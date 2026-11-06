@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
+import type { OmpApi } from "./api";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
 import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
@@ -444,11 +445,24 @@ export function activate(context: vscode.ExtensionContext): void {
 	reg("omp.showLog", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Show log of which session?"));
 		const meta = id ? sessions.get(id) : undefined;
-		if (meta) await vscode.window.showTextDocument(vscode.Uri.file(path.join(path.dirname(meta.socket), "host.log")));
+		if (meta) await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(meta.id), "host.log")));
 	});
 
+	const api: OmpApi = {
+		context,
+		sessions,
+		snapshots,
+		openPanel,
+		launchAndOpen,
+		pickSession,
+		pickFolder,
+		targetPanel,
+		idFrom,
+		refreshTree: () => tree.refresh(),
+	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
 	registerTasks(context, sessions, pickSession);
+	// Feature modules: one `register*(api)` line each.
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

@@ -1,5 +1,6 @@
 // Test runner: bundles the session host and the TypeScript tests with esbuild into .test-out/,
 // then runs them with `node --test`. Usage: node test/run.mjs [unit|host]...
+// TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -7,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = path.join(root, ".test-out");
+const outDir = process.env.TEST_OUT ? path.resolve(process.env.TEST_OUT) : path.join(root, ".test-out");
+const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : undefined;
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
 const selected = suites.length ? suites : ["unit", "host"];
 for (const s of selected) if (s !== "unit" && s !== "host") throw new Error(`unknown suite ${s}`);
@@ -18,7 +20,7 @@ fs.mkdirSync(outDir, { recursive: true });
 const entryPoints = selected.flatMap(s =>
 	fs
 		.readdirSync(path.join(root, "test", s))
-		.filter(f => f.endsWith(".test.ts"))
+		.filter(f => f.endsWith(".test.ts") && (!filter || filter.test(f)))
 		.map(f => path.join(root, "test", s, f)),
 );
 const common = { bundle: true, platform: "node", target: "es2022", sourcemap: "inline", logLevel: "warning", absWorkingDir: root };
