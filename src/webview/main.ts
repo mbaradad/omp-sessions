@@ -8,6 +8,7 @@ import { hasAnsi, renderAnsi } from "./ansi";
 import { AttachmentTray } from "./attachments";
 import { renderFileDiff } from "./diffview";
 import { copyButton, escapeHtml, h, icon, post, rec, str, vscode } from "./dom";
+import { highlight, languageFor } from "./highlight";
 import { fileLink, installLinkHandler, linkify, onPathsResolved, splitLine } from "./links";
 
 // ---------- markdown ----------
@@ -29,7 +30,8 @@ md.use({
 		},
 		code(token: Tokens.Code) {
 			const lang = (token.lang ?? "").split(/\s/)[0];
-			return `<div class="codeblock"><div class="code-head"><span>${escapeHtml(lang || "text")}</span><span class="code-actions"></span></div><pre><code>${escapeHtml(token.text)}</code></pre></div>`;
+			const html = highlight(token.text, lang ? languageFor(lang) : undefined) ?? escapeHtml(token.text);
+			return `<div class="codeblock" data-lang="${escapeHtml(lang)}"><div class="code-head"><span>${escapeHtml(lang || "text")}</span><span class="code-actions"></span></div><pre><code class="hljs">${html}</code></pre></div>`;
 		},
 	},
 });
@@ -99,6 +101,20 @@ const main = h("div", { class: "main" }, transcript, jumpBtn);
 app.append(header, banner, main, dialogs, todoBox, widgetBox, composer);
 installLinkHandler();
 
+function setAllCards(open: boolean): void {
+	for (const card of cards.values()) card.el.open = open;
+}
+
+// Click any chat image to view it full size.
+document.addEventListener("click", e => {
+	const img = (e.target as HTMLElement | null)?.closest<HTMLImageElement>(".thumb, .att-image img, .md-img");
+	if (!img?.src) return;
+	e.preventDefault();
+	const overlay = h("div", { class: "lightbox", title: "Click to close" }, h("img", { src: img.src, alt: "" }));
+	overlay.addEventListener("click", () => overlay.remove());
+	document.body.append(overlay);
+});
+
 // ---------- scrolling ----------
 let stickToBottom = true;
 transcript.addEventListener("scroll", () => {
@@ -140,6 +156,15 @@ function updateEmpty(): void {
 }
 
 // ---------- tool cards ----------
+function fmtDuration(ms: number): string {
+	const s = Math.max(0, Math.round(ms / 1000));
+	if (s < 60) return `${s}s`;
+	const m = Math.floor(s / 60);
+	return m < 60 ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+let turnStartedAt: number | undefined;
+const promptHistory: string[] = [];
 interface ToolCard {
 	id: string;
 	name: string;
@@ -155,6 +180,9 @@ interface ToolCard {
 	live?: string;
 	subagents: Map<string, Record<string, unknown>>;
 	userToggled?: boolean;
+	startedAt?: number;
+	endedAt?: number;
+	durEl: HTMLElement;
 }
 const cards = new Map<string, ToolCard>();
 
@@ -247,10 +275,11 @@ function getCard(id: string, name: string): ToolCard {
 	const statusEl = h("span", { class: "tstatus pending" });
 	const summary = h("span", { class: "tsummary" });
 	const badges = h("span", { class: "tbadges" });
-	const head = h("div", { class: "thead" }, statusEl, h("span", { class: "tglyph" }, TOOL_GLYPH[name] ?? "•"), h("span", { class: "tname" }, name), summary, badges);
+	const durEl = h("span", { class: "tdur" });
+	const head = h("div", { class: "thead" }, statusEl, h("span", { class: "tglyph" }, TOOL_GLYPH[name] ?? "•"), h("span", { class: "tname" }, name), summary, badges, durEl);
 	const body = h("div", { class: "tbody" });
 	const el = h("details", { class: `tool tool-${name}` }, h("summary", {}, head), body);
-	const card: ToolCard = { id, name, el, statusEl, summary, badges, body, args: {}, status: "pending", subagents: new Map() };
+	const card: ToolCard = { id, name, el, statusEl, summary, badges, body, args: {}, status: "pending", subagents: new Map(), durEl };
 	el.addEventListener("toggle", () => {
 		card.userToggled = true;
 	});
@@ -289,6 +318,9 @@ function fileHeader(card: ToolCard, path: string, diff: FileDiff | undefined, li
 		h("span", { class: "spacer" }),
 		h("button", { class: "mini", title: "Open in VS Code's diff editor", onclick: (e: Event) => (e.preventDefault(), post({ type: "openDiff", toolCallId: card.id, path })) }, icon("diff"), "Diff"),
 		h("button", { class: "mini ghost", title: "Open file", onclick: (e: Event) => (e.preventDefault(), post({ type: "openFile", path, line })) }, "Open"),
+		changesByTool.get(card.id)
+			? h("button", { class: "mini ghost danger", title: "Restore this file to its content before this edit", onclick: (e: Event) => (e.preventDefault(), post({ type: "revertFile", toolCallId: card.id, path })) }, "Revert")
+			: "",
 	);
 }
 
@@ -300,6 +332,7 @@ function outputBlock(text: string, error = false): HTMLElement {
 
 function updateCard(card: ToolCard): void {
 	card.statusEl.className = `tstatus ${card.status}`;
+	card.durEl.textContent = card.startedAt ? fmtDuration((card.endedAt ?? Date.now()) - card.startedAt) : "";
 	card.summary.replaceChildren(...(card.intent ? [h("span", { class: "intent" }, card.intent)] : []), ...toolSummary(card));
 	const body = card.body;
 	body.replaceChildren();
@@ -315,7 +348,7 @@ function updateCard(card: ToolCard): void {
 		for (const { path, diff, line } of diffs) {
 			added += diff.added;
 			removed += diff.removed;
-			body.append(h("div", { class: "file-block" }, fileHeader(card, path, diff, line), renderFileDiff(diff, { onLine: n => post({ type: "openFile", path, line: n }) })));
+			body.append(h("div", { class: "file-block" }, fileHeader(card, path, diff, line), renderFileDiff(diff, { onLine: n => post({ type: "openFile", path, line: n }), language: languageFor(path) })));
 		}
 		if (!diffs.length) {
 			const change = changesByTool.get(card.id);
@@ -343,7 +376,7 @@ function updateCard(card: ToolCard): void {
 					{ class: `subagent ${status}` },
 					h("span", { class: `tstatus ${status === "completed" ? "done" : status === "failed" || status === "aborted" ? "error" : "running"}` }),
 					h("span", { class: "sa-name" }, `${str(s.agent)}`),
-					h("span", { class: "sa-desc" }, str(p.description) || str(s.description) || str(p.task).slice(0, 120)),
+					h("span", { class: "sa-desc" }, str(p.description) || str(s.description) || str(p.lastIntent) || str(s.task || p.task).split("\n").find(l => l.trim() && !/^#|complete assignment/i.test(l))?.slice(0, 120) || ""),
 					h("span", { class: "sa-now dim" }, [str(p.lastIntent) || (p.currentTool ? `${str(p.currentTool)}…` : ""), typeof p.toolCount === "number" ? `${p.toolCount} tools` : ""].filter(Boolean).join(" · ")),
 				),
 			);
@@ -401,7 +434,18 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		for (const r of imgs) row.append(typeof r?.data === "string" ? h("img", { class: "thumb", src: `data:${str(r.mimeType)};base64,${r.data}` }) : h("span", { class: "thumb ph" }, "image"));
 		bubble.append(row);
 	}
-	el.append(bubble, h("div", { class: "msg-actions" }, copyButton(() => text, "Copy message")));
+	const userAuthored = m.attribution !== "agent";
+	el.append(
+		bubble,
+		h(
+			"div",
+			{ class: "msg-actions" },
+			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text }) }, icon("edit")) : "",
+			userAuthored ? h("button", { class: "icon-btn", title: "Fork: continue from this message in a new transcript", onclick: () => post({ type: "forkFrom", text }) }, icon("fork")) : "",
+			copyButton(() => text, "Copy message"),
+		),
+	);
+	if (userAuthored && text.trim()) promptHistory.push(text);
 	linkify(bubble);
 	return el;
 }
@@ -465,7 +509,13 @@ function renderAssistantInto(el: HTMLElement, m: Record<string, unknown>, live: 
 	if (!live && m.stopReason === "error") el.append(h("div", { class: "msg-error" }, `⚠ ${str(m.errorMessage) || "The model request failed."}`));
 	if (!live && m.stopReason === "aborted") el.append(h("div", { class: "msg-aborted" }, "Interrupted"));
 	const text = blocks.map(b => rec(b)).filter(b => b?.type === "text").map(b => str(b?.text)).join("\n\n");
-	if (!live && text.trim()) el.append(h("div", { class: "msg-actions" }, copyButton(() => text, "Copy response")));
+	if (!live && text.trim()) {
+		const usage = rec(m.usage);
+		const cost = typeof usage?.cost === "number" ? `$${usage.cost.toFixed(4)}` : "";
+		const tokens = typeof usage?.totalTokens === "number" ? `${Math.round(usage.totalTokens / 100) / 10}k tok` : "";
+		const info = [str(m.model), tokens, cost].filter(Boolean).join(" · ");
+		el.append(h("div", { class: "msg-actions" }, copyButton(() => text, "Copy response"), info ? h("span", { class: "msg-meta" }, info) : ""));
+	}
 }
 
 function applyToolResult(m: Record<string, unknown>): void {
@@ -482,7 +532,13 @@ function renderOther(m: Record<string, unknown>): HTMLElement | null {
 	const role = str(m.role);
 	const text = contentText(m.content) || str(m.summary) || str(m.output);
 	if (role === "compactionSummary" || role === "branchSummary") return h("div", { class: "divider" }, role === "compactionSummary" ? "Context compacted" : "Branch summary");
-	if (role === "bashExecution") return bashCard(str(m.command), str(m.output), typeof m.exitCode === "number" ? m.exitCode : undefined);
+	if (role === "bashExecution") return bashCard(str(m.command), str(m.output), typeof m.exitCode === "number" ? m.exitCode : undefined, !!m.cancelled);
+	if (role === "commandOutput") return commandOutputEl(str(m.text));
+	if (role === "notice") return noticeEl(str(m.message), (str(m.level) as "info" | "warning" | "error") || "info", !!m.markdown);
+	if (role === "sideQuestion") {
+		onBtwRecord(rec(m.record) ?? {});
+		return null;
+	}
 	if (!text.trim()) return null;
 	const label = str(m.customType) || role || "note";
 	const body = h("div", { class: "md" });
@@ -553,14 +609,25 @@ function addMessage(message: unknown, messageId?: string, live = false): void {
 	queueScroll();
 }
 
-function appendNotice(text: string, level: "info" | "warning" | "error" = "info", markdown = false): void {
+function noticeEl(text: string, level: "info" | "warning" | "error" = "info", markdown = false): HTMLElement {
 	const el = h("div", { class: `notice ${level}` });
 	if (markdown) {
 		el.classList.add("md");
 		renderMarkdownInto(el, text);
 	} else renderText(el, text);
 	linkify(el);
-	transcript.append(el);
+	return el;
+}
+
+function commandOutputEl(text: string): HTMLElement {
+	const pre = h("pre", { class: "command-output" });
+	renderText(pre, text);
+	linkify(pre);
+	return pre;
+}
+
+function appendNotice(text: string, level: "info" | "warning" | "error" = "info", markdown = false): void {
+	transcript.append(noticeEl(text, level, markdown));
 	updateEmpty();
 	queueScroll();
 }
@@ -747,6 +814,8 @@ function renderHeader(): void {
 			["Switch to earlier transcript…", cmd("resumeTranscript"), "/resume"],
 			null,
 			["Compact context", cmd("compact"), "/compact"],
+			["Collapse all tool cards", () => setAllCards(false)],
+			["Expand all tool cards", () => setAllCards(true)],
 			["Goal…", cmd("goal"), "/goal"],
 			["Subagents…", cmd("agents"), "/agents"],
 			[`Fast mode: ${state?.fastModeEnabled ? "on" : "off"}`, cmd("toggleFast"), "/fast"],
@@ -788,7 +857,7 @@ function renderHeader(): void {
 	} else banner.className = "banner hidden";
 	input.disabled = stopped;
 	updateSendState();
-	vscode.setState({ sessionId: meta?.id });
+	vscode.setState({ ...(rec(vscode.getState()) ?? {}), sessionId: meta?.id });
 }
 
 function renderFooter(): void {
@@ -810,7 +879,9 @@ function renderFooter(): void {
 		goal ? h("span", { class: "pill accent", title: str(goal.objective) }, `goal: ${str(goal.status) || "active"}`) : "",
 		...[...statuses.values()].filter(Boolean).map(s => h("span", { class: "pill dim" }, s)),
 		h("span", { class: "spacer" }),
-		busy ? h("span", { class: "working" }, h("span", { class: "spinner" }), state?.isCompacting ? "compacting" : "working") : h("span", { class: "dim" }, meta?.status === "stopped" ? "stopped" : "ready"),
+		busy
+			? h("span", { class: "working" }, h("span", { class: "spinner" }), state?.isCompacting ? "compacting" : "working", h("span", { class: "elapsed" }, turnStartedAt ? fmtDuration(Date.now() - turnStartedAt) : ""))
+			: h("span", { class: "dim" }, meta?.status === "stopped" ? "stopped" : "ready"),
 	);
 	stopBtn.classList.toggle("hidden", !busy);
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
@@ -998,13 +1069,47 @@ function send(): void {
 	if ((!text && tray.count === 0) || meta?.status === "stopped") return;
 	const { images, files } = tray.take();
 	post({ type: "prompt", text, images, files });
+	promptHistory.push(text);
+	historyIndex = -1;
 	input.value = "";
+	saveDraft();
 	autosize();
 	hidePopup();
 	scrollToBottom(true);
 }
 
+let historyIndex = -1;
+let draftTimer: number | undefined;
+function saveDraft(): void {
+	clearTimeout(draftTimer);
+	draftTimer = window.setTimeout(() => vscode.setState({ ...(rec(vscode.getState()) ?? {}), sessionId: meta?.id, draft: input.value }), 250);
+}
+
+/** ↑/↓ walk previous prompts when the caret is on the first/last line (like a shell). */
+function recallHistory(dir: -1 | 1): boolean {
+	if (!promptHistory.length) return false;
+	const before = input.value.slice(0, input.selectionStart ?? 0);
+	const after = input.value.slice(input.selectionEnd ?? 0);
+	if (dir === -1 && before.includes("\n")) return false;
+	if (dir === 1 && (after.includes("\n") || historyIndex === -1)) return false;
+	if (historyIndex === -1 && input.value.trim() && dir === -1 && !promptHistory.includes(input.value)) return false;
+	const next = historyIndex === -1 ? promptHistory.length - 1 : historyIndex + dir;
+	if (next < 0) return true;
+	if (next >= promptHistory.length) {
+		historyIndex = -1;
+		input.value = "";
+	} else {
+		historyIndex = next;
+		input.value = promptHistory[next];
+	}
+	autosize();
+	input.selectionStart = input.selectionEnd = input.value.length;
+	return true;
+}
+
 input.addEventListener("input", () => {
+	historyIndex = -1;
+	saveDraft();
 	autosize();
 	updateCompletion();
 });
@@ -1026,6 +1131,10 @@ input.addEventListener("keydown", e => {
 			hidePopup();
 			return;
 		}
+	}
+	if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && recallHistory(e.key === "ArrowUp" ? -1 : 1)) {
+		e.preventDefault();
+		return;
 	}
 	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
 		e.preventDefault();
@@ -1087,13 +1196,21 @@ function resetTranscript(): void {
 	cards.clear();
 	sideQuestions.clear();
 	totalCost = 0;
+	promptHistory.length = 0;
 }
+
+// Live clocks: turn elapsed time in the footer and running tool durations.
+setInterval(() => {
+	const elapsed = footer.querySelector<HTMLElement>(".elapsed");
+	if (elapsed && turnStartedAt) elapsed.textContent = fmtDuration(Date.now() - turnStartedAt);
+	for (const card of cards.values()) if (card.status === "running" && card.startedAt) card.durEl.textContent = fmtDuration(Date.now() - card.startedAt);
+}, 1000);
 
 function onSubagentFrame(payload: Record<string, unknown>, lifecycle: boolean): void {
 	const parent = str(payload.parentToolCallId);
 	const card = parent ? cards.get(parent) : undefined;
 	if (!card) return;
-	const key = str(payload.id) || `${str(payload.agent)}#${String(payload.index)}`;
+	const key = `${str(payload.agent)}#${String(payload.index)}`;
 	const prev = card.subagents.get(key) ?? {};
 	card.subagents.set(key, lifecycle ? { ...prev, ...payload } : { ...prev, ...payload, progress: payload.progress });
 	scheduleCard(card);
@@ -1116,6 +1233,8 @@ function handleEvent(ev: OmpFrame): void {
 			card.args = rec(ev.args) ?? card.args;
 			card.intent = str(ev.intent) || card.intent;
 			card.status = "running";
+			card.startedAt = Date.now();
+			card.endedAt = undefined;
 			attachCard(card);
 			scheduleCard(card);
 			return;
@@ -1124,7 +1243,8 @@ function handleEvent(ev: OmpFrame): void {
 			const card = cards.get(str(ev.toolCallId));
 			if (!card) return;
 			card.live = contentText(rec(ev.partialResult)?.content);
-			card.status = "running";
+			// Async tools (task) keep streaming progress after their result; never un-finish a card.
+			if (!card.result) card.status = "running";
 			scheduleCard(card);
 			return;
 		}
@@ -1133,6 +1253,7 @@ function handleEvent(ev: OmpFrame): void {
 			const r = rec(ev.result);
 			card.result = { content: r?.content, details: rec(r?.details) };
 			card.status = ev.isError ? "error" : "done";
+			if (card.startedAt) card.endedAt = Date.now();
 			attachCard(card);
 			scheduleCard(card);
 			return;
@@ -1149,14 +1270,19 @@ function handleEvent(ev: OmpFrame): void {
 			return;
 		case "agent_start":
 			agentBusy = true;
+			turnStartedAt ??= Date.now();
 			renderFooter();
 			return;
 		case "session_settled":
 			agentBusy = false;
+			turnStartedAt = undefined;
 			renderFooter();
 			return;
 		case "prompt_result": {
-			if (ev.sessionSettled) agentBusy = false;
+			if (ev.sessionSettled) {
+				agentBusy = false;
+				turnStartedAt = undefined;
+			}
 			const err = rec(ev.error);
 			if (ev.status === "error" && err) appendNotice(`⚠ ${str(err.message)}`, "error");
 			renderFooter();
@@ -1181,15 +1307,11 @@ function handleEvent(ev: OmpFrame): void {
 		case "notice":
 			appendNotice(str(ev.message), (str(ev.level) as "info" | "warning" | "error") || "info");
 			return;
-		case "command_output": {
-			const pre = h("pre", { class: "command-output" });
-			renderText(pre, str(ev.text));
-			linkify(pre);
-			transcript.append(pre);
+		case "command_output":
+			transcript.append(commandOutputEl(str(ev.text)));
 			updateEmpty();
 			queueScroll();
 			return;
-		}
 		case "queue_update":
 			renderQueue(Array.isArray(ev.steering) ? ev.steering.map(String) : [], Array.isArray(ev.followUp) ? ev.followUp.map(String) : []);
 			return;
@@ -1268,6 +1390,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			pendingUi.clear();
 			for (const r of msg.pendingUi) pendingUi.set(r.id, r);
 			agentBusy = meta.status === "working";
+			turnStartedAt = agentBusy ? (turnStartedAt ?? Date.now()) : undefined;
 			renderDialogs();
 			renderHeader();
 			renderFooter();
@@ -1277,6 +1400,13 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			updateEmpty();
 			requestAnimationFrame(() => scrollToBottom(true));
 			if (meta.status !== "stopped") input.focus();
+			{
+				const draft = str(rec(vscode.getState())?.draft);
+				if (draft && !input.value) {
+					input.value = draft;
+					autosize();
+				}
+			}
 			return;
 		}
 		case "event":

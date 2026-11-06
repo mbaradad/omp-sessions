@@ -82,7 +82,7 @@ export function slimMessage(message: unknown, live = false): unknown {
 		content: slimContent(m.content, live ? MAX_LIVE_TEXT : MAX_TEXT, false),
 		timestamp: m.timestamp,
 	};
-	for (const k of ["stopReason", "errorMessage", "toolCallId", "toolName", "isError", "attribution", "model", "customType", "display", "command", "output", "exitCode", "summary"]) {
+	for (const k of ["stopReason", "errorMessage", "toolCallId", "toolName", "isError", "attribution", "model", "customType", "display", "command", "output", "exitCode", "cancelled", "summary", "text", "record", "level", "message", "markdown"]) {
 		const v = m[k];
 		if (v !== undefined) out[k] = typeof v === "string" ? clip(v, MAX_TEXT) : v;
 	}

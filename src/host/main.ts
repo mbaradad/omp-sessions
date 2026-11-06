@@ -87,6 +87,7 @@ const meta: SessionMeta = {
 	pid: process.pid,
 	socket: socketPath,
 	createdAt: previous?.createdAt ?? Date.now(),
+	cost: previous?.cost,
 	updatedAt: Date.now(),
 	ompSessionFile: args.resume ?? previous?.ompSessionFile,
 	changedFiles: 0,
@@ -142,6 +143,8 @@ function publishMeta(): void {
 
 // ---------- transcript mirror ----------
 let messages: unknown[] = [];
+/** Client `bash` requests in flight (rewritten id → command), recorded into the mirror on response. */
+const pendingBash = new Map<string, string>();
 let inflight: { messageId: string; message: unknown } | null = null;
 const running = new Map<string, RunningTool>();
 const pendingUi: UiRequest[] = [];
@@ -480,6 +483,13 @@ function handleFrame(frame: OmpFrame): void {
 			const res = { ...frame, id: m ? m[2] : frame.id };
 			const client = m ? clients.find(c => c.num === Number(m[1])) : undefined;
 			if (client) send(client, { t: "response", res });
+			const bashCommand = pendingBash.get(id);
+			if (bashCommand !== undefined) {
+				pendingBash.delete(id);
+				const data = rec(frame.data);
+				// omp records `bash` output in its transcript but emits no message events for it.
+				if (frame.success && data) messages.push({ role: "bashExecution", command: bashCommand, output: data.output, exitCode: data.exitCode, cancelled: data.cancelled, timestamp: Date.now() });
+			}
 			if (frame.success && typeof frame.command === "string") {
 				if (SESSION_CHANGING[frame.command]) void resync().then(refreshState);
 				else if (!frame.command.startsWith("get_")) refreshState();
@@ -498,10 +508,10 @@ function handleFrame(frame: OmpFrame): void {
 			const msg = rec(frame.message);
 			if (msg?.role === "assistant") {
 				const text = textOf(msg).trim();
-				if (text) {
-					meta.lastText = text.slice(0, 300);
-					saveMeta();
-				}
+				if (text) meta.lastText = text.slice(0, 300);
+				const cost = rec(rec(msg.usage)?.cost)?.total;
+				if (typeof cost === "number") meta.cost = (meta.cost ?? 0) + cost;
+				saveMeta();
 			}
 			break;
 		}
@@ -555,6 +565,22 @@ function handleFrame(frame: OmpFrame): void {
 			} else if (method === "setTitle" && typeof frame.title === "string" && meta.title === "New session") {
 				meta.title = frame.title;
 				publishMeta();
+			}
+			break;
+		}
+		case "command_output":
+			messages.push({ role: "commandOutput", text: frame.text, timestamp: Date.now() });
+			break;
+		case "notice":
+			messages.push({ role: "notice", level: frame.level, message: frame.message, timestamp: Date.now() });
+			break;
+		case "btw_record": {
+			const record = rec(frame.record);
+			if (record && record.status !== "running") {
+				const existing = messages.findIndex(m => rec(m)?.role === "sideQuestion" && rec(rec(m)?.record)?.id === record.id);
+				const entry = { role: "sideQuestion", record, timestamp: Date.now() };
+				if (existing >= 0) messages[existing] = entry;
+				else messages.push(entry);
 			}
 			break;
 		}
@@ -633,12 +659,16 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 				sendOmp({ type: "set_session_name", name: meta.title });
 				publishMeta();
 			}
+			if (cmd.type === "bash" && typeof msg.cmd.command === "string") pendingBash.set(cmd.id, msg.cmd.command);
 			sendOmp(cmd);
 			return;
 		}
 		case "ui_response":
 			sendOmp({ ...msg.res, type: "extension_ui_response" });
 			removePending(msg.res.id);
+			return;
+		case "note":
+			messages.push({ role: "notice", level: msg.level, message: msg.message, markdown: msg.markdown, timestamp: Date.now() });
 			return;
 		case "rename":
 			meta.title = msg.title;

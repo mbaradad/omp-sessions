@@ -16,6 +16,8 @@ export interface CommandContext {
 	readonly state: SlimState | null;
 	post(msg: ToWebview): void;
 	insertText(text: string): void;
+	/** Show a notice after the next transcript replacement (fork/new/switch reset the view). */
+	postAfterReset(msg: ToWebview): void;
 }
 
 function rec(v: unknown): Record<string, unknown> | undefined {
@@ -245,7 +247,7 @@ export async function runSessionAction(name: PanelCommand, ctx: CommandContext):
 			const c = need(ctx);
 			if (!c) return true;
 			const res = await c.rpc({ type: "fork" });
-			if (!fail(ctx, res)) ctx.post({ type: "notice", level: "info", text: rec(res.data)?.cancelled ? "Fork cancelled." : "Forked: continuing in a copy of this conversation." });
+			if (!fail(ctx, res)) ctx.postAfterReset({ type: "notice", level: "info", text: rec(res.data)?.cancelled ? "Fork cancelled." : "Forked: continuing in a copy of this conversation." });
 			return true;
 		}
 		case "export": {

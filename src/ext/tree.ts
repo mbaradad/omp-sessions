@@ -37,7 +37,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 	private readonly emitter = new vscode.EventEmitter<Node | undefined>();
 	readonly onDidChangeTreeData = this.emitter.event;
 
-	constructor(private readonly sessions: SessionManager) {
+	constructor(
+		private readonly sessions: SessionManager,
+		/** Sessions with news the user has not looked at (finished or asking while unattended). */
+		private readonly isUnread: (id: string) => boolean = () => false,
+	) {
 		sessions.onDidChange(() => this.emitter.fire(undefined));
 	}
 
@@ -79,16 +83,19 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 		}
 		const m = node.meta;
 		const inWs = this.sessions.inWorkspace(m);
-		const item = new vscode.TreeItem(m.title, m.changedFiles > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+		const unread = this.isUnread(m.id);
+		const label: vscode.TreeItemLabel = { label: m.title, highlights: unread ? [[0, m.title.length]] : undefined };
+		const item = new vscode.TreeItem(label, m.changedFiles > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
 		item.id = `session:${m.id}`;
 		item.iconPath = m.status === "stopped" && m.exitCode && m.exitCode !== 0 ? new vscode.ThemeIcon("error", new vscode.ThemeColor("charts.red")) : STATUS_ICON[m.status];
 		const where = node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
-		item.description = [STATUS_LABEL[m.status], where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
+		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
 		if (m.model) tip.appendMarkdown(`$(hubot) ${m.model}  \n`);
 		if (m.changedFiles) tip.appendMarkdown(`$(diff) ${m.changedFiles} file(s) changed  \n`);
+		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
 		item.contextValue = m.status === "stopped" ? "session.stopped" : "session.running";

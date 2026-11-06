@@ -51,6 +51,8 @@ const ICONS: Record<string, string> = {
 	more: '<circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/>',
 	x: '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
 	link: '<path d="M7 9a3 3 0 004.2 0l2.3-2.3a3 3 0 00-4.2-4.2L8.6 3.2M9 7a3 3 0 00-4.2 0L2.5 9.3a3 3 0 004.2 4.2l.7-.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+	edit: '<path d="M10.5 2.5l3 3L6 13H3v-3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
+	fork: '<circle cx="4" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 5.1v1.4c0 1.4 1 2.2 2.4 2.6L8 9.5v1.4M12 5.1v1.4c0 1.4-1 2.2-2.4 2.6L8 9.5" fill="none" stroke="currentColor" stroke-width="1.3"/>',
 	chevron: '<path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 export function icon(name: string, cls = ""): HTMLElement {

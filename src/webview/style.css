@@ -416,3 +416,33 @@ button.stop { background: var(--vscode-inputValidation-errorBorder, #be1100); co
 .picker .plist { overflow-y: auto; display: flex; flex-direction: column; min-height: 60px; }
 .picker .levels { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0 8px; padding: 0 4px; }
 .picker .lvl { border: 1px solid var(--border); padding: 0 9px; }
+
+/* ---------- timing / actions ---------- */
+.tdur { color: var(--muted); font-size: 0.82em; font-variant-numeric: tabular-nums; flex: none; min-width: 2.5em; text-align: right; }
+.tbadges + .tdur { margin-left: 8px; }
+.thead > .tdur:last-child { margin-left: auto; }
+.tbadges ~ .tdur { margin-left: 8px; }
+.elapsed { font-variant-numeric: tabular-nums; color: var(--muted); }
+button.mini.danger { color: var(--del-fg); }
+button.mini.danger:hover { background: color-mix(in srgb, var(--del-fg) 14%, transparent); }
+.msg.user > .msg-actions { justify-content: flex-end; }
+
+/* ---------- syntax colors (theme-aware via VS Code symbol colors) ---------- */
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-selector-tag, .hljs-tag .hljs-name { color: var(--vscode-symbolIcon-keywordForeground, #c586c0); }
+.hljs-string, .hljs-regexp, .hljs-template-tag, .hljs-attr .hljs-string { color: var(--vscode-debugTokenExpression-string, #ce9178); }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
+.hljs-comment, .hljs-quote { color: var(--vscode-editorCodeLens-foreground, #6a9955); font-style: italic; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: var(--vscode-symbolIcon-functionForeground, #dcdcaa); }
+.hljs-type, .hljs-title.class_, .hljs-class .hljs-title { color: var(--vscode-symbolIcon-classForeground, #4ec9b0); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-selector-attr, .hljs-selector-class { color: var(--vscode-symbolIcon-propertyForeground, #9cdcfe); }
+.hljs-variable, .hljs-params, .hljs-template-variable { color: var(--vscode-symbolIcon-variableForeground, #9cdcfe); }
+.hljs-meta, .hljs-meta .hljs-keyword { color: var(--vscode-symbolIcon-constantForeground, #569cd6); }
+.hljs-addition { color: var(--add-fg); }
+.hljs-deletion { color: var(--del-fg); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+.msg-meta { color: var(--muted); font-size: 0.8em; align-self: center; margin-left: 4px; }
+.thumb, .att-image img, .md-img { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.72); display: flex; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px; }
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }

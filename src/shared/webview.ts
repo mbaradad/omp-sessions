@@ -121,4 +121,9 @@ export type FromWebview =
 	| { type: "removeQueued"; text: string; queue: "steering" | "followUp" }
 	| { type: "command"; name: PanelCommand }
 	| { type: "copy"; text: string }
-	| { type: "pickFiles" };
+	| { type: "pickFiles" }
+	/** Rewind / fork the conversation at the user message with this text. */
+	| { type: "rewindTo"; text: string }
+	| { type: "forkFrom"; text: string }
+	/** Restore one file to its content before a given tool call. */
+	| { type: "revertFile"; toolCallId: string; path: string };

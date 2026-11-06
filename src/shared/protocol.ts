@@ -26,6 +26,8 @@ export interface SessionMeta {
 	changedFiles: number;
 	/** Last assistant text (truncated), for tree tooltips. */
 	lastText?: string;
+	/** Accumulated model cost (USD) of assistant turns seen by this host. */
+	cost?: number;
 }
 
 /** One file touched by one tool call. `before`/`after` are blob hashes; null = file absent. */
@@ -87,6 +89,8 @@ export type ClientToHost =
 	| { t: "rpc"; cmd: { id?: string; type: string; [k: string]: unknown } }
 	| { t: "ui_response"; res: { id: string; [k: string]: unknown } }
 	| { t: "rename"; title: string }
+	/** Persist an extension-generated notice into the session timeline (shown again after reloads). */
+	| { t: "note"; level: "info" | "warning" | "error"; message: string; markdown?: boolean }
 	| { t: "stop" };
 
 /** UI request methods that need an answer from the user. */

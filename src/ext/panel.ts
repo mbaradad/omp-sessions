@@ -65,6 +65,8 @@ export class ChatPanel implements vscode.Disposable {
 	private readonly editTexts = new Map<string, Array<{ path: string; oldText: string; newText: string }>>();
 	private readonly diffCache = new Map<string, DiffsByPath>();
 	private outbox: ToWebview[] = [];
+	/** Notices to show once the host replaces the transcript (fork / new / switch). */
+	private readonly afterReset: ToWebview[] = [];
 	private flushTimer: NodeJS.Timeout | undefined;
 	private disposed = false;
 	private lastStatus: SessionMeta["status"] | undefined;
@@ -279,6 +281,7 @@ export class ChatPanel implements vscode.Disposable {
 				this.state = (m.state as SlimState) ?? null;
 				this.indexEdits(m.messages);
 				this.post({ type: "reset", messages: m.messages.map(x => slimMessage(x)), state: this.state, diffs: this.allDiffs() });
+				for (const msg of this.afterReset.splice(0)) this.commandContext.post(msg);
 				return;
 			case "response":
 				return;
@@ -314,6 +317,12 @@ export class ChatPanel implements vscode.Disposable {
 		});
 	}
 
+	/** Send a prompt as if typed in the composer (used by editor integrations). */
+	async sendPrompt(text: string): Promise<void> {
+		this.reveal();
+		await this.onWebviewMessage({ type: "prompt", text });
+	}
+
 	insertText(text: string): void {
 		this.post({ type: "insertText", text });
 	}
@@ -346,13 +355,25 @@ export class ChatPanel implements vscode.Disposable {
 		});
 	}
 
+	/** omp reads files from disk: save unsaved editors inside the session folder so it sees what the user sees. */
+	private async saveDirtyDocuments(): Promise<void> {
+		const cwd = this.meta?.cwd;
+		if (!cwd || !vscode.workspace.getConfiguration("omp").get<boolean>("saveBeforePrompt", true)) return;
+		const dirty = vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === "file" && !path.relative(cwd, d.uri.fsPath).startsWith(".."));
+		await Promise.all(dirty.map(d => d.save()));
+	}
+
 	private get commandContext(): CommandContext {
 		return {
 			client: this.client,
 			meta: this.meta,
 			state: this.state,
-			post: msg => this.post(msg),
+			post: msg => {
+				this.post(msg);
+				if (msg.type === "notice") this.client?.write({ t: "note", level: msg.level, message: msg.text, markdown: msg.markdown });
+			},
 			insertText: text => this.insertText(text),
+			postAfterReset: msg => this.afterReset.push(msg),
 		};
 	}
 
@@ -372,6 +393,7 @@ export class ChatPanel implements vscode.Disposable {
 					this.post({ type: "error", message: "Session is not running. Resume it first." });
 					return;
 				}
+				await this.saveDirtyDocuments();
 				let message = m.text;
 				if (files.length) {
 					const listed = this.storeAttachments(files);
@@ -469,6 +491,28 @@ export class ChatPanel implements vscode.Disposable {
 			case "removeQueued":
 				await client?.rpc({ type: "remove_queued_message", message: m.text, queue: m.queue });
 				return;
+			case "rewindTo":
+			case "forkFrom": {
+				const entryId = await this.findUserEntry(m.text);
+				if (!client || !entryId) {
+					this.post({ type: "notice", level: "warning", text: "Could not locate that message on the current branch." });
+					return;
+				}
+				if (m.type === "rewindTo") {
+					const res = await client.rpc({ type: "branch", entryId });
+					const data = rec(res.data) ?? {};
+					if (!res.success) this.post({ type: "error", message: String(res.error) });
+					else if (!data.cancelled) this.insertText(String(data.text ?? m.text));
+				} else {
+					const res = await client.rpc({ type: "fork", entryId });
+					if (!res.success) this.post({ type: "error", message: String(res.error) });
+					else this.afterReset.push({ type: "notice", level: "info", text: "Forked: continuing from that message in a new transcript." });
+				}
+				return;
+			}
+			case "revertFile":
+				await this.revertFile(m.toolCallId, m.path);
+				return;
 			case "command":
 				await this.runCommand(m.name);
 				return;
@@ -506,6 +550,36 @@ export class ChatPanel implements vscode.Disposable {
 				await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(this.sessionId), "host.log")));
 				return;
 		}
+	}
+
+	private async findUserEntry(text: string): Promise<string | undefined> {
+		const res = await this.client?.rpc({ type: "get_branch_messages" });
+		const msgs = Array.isArray(rec(res?.data)?.messages) ? (rec(res?.data)?.messages as unknown[]).map(x => rec(x) ?? {}) : [];
+		const want = text.trim();
+		const hit = [...msgs].reverse().find(x => String(x.text ?? "").trim() === want) ?? [...msgs].reverse().find(x => String(x.text ?? "").trim().startsWith(want.slice(0, 200)));
+		return hit ? String(hit.entryId) : undefined;
+	}
+
+	/** Restores one file to its content right before the given tool call. */
+	private async revertFile(toolCallId: string, file: string): Promise<void> {
+		const change = this.changes.find(c => c.toolCallId === toolCallId);
+		const entry = change?.files.find(f => f.path === file);
+		if (!change || !entry) return;
+		const name = path.relative(this.meta?.cwd ?? "", file) || file;
+		const later = this.changes.some(c => c.timestamp > change.timestamp && c.files.some(f => f.path === file));
+		const ok = await vscode.window.showWarningMessage(
+			`Revert ${name} to its content before this edit?`,
+			{ modal: true, detail: later ? "Later edits to this file in this session will be undone too." : entry.before === null ? "The file did not exist before; it will be deleted." : undefined },
+			"Revert",
+		);
+		if (ok !== "Revert") return;
+		const uri = vscode.Uri.file(file);
+		if (entry.before === null) await vscode.workspace.fs.delete(uri, { useTrash: true });
+		else {
+			const content = entry.before === EMPTY_BLOB ? new Uint8Array() : fs.readFileSync(blobPath(this.sessionId, entry.before));
+			await vscode.workspace.fs.writeFile(uri, content);
+		}
+		this.commandContext.post({ type: "notice", level: "info", markdown: true, text: `Reverted \`${name}\` to before that ${change.toolName}.` });
 	}
 
 	private async openDiff(toolCallId: string, file?: string): Promise<void> {

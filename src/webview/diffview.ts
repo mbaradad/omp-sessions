@@ -1,6 +1,7 @@
 // Renders structured diffs (from the extension's line diff, or omp's own diff rows).
 import type { DiffLine, FileDiff } from "../shared/diff";
 import { h } from "./dom";
+import { highlight } from "./highlight";
 
 const INITIAL_LINES = 80;
 
@@ -16,10 +17,15 @@ function changedSpan(a: string, b: string): [number, number, number, number] | n
 	return [p, a.length - s, p, b.length - s];
 }
 
-function textCell(text: string, span?: [number, number]): HTMLElement {
+function textCell(text: string, span: [number, number] | undefined, language: string | undefined): HTMLElement {
 	const tx = h("span", { class: "tx" });
-	if (!span || span[0] >= span[1]) tx.textContent = text || " ";
-	else tx.append(text.slice(0, span[0]), h("mark", { class: "wd" }, text.slice(span[0], span[1])), text.slice(span[1]));
+	if (span && span[0] < span[1]) {
+		tx.append(text.slice(0, span[0]), h("mark", { class: "wd" }, text.slice(span[0], span[1])), text.slice(span[1]));
+		return tx;
+	}
+	const html = highlight(text, language);
+	if (html) tx.innerHTML = html || " ";
+	else tx.textContent = text || " ";
 	return tx;
 }
 
@@ -51,6 +57,8 @@ export interface DiffViewOptions {
 	/** Open the file at a new-file line number. */
 	onLine?: (line: number) => void;
 	maxInitialLines?: number;
+	/** highlight.js language id for per-line syntax colors. */
+	language?: string;
 }
 
 export function renderFileDiff(diff: FileDiff, opts: DiffViewOptions = {}): HTMLElement {
@@ -64,7 +72,7 @@ export function renderFileDiff(diff: FileDiff, opts: DiffViewOptions = {}): HTML
 			h("span", { class: "ln" }, l.o ? String(l.o) : ""),
 			h("span", { class: "ln" }, l.n ? String(l.n) : ""),
 			h("span", { class: "sg" }, l.t === " " ? "" : l.t === "-" ? "−" : "+"),
-			textCell(l.s, marks.get(l)),
+			textCell(l.s, marks.get(l), opts.language),
 		);
 		const target = l.n ?? l.o;
 		if (opts.onLine && target) {

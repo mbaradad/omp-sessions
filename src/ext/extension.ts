@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type ClientToHost, type SessionMeta, sessionDir } from "../shared/protocol";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
+import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
 import { ChatPanel, VIEW_TYPE } from "./panel";
 import { SessionManager, listOmpHistory } from "./sessions";
@@ -37,7 +38,17 @@ export function activate(context: vscode.ExtensionContext): void {
 	const hostScript = vscode.Uri.joinPath(context.extensionUri, "out", "host.js").fsPath;
 	const sessions = new SessionManager(hostScript);
 	const snapshots = new SnapshotProvider();
-	const tree = new SessionTree(sessions);
+	// Sessions that finished or asked something while their chat was not in view.
+	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
+	const setUnread = (id: string, value: boolean) => {
+		if (unread.has(id) === value) return;
+		if (value) unread.add(id);
+		else unread.delete(id);
+		void context.globalState.update("omp.unread", [...unread]);
+		tree.refresh();
+		updateStatus();
+	};
+	const tree = new SessionTree(sessions, id => unread.has(id));
 	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, showCollapseAll: true });
 	context.subscriptions.push(sessions, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
@@ -48,7 +59,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
 			if (e.webviewPanel.active) lastActive = panel;
+			if (e.webviewPanel.visible) setUnread(id, false);
 		});
+		setUnread(id, false);
 		panel.onDidDispose(() => {
 			if (panels.get(id) === panel) panels.delete(id);
 			if (lastActive === panel) lastActive = undefined;
@@ -143,6 +156,22 @@ export function activate(context: vscode.ExtensionContext): void {
 			}));
 		if (items.length === 0) return undefined;
 		return (await vscode.window.showQuickPick(items, { placeHolder, matchOnDescription: true, matchOnDetail: true }))?.id;
+	}
+
+	/** Chat panel that editor integrations send to: the active chat when it belongs to `cwdHint`, else a related open chat, else ask. */
+	async function targetPanel(cwdHint?: string): Promise<ChatPanel | undefined> {
+		const within = (child: string, parent: string) => {
+			const rel = path.relative(parent, child);
+			return !rel.startsWith("..") && !path.isAbsolute(rel);
+		};
+		const related = (m: SessionMeta | undefined): m is SessionMeta => !!m && (!cwdHint || within(cwdHint, m.cwd) || within(m.cwd, cwdHint));
+		if (lastActive && related(lastActive.meta)) return lastActive;
+		const open = [...panels.values()].find(p => related(p.meta) && p.meta.status !== "stopped");
+		if (open) return open;
+		const candidates = sessions.all().filter(m => m.status !== "stopped" && sessions.inWorkspace(m) && related(m));
+		if (candidates.length === 0 && lastActive) return lastActive;
+		const id = candidates.length === 1 ? candidates[0].id : await pickSession("Send to which omp session?", m => m.status !== "stopped" && sessions.inWorkspace(m) && (candidates.length === 0 || related(m)));
+		return id ? openPanel(id) : undefined;
 	}
 
 	// ---------- commands ----------
@@ -296,10 +325,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!editor) return;
 		const doc = editor.document;
 		const sel = editor.selection;
-		const target = lastActive ?? (await (async () => {
-			const id = await pickSession("Send selection to which session?", m => m.status !== "stopped" && sessions.inWorkspace(m));
-			return id ? openPanel(id) : undefined;
-		})());
+		const target = await targetPanel(doc.uri.scheme === "file" ? vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath : undefined);
 		if (!target) {
 			void vscode.window.showInformationMessage("Open or start an omp session first.");
 			return;
@@ -339,6 +365,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (meta) await vscode.window.showTextDocument(vscode.Uri.file(path.join(path.dirname(meta.socket), "host.log")));
 	});
 
+	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
+
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
 	status.command = "omp.openSession";
@@ -360,7 +388,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
 		status.show();
-		treeView.badge = waiting ? { value: waiting, tooltip: `${waiting} session(s) need input` } : undefined;
+		const unseen = sessions.all().filter(m => unread.has(m.id) && sessions.inWorkspace(m)).length;
+		const attention = waiting + unseen;
+		treeView.badge = attention ? { value: attention, tooltip: [waiting ? `${waiting} need input` : "", unseen ? `${unseen} with new results` : ""].filter(Boolean).join(", ") } : undefined;
 	};
 	sessions.onDidChange(updateStatus);
 	updateStatus();
@@ -368,10 +398,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------- notifications ----------
 	context.subscriptions.push(
 		sessions.onDidTransition(({ meta, from }) => {
+			const panel = panels.get(meta.id);
+			const attended = !!panel?.isVisible && vscode.window.state.focused;
+			if (!attended && (meta.status === "waiting" || (meta.status === "idle" && from === "working"))) setUnread(meta.id, true);
 			if (!vscode.workspace.getConfiguration("omp").get<boolean>("notifications", true)) return;
 			if (!sessions.inWorkspace(meta)) return;
-			const panel = panels.get(meta.id);
-			if (panel?.isVisible && vscode.window.state.focused) return;
+			if (attended) return;
 			let message: string | undefined;
 			if (meta.status === "waiting") message = `omp needs your input: ${meta.title}`;
 			else if (meta.status === "idle" && from === "working") message = `omp finished: ${meta.title}`;
