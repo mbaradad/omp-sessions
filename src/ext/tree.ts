@@ -1,10 +1,11 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { SessionMeta } from "../shared/protocol";
-import type { SessionManager } from "./sessions";
+import { type SessionManager, projectRoot } from "./sessions";
 
 export type Node =
-	| { kind: "session"; meta: SessionMeta }
+	| { kind: "project"; root: string; isRepo: boolean; sessions: SessionMeta[]; inWorkspace: boolean }
+	| { kind: "session"; meta: SessionMeta; project?: string }
 	| { kind: "group"; label: string; sessions: SessionMeta[] }
 	| { kind: "file"; sessionId: string; cwd: string; file: string; op: string; count: number };
 
@@ -45,6 +46,21 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 	}
 
 	getTreeItem(node: Node): vscode.TreeItem {
+		if (node.kind === "project") {
+			const active = node.sessions.filter(m => m.status !== "stopped");
+			const waiting = node.sessions.filter(m => m.status === "waiting").length;
+			const working = node.sessions.filter(m => m.status === "working" || m.status === "starting").length;
+			const expanded = node.inWorkspace || active.length > 0;
+			const item = new vscode.TreeItem(path.basename(node.root) || node.root, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+			item.id = `project:${node.root}`;
+			item.iconPath = new vscode.ThemeIcon(node.isRepo ? "repo" : "folder", waiting ? new vscode.ThemeColor("charts.yellow") : working ? new vscode.ThemeColor("charts.blue") : undefined);
+			const parts = [working ? `${working} working` : "", waiting ? `${waiting} needs input` : "", `${node.sessions.length} session${node.sessions.length === 1 ? "" : "s"}`].filter(Boolean);
+			item.description = parts.join(" · ");
+			item.tooltip = `${node.root}${node.inWorkspace ? "\n(in this workspace)" : ""}`;
+			item.contextValue = "project";
+			item.resourceUri = vscode.Uri.file(node.root);
+			return item;
+		}
 		if (node.kind === "group") {
 			const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Collapsed);
 			item.iconPath = new vscode.ThemeIcon("folder-library");
@@ -66,7 +82,8 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 		const item = new vscode.TreeItem(m.title, m.changedFiles > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
 		item.id = `session:${m.id}`;
 		item.iconPath = m.status === "stopped" && m.exitCode && m.exitCode !== 0 ? new vscode.ThemeIcon("error", new vscode.ThemeColor("charts.red")) : STATUS_ICON[m.status];
-		item.description = [STATUS_LABEL[m.status], inWs ? "" : path.basename(m.cwd), relTime(m.updatedAt)].filter(Boolean).join(" · ");
+		const where = node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
+		item.description = [STATUS_LABEL[m.status], where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
@@ -82,11 +99,31 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 	getChildren(node?: Node): Node[] {
 		if (!node) {
 			const all = this.sessions.all();
-			const showAll = vscode.workspace.getConfiguration("omp").get<boolean>("showAllSessions") ?? false;
+			const cfg = vscode.workspace.getConfiguration("omp");
+			const showAll = cfg.get<boolean>("showAllSessions") ?? false;
+			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
+			if ((cfg.get<string>("groupBy") ?? "project") === "project") {
+				const byRoot = new Map<string, SessionMeta[]>();
+				for (const m of all) {
+					const inWs = this.sessions.inWorkspace(m);
+					if (!inWs && !showAll && !noWorkspace && m.status === "stopped") continue;
+					const root = projectRoot(m.cwd);
+					byRoot.set(root.root, [...(byRoot.get(root.root) ?? []), m]);
+				}
+				const projects = [...byRoot].map(([root, sessions]) => ({
+					kind: "project" as const,
+					root,
+					isRepo: projectRoot(sessions[0].cwd).isRepo,
+					sessions,
+					inWorkspace: sessions.some(m => this.sessions.inWorkspace(m)),
+				}));
+				const recent = (p: (typeof projects)[number]) => Math.max(...p.sessions.map(m => m.updatedAt));
+				projects.sort((a, b) => Number(b.inWorkspace) - Number(a.inWorkspace) || recent(b) - recent(a));
+				return projects;
+			}
 			const local = all.filter(m => this.sessions.inWorkspace(m));
 			const other = all.filter(m => !this.sessions.inWorkspace(m));
 			const nodes: Node[] = local.map(meta => ({ kind: "session", meta }));
-			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
 			if (other.length && (showAll || noWorkspace)) {
 				if (noWorkspace) nodes.push(...other.map(meta => ({ kind: "session" as const, meta })));
 				else nodes.push({ kind: "group", label: "Other folders", sessions: other });
@@ -95,6 +132,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 			}
 			return nodes;
 		}
+		if (node.kind === "project") return node.sessions.map(meta => ({ kind: "session", meta, project: node.root }));
 		if (node.kind === "group") return node.sessions.map(meta => ({ kind: "session", meta }));
 		if (node.kind === "session") {
 			const byFile = new Map<string, { op: string; count: number }>();

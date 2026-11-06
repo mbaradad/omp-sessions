@@ -31,6 +31,7 @@ interface HostArgs {
 	omp: string;
 	resume?: string;
 	title?: string;
+	goal?: string;
 	ompArgs: string[];
 }
 
@@ -46,6 +47,7 @@ function parseArgs(argv: string[]): HostArgs {
 		else if (key === "--omp") out.omp = value;
 		else if (key === "--resume") out.resume = value;
 		else if (key === "--title") out.title = value;
+		else if (key === "--goal") out.goal = value;
 		else if (key === "--omp-arg") out.ompArgs.push(value);
 		else throw new Error(`unknown argument ${key}`);
 	}
@@ -281,7 +283,20 @@ function onToolEnd(toolCallId: string, toolName: string, result: unknown): void 
 }
 
 // ---------- omp child ----------
-const ompArgv = ["--mode", "rpc-ui", "--cwd", args.cwd, ...(meta.ompSessionFile ? ["--resume", meta.ompSessionFile] : []), ...args.ompArgs];
+// The chat panel is an interactive frontend, so goals should keep running between turns as they
+// do in the TUI (omp only auto-continues goals for "interactive" by default).
+const overlayPath = path.join(dir, "omp-overlay.yml");
+fs.writeFileSync(overlayPath, "goal:\n  continuationModes:\n    - interactive\n    - rpc\n");
+const ompArgv = [
+	"--mode",
+	"rpc-ui",
+	"--cwd",
+	args.cwd,
+	"--config",
+	overlayPath,
+	...(meta.ompSessionFile ? ["--resume", meta.ompSessionFile] : []),
+	...args.ompArgs,
+];
 const env = { ...process.env };
 const extraPath = [path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".local", "bin")];
 env.PATH = [...extraPath.filter(p => !(env.PATH ?? "").split(":").includes(p)), env.PATH ?? ""].join(":");
@@ -410,6 +425,7 @@ const SESSION_CHANGING: Record<string, true> = { new_session: true, switch_sessi
 async function onReady(): Promise<void> {
 	await request({ type: "negotiate_protocol", protocolVersion: 2 });
 	await request({ type: "set_ask_dialog", enabled: true });
+	await request({ type: "set_subagent_subscription", level: "progress" });
 	const st = await request({ type: "get_state" });
 	if (st.success) state = slimState(st.data);
 	const msgs = await request({ type: "get_messages" });
@@ -423,6 +439,18 @@ async function onReady(): Promise<void> {
 	recomputeStatus();
 	publishMeta();
 	for (const c of clients) if (c.helloed) sendSnapshot(c);
+	if (args.goal && !previous) {
+		if (meta.title === "New session") {
+			meta.title = titleFromPrompt(`Goal: ${args.goal}`);
+			sendOmp({ type: "set_session_name", name: meta.title });
+			publishMeta();
+		}
+		const res = await request({ type: "goal", op: "create", objective: args.goal });
+		if (!res.success) {
+			log("goal create failed", res.error);
+			broadcast({ t: "event", ev: { type: "notice", level: "error", message: `Could not start goal: ${String(res.error)}` } });
+		}
+	}
 }
 
 function textOf(message: unknown): string {
@@ -533,6 +561,7 @@ function handleFrame(frame: OmpFrame): void {
 		case "available_commands_update":
 			commands = (frame.commands as unknown[]) ?? [];
 			break;
+		case "goal_updated":
 		case "model_changed":
 		case "thinking_level_changed":
 		case "queue_update":

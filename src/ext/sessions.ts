@@ -3,6 +3,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { type FileChange, type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 
@@ -13,6 +14,25 @@ function pidAlive(pid: number): boolean {
 	} catch (err) {
 		return (err as NodeJS.ErrnoException).code === "EPERM";
 	}
+}
+
+const rootCache = new Map<string, { root: string; isRepo: boolean }>();
+
+/** Project a folder belongs to: the enclosing git repository, else the folder itself. */
+export function projectRoot(cwd: string): { root: string; isRepo: boolean } {
+	const cached = rootCache.get(cwd);
+	if (cached) return cached;
+	let dir = cwd;
+	let found: { root: string; isRepo: boolean } = { root: cwd, isRepo: false };
+	while (dir !== path.dirname(dir) && dir !== os.homedir()) {
+		if (fs.existsSync(path.join(dir, ".git"))) {
+			found = { root: dir, isRepo: true };
+			break;
+		}
+		dir = path.dirname(dir);
+	}
+	rootCache.set(cwd, found);
+	return found;
 }
 
 function isWithin(child: string, parent: string): boolean {
@@ -133,17 +153,31 @@ export class SessionManager implements vscode.Disposable {
 		return out;
 	}
 
-	/** Launch a detached host. Reusing an existing id resumes that session's omp transcript. */
-	launch(opts: { cwd: string; id?: string; resumeFile?: string; title?: string }): string {
+	/**
+	 * Launch a detached host. Reusing an existing id resumes that session's omp transcript with
+	 * the omp arguments it was created with (persisted in `launch.json`).
+	 */
+	launch(opts: { cwd: string; id?: string; resumeFile?: string; title?: string; goal?: string; ompArgs?: string[] }): string {
 		const omp = resolveOmpPath();
 		if (!omp) throw new Error("Could not find the `omp` executable. Set `omp.path` in settings.");
 		const id = opts.id ?? `${Date.now().toString(36)}${crypto.randomBytes(3).toString("hex")}`;
-		const extra = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
+		const launchFile = path.join(sessionDir(id), "launch.json");
+		let ompArgs = opts.ompArgs;
+		if (!ompArgs && opts.id) {
+			try {
+				ompArgs = (JSON.parse(fs.readFileSync(launchFile, "utf8")) as { ompArgs?: string[] }).ompArgs;
+			} catch {
+				/* sessions created before launch.json existed */
+			}
+		}
+		ompArgs ??= vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
 		const argv = [this.hostScript, "--daemonize", "--id", id, "--cwd", opts.cwd, "--omp", omp];
 		if (opts.resumeFile) argv.push("--resume", opts.resumeFile);
 		if (opts.title) argv.push("--title", opts.title);
-		for (const a of extra) argv.push("--omp-arg", a);
+		if (opts.goal) argv.push("--goal", opts.goal);
+		for (const a of ompArgs) argv.push("--omp-arg", a);
 		fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
+		fs.writeFileSync(launchFile, JSON.stringify({ ompArgs }));
 		const child = spawn(process.execPath, argv, {
 			cwd: opts.cwd,
 			detached: true,
@@ -159,7 +193,7 @@ export class SessionManager implements vscode.Disposable {
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
 			if (fs.existsSync(sock)) return true;
-			await new Promise(r => setTimeout(r, 100));
+			await sleep(100);
 		}
 		return false;
 	}

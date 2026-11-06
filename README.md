@@ -16,14 +16,16 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 
 - **Session host** owns the `omp` process, mirrors the transcript, tracks in-flight messages/tools and pending dialogs, and snapshots every file before/after `edit`/`write`/`ast_edit`/`notebook` tool calls into content-addressed blobs. Any number of VS Code windows can attach; late attachers get a full snapshot.
 - **Extension** lists sessions (tree view + status bar), opens chat panels, renders diffs from the snapshots, and restores open panels after a reload/reconnect.
-- State lives in `~/.omp/vscode/sessions/<id>/` (`meta.json`, `changes.jsonl`, `blobs/`, `host.log`). The omp transcript itself stays in `~/.omp/agent/sessions/`.
+- State lives in `~/.omp/vscode/sessions/<id>/` (`meta.json`, `launch.json`, `changes.jsonl`, `blobs/`, `attachments/`, `host.log`). The omp transcript itself stays in `~/.omp/agent/sessions/`.
 
 ## Using it
 
-- **omp** activity-bar view → `+` starts a session in the workspace folder (or right-click a folder in the Explorer → *New Session*). `Cmd+Alt+O` focuses the chat (or starts one).
-- Chat: Enter sends, Shift+Enter newline, `/` completes omp slash commands, `@` completes files, Esc / *Stop* interrupts. While the agent works, Enter steers the running turn (`omp.sendWhileBusy` = `followUp` to queue instead).
-- Tool cards show inline diffs; **Open diff** opens VS Code's diff editor for that exact tool call. Any existing file path in the transcript is a link (`path:line` jumps to the line).
-- Tree: expand a session to see files it changed; click one for a diff from *before the session touched it* to the live file.
+- **Sessions view** groups sessions by project (git repository, else folder) with working / needs-input counts; `+` on a project starts a session there. *Toggle Group by Project* switches to a flat list.
+- `+` starts a session in the workspace folder; *New Session with Options…* picks model, thinking level, approval mode, plan-first / advisor / prewalk / auto-approve, an optional **goal**, and any extra omp CLI flags (remembered for resumes). `Cmd+Alt+O` focuses the chat.
+- Composer: Enter sends, Shift+Enter newline, Esc interrupts; while the agent works Enter steers (`omp.sendWhileBusy`). `/` completes omp's commands plus the extension's (`/new`, `/resume`, `/tree`, `/fork`, `/goal`, `/btw`, `/agents`, `/changes`, `/copy`, `/cost`, `/login`, `/logout`, `/settings`, `/help`, `/exit`); `@` completes files; `!cmd` runs a shell command in the session.
+- **Attachments**: paste or drop images (sent to the model as images) and any other file — PDFs, docs, archives — (stored under the session's `attachments/` on the remote and handed to omp's read tool). 📎 picks files on the remote disk.
+- **Links**: web URLs open in the browser; `file:`/relative/absolute paths (with `:line` or `#L12`) open in the editor; `artifact://`, `local://`, `skill://`, `omp://`, … open their content.
+- **Diffs**: edit/write cards show a line diff with old/new line numbers and word-level highlights (click a line to jump there); *Diff* opens VS Code's diff editor for that tool call; *N files changed* / `/changes` opens a multi-file review of everything the session changed.
 - omp questions (`ask`, approvals, selects, inputs) appear as cards above the composer; the session shows **needs input** in the tree/status bar and a notification fires when the chat is not visible.
 - Stopped sessions keep their transcript; **Resume** restarts omp on the same transcript. *Resume omp Transcript in Background…* adopts any earlier omp session for the folder (e.g. started in a terminal).
 - Select code → `Cmd+Alt+K` (or editor context menu → *Send Selection to omp*) inserts `path:lines` plus the snippet into the composer.
@@ -36,7 +38,8 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 | `omp.extraArgs` | `[]` | Extra CLI args for new sessions, e.g. `["--model","opus"]` |
 | `omp.sendWhileBusy` | `steer` | Enter while working: `steer` or `followUp` |
 | `omp.panelLocation` | `beside` | Chat column |
-| `omp.showAllSessions` | `false` | List stopped sessions from other folders |
+| `omp.groupBy` | `project` | Sessions view: `project` groups or flat `none` |
+| `omp.showAllSessions` | `false` | List stopped sessions from other projects |
 | `omp.notifications` | `true` | Notify on finish / needs input |
 
 ## Development
@@ -63,4 +66,5 @@ npm run install-local  # production build → dist/omp-sessions-<version>.vsix �
 ## Limits
 
 - File changes made through `bash` (e.g. `sed -i`, codegen) are not snapshotted; only omp's file-editing tools are.
+- omp's terminal-only plan mode (`/plan`) is not exposed over its RPC protocol; use *New Session with Options… → Plan first* (`--plan-yolo`).
 - A machine reboot stops sessions; their transcripts remain resumable.

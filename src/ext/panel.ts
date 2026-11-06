@@ -3,15 +3,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { diffTexts } from "../shared/diff";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
-import { sessionDir } from "../shared/protocol";
-import type { FromWebview, SlashCommand, SlimState, ToWebview } from "../shared/webview";
+import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
+import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { HostClient } from "./client";
-import { type SnapshotProvider, openFile, openSessionDiff, openTextDiff, openToolDiff } from "./diff";
+import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
+import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
+import { openLink } from "./links";
 import type { SessionManager } from "./sessions";
 import { slimFrame, slimMessage, slimRunningTool } from "./slim";
 
 export const VIEW_TYPE = "omp.chat";
+
+/** Files larger than this are not diffed line-by-line in the chat (the editor diff still works). */
+const MAX_INLINE_DIFF_BYTES = 2 * 1024 * 1024;
+const IMAGE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
 
 function rec(v: unknown): Record<string, unknown> | undefined {
 	// JSON objects from omp frames; arrays/primitives excluded.
@@ -40,6 +47,11 @@ function readTranscript(file: string | undefined): unknown[] {
 	return out;
 }
 
+function mergeCommands(server: SlashCommand[]): SlashCommand[] {
+	const names = new Set(server.map(c => c.name));
+	return [...server, ...LOCAL_COMMANDS.filter(c => !names.has(c.name))];
+}
+
 export class ChatPanel implements vscode.Disposable {
 	private client: HostClient | undefined;
 	private clientSubs: vscode.Disposable[] = [];
@@ -47,12 +59,15 @@ export class ChatPanel implements vscode.Disposable {
 	private webviewReady = false;
 	private snapshot: Extract<HostToClient, { t: "snapshot" }> | undefined;
 	private state: SlimState | null = null;
+	private serverCommands: SlashCommand[] = [];
 	private changes: FileChange[] = [];
 	/** Full edit details (with oldText/newText) by toolCallId, for diffs of history the host did not snapshot. */
 	private readonly editTexts = new Map<string, Array<{ path: string; oldText: string; newText: string }>>();
+	private readonly diffCache = new Map<string, DiffsByPath>();
 	private outbox: ToWebview[] = [];
 	private flushTimer: NodeJS.Timeout | undefined;
 	private disposed = false;
+	private lastStatus: SessionMeta["status"] | undefined;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
 
@@ -129,7 +144,6 @@ export class ChatPanel implements vscode.Disposable {
 		);
 	}
 
-	private lastStatus: SessionMeta["status"] | undefined;
 	private onSessionsChanged(): void {
 		const meta = this.meta;
 		if (!meta) return;
@@ -148,7 +162,53 @@ export class ChatPanel implements vscode.Disposable {
 		this.panel.title = `${mark}${meta.title}`;
 	}
 
-	private indexEdits(messages: unknown[]): void {
+	// ---------- diffs ----------
+	private readBlob(hash: string | null): string | undefined {
+		if (hash === null || hash === EMPTY_BLOB) return "";
+		try {
+			const file = blobPath(this.sessionId, hash);
+			if (fs.statSync(file).size > MAX_INLINE_DIFF_BYTES) return undefined;
+			return fs.readFileSync(file, "utf8");
+		} catch {
+			return undefined;
+		}
+	}
+
+	private diffsForChange(change: FileChange): DiffsByPath {
+		const cached = this.diffCache.get(change.toolCallId);
+		if (cached) return cached;
+		const out: DiffsByPath = {};
+		for (const f of change.files) {
+			const before = this.readBlob(f.before);
+			const after = this.readBlob(f.after);
+			if (before !== undefined && after !== undefined) out[f.path] = diffTexts(before, after);
+		}
+		this.diffCache.set(change.toolCallId, out);
+		return out;
+	}
+
+	private diffsForEditTexts(toolCallId: string): DiffsByPath | undefined {
+		const texts = this.editTexts.get(toolCallId);
+		if (!texts) return undefined;
+		const cached = this.diffCache.get(toolCallId);
+		if (cached) return cached;
+		const out: DiffsByPath = {};
+		for (const t of texts) {
+			if (t.oldText.length + t.newText.length < MAX_INLINE_DIFF_BYTES) out[t.path] = diffTexts(t.oldText, t.newText);
+		}
+		this.diffCache.set(toolCallId, out);
+		return out;
+	}
+
+	private allDiffs(): Record<string, DiffsByPath> {
+		const out: Record<string, DiffsByPath> = {};
+		for (const c of this.changes) out[c.toolCallId] = this.diffsForChange(c);
+		for (const id of this.editTexts.keys()) if (!out[id]) out[id] = this.diffsForEditTexts(id) ?? {};
+		return out;
+	}
+
+	private indexEdits(messages: unknown[]): string[] {
+		const ids: string[] = [];
 		for (const m of messages) {
 			const r = rec(m);
 			if (r?.role !== "toolResult" || typeof r.toolCallId !== "string") continue;
@@ -160,26 +220,45 @@ export class ChatPanel implements vscode.Disposable {
 			};
 			add(d);
 			if (Array.isArray(d.perFileResults)) for (const f of d.perFileResults) add(rec(f));
-			if (files.length) this.editTexts.set(r.toolCallId, files);
+			if (files.length) {
+				this.editTexts.set(r.toolCallId, files);
+				ids.push(r.toolCallId);
+			}
 		}
+		return ids;
 	}
 
+	// ---------- host -> webview ----------
 	private onHostMessage(m: HostToClient): void {
 		switch (m.t) {
 			case "snapshot":
 				this.snapshot = m;
 				this.state = (m.state as SlimState) ?? null;
+				this.serverCommands = (m.commands as SlashCommand[]) ?? [];
 				this.changes = [...m.changes];
 				this.indexEdits(m.messages);
 				this.sendInit();
 				return;
 			case "event": {
-				if (m.ev.type === "message_end") this.indexEdits([m.ev.message]);
-				const ev = slimFrame(m.ev);
-				if (ev) this.post({ type: "event", ev });
-				if (m.ev.type === "available_commands_update" && this.snapshot) {
-					this.snapshot.commands = (m.ev.commands as unknown[]) ?? [];
+				const ev = m.ev;
+				if (ev.type === "message_end") {
+					for (const id of this.indexEdits([ev.message])) {
+						if (this.changes.some(c => c.toolCallId === id)) continue;
+						const diffs = this.diffsForEditTexts(id);
+						if (diffs) this.post({ type: "diffs", toolCallId: id, diffs });
+					}
 				}
+				if (ev.type === "available_commands_update") {
+					this.serverCommands = Array.isArray(ev.commands) ? (ev.commands as SlashCommand[]) : [];
+					this.post({ type: "commands", commands: mergeCommands(this.serverCommands) });
+					return;
+				}
+				if (ev.type === "extension_ui_request" && ev.method === "open_url") {
+					const target = typeof ev.launchUrl === "string" ? ev.launchUrl : typeof ev.url === "string" ? ev.url : undefined;
+					if (target) void vscode.env.openExternal(vscode.Uri.parse(target, true));
+				}
+				const slim = slimFrame(ev);
+				if (slim) this.post({ type: "event", ev: slim });
 				return;
 			}
 			case "state":
@@ -191,7 +270,7 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			case "change":
 				this.changes.push(m.change);
-				this.post({ type: "change", change: m.change });
+				this.post({ type: "change", change: m.change, diffs: this.diffsForChange(m.change) });
 				return;
 			case "ui_resolved":
 				this.post({ type: "uiResolved", id: m.id });
@@ -199,7 +278,7 @@ export class ChatPanel implements vscode.Disposable {
 			case "reset":
 				this.state = (m.state as SlimState) ?? null;
 				this.indexEdits(m.messages);
-				this.post({ type: "reset", messages: m.messages.map(x => slimMessage(x)), state: this.state });
+				this.post({ type: "reset", messages: m.messages.map(x => slimMessage(x)), state: this.state, diffs: this.allDiffs() });
 				return;
 			case "response":
 				return;
@@ -227,8 +306,9 @@ export class ChatPanel implements vscode.Disposable {
 			runningTools: (snap?.runningTools ?? []).map(slimRunningTool),
 			pendingUi: snap?.pendingUi ?? [],
 			state: this.state,
-			commands: (snap?.commands ?? []) as SlashCommand[],
+			commands: mergeCommands(this.serverCommands),
 			changes: this.changes,
+			diffs: this.allDiffs(),
 			connected: !!this.client?.connected,
 			home: os.homedir(),
 		});
@@ -249,6 +329,34 @@ export class ChatPanel implements vscode.Disposable {
 		return fs.existsSync(abs) ? abs : undefined;
 	}
 
+	/** Writes pasted/dropped files next to the session; returns prompt lines describing every attachment. */
+	private storeAttachments(files: FileAttachment[]): string[] {
+		const dir = path.join(sessionDir(this.sessionId), "attachments");
+		fs.mkdirSync(dir, { recursive: true });
+		const fmt = (n?: number) => (n === undefined ? "" : n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+		return files.map(f => {
+			let file = f.path;
+			if (!file && f.data !== undefined) {
+				const safe = f.name.replace(/[^\w.@+-]+/g, "_").slice(-120) || "attachment";
+				file = path.join(dir, `${Date.now().toString(36)}-${safe}`);
+				fs.writeFileSync(file, Buffer.from(f.data, "base64"));
+			}
+			const info = [f.name !== path.basename(file ?? "") ? f.name : "", f.mimeType ?? "", fmt(f.size)].filter(Boolean).join(", ");
+			return `${file}${info ? ` (${info})` : ""}`;
+		});
+	}
+
+	private get commandContext(): CommandContext {
+		return {
+			client: this.client,
+			meta: this.meta,
+			state: this.state,
+			post: msg => this.post(msg),
+			insertText: text => this.insertText(text),
+		};
+	}
+
+	// ---------- webview -> host ----------
 	private async onWebviewMessage(m: FromWebview): Promise<void> {
 		const client = this.client;
 		switch (m.type) {
@@ -257,13 +365,27 @@ export class ChatPanel implements vscode.Disposable {
 				this.sendInit();
 				return;
 			case "prompt": {
-				if (!client) {
+				const images = m.images ?? [];
+				const files = m.files ?? [];
+				if (!images.length && !files.length && (await handleComposerInput(m.text, this.commandContext, name => this.runCommand(name)))) return;
+				if (!client?.connected) {
 					this.post({ type: "error", message: "Session is not running. Resume it first." });
 					return;
 				}
+				let message = m.text;
+				if (files.length) {
+					const listed = this.storeAttachments(files);
+					message = `${message}${message ? "\n\n" : ""}Attached files (read them with your read tool):\n${listed.map(f => `- ${f}`).join("\n")}`;
+				}
+				if (!message.trim() && images.length) message = images.length === 1 ? "(see attached image)" : "(see attached images)";
 				const busy = !!this.state?.isStreaming;
 				const behavior = vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer";
-				const res = await client.rpc({ type: "prompt", message: m.text, ...(busy ? { streamingBehavior: behavior } : {}) });
+				const res = await client.rpc({
+					type: "prompt",
+					message,
+					...(images.length ? { images: images.map(i => ({ type: "image", data: i.data, mimeType: i.mimeType })) } : {}),
+					...(busy ? { streamingBehavior: behavior } : {}),
+				});
 				if (!res.success) this.post({ type: "error", message: String(res.error ?? "prompt failed") });
 				return;
 			}
@@ -278,9 +400,32 @@ export class ChatPanel implements vscode.Disposable {
 				await openFile(abs, m.line, m.column, this.panel.viewColumn);
 				return;
 			}
+			case "openLink":
+				await openLink(m.url, this.meta, this.panel.viewColumn);
+				return;
 			case "openDiff":
 				await this.openDiff(m.toolCallId, m.path);
 				return;
+			case "copy":
+				await vscode.env.clipboard.writeText(m.text);
+				void vscode.window.setStatusBarMessage("$(copy) Copied", 2000);
+				return;
+			case "pickFiles": {
+				const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: "Attach", defaultUri: this.meta ? vscode.Uri.file(this.meta.cwd) : undefined });
+				if (!picked?.length) return;
+				const images = [];
+				const files = [];
+				for (const uri of picked) {
+					const mimeType = IMAGE_MIME[path.extname(uri.fsPath).toLowerCase()];
+					const stat = await vscode.workspace.fs.stat(uri);
+					if (mimeType && stat.size < 20 * 1024 * 1024) {
+						const bytes = await vscode.workspace.fs.readFile(uri);
+						images.push({ data: Buffer.from(bytes).toString("base64"), mimeType, name: path.basename(uri.fsPath) });
+					} else files.push({ name: path.basename(uri.fsPath), path: uri.fsPath, size: stat.size });
+				}
+				this.post({ type: "attachFiles", images, files });
+				return;
+			}
 			case "resolvePaths": {
 				const resolved: Record<string, string> = {};
 				for (const c of m.candidates.slice(0, 500)) {
@@ -324,16 +469,14 @@ export class ChatPanel implements vscode.Disposable {
 			case "removeQueued":
 				await client?.rpc({ type: "remove_queued_message", message: m.text, queue: m.queue });
 				return;
-			case "openUrl":
-				await vscode.env.openExternal(vscode.Uri.parse(m.url));
-				return;
 			case "command":
 				await this.runCommand(m.name);
 				return;
 		}
 	}
 
-	private async runCommand(name: string): Promise<void> {
+	private async runCommand(name: PanelCommand): Promise<void> {
+		if (await runSessionAction(name, this.commandContext)) return;
 		const meta = this.meta;
 		switch (name) {
 			case "compact": {
@@ -356,6 +499,9 @@ export class ChatPanel implements vscode.Disposable {
 			case "sessionChanges":
 				await vscode.commands.executeCommand("omp.showChanges", this.sessionId);
 				return;
+			case "reviewChanges":
+				await vscode.commands.executeCommand("omp.reviewChanges", this.sessionId);
+				return;
 			case "openLog":
 				await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(this.sessionId), "host.log")));
 				return;
@@ -365,7 +511,7 @@ export class ChatPanel implements vscode.Disposable {
 	private async openDiff(toolCallId: string, file?: string): Promise<void> {
 		const change = this.changes.find(c => c.toolCallId === toolCallId);
 		if (change) {
-			const target = file ? this.resolveCandidate(file) ?? file : undefined;
+			const target = file ? (this.resolveCandidate(file) ?? file) : undefined;
 			const entry = change.files.find(f => f.path === target) ?? change.files.find(f => file && f.path.endsWith(file)) ?? change.files[0];
 			await openToolDiff(this.snapshots, this.sessionId, change, entry.path, this.panel.viewColumn);
 			return;
@@ -387,16 +533,17 @@ export class ChatPanel implements vscode.Disposable {
 		const nonce = crypto.randomBytes(16).toString("base64");
 		const js = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.js"));
 		const css = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.css"));
+		const logo = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "omp-color.svg"));
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: https:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob: https:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${css}">
 <title>omp</title>
 </head>
-<body>
+<body data-logo="${logo}">
 <div id="app"></div>
 <script nonce="${nonce}" src="${js}"></script>
 </body>

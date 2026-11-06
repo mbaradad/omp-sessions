@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type ClientToHost, type SessionMeta, sessionDir } from "../shared/protocol";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
+import { askLaunchOptions } from "./launch-options";
 import { ChatPanel, VIEW_TYPE } from "./panel";
 import { SessionManager, listOmpHistory } from "./sessions";
 import { type Node, SessionTree } from "./tree";
@@ -92,6 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------- helpers ----------
 	async function pickFolder(arg?: unknown): Promise<string | undefined> {
 		if (typeof arg === "string" && arg) return arg;
+		if (arg && typeof arg === "object" && "kind" in arg && (arg as Node).kind === "project") return (arg as Extract<Node, { kind: "project" }>).root;
 		if (arg instanceof vscode.Uri) {
 			const stat = await vscode.workspace.fs.stat(arg);
 			return stat.type & vscode.FileType.Directory ? arg.fsPath : path.dirname(arg.fsPath);
@@ -111,7 +113,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		return chosen?.[0]?.fsPath;
 	}
 
-	async function launchAndOpen(opts: { cwd: string; id?: string; resumeFile?: string; title?: string }): Promise<ChatPanel | undefined> {
+	async function launchAndOpen(opts: { cwd: string; id?: string; resumeFile?: string; title?: string; goal?: string; ompArgs?: string[] }): Promise<ChatPanel | undefined> {
 		let id: string;
 		try {
 			id = sessions.launch(opts);
@@ -149,6 +151,13 @@ export function activate(context: vscode.ExtensionContext): void {
 	reg("omp.newSession", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (cwd) await launchAndOpen({ cwd });
+	});
+
+	reg("omp.newSessionWithOptions", async (arg?: unknown) => {
+		const cwd = await pickFolder(arg);
+		if (!cwd) return;
+		const opts = await askLaunchOptions(cwd);
+		if (opts) await launchAndOpen({ cwd, ...opts });
 	});
 
 	reg("omp.openSession", async (arg?: unknown) => {
@@ -249,6 +258,24 @@ export function activate(context: vscode.ExtensionContext): void {
 		await openSessionDiff(snapshots, sessionId, sessions.changes(sessionId), file, panels.get(sessionId)?.panel.viewColumn);
 	});
 
+	reg("omp.reviewChanges", async (arg?: unknown) => {
+		const id = idFrom(arg) ?? (await pickSession("Review changes of which session?"));
+		const meta = id ? sessions.get(id) : undefined;
+		if (!meta) return;
+		const firstBefore = new Map<string, string | null>();
+		for (const c of sessions.changes(meta.id)) for (const f of c.files) if (!firstBefore.has(f.path)) firstBefore.set(f.path, f.before);
+		if (firstBefore.size === 0) {
+			void vscode.window.showInformationMessage("This session has not changed any files yet.");
+			return;
+		}
+		const resources = [...firstBefore].map(([file, before]) => {
+			const left = snapshots.blobUri(file, meta.id, before, "session start");
+			const right = fs.existsSync(file) ? vscode.Uri.file(file) : snapshots.blobUri(file, meta.id, null, "deleted");
+			return [vscode.Uri.file(file), left, right];
+		});
+		await vscode.commands.executeCommand("vscode.changes", `omp: ${meta.title} — ${resources.length} file${resources.length === 1 ? "" : "s"} changed`, resources);
+	});
+
 	reg("omp.resumeFromHistory", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (!cwd) return;
@@ -290,6 +317,16 @@ export function activate(context: vscode.ExtensionContext): void {
 		target.reveal();
 		target.insertText(text);
 	});
+
+	reg("omp.toggleGrouping", async () => {
+		const cfg = vscode.workspace.getConfiguration("omp");
+		await cfg.update("groupBy", (cfg.get<string>("groupBy") ?? "project") === "project" ? "none" : "project", vscode.ConfigurationTarget.Global);
+	});
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.showAllSessions")) tree.refresh();
+		}),
+	);
 
 	reg("omp.refresh", () => {
 		sessions.refresh();

@@ -71,29 +71,38 @@
 		],
 		"commands": [
 			{ "command": "omp.newSession", "title": "New Session", "category": "omp", "icon": "$(add)" },
+			{ "command": "omp.newSessionWithOptions", "title": "New Session with Options…", "category": "omp", "icon": "$(settings-gear)" },
+			{ "command": "omp.reviewChanges", "title": "Review Changes", "category": "omp", "icon": "$(diff-multiple)" },
 			{ "command": "omp.openSession", "title": "Open Session…", "category": "omp", "icon": "$(comment-discussion)" },
 			{ "command": "omp.focus", "title": "Focus Chat", "category": "omp" },
 			{ "command": "omp.stopSession", "title": "Stop Session", "category": "omp", "icon": "$(debug-stop)" },
 			{ "command": "omp.resumeSession", "title": "Resume Session", "category": "omp", "icon": "$(debug-start)" },
 			{ "command": "omp.deleteSession", "title": "Remove Session", "category": "omp", "icon": "$(trash)" },
 			{ "command": "omp.renameSession", "title": "Rename Session…", "category": "omp", "icon": "$(edit)" },
-			{ "command": "omp.showChanges", "title": "Show Changed Files…", "category": "omp", "icon": "$(diff-multiple)" },
+			{ "command": "omp.showChanges", "title": "Show Changed Files…", "category": "omp", "icon": "$(list-tree)" },
 			{ "command": "omp.openSessionFileDiff", "title": "Open Session Diff", "category": "omp" },
 			{ "command": "omp.resumeFromHistory", "title": "Resume omp Transcript in Background…", "category": "omp", "icon": "$(history)" },
 			{ "command": "omp.sendSelection", "title": "Send Selection to omp", "category": "omp" },
 			{ "command": "omp.showLog", "title": "Show Session Host Log", "category": "omp", "icon": "$(output)" },
-			{ "command": "omp.refresh", "title": "Refresh", "category": "omp", "icon": "$(refresh)" }
+			{ "command": "omp.refresh", "title": "Refresh", "category": "omp", "icon": "$(refresh)" },
+			{ "command": "omp.toggleGrouping", "title": "Toggle Group by Project", "category": "omp", "icon": "$(list-tree)" }
 		],
 		"menus": {
 			"view/title": [
 				{ "command": "omp.newSession", "when": "view == omp.sessions", "group": "navigation@1" },
 				{ "command": "omp.resumeFromHistory", "when": "view == omp.sessions", "group": "navigation@2" },
-				{ "command": "omp.refresh", "when": "view == omp.sessions", "group": "navigation@3" }
+				{ "command": "omp.refresh", "when": "view == omp.sessions", "group": "navigation@3" },
+				{ "command": "omp.newSessionWithOptions", "when": "view == omp.sessions", "group": "1_new@1" },
+				{ "command": "omp.toggleGrouping", "when": "view == omp.sessions", "group": "2_view@1" }
 			],
 			"view/item/context": [
 				{ "command": "omp.stopSession", "when": "view == omp.sessions && viewItem == session.running", "group": "inline@2" },
 				{ "command": "omp.resumeSession", "when": "view == omp.sessions && viewItem == session.stopped", "group": "inline@1" },
 				{ "command": "omp.deleteSession", "when": "view == omp.sessions && viewItem == session.stopped", "group": "inline@2" },
+				{ "command": "omp.newSession", "when": "view == omp.sessions && viewItem == project", "group": "inline@0" },
+				{ "command": "omp.newSessionWithOptions", "when": "view == omp.sessions && viewItem == project", "group": "1_project@1" },
+				{ "command": "omp.reviewChanges", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "inline@0" },
+				{ "command": "omp.reviewChanges", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "1_session@0" },
 				{ "command": "omp.showChanges", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "1_session@1" },
 				{ "command": "omp.renameSession", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "1_session@2" },
 				{ "command": "omp.showLog", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "1_session@3" },
@@ -105,7 +114,8 @@
 				{ "command": "omp.sendSelection", "when": "editorHasSelection", "group": "omp@1" }
 			],
 			"explorer/context": [
-				{ "command": "omp.newSession", "when": "explorerResourceIsFolder", "group": "omp@1" }
+				{ "command": "omp.newSession", "when": "explorerResourceIsFolder", "group": "omp@1" },
+				{ "command": "omp.newSessionWithOptions", "when": "explorerResourceIsFolder", "group": "omp@2" }
 			],
 			"commandPalette": [
 				{ "command": "omp.openSessionFileDiff", "when": "false" }
@@ -141,6 +151,13 @@
 					"enum": ["beside", "active"],
 					"default": "beside",
 					"description": "Editor column for chat panels."
+				},
+				"omp.groupBy": {
+					"type": "string",
+					"enum": ["project", "none"],
+					"default": "project",
+					"enumDescriptions": ["Group sessions under their project (git repository, else folder).", "Flat list for this workspace."],
+					"description": "How the Sessions view organizes sessions."
 				},
 				"omp.showAllSessions": {
 					"type": "boolean",
