@@ -7,6 +7,9 @@ import type { SessionMeta } from "../shared/protocol";
 import { openFile } from "./diff";
 import { resolveOmpPath } from "./sessions";
 
+/** Commands that `command:` links in the chat may run (see openLink). */
+const SAFE_LINK_COMMANDS: Record<string, true> = { "omp.login": true, "omp.doctor": true, "omp.installOmp": true, "omp.setOmpPath": true };
+
 /** `<session>.jsonl` → `<session>/`: where omp keeps artifacts and the `local://` root. */
 function artifactsDir(meta: SessionMeta | undefined): string | undefined {
 	return meta?.ompSessionFile?.replace(/\.jsonl$/, "");
@@ -59,6 +62,13 @@ export async function openLink(url: string, meta: SessionMeta | undefined, chatC
 	if (scheme === "file") {
 		const uri = vscode.Uri.parse(url, true);
 		await openFile(uri.fsPath, uri.fragment ? lineFrom(uri.fragment) : undefined, undefined, chatColumn);
+		return;
+	}
+	if (scheme === "command") {
+		// Only argument-less helper commands the host puts in its notices; never arbitrary
+		// commands from model-written markdown.
+		const id = url.slice("command:".length);
+		if (SAFE_LINK_COMMANDS[id]) await vscode.commands.executeCommand(id);
 		return;
 	}
 	const dir = artifactsDir(meta);

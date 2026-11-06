@@ -6,13 +6,18 @@ import * as vscode from "vscode";
 import { diffTexts } from "../shared/diff";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
 import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
+import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
+import { expandContextMentions, placeholderValues } from "./chat-context";
 import { HostClient } from "./client";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
 import { parseTaskInput } from "./tasks";
+import { chatSymbolInfo, openChatSymbol } from "./bridge";
 import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
+import { exportMarkdown } from "./export";
 import { openLink } from "./links";
 import type { SessionManager } from "./sessions";
+import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage, slimRunningTool } from "./slim";
 
 export const VIEW_TYPE = "omp.chat";
@@ -28,10 +33,30 @@ export interface ChatSurface {
 	readonly onDidDispose: vscode.Event<void>;
 	/** Called when the controller is done: editor tabs close, the side bar view stays. */
 	release(): void;
+	/** Per-session chrome: tab icon (editor tabs) or a header mark (side bar). */
+	decorate(d: ChatDecoration | undefined): void;
+}
+
+/** Session chrome supplied by a feature module (Organize: the session's color). */
+export interface ChatDecoration {
+	/** Editor tab icon. */
+	icon?: vscode.Uri;
+	/** Short prefix of the side bar header (e.g. a colored emoji dot). */
+	mark?: string;
+}
+
+let chatDecorator: (sessionId: string) => ChatDecoration | undefined = () => undefined;
+const decorationEmitter = new vscode.EventEmitter<void>();
+
+/** Installs the decoration source of all chats; call again (same function is fine) when its answers change. */
+export function setChatDecorator(fn: (sessionId: string) => ChatDecoration | undefined): void {
+	chatDecorator = fn;
+	decorationEmitter.fire();
 }
 
 export function panelSurface(panel: vscode.WebviewPanel, icon: vscode.Uri): ChatSurface {
 	panel.iconPath = icon;
+	let shown = icon.toString();
 	return {
 		get webview() {
 			return panel.webview;
@@ -51,10 +76,18 @@ export function panelSurface(panel: vscode.WebviewPanel, icon: vscode.Uri): Chat
 		reveal: () => panel.reveal(undefined, false),
 		onDidDispose: panel.onDidDispose,
 		release: () => panel.dispose(),
+		decorate: d => {
+			const next = d?.icon ?? icon;
+			if (next.toString() === shown) return;
+			shown = next.toString();
+			panel.iconPath = next;
+		},
 	};
 }
 
 export function viewSurface(view: vscode.WebviewView): ChatSurface {
+	let base = "";
+	let mark = "";
 	return {
 		get webview() {
 			return view.webview;
@@ -64,14 +97,21 @@ export function viewSurface(view: vscode.WebviewView): ChatSurface {
 		},
 		viewColumn: undefined,
 		get title() {
-			return view.description ?? "";
+			return base;
 		},
 		set title(t: string) {
-			view.description = t;
+			base = t;
+			view.description = mark + t;
 		},
 		reveal: () => view.show(false),
 		onDidDispose: view.onDidDispose,
 		release: () => {},
+		decorate: d => {
+			const next = d?.mark ? `${d.mark} ` : "";
+			if (next === mark) return;
+			mark = next;
+			view.description = mark + base;
+		},
 	};
 }
 
@@ -106,9 +146,9 @@ function readTranscript(file: string | undefined): unknown[] {
 	return out;
 }
 
-function mergeCommands(server: SlashCommand[]): SlashCommand[] {
+function mergeCommands(server: SlashCommand[], snippets: PromptSnippet[]): SlashCommand[] {
 	const names = new Set(server.map(c => c.name));
-	return [...server, ...LOCAL_COMMANDS.filter(c => !names.has(c.name))];
+	return [...server, ...LOCAL_COMMANDS.filter(c => !names.has(c.name)), ...snippetCommands(snippets)];
 }
 
 export class ChatPanel implements vscode.Disposable {
@@ -119,6 +159,8 @@ export class ChatPanel implements vscode.Disposable {
 	private snapshot: Extract<HostToClient, { t: "snapshot" }> | undefined;
 	private state: SlimState | null = null;
 	private serverCommands: SlashCommand[] = [];
+	/** Prompt snippets offered as `/p:<name>` (settings + the session folder's .omp/prompts). */
+	private snippets: PromptSnippet[] = [];
 	private changes: FileChange[] = [];
 	/** Full edit details (with oldText/newText) by toolCallId, for diffs of history the host did not snapshot. */
 	private readonly editTexts = new Map<string, Array<{ path: string; oldText: string; newText: string }>>();
@@ -145,7 +187,17 @@ export class ChatPanel implements vscode.Disposable {
 			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
 			surface.onDidDispose(() => this.dispose()),
 			sessions.onDidChange(() => this.onSessionsChanged()),
+			decorationEmitter.event(() => this.updateTitle()),
+			vscode.workspace.onDidChangeConfiguration(e => {
+				if (e.affectsConfiguration("omp.chat.snippets")) this.reloadSnippets();
+				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
+			}),
 		);
+		const cwd = this.meta?.cwd;
+		if (cwd) {
+			const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(promptsDir(cwd)), "*.md"));
+			this.subs.push(watcher, watcher.onDidCreate(() => this.reloadSnippets()), watcher.onDidChange(() => this.reloadSnippets()), watcher.onDidDelete(() => this.reloadSnippets()));
+		}
 		this.updateTitle();
 		this.lastStatus = this.meta?.status;
 		this.attach();
@@ -220,6 +272,16 @@ export class ChatPanel implements vscode.Disposable {
 		if (!meta) return;
 		const mark = meta.status === "working" ? "● " : meta.status === "waiting" ? "◆ " : "";
 		this.surface.title = `${mark}${meta.title}`;
+		this.surface.decorate(chatDecorator(this.sessionId));
+	}
+
+	private reloadSnippets(): void {
+		this.snippets = loadSnippets(this.meta?.cwd);
+		this.post({ type: "commands", commands: mergeCommands(this.serverCommands, this.snippets) });
+	}
+
+	private postChatConfig(): void {
+		this.post({ type: "chatConfig", toolCardsCollapsed: vscode.workspace.getConfiguration("omp.chat").get<boolean>("toolCardsCollapsed", true) });
 	}
 
 	// ---------- diffs ----------
@@ -310,7 +372,7 @@ export class ChatPanel implements vscode.Disposable {
 				}
 				if (ev.type === "available_commands_update") {
 					this.serverCommands = Array.isArray(ev.commands) ? (ev.commands as SlashCommand[]) : [];
-					this.post({ type: "commands", commands: mergeCommands(this.serverCommands) });
+					this.post({ type: "commands", commands: mergeCommands(this.serverCommands, this.snippets) });
 					return;
 				}
 				if (ev.type === "extension_ui_request" && ev.method === "open_url") {
@@ -362,6 +424,8 @@ export class ChatPanel implements vscode.Disposable {
 			this.indexEdits(messages);
 		}
 		this.outbox = [];
+		this.snippets = loadSnippets(meta.cwd);
+		this.postChatConfig();
 		this.post({
 			type: "init",
 			meta: snap?.meta ?? meta,
@@ -370,7 +434,7 @@ export class ChatPanel implements vscode.Disposable {
 			runningTools: (snap?.runningTools ?? []).map(slimRunningTool),
 			pendingUi: snap?.pendingUi ?? [],
 			state: this.state,
-			commands: mergeCommands(this.serverCommands),
+			commands: mergeCommands(this.serverCommands, this.snippets),
 			changes: this.changes,
 			diffs: this.allDiffs(),
 			connected: !!this.client?.connected,
@@ -462,13 +526,18 @@ export class ChatPanel implements vscode.Disposable {
 					await vscode.commands.executeCommand("omp.tasks.focus");
 					return;
 				}
-				if (!images.length && !files.length && (await handleComposerInput(m.text, this.commandContext, name => this.runCommand(name)))) return;
+				let text = m.text;
+				const snippet = matchSnippetCommand(text, this.snippets);
+				if (snippet) text = [this.fillSnippet(snippet.snippet.prompt), snippet.rest].filter(Boolean).join("\n\n");
+				if (!images.length && !files.length && (await handleComposerInput(text, this.commandContext, name => this.runCommand(name)))) return;
 				if (!client?.connected) {
 					this.post({ type: "error", message: "Session is not running. Resume it first." });
 					return;
 				}
 				await this.saveDirtyDocuments();
-				let message = m.text;
+				const expansion = await expandContextMentions(text, this.meta?.cwd);
+				for (const u of expansion.unavailable) this.post({ type: "notice", level: "warning", text: `@${u.kind}: ${u.reason}` });
+				let message = expansion.text;
 				if (files.length) {
 					const listed = this.storeAttachments(files);
 					message = `${message}${message ? "\n\n" : ""}Attached files (read them with your read tool):\n${listed.map(f => `- ${f}`).join("\n")}`;
@@ -506,6 +575,11 @@ export class ChatPanel implements vscode.Disposable {
 				await vscode.env.clipboard.writeText(m.text);
 				void vscode.window.setStatusBarMessage("$(copy) Copied", 2000);
 				return;
+			case "expandSnippet": {
+				const snippet = this.snippets.find(s => s.name === m.name);
+				if (snippet) this.insertText(this.fillSnippet(snippet.prompt));
+				return;
+			}
 			case "pickFiles": {
 				const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: "Attach", defaultUri: this.meta ? vscode.Uri.file(this.meta.cwd) : undefined });
 				if (!picked?.length) return;
@@ -522,6 +596,12 @@ export class ChatPanel implements vscode.Disposable {
 				this.post({ type: "attachFiles", images, files });
 				return;
 			}
+			case "symbolInfo":
+				this.post({ type: "symbolInfo", name: m.name, ...(await chatSymbolInfo(m.name, this.meta?.cwd)) });
+				return;
+			case "openSymbol":
+				await openChatSymbol(m.name, this.meta?.cwd, this.surface.viewColumn);
+				return;
 			case "resolvePaths": {
 				const resolved: Record<string, string> = {};
 				for (const c of m.candidates.slice(0, 500)) {
@@ -630,7 +710,28 @@ export class ChatPanel implements vscode.Disposable {
 			case "openLog":
 				await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(this.sessionId), "host.log")));
 				return;
+			case "exportMarkdownCopy":
+			case "exportMarkdownSave":
+				await exportMarkdown(name === "exportMarkdownCopy" ? "copy" : "save", await this.transcriptMessages(), meta, msg => this.post(msg));
+				return;
 		}
+	}
+
+	/** Snippet text with `{{selection}}` / `{{file}}` filled in from the editor the user last used. */
+	private fillSnippet(prompt: string): string {
+		const { text, missing } = expandPlaceholders(prompt, placeholderValues(this.meta?.cwd));
+		if (missing.length) this.post({ type: "notice", level: "warning", text: `Snippet placeholder ${missing.map(k => `{{${k}}}`).join(", ")} left empty: ${missing.includes("selection") ? "nothing is selected" : "no editor is open"}.` });
+		return text;
+	}
+
+	/** Full transcript of the current branch: from omp when running, else the recorded session file. */
+	private async transcriptMessages(): Promise<unknown[]> {
+		if (this.client?.connected) {
+			const res = await this.client.rpc({ type: "get_messages" });
+			const list = rec(res.data)?.messages;
+			if (res.success && Array.isArray(list)) return list;
+		}
+		return this.snapshot?.messages ?? readTranscript(this.meta?.ompSessionFile);
 	}
 
 	private async findUserEntry(text: string): Promise<string | undefined> {

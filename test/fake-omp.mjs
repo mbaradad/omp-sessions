@@ -22,6 +22,10 @@
 //   FAKE_OMP_TOOL_DELAY  ms between tool_execution_start and the tool touching files (default 30;
 //                      0 = same tick, like a fast real tool)
 //   FAKE_OMP_READY_DELAY  ms to wait before emitting `ready` (default 0), to simulate slow startup
+//   FAKE_OMP_NO_MODELS=1  `get_available_models` returns none (like a fresh install with no login)
+//   FAKE_OMP_DISABLED_EXTENSIONS  JSON array `omp config get disabledExtensions --json` reports (default [])
+//
+// `--restore <file>` loads the transcript like `--resume <file>`.
 
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
@@ -37,7 +41,7 @@ function flag(name) {
 	return i >= 0 ? argv[i + 1] : undefined;
 }
 const cwd = path.resolve(flag("--cwd") ?? process.cwd());
-const resumeFile = flag("--resume");
+const resumeFile = flag("--resume") ?? flag("--restore");
 const sessionsDir = process.env.FAKE_OMP_SESSIONS || path.join(os.tmpdir(), "fake-omp-sessions");
 const logFile = process.env.FAKE_OMP_LOG;
 const DELAY = Number(process.env.FAKE_OMP_DELAY ?? 15);
@@ -48,6 +52,13 @@ fs.mkdirSync(sessionsDir, { recursive: true });
 
 function debug(entry) {
 	if (logFile) fs.appendFileSync(logFile, `${JSON.stringify({ t: Date.now(), pid: process.pid, ...entry })}\n`);
+}
+// `omp config get <key> --json` (the host reads disabledExtensions for session overlays).
+if (argv[0] === "config") {
+	debug({ kind: "config", argv });
+	const value = argv[2] === "disabledExtensions" ? JSON.parse(process.env.FAKE_OMP_DISABLED_EXTENSIONS || "[]") : null;
+	process.stdout.write(`${JSON.stringify({ key: argv[2], value })}\n`);
+	process.exit(0);
 }
 debug({ kind: "argv", argv, cwd: process.cwd() });
 
@@ -472,7 +483,7 @@ function handle(cmd) {
 			appendEntry({ type: "session_info", name: sessionName, timestamp: new Date().toISOString() });
 			return respond(cmd);
 		case "get_available_models":
-			return respond(cmd, { models: MODELS });
+			return respond(cmd, { models: process.env.FAKE_OMP_NO_MODELS === "1" ? [] : MODELS });
 		case "get_available_thinking_levels":
 			return respond(cmd, { levels: THINKING_LEVELS });
 		case "set_model": {

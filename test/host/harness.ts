@@ -146,6 +146,8 @@ export class Client {
 
 export interface FakeLogEntry {
 	kind: "argv" | "cmd" | "exit";
+	/** Epoch ms when the fake logged the entry. */
+	t: number;
 	pid: number;
 	argv?: string[];
 	cmd?: { type: string; [k: string]: unknown };
@@ -165,9 +167,11 @@ export class Host {
 	constructor(
 		readonly id: string,
 		private readonly env: Record<string, string> = {},
+		/** Shared OMP_VSCODE_HOME for multi-host tests (not removed on dispose); default: inside the sandbox. */
+		home?: string,
 	) {
 		this.root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vsc-test-"));
-		this.home = path.join(this.root, "home");
+		this.home = home ?? path.join(this.root, "home");
 		this.cwd = path.join(this.root, "work");
 		this.sessions = path.join(this.root, "omp-sessions");
 		this.fakeLog = path.join(this.root, "fake-omp.log");
@@ -245,8 +249,8 @@ export class Host {
 
 let seq = 0;
 /** New host sandbox, started, disposed after the test. */
-export async function launch(t: TestContext, opts: { args?: string[]; env?: Record<string, string> } = {}): Promise<Host> {
-	const host = new Host(`t${process.pid}-${++seq}`, opts.env);
+export async function launch(t: TestContext, opts: { args?: string[]; env?: Record<string, string>; home?: string } = {}): Promise<Host> {
+	const host = new Host(`t${process.pid}-${++seq}`, opts.env, opts.home);
 	t.after(() => host.dispose());
 	await host.start(opts.args);
 	return host;

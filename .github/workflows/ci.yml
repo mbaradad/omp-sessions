@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # Windows (named pipes, .cmd shims) is handled but not yet a supported platform: report, don't block.
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        experimental: [false]
+        include:
+          - os: windows-latest
+            experimental: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # Unit + session-host suites against test/fake-omp.mjs (no omp, no model calls).
+      - run: npm test
+
+  e2e-desktop:
+    name: desktop e2e (ubuntu, xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install xvfb
+        run: command -v xvfb-run >/dev/null || (sudo apt-get update && sudo apt-get install -y xvfb)
+      # VS Code stable is downloaded into .vscode-test/; a newer stable replaces the cached one.
+      - uses: actions/cache@v4
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: vscode-test-${{ runner.os }}-
+      - name: Desktop e2e
+        run: xvfb-run -a npm run test:e2e:desktop
+        env:
+          OMP_E2E_ARTIFACTS: ${{ runner.temp }}/e2e-logs
+      - name: Upload e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: ${{ runner.temp }}/e2e-logs
+          if-no-files-found: ignore
+
+  package:
+    name: package vsix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Package (vscode:prepublish typechecks and builds minified)
+        run: npm run package
+      - name: List packaged files
+        run: npx vsce ls
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: dist/*.vsix
+          if-no-files-found: error

@@ -1,15 +1,9 @@
-.vscode/**
-.dev-state/**
-node_modules/**
-src/**
-scripts/**
-dist/**
-out/*.map
-media/icon.svg
-build.mjs
-tsconfig.json
-*.vsix
-.gitignore
-.vscode-test/**
-test/**
-.test-out/**
+# Allowlist: ignore everything, then re-include what the extension needs at runtime.
+# vsce always ships package.json and README.md. A `!` line always wins, so excluded
+# sources are carved out inside the patterns themselves (icon.svg, *.map).
+**
+!out/**/!(*.map)
+!media/!(icon.svg)
+!media/*/**
+!CHANGELOG.md
+!LICENSE

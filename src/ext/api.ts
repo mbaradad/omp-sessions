@@ -1,20 +1,11 @@
 import type * as vscode from "vscode";
+import type { LaunchOptions } from "../shared/launch";
+import type { OrganizeStore } from "../shared/organize";
 import type { SessionMeta } from "../shared/protocol";
 import type { SnapshotProvider } from "./diff";
 import type { ChatPanel } from "./panel";
 import type { SessionManager } from "./sessions";
-
-/** Options for starting (or resuming, with `id`) a background session. */
-export interface LaunchOptions {
-	cwd: string;
-	/** Resume this existing session id instead of creating a new one. */
-	id?: string;
-	/** omp transcript (.jsonl) to resume. */
-	resumeFile?: string;
-	title?: string;
-	goal?: string;
-	ompArgs?: string[];
-}
+import type { Node, SessionTree } from "./tree";
 
 /** What feature modules (`register*(context, api)`) get from extension.ts. */
 export interface OmpApi {
@@ -35,4 +26,13 @@ export interface OmpApi {
 	idFrom(arg: unknown): string | undefined;
 	/** Refresh the Sessions view. */
 	refreshTree(): void;
+	/** Close a session's chat if one is open (e.g. before removing the session). */
+	closePanel(id: string): void;
+	/** Whether a session has new activity the user has not seen (tree badge and board cards). */
+	isUnread(id: string): boolean;
+	/** User organization of sessions (organize.json): groups, colors, priorities, pins, lanes, order. */
+	readonly organize: OrganizeStore;
+	/** Sessions view data provider and view (selection, description, reveal). */
+	readonly sessionTree: SessionTree;
+	readonly sessionsView: vscode.TreeView<Node>;
 }

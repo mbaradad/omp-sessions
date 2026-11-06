@@ -71,6 +71,8 @@ export type ToWebview =
 	| { type: "reset"; messages: unknown[]; state: SlimState | null; diffs: Record<string, DiffsByPath> }
 	| { type: "connection"; connected: boolean }
 	| { type: "pathsResolved"; reqId: number; resolved: Record<string, string> }
+	/** Lazy chat symbol link resolution (inline code like `FooBar`, `foo.bar()`). */
+	| { type: "symbolInfo"; name: string; found: boolean; location?: string; kind?: string; hover?: string }
 	| { type: "fileSuggestions"; reqId: number; files: string[] }
 	| { type: "models"; models: Array<{ provider: string; id: string; name?: string }>; levels: string[] }
 	| { type: "insertText"; text: string }
@@ -80,6 +82,8 @@ export type ToWebview =
 	| { type: "attachFiles"; images: ImageAttachment[]; files: FileAttachment[] }
 	| { type: "commands"; commands: SlashCommand[] }
 	| { type: "queue"; queue: TaskQueue }
+	/** `omp.chat.*` settings the webview applies (sent after init and on change). */
+	| { type: "chatConfig"; toolCardsCollapsed: boolean }
 	| { type: "error"; message: string };
 
 export type PanelCommand =
@@ -96,6 +100,8 @@ export type PanelCommand =
 	| "fork"
 	| "rewind"
 	| "export"
+	| "exportMarkdownCopy"
+	| "exportMarkdownSave"
 	| "stats"
 	| "copyLast"
 	| "toggleFast"
@@ -116,6 +122,8 @@ export type FromWebview =
 	| { type: "openDiff"; toolCallId: string; path?: string }
 	| { type: "openLink"; url: string }
 	| { type: "resolvePaths"; reqId: number; candidates: string[] }
+	| { type: "symbolInfo"; name: string }
+	| { type: "openSymbol"; name: string }
 	| { type: "suggestFiles"; reqId: number; query: string }
 	| { type: "getModels" }
 	| { type: "setModel"; provider: string; id: string }
@@ -124,6 +132,8 @@ export type FromWebview =
 	| { type: "command"; name: PanelCommand }
 	| { type: "copy"; text: string }
 	| { type: "pickFiles" }
+	/** Insert prompt snippet `name` (without the `p:` prefix) with its placeholders expanded. */
+	| { type: "expandSnippet"; name: string }
 	/** Rewind / fork the conversation at the user message with this text. */
 	| { type: "rewindTo"; text: string }
 	| { type: "forkFrom"; text: string }

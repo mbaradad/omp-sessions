@@ -49,6 +49,7 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "diff", description: "Same as /changes", local: true },
 	{ name: "copy", description: "Copy the last assistant response", local: true },
 	{ name: "cost", description: "Tokens, cost and message counts for this session", local: true },
+	{ name: "export", description: "Export the conversation: copy or save as Markdown, or HTML", input: { hint: "[md|copy|html]" }, local: true },
 	{ name: "settings", description: "Open omp's config.yml", local: true },
 	{ name: "plan", description: "Plan mode (see note)", local: true },
 	{ name: "help", description: "Commands and keyboard shortcuts", local: true },
@@ -130,10 +131,35 @@ export async function handleComposerInput(text: string, ctx: CommandContext, run
 		});
 		return true;
 	}
+	if (name === "export") {
+		const choice = await exportChoice(args);
+		if (choice === null) return false;
+		if (choice) await runPanel(choice);
+		return true;
+	}
 	const panel = SLASH_TO_PANEL[name];
 	if (!panel) return false;
 	await runPanel(panel);
 	return true;
+}
+
+/**
+ * `/export` target: a panel command, undefined when the quick pick was cancelled, or null for
+ * arguments omp handles itself (e.g. `/export <file>`).
+ */
+async function exportChoice(args: string): Promise<PanelCommand | undefined | null> {
+	const arg = args.toLowerCase();
+	if (arg === "md" || arg === "markdown" || arg === "save") return "exportMarkdownSave";
+	if (arg === "copy" || arg === "clipboard") return "exportMarkdownCopy";
+	if (arg === "html") return "export";
+	if (arg) return null;
+	const items: Array<vscode.QuickPickItem & { cmd: PanelCommand }> = [
+		{ label: "$(copy) Copy as Markdown", cmd: "exportMarkdownCopy" },
+		{ label: "$(save) Save as Markdown…", cmd: "exportMarkdownSave" },
+		{ label: "$(globe) Export HTML (omp)", cmd: "export" },
+	];
+	const pick = await vscode.window.showQuickPick(items, { placeHolder: "Export this conversation" });
+	return pick?.cmd;
 }
 
 async function goal(ctx: CommandContext, args: string): Promise<void> {
@@ -429,15 +455,17 @@ function helpText(): string {
 		"| `Esc` | interrupt the agent |",
 		"| `/` | omp + extension commands |",
 		"| `@path` | file completion |",
+		"| `@selection` `@file` `@problems` `@git` `@terminal` | attach editor selection, active file, diagnostics, uncommitted diff or terminal output when sending |",
+		"| `/p:<name>` | insert a prompt snippet (`omp.chat.snippets`, `.omp/prompts/*.md`; `{{selection}}`, `{{file}}` filled in) |",
 		"| `!command` | run a shell command in the session (output goes to context) |",
 		"| paste / drop image, 📎 | attach images |",
 		"",
-		"**Extension commands** (omp's own commands like `/model`, `/compact`, `/context`, `/usage`, `/todo`, `/export`, `/share`, `/handoff` also work)",
+		"**Extension commands** (omp's own commands like `/model`, `/compact`, `/context`, `/usage`, `/todo`, `/share`, `/handoff` also work)",
 		"",
 		"| Command | |",
 		"|---|---|",
 		...rows,
 		"",
-		"**Keyboard** — `Cmd+Alt+O` focus chat · `Cmd+Alt+K` send selection",
+		"**Keyboard** — `Cmd+Alt+O` focus chat · `Cmd+Alt+K` send selection · `Ctrl/Cmd+F` find in conversation · `Alt+T` collapse/expand tool cards",
 	].join("\n");
 }

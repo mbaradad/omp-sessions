@@ -467,3 +467,59 @@ button.mini.danger:hover { background: color-mix(in srgb, var(--del-fg) 14%, tra
 .tb-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg.user.queued-task .bubble { border-color: color-mix(in srgb, var(--brand-2) 55%, var(--border)); }
 .task-chip { display: inline-block; font-size: 0.75em; font-weight: 600; letter-spacing: 0.02em; padding: 0 7px; margin-bottom: 4px; border-radius: 999px; background: var(--brand); color: #fff; }
+
+/* ---------- empty-state starters ---------- */
+.starters { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; width: 100%; max-width: 640px; margin: 6px 0 4px; }
+button.starter { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 9px 12px; background: var(--card-2); color: var(--vscode-foreground); border: 1px solid var(--border); border-radius: var(--radius); }
+button.starter:hover { background: var(--vscode-list-hoverBackground); border-color: var(--focus); }
+.starter-title { font-weight: 600; }
+.starter-detail { color: var(--muted); font-size: 0.88em; }
+
+/* ---------- find bar ---------- */
+.find-bar {
+	position: absolute; top: 6px; right: 18px; z-index: 15;
+	display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+	background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+	border: 1px solid var(--vscode-editorWidget-border, var(--border)); border-radius: var(--radius-sm);
+	box-shadow: 0 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+	max-width: calc(100% - 36px);
+}
+.find-input { width: 200px; min-width: 80px; flex: 1 1 auto; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; padding: 2px 6px; }
+.find-input:focus { outline: 1px solid var(--focus); outline-offset: -1px; }
+.find-status { font-size: 0.85em; color: var(--muted); white-space: nowrap; min-width: 4.5em; font-variant-numeric: tabular-nums; }
+.find-status.none { color: var(--vscode-errorForeground); }
+mark.find-hit { background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33)); color: inherit; border-radius: 2px; }
+mark.find-hit.current { background: var(--vscode-editor-findMatchBackground, rgba(81, 92, 106, 0.8)); outline: 1px solid var(--vscode-editor-findMatchBorder, var(--focus)); }
+
+/* ---------- context mentions ---------- */
+.mention-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px; }
+.mchip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; font-size: 0.82em; font-family: var(--mono); border-radius: 999px; border: 1px solid var(--focus); color: var(--vscode-foreground); background: color-mix(in srgb, var(--focus) 12%, transparent); }
+.mchip .x { background: transparent; color: inherit; border: none; padding: 0 5px; }
+details.ctx { margin-top: 6px; font-size: 0.9em; }
+details.ctx > summary { cursor: pointer; color: var(--muted); }
+details.ctx > .md { margin-top: 4px; max-height: 360px; overflow: auto; }
+
+/* ---------- times ---------- */
+.day-sep { font-weight: 600; }
+.msg.user > .msg-actions .msg-meta { order: -1; margin-right: 4px; }
+.thinking-btn { text-transform: none; }
+
+/* ---------- accessibility ---------- */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+button:focus-visible, summary:focus-visible, [tabindex]:focus-visible, a:focus-visible, .ext-link:focus-visible, .file-link:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+.msg:focus-within > .msg-actions, .out-wrap:focus-within .icon-btn { opacity: 1; }
+.transcript:focus { outline: none; }
+body.vscode-high-contrast, body.vscode-high-contrast-light { --border: var(--vscode-contrastBorder); --border-soft: var(--vscode-contrastBorder); --brand: var(--vscode-button-background); }
+body.vscode-high-contrast .tool, body.vscode-high-contrast-light .tool,
+body.vscode-high-contrast .msg.user .bubble, body.vscode-high-contrast-light .msg.user .bubble { border-color: var(--vscode-contrastBorder); }
+body.vscode-high-contrast button.send, body.vscode-high-contrast-light button.send,
+body.vscode-high-contrast .task-chip, body.vscode-high-contrast-light .task-chip,
+body.vscode-high-contrast .rec, body.vscode-high-contrast-light .rec,
+body.vscode-high-contrast .att-ext, body.vscode-high-contrast-light .att-ext { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-contrastBorder); }
+body.vscode-high-contrast .pitem.active, body.vscode-high-contrast-light .pitem.active,
+body.vscode-high-contrast .menu button:hover, body.vscode-high-contrast-light .menu button:hover { outline: 1px dashed var(--vscode-contrastActiveBorder); outline-offset: -1px; }
+body.vscode-high-contrast mark.find-hit, body.vscode-high-contrast-light mark.find-hit { outline: 1px dotted var(--vscode-contrastActiveBorder); }
+body.vscode-high-contrast mark.find-hit.current, body.vscode-high-contrast-light mark.find-hit.current { outline: 2px solid var(--vscode-contrastActiveBorder); }
+@media (prefers-reduced-motion: reduce) {
+	.spinner, .tstatus.running, .dot.working, .dot.starting { animation: none; }
+}

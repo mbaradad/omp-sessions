@@ -1,13 +1,25 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { isOutdated, needsRestore } from "../shared/health";
+import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
+import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
+import { sessionSettingsChip } from "../shared/session-config";
+import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
+import { headOf } from "./worktree-git";
 
-export type Node =
-	| { kind: "project"; root: string; isRepo: boolean; sessions: SessionMeta[]; inWorkspace: boolean }
-	| { kind: "session"; meta: SessionMeta; project?: string }
-	| { kind: "group"; label: string; sessions: SessionMeta[] }
-	| { kind: "file"; sessionId: string; cwd: string; file: string; op: string; count: number };
+/** Layout nodes (projects, custom groups, sections, sessions; see shared/organize-view) plus changed files. */
+export type Node = ViewNode | { kind: "file"; sessionId: string; cwd: string; file: string; op: string; count: number };
+
+/** Container nodes (everything with children computed by the layout). */
+export type ContainerNode = Exclude<Node, { kind: "session" } | { kind: "file" }>;
+
+const DND_MIME = "application/vnd.code.tree.omp.sessions.organize";
+
+export function isNode(v: unknown): v is Node {
+	return !!v && typeof v === "object" && "kind" in v && typeof v.kind === "string";
+}
 
 function relTime(ts: number): string {
 	const s = Math.max(0, (Date.now() - ts) / 1000);
@@ -33,20 +45,64 @@ const STATUS_LABEL: Record<SessionMeta["status"], string> = {
 	stopped: "stopped",
 };
 
-export class SessionTree implements vscode.TreeDataProvider<Node> {
+/** "3 · 1 working · 1 needs input" for a container. */
+function groupSummary(sessions: readonly SessionMeta[]): string {
+	const working = sessions.filter(m => m.status === "working" || m.status === "starting").length;
+	const waiting = sessions.filter(m => m.status === "waiting").length;
+	return [`${sessions.length}`, working ? `${working} working` : "", waiting ? `${waiting} needs input` : ""].filter(Boolean).join(" · ");
+}
+
+/** Session state shapes for colored session icons (the color is the user's label, the shape the status). */
+const STATUS_SHAPE: Record<SessionMeta["status"], string> = {
+	starting: "loading~spin",
+	working: "loading~spin",
+	waiting: "bell-dot",
+	idle: "circle-filled",
+	stopped: "circle-outline",
+};
+
+const SECTION_ICON: Record<string, vscode.ThemeIcon> = {
+	pinned: new vscode.ThemeIcon("pinned"),
+	archived: new vscode.ThemeIcon("archive"),
+	ungrouped: new vscode.ThemeIcon("inbox"),
+	other: new vscode.ThemeIcon("folder-library"),
+	"status:waiting": new vscode.ThemeIcon("bell-dot", new vscode.ThemeColor("charts.yellow")),
+	"status:working": new vscode.ThemeIcon("loading~spin", new vscode.ThemeColor("charts.blue")),
+	"status:idle": new vscode.ThemeIcon("pass-filled", new vscode.ThemeColor("charts.green")),
+	"status:stopped": new vscode.ThemeIcon("circle-outline"),
+};
+
+export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDragAndDropController<Node> {
 	private readonly emitter = new vscode.EventEmitter<Node | undefined>();
 	readonly onDidChangeTreeData = this.emitter.event;
+	readonly dragMimeTypes = [DND_MIME];
+	readonly dropMimeTypes = [DND_MIME];
+	/** Text filter of the view (organize.ts). */
+	filter = "";
+	/** Whether archived sessions are listed (organize.ts). */
+	showArchived = false;
+	/** Handles drops of sessions/groups (organize.ts). */
+	onDrop: ((target: Node | undefined, dragged: Node[]) => Promise<void> | void) | undefined;
+	/** Root nodes of the last render. */
+	private layout: ViewNode[] = [];
 
 	constructor(
 		private readonly sessions: SessionManager,
 		/** Sessions with news the user has not looked at (finished or asking while unattended). */
-		private readonly isUnread: (id: string) => boolean = () => false,
+		private readonly isUnread: (id: string) => boolean,
+		readonly organize: OrganizeStore,
 	) {
 		sessions.onDidChange(() => this.emitter.fire(undefined));
+		organize.onDidChange(() => this.emitter.fire(undefined));
 	}
 
 	refresh(): void {
 		this.emitter.fire(undefined);
+	}
+
+	/** Ids of the sessions directly inside the container `key`, in display order (organize.ts drop/move). */
+	sessionIdsIn(key: string): string[] {
+		return siblingIds(this.layout, key);
 	}
 
 	getTreeItem(node: Node): vscode.TreeItem {
@@ -54,9 +110,8 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 			const active = node.sessions.filter(m => m.status !== "stopped");
 			const waiting = node.sessions.filter(m => m.status === "waiting").length;
 			const working = node.sessions.filter(m => m.status === "working" || m.status === "starting").length;
-			const expanded = node.inWorkspace || active.length > 0;
-			const item = new vscode.TreeItem(path.basename(node.root) || node.root, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
-			item.id = `project:${node.root}`;
+			const item = new vscode.TreeItem(path.basename(node.root) || node.root, this.collapsible(node, node.inWorkspace || active.length > 0));
+			item.id = this.containerId(node);
 			item.iconPath = new vscode.ThemeIcon(node.isRepo ? "repo" : "folder", waiting ? new vscode.ThemeColor("charts.yellow") : working ? new vscode.ThemeColor("charts.blue") : undefined);
 			const parts = [working ? `${working} working` : "", waiting ? `${waiting} needs input` : "", `${node.sessions.length} session${node.sessions.length === 1 ? "" : "s"}`].filter(Boolean);
 			item.description = parts.join(" · ");
@@ -65,11 +120,23 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 			item.resourceUri = vscode.Uri.file(node.root);
 			return item;
 		}
-		if (node.kind === "group") {
-			const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Collapsed);
-			item.iconPath = new vscode.ThemeIcon("folder-library");
-			item.description = `${node.sessions.length}`;
-			item.contextValue = "group";
+		if (node.kind === "orgGroup") {
+			const g = node.group;
+			const item = new vscode.TreeItem(g.name, this.collapsible(node, true));
+			item.id = this.containerId(node);
+			item.iconPath = new vscode.ThemeIcon(g.icon ?? "folder", orgThemeColor(g.color));
+			item.description = groupSummary(node.sessions);
+			item.tooltip = `${groupPath(this.organize.data, g.id)}\n${node.sessions.length} session(s)${g.color ? ` · ${g.color}` : ""}\nDrop sessions or groups here to move them into this group.`;
+			item.contextValue = "orgGroup";
+			return item;
+		}
+		if (node.kind === "section") {
+			const defaultOpen = node.section === "pinned" || node.section === "ungrouped" || (node.section === "status" && node.status !== "stopped");
+			const item = new vscode.TreeItem(node.label, this.collapsible(node, defaultOpen));
+			item.id = this.containerId(node);
+			item.iconPath = SECTION_ICON[node.key] ?? SECTION_ICON[node.section];
+			item.description = node.section === "status" ? `${node.sessions.length}` : groupSummary(node.sessions);
+			item.contextValue = `section.${node.section}`;
 			return item;
 		}
 		if (node.kind === "file") {
@@ -88,59 +155,143 @@ export class SessionTree implements vscode.TreeDataProvider<Node> {
 		const item = new vscode.TreeItem(label, m.changedFiles > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
 		item.id = `session:${m.id}`;
 		item.iconPath = m.status === "stopped" && m.exitCode && m.exitCode !== 0 ? new vscode.ThemeIcon("error", new vscode.ThemeColor("charts.red")) : STATUS_ICON[m.status];
-		const where = node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
-		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
+		const worktree = projectRoot(m.cwd).worktree;
+		const branch = worktree && headOf(worktree.gitDir);
+		const where = worktree ? `⎇ ${branch ?? path.basename(worktree.root)}` : node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
+		const outdated = isOutdated(m, this.sessions.version);
+		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], outdated ? "⟳ update available" : "", where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
+		if (worktree) tip.appendMarkdown(`$(git-branch) worktree on \`${branch ?? "?"}\`  \n`);
 		if (m.model) tip.appendMarkdown(`$(hubot) ${m.model}  \n`);
 		if (m.changedFiles) tip.appendMarkdown(`$(diff) ${m.changedFiles} file(s) changed  \n`);
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
+		if (outdated) tip.appendMarkdown(`$(sync) host ${m.hostVersion ?? "(old)"} ≠ extension ${this.sessions.version}: run **omp: Upgrade Session Host** when idle  \n`);
+		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
+		if (needsRestore(m)) tip.appendMarkdown("$(debug-restart) Resume continues the interrupted turn  \n");
+		const settingsChip = sessionSettingsChip(m.id);
+		if (settingsChip) tip.appendMarkdown(`$(settings-gear) ${settingsChip.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
-		item.contextValue = m.status === "stopped" ? "session.stopped" : "session.running";
+		item.contextValue = `${m.status === "stopped" ? "session.stopped" : "session.running"}${worktree ? ".worktree" : ""}`;
 		item.command = { command: "omp.openSession", title: "Open", arguments: [m.id] };
+		this.organizeItem(item, node);
 		return item;
+	}
+
+	/** Collapse state: remembered per container (organize.json); everything opens while filtering. */
+	private collapsible(node: ContainerNode, openByDefault: boolean): vscode.TreeItemCollapsibleState {
+		if (this.filter) return vscode.TreeItemCollapsibleState.Expanded;
+		const collapsed = this.organize.data.collapsed[node.key] ?? !openByDefault;
+		return collapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded;
+	}
+
+	/** Item id of a container; a different id while filtering so VS Code applies the expanded state. */
+	private containerId(node: ContainerNode): string {
+		const id = node.kind === "project" ? node.key : `org:${node.key}`;
+		return this.filter ? `filtered:${id}` : id;
+	}
+
+	/** Colors, priority decoration, tags and context flags of a session item. */
+	private organizeItem(item: vscode.TreeItem, node: Extract<Node, { kind: "session" }>): void {
+		const m = node.meta;
+		const data = this.organize.data;
+		const e = data.sessions[m.id];
+		const color = effectiveColor(data, m.id);
+		const failed = m.status === "stopped" && !!m.exitCode;
+		if (color && !failed) item.iconPath = new vscode.ThemeIcon(STATUS_SHAPE[m.status], orgThemeColor(color));
+		if (e?.tags?.length) item.description = [item.description, e.tags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" · ");
+		// Priority badge and label color come from the organize FileDecorationProvider.
+		item.resourceUri = vscode.Uri.from({ scheme: "omp-org", path: `/session/${m.id}` });
+		if (item.tooltip instanceof vscode.MarkdownString) {
+			const lines = [
+				e?.priority ? `$(flame) priority: ${e.priority}` : "",
+				e?.groupId ? `$(folder) group: ${groupPath(data, e.groupId)}` : "",
+				e?.lane ? `$(project) lane: ${this.organize.lanes().find(l => l.id === e.lane)?.name ?? e.lane}` : "",
+				e?.tags?.length ? `$(tag) ${e.tags.map(t => `#${t}`).join(" ")}` : "",
+				color ? `$(symbol-color) ${color}${e?.color ? "" : " (from group)"}` : "",
+				e?.pinned ? "$(pinned) pinned" : "",
+				e?.archived ? "$(archive) archived" : "",
+			].filter(Boolean);
+			if (lines.length) item.tooltip.appendMarkdown(`\n\n${lines.join("  \n")}`);
+		}
+		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${e?.groupId ? ".grouped" : ""}`;
+	}
+
+	/** Session ids shown next to `node` in its container (display order). */
+	siblingsOf(node: Extract<Node, { kind: "session" }>): string[] {
+		return siblingIds(this.layout, node.parent);
+	}
+
+	/** The rendered node of a session (first match), e.g. for keyboard commands. */
+	findSession(id: string): Extract<Node, { kind: "session" }> | undefined {
+		const walk = (nodes: readonly ViewNode[]): Extract<Node, { kind: "session" }> | undefined => {
+			for (const n of nodes) {
+				if (n.kind === "session") {
+					if (n.meta.id === id) return n;
+				} else {
+					const hit = walk(n.children);
+					if (hit) return hit;
+				}
+			}
+			return undefined;
+		};
+		return walk(this.layout);
+	}
+
+	handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
+		const movable = source.filter(n => n.kind === "session" || n.kind === "orgGroup");
+		if (movable.length) data.set(DND_MIME, new vscode.DataTransferItem(movable));
+	}
+
+	async handleDrop(target: Node | undefined, data: vscode.DataTransfer): Promise<void> {
+		const raw = data.get(DND_MIME)?.value;
+		const dragged = Array.isArray(raw) ? raw.filter(isNode) : [];
+		if (dragged.length) await this.onDrop?.(target, dragged);
+	}
+
+	getParent(node: Node): Node | undefined {
+		if (node.kind === "file") return this.findSession(node.sessionId);
+		const key = node.kind === "session" ? node.parent : node.key;
+		const walk = (nodes: readonly ViewNode[], parent: Node | undefined): Node | undefined | null => {
+			for (const n of nodes) {
+				if (n.kind === "session") {
+					if (node.kind === "session" && n.meta.id === node.meta.id) return parent;
+					continue;
+				}
+				if (node.kind !== "session" && n.key === key) return parent;
+				const hit = walk(n.children, n);
+				if (hit !== null) return hit;
+			}
+			return null;
+		};
+		return walk(this.layout, undefined) ?? undefined;
 	}
 
 	getChildren(node?: Node): Node[] {
 		if (!node) {
-			const all = this.sessions.all();
 			const cfg = vscode.workspace.getConfiguration("omp");
 			const showAll = cfg.get<boolean>("showAllSessions") ?? false;
 			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
-			if ((cfg.get<string>("groupBy") ?? "project") === "project") {
-				const byRoot = new Map<string, SessionMeta[]>();
-				for (const m of all) {
-					const inWs = this.sessions.inWorkspace(m);
-					if (!inWs && !showAll && !noWorkspace && m.status === "stopped") continue;
-					const root = projectRoot(m.cwd);
-					byRoot.set(root.root, [...(byRoot.get(root.root) ?? []), m]);
-				}
-				const projects = [...byRoot].map(([root, sessions]) => ({
-					kind: "project" as const,
-					root,
-					isRepo: projectRoot(sessions[0].cwd).isRepo,
-					sessions,
-					inWorkspace: sessions.some(m => this.sessions.inWorkspace(m)),
-				}));
-				const recent = (p: (typeof projects)[number]) => Math.max(...p.sessions.map(m => m.updatedAt));
-				projects.sort((a, b) => Number(b.inWorkspace) - Number(a.inWorkspace) || recent(b) - recent(a));
-				return projects;
-			}
-			const local = all.filter(m => this.sessions.inWorkspace(m));
-			const other = all.filter(m => !this.sessions.inWorkspace(m));
-			const nodes: Node[] = local.map(meta => ({ kind: "session", meta }));
-			if (other.length && (showAll || noWorkspace)) {
-				if (noWorkspace) nodes.push(...other.map(meta => ({ kind: "session" as const, meta })));
-				else nodes.push({ kind: "group", label: "Other folders", sessions: other });
-			} else if (other.some(m => m.status !== "stopped")) {
-				nodes.push({ kind: "group", label: "Running in other folders", sessions: other.filter(m => m.status !== "stopped") });
-			}
-			return nodes;
+			const groupBy = cfg.get<string>("groupBy");
+			const sortBy = cfg.get<string>("sortBy");
+			this.layout = buildView({
+				sessions: this.sessions.all(),
+				data: this.organize.data,
+				groupBy: isGroupMode(groupBy) ? groupBy : "project",
+				sortBy: isSortMode(sortBy) ? sortBy : "auto",
+				filter: this.filter,
+				showArchived: this.showArchived,
+				visible: m => showAll || noWorkspace || m.status !== "stopped" || this.sessions.inWorkspace(m),
+				inWorkspace: m => this.sessions.inWorkspace(m),
+				project: m => projectRoot(m.cwd),
+				noWorkspace,
+				showAll,
+			});
+			return this.layout;
 		}
-		if (node.kind === "project") return node.sessions.map(meta => ({ kind: "session", meta, project: node.root }));
-		if (node.kind === "group") return node.sessions.map(meta => ({ kind: "session", meta }));
+		if (node.kind !== "session" && node.kind !== "file") return node.children;
 		if (node.kind === "session") {
 			const byFile = new Map<string, { op: string; count: number }>();
 			for (const c of this.sessions.changes(node.meta.id)) {

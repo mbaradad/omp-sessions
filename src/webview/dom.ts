@@ -22,6 +22,8 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = 
 		else el.setAttribute(k, v);
 	}
 	for (const c of children) if (c !== null && c !== undefined && c !== false) el.append(c);
+	// Icon-only buttons: screen readers announce the tooltip.
+	if (tag === "button" && typeof attrs.title === "string" && !attrs["aria-label"] && !el.textContent?.trim()) el.setAttribute("aria-label", attrs.title);
 	return el;
 }
 

@@ -1,0 +1,71 @@
+name: Release
+
+# Push a tag `v<version>` matching package.json's version (e.g. `git tag v0.4.0 && git push origin v0.4.0`).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Check tag matches package.json version
+        id: version
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "vsix=omp-sessions-$version.vsix" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          node -e '
+            const [version] = process.argv.slice(1);
+            const text = require("fs").readFileSync("CHANGELOG.md", "utf8");
+            const start = text.indexOf(`\n## ${version}\n`);
+            if (start < 0) { console.error(`CHANGELOG.md has no "## ${version}" section`); process.exit(1); }
+            const rest = text.slice(start + 1);
+            const end = rest.indexOf("\n## ", 1);
+            require("fs").writeFileSync("release-notes.md", (end < 0 ? rest : rest.slice(0, end)).split("\n").slice(1).join("\n").trim() + "\n");
+          ' "${{ steps.version.outputs.version }}"
+
+      - run: npm test
+
+      - name: Package (vscode:prepublish typechecks and builds minified)
+        run: npx vsce package --no-dependencies -o "${{ steps.version.outputs.vsix }}"
+
+      - name: Publish to VS Code Marketplace
+        run: |
+          if [ -z "$VSCE_PAT" ]; then echo "::error::secret VSCE_PAT is not set"; exit 1; fi
+          npx vsce publish --no-dependencies --packagePath "${{ steps.version.outputs.vsix }}"
+
+      - name: Publish to Open VSX
+        run: |
+          if [ -z "$OVSX_PAT" ]; then echo "::warning::secret OVSX_PAT is not set; skipping Open VSX"; exit 0; fi
+          npx --yes ovsx publish "${{ steps.version.outputs.vsix }}"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.version.outputs.vsix }}" --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag

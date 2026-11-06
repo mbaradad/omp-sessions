@@ -9,6 +9,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { isAuthError } from "../shared/health";
 import {
 	type ClientToHost,
 	DIALOG_METHODS,
@@ -23,7 +24,8 @@ import {
 	blobPath,
 	sessionDir,
 } from "../shared/protocol";
-import { applyQueueOps, nextPending, queueSummary, readQueueFile, taskPrompt, writeQueueFile } from "../shared/queue";
+import { QueueRunner } from "./queue-runner";
+import { sessionOverlayArgs } from "../shared/session-config";
 
 // ---------- args ----------
 interface HostArgs {
@@ -31,8 +33,14 @@ interface HostArgs {
 	cwd: string;
 	omp: string;
 	resume?: string;
+	/** Resume with `omp --restore`: also continue the interrupted turn and its subagents. */
+	restore?: boolean;
+	/** Extension version that launched this host, recorded in meta for upgrade checks. */
+	hostVersion?: string;
 	title?: string;
 	goal?: string;
+	/** Who started this host (e.g. "scheduler" for the omp-vs server), recorded in meta. */
+	launchedBy?: string;
 	ompArgs: string[];
 }
 
@@ -47,8 +55,13 @@ function parseArgs(argv: string[]): HostArgs {
 		else if (key === "--cwd") out.cwd = value;
 		else if (key === "--omp") out.omp = value;
 		else if (key === "--resume") out.resume = value;
+		else if (key === "--restore") {
+			out.resume = value;
+			out.restore = true;
+		} else if (key === "--host-version") out.hostVersion = value;
 		else if (key === "--title") out.title = value;
 		else if (key === "--goal") out.goal = value;
+		else if (key === "--launched-by") out.launchedBy = value;
 		else if (key === "--omp-arg") out.ompArgs.push(value);
 		else throw new Error(`unknown argument ${key}`);
 	}
@@ -117,6 +130,9 @@ const meta: SessionMeta = {
 	cost: previous?.cost,
 	updatedAt: Date.now(),
 	ompSessionFile: args.resume ?? previous?.ompSessionFile,
+	hostVersion: args.hostVersion,
+	hostPath: path.resolve(process.argv[1]),
+	launchedBy: args.launchedBy,
 	changedFiles: 0,
 };
 
@@ -187,80 +203,30 @@ const changes: FileChange[] = [];
 const changesPath = path.join(dir, "changes.jsonl");
 
 // ---------- task queue ----------
-const queuePath = path.join(dir, "queue.json");
-let queue = readQueueFile(queuePath);
-// A task left "running" by a crashed/restarted host goes back to pending; don't auto-run it again
-// unattended, the user decides.
-if (queue.tasks.some(t => t.status === "running")) {
-	for (const t of queue.tasks) if (t.status === "running") Object.assign(t, { status: "pending", summary: "Interrupted: the session host restarted." });
-	queue.autoRun = false;
-}
-/** The queue task currently driving omp, keyed by its prompt id. */
-let activeTask: { id: string; promptId: string; result?: "completed" | "aborted" | "error"; error?: string } | null = null;
-let dispatchTimer: NodeJS.Timeout | undefined;
-
-function saveQueue(): void {
-	try {
-		writeQueueFile(queuePath, queue);
-	} catch (err) {
-		log("queue save failed", String(err));
-	}
-	meta.queue = queueSummary(queue);
-	broadcast({ t: "queue", queue });
-	publishMeta();
-}
-
-/** Feeds the next pending task to omp when the queue is armed and the session is idle. */
-function scheduleDispatch(delay = 400): void {
-	clearTimeout(dispatchTimer);
-	dispatchTimer = setTimeout(dispatchNext, delay);
-}
-
-function dispatchNext(): void {
-	if (!queue.autoRun || activeTask || stopping || finished) return;
-	if (meta.status === "starting" || agentActive || pendingUi.length > 0) return;
-	const task = nextPending(queue);
-	if (!task) return;
-	const index = queue.tasks.indexOf(task) + 1;
-	task.status = "running";
-	task.startedAt = Date.now();
-	task.finishedAt = undefined;
-	task.summary = undefined;
-	activeTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}` };
-	agentActive = true;
-	recomputeStatus();
-	log("queue dispatch", task.id, task.title);
-	sendOmp({ type: "prompt", id: activeTask.promptId, message: taskPrompt(task, { index, total: queue.tasks.length }) });
-	saveQueue();
-}
-
-function finishActiveTask(): void {
-	if (!activeTask?.result) return;
-	const task = queue.tasks.find(t => t.id === activeTask?.id);
-	const { result, error } = activeTask;
-	activeTask = null;
-	if (task) {
-		task.finishedAt = Date.now();
-		if (result === "completed") {
-			task.status = "done";
-			for (const s of task.subtasks) s.done = true;
-			task.summary = meta.lastText;
-		} else if (result === "aborted") {
-			// The user interrupted: keep the task, stop the runner until they resume it.
-			task.status = "pending";
-			task.startedAt = undefined;
-			task.finishedAt = undefined;
-			task.summary = "Interrupted.";
-			queue.autoRun = false;
-		} else {
-			task.status = "failed";
-			task.summary = error ?? "The model request failed.";
-			queue.autoRun = false;
-		}
-	}
-	saveQueue();
-	scheduleDispatch(800);
-}
+// The runner (queue-runner.ts) owns queue.json, dispatch, per-task options, and concurrency slots.
+const queueRunner = new QueueRunner(args.id, path.join(dir, "queue.json"), {
+	log,
+	sendOmp,
+	request,
+	idle: () => !stopping && !finished && meta.status !== "starting" && !agentActive && pendingUi.length === 0,
+	setBusy: busy => {
+		agentActive = busy;
+		recomputeStatus();
+	},
+	sessionReset: async () => {
+		await resync();
+		refreshState();
+	},
+	notice: (level, message) => {
+		messages.push({ role: "notice", level, message, timestamp: Date.now() });
+		broadcast({ t: "event", ev: { type: "notice", level, message } });
+	},
+	changed: (queue, summary) => {
+		meta.queue = summary;
+		broadcast({ t: "queue", queue });
+		publishMeta();
+	},
+});
 for (const line of safeRead(changesPath).split("\n")) {
 	if (!line) continue;
 	try {
@@ -408,7 +374,7 @@ const ompArgv = [
 	args.cwd,
 	"--config",
 	overlayPath,
-	...(meta.ompSessionFile ? ["--resume", meta.ompSessionFile] : []),
+	...(meta.ompSessionFile ? [args.restore ? "--restore" : "--resume", meta.ompSessionFile] : []),
 	...args.ompArgs,
 ];
 const env = { ...process.env };
@@ -430,6 +396,8 @@ if (!fs.existsSync(args.cwd)) {
 	saveMeta(true);
 	process.exit(1);
 }
+// Per-session skills/tools/MCP toggles (omp: Session Settings) as one more settings overlay.
+ompArgv.push(...sessionOverlayArgs(dir, args.omp, args.cwd, env, log));
 log("spawn", args.omp, ompArgv);
 // npm/bun shims on Windows are .cmd files, which need a shell to start.
 const child: ChildProcessWithoutNullStreams = spawn(args.omp, ompArgv, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: IS_WINDOWS && /\.(cmd|bat)$/i.test(args.omp) });
@@ -570,11 +538,14 @@ async function onReady(): Promise<void> {
 	if (typeof state?.sessionName === "string" && state.sessionName) meta.title = state.sessionName;
 	else if (meta.title !== "New session") sendOmp({ type: "set_session_name", name: meta.title });
 	meta.status = "idle";
-	meta.queue = queueSummary(queue);
+	meta.queue = queueRunner.summary();
 	recomputeStatus();
 	publishMeta();
 	for (const c of clients) if (c.helloed) sendSnapshot(c);
-	scheduleDispatch(1000);
+	queueRunner.schedule(1000);
+	const models = await request({ type: "get_available_models" });
+	const available = rec(models.data)?.models;
+	if (models.success && Array.isArray(available) && available.length === 0) noteAuthProblem("no model is available");
 	if (args.goal && !previous) {
 		if (meta.title === "New session") {
 			meta.title = titleFromPrompt(`Goal: ${args.goal}`);
@@ -587,6 +558,24 @@ async function onReady(): Promise<void> {
 			broadcast({ t: "event", ev: { type: "notice", level: "error", message: `Could not start goal: ${String(res.error)}` } });
 		}
 	}
+}
+
+/**
+ * omp can't use any model (no provider logged in, missing/rejected API key): say so once in the
+ * chat with a login link and flag it in meta so the extension can notify. Deferred so the frame
+ * that revealed it reaches clients first.
+ */
+function noteAuthProblem(detail: string): void {
+	setImmediate(() => {
+		if (meta.authProblem || meta.status === "stopped") return;
+		meta.authProblem = detail.slice(0, 300);
+		const shown = meta.authProblem.replace(/[\\`*_[\]<>]/g, "\\$&");
+		const message = `**omp can't use a model** (${shown}). Log in to a provider with [omp login](command:omp.login) or configure an API key, then send your message again. Still stuck? [Run omp Doctor](command:omp.doctor)`;
+		log("auth problem:", detail);
+		messages.push({ role: "notice", level: "warning", message, markdown: true, timestamp: Date.now() });
+		broadcast({ t: "event", ev: { type: "notice", level: "warning", message, markdown: true } });
+		publishMeta();
+	});
 }
 
 function textOf(message: unknown): string {
@@ -612,15 +601,8 @@ function handleFrame(frame: OmpFrame): void {
 				resolve?.(frame);
 				return;
 			}
-			if (activeTask && id === activeTask.promptId && !frame.success) {
-				// The queued prompt was rejected before reaching the agent.
-				activeTask.result = "error";
-				activeTask.error = str(frame.error);
-				agentActive = false;
-				recomputeStatus();
-				finishActiveTask();
-				return;
-			}
+			if (!frame.success && frame.command === "prompt" && isAuthError(str(frame.error))) noteAuthProblem(String(frame.error));
+			if (queueRunner.onResponse(frame)) return;
 			const m = /^c(\d+):(.*)$/s.exec(id);
 			const res = { ...frame, id: m ? m[2] : frame.id };
 			const client = m ? clients.find(c => c.num === Number(m[1])) : undefined;
@@ -654,6 +636,12 @@ function handleFrame(frame: OmpFrame): void {
 				const cost = rec(rec(msg.usage)?.cost)?.total;
 				if (typeof cost === "number") meta.cost = (meta.cost ?? 0) + cost;
 				saveMeta();
+				queueRunner.onAssistantMessage(msg);
+				if (msg.stopReason === "error" && isAuthError(str(msg.errorMessage))) noteAuthProblem(String(msg.errorMessage));
+				else if (msg.stopReason !== "error" && msg.stopReason !== "aborted" && meta.authProblem) {
+					meta.authProblem = undefined;
+					publishMeta();
+				}
 				// Snapshot files the upcoming tool calls will touch before omp executes them.
 				if (Array.isArray(msg.content)) {
 					for (const block of msg.content) {
@@ -693,24 +681,19 @@ function handleFrame(frame: OmpFrame): void {
 			return;
 		}
 		case "prompt_result":
-			if (activeTask && frame.id === activeTask.promptId) {
-				const status = frame.status === "completed" ? "completed" : frame.status === "aborted" ? "aborted" : "error";
-				activeTask.result = status;
-				activeTask.error = str(rec(frame.error)?.message);
-				if (frame.sessionSettled || status !== "completed") finishActiveTask();
-			}
+			queueRunner.onPromptResult(frame);
 			if (frame.sessionSettled) {
 				agentActive = false;
 				recomputeStatus();
-				scheduleDispatch();
+				queueRunner.schedule();
 			}
 			refreshState();
 			break;
 		case "session_settled":
 			agentActive = false;
 			recomputeStatus();
-			finishActiveTask();
-			scheduleDispatch();
+			queueRunner.onSettled();
+			queueRunner.schedule();
 			refreshState();
 			break;
 		case "extension_ui_request": {
@@ -793,7 +776,7 @@ function sendSnapshot(c: Client): void {
 		state,
 		commands,
 		changes,
-		queue,
+		queue: queueRunner.queue,
 	});
 }
 
@@ -825,12 +808,10 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 		case "ui_response":
 			sendOmp({ ...msg.res, type: "extension_ui_response" });
 			removePending(msg.res.id);
-			scheduleDispatch();
+			queueRunner.schedule();
 			return;
 		case "queue":
-			queue = applyQueueOps(queue, msg.ops);
-			saveQueue();
-			scheduleDispatch();
+			queueRunner.apply(msg.ops);
 			return;
 		case "note":
 			messages.push({ role: "notice", level: msg.level, message: msg.message, markdown: msg.markdown, timestamp: Date.now() });

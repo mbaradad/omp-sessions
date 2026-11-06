@@ -1,0 +1,93 @@
+# Publishing checklist
+
+Releases are automated by `.github/workflows/release.yml`: pushing a tag `v<version>` runs the tests, packages the VSIX, publishes it to the VS Code Marketplace and Open VSX, and creates a GitHub release with the VSIX attached. The steps below are the one-time setup plus the per-release routine.
+
+## One-time setup
+
+### 1. GitHub repository
+
+`package.json` already points `repository`, `bugs`, `homepage` and `qna` at `https://github.com/mbaradad/omp-vscode`. The Marketplace page links there, and `vsce` rewrites relative README links against it, so the repository must exist and be public before the first publish.
+
+1. Create the **public** repository `mbaradad/omp-vscode` on GitHub (no README, license or .gitignore: they already exist here).
+2. Push:
+   ```sh
+   git remote add origin git@github.com:mbaradad/omp-vscode.git
+   git push -u origin main
+   ```
+3. Settings → **Code security** → enable *Private vulnerability reporting* (`SECURITY.md` links to it).
+4. Settings → General → make sure *Issues* is enabled (bug reports and Marketplace Q&A both go there).
+5. Check that the **CI** workflow passes on `main` (Actions tab).
+6. Optional: Settings → Branches → protect `main` and require the `test (ubuntu-latest)`, `test (macos-latest)`, `desktop e2e (ubuntu, xvfb)` and `package vsix` checks.
+
+### 2. VS Code Marketplace publisher and token
+
+1. Sign in at <https://marketplace.visualstudio.com/manage/createpublisher> with a Microsoft account and create the publisher with ID **`mbaradad`**. It must equal `publisher` in `package.json`.
+2. Open <https://dev.azure.com> with the same account (create an organization if asked). Go to *User settings* → **Personal access tokens** → *New token*:
+   - Organization: **All accessible organizations**
+   - Scopes: *Custom defined* → **Marketplace → Manage**
+   - Expiration: the maximum allowed. Note the date: releases fail once it expires.
+3. Check it: `npx vsce verify-pat mbaradad` (paste the token when asked).
+
+### 3. Open VSX namespace and token (Cursor, VSCodium, Windsurf, Gitpod, …)
+
+1. Sign in at <https://open-vsx.org> with GitHub.
+2. In your profile settings, log in with an Eclipse account and sign the **Open VSX Publisher Agreement**. Publishing is rejected without it.
+3. Profile settings → **Access Tokens** → generate a token.
+4. Create the namespace once: `npx ovsx create-namespace mbaradad -p <token>`.
+5. Optional: claim ownership of the namespace (open-vsx.org → *Namespaces*) so the listing shows as verified.
+
+### 4. Repository secrets
+
+Settings → Secrets and variables → **Actions** → *New repository secret* (or `gh secret set NAME`):
+
+| Secret | Value | If missing |
+| --- | --- | --- |
+| `VSCE_PAT` | Azure DevOps token from step 2 | release fails before publishing anywhere |
+| `OVSX_PAT` | Open VSX token from step 3 | Open VSX is skipped with a warning |
+
+The workflow uses the built-in `GITHUB_TOKEN` for the GitHub release. Nothing else is needed.
+
+### 5. Marketplace listing assets
+
+Capture the screenshots below, save them as PNGs under `docs/images/` and embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`). `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-vscode/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
+
+Capture guidelines: a dark theme (it matches the `#1a1124` gallery banner and the icon), a window about 1600×1000 cropped to the relevant area, editor font around 15 px, a small demo repository, and no personal paths, hostnames, keys or costs you would rather not show. The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
+
+| # | File | What to capture | Caption |
+| --- | --- | --- | --- |
+| 1 | `chat.png` | A chat tab mid-turn: streaming answer, a collapsed tool call, clickable `file:line` links and an inline diff | Chat with omp in an editor tab or the side bar: streaming answers, tool calls, clickable files and inline diffs. |
+| 2 | `sessions.png` | The omp activity bar with the Sessions view: several sessions across two projects (running, waiting for input, stopped), a **● new** marker and the badge count | Every session at a glance: running, waiting for you, or finished while you were away. |
+| 3 | `remote.png` | A Remote-SSH window just reconnected to a session that kept working while disconnected (status bar shows `SSH: <host>`) | Close the laptop or drop SSH: sessions keep running on the machine and reattach with everything that happened meanwhile. |
+| 4 | `review.png` | *Review Changes*: VS Code's native diff of a session edit, with change markers in the gutter and the CodeLens *Revert* | Review every edit in VS Code's own diff editor and revert per file or per change. |
+| 5 | `tasks.png` | The Tasks view with a queued task, nested subtasks, one running and one checked off | Queue tasks and subtasks. omp works through them one after another, even with VS Code closed. |
+| 6 | `editor.png` | A red squiggle with the lightbulb menu open on *Fix with omp*, plus *Add to omp Chat* in the editor context menu | Fix with omp, Explain, Add to Chat: right from the editor, Problems, terminal and Source Control. |
+
+Optional: a 10–20 s GIF of starting a session, closing VS Code, reopening and finding the finished work (keep it under about 5 MB).
+
+## Every release
+
+1. Bump `version` in `package.json` (`npm version <x.y.z> --no-git-tag-version` also updates `package-lock.json`).
+2. Add a `## <x.y.z>` section at the top of `CHANGELOG.md`. The release workflow uses that section as the GitHub release notes and fails without it.
+3. Pre-flight locally:
+   ```sh
+   npm run typecheck && npm test
+   npx vsce ls            # only out/, media/, README.md, CHANGELOG.md, LICENSE, package.json
+   ```
+4. Commit, tag, push:
+   ```sh
+   git commit -am "Release <x.y.z>"
+   git tag v<x.y.z>
+   git push origin main v<x.y.z>
+   ```
+5. Watch the **Release** workflow. It checks the tag against `package.json`, runs the tests, packages, publishes to the Marketplace and then Open VSX, and creates the GitHub release with the VSIX.
+6. Within about 5–10 minutes, check that the listing appears on <https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions> and <https://open-vsx.org/extension/mbaradad/omp-sessions>, then install it in a clean profile (`code --profile Temp --install-extension mbaradad.omp-sessions`).
+
+If the Marketplace publish succeeded but a later step failed, do not re-push the tag (the version already exists there). Finish by hand: `npx ovsx publish <vsix> -p <token>` and/or `gh release create v<x.y.z> <vsix> --notes-file …`.
+
+Manual fallback without CI: `npx vsce login mbaradad && npm run publish:vsce`, then `OVSX_PAT=… npm run publish:ovsx`. Both run `vscode:prepublish` (typecheck and minified build).
+
+## Listing flags to revisit
+
+- `"preview": true` shows a *Preview* badge. Remove it once Windows is tested and the feature set is stable (1.0).
+- `"categories": ["AI", "Chat", "Other"]` and the 25 `keywords` drive search. Keep keywords at 30 or fewer, and adjust them after seeing what users search for.
+- `"private": true` only stops an accidental `npm publish`. `vsce` and `ovsx` ignore it.

@@ -28,10 +28,19 @@ export interface SessionMeta {
 	lastText?: string;
 	/** Accumulated model cost (USD) of assistant turns seen by this host. */
 	cost?: number;
-	/** Task queue summary for tree badges. */
-	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean };
+	/** Task queue summary for tree badges. `waiting`: the next task waits for a global concurrency slot
+	 * (`position` 1-based among waiting sessions, `since` epoch ms). */
+	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; waiting?: { position: number; since: number } };
 	/** omp's own todo plan (phases → tasks), mirrored for the Tasks view. */
 	plan?: Array<{ name: string; tasks: Array<{ content: string; status: string; blocker?: string }> }>;
+	/** Extension version whose host.js runs this session (absent: hosts that predate the field). */
+	hostVersion?: string;
+	/** host.js running this session. */
+	hostPath?: string;
+	/** Set while omp reports it cannot use any model (no provider logged in, missing API key). */
+	authProblem?: string;
+	/** Who started this host when not a person (e.g. "scheduler": the omp-vs server ran its queue). */
+	launchedBy?: string;
 }
 
 /** One file touched by one tool call. `before`/`after` are blob hashes; null = file absent. */
@@ -69,18 +78,41 @@ export interface QueueTask {
 	createdAt: number;
 	startedAt?: number;
 	finishedAt?: number;
-	/** Last assistant text when the task finished, or the error that stopped it. */
+	/** Final assistant text when the task finished, or the error that stopped it. */
 	summary?: string;
+	/** How the host runs this task; absent = session defaults, one attempt, no time limit. */
+	options?: QueueTaskOptions;
+	/** Failed attempts of the current run (auto-retry counter); reset when the task is re-queued. */
+	attempts?: number;
+	/** Wall time spent running (all attempts of the current run). */
+	durationMs?: number;
+	/** Model cost (USD) of the assistant turns of the current run. */
+	cost?: number;
+}
+
+export interface QueueTaskOptions {
+	/** `provider/modelId` to switch to for this task; the previous model is restored afterwards. */
+	model?: string;
+	/** Thinking level for this task; restored afterwards. */
+	thinking?: string;
+	/** Start the task in a new omp session (clean context); the chat transcript continues there. */
+	freshContext?: boolean;
+	/** Automatic retries after a failure or timeout (with backoff). */
+	retries?: number;
+	/** Abort the task (→ failed) when it runs longer than this. */
+	timeoutMinutes?: number;
 }
 
 export interface TaskQueue {
 	tasks: QueueTask[];
 	/** When on, the host feeds the next pending task to omp whenever the session is idle. */
 	autoRun: boolean;
+	/** Epoch ms at which the host arms autoRun by itself (cleared when it fires or the queue is started/paused). */
+	startAt?: number;
 }
 
 export type QueueOp =
-	| { op: "add"; title: string; notes?: string; subtasks?: string[]; index?: number }
+	| { op: "add"; title: string; notes?: string; subtasks?: Array<string | { title: string; done?: boolean }>; index?: number; options?: QueueTaskOptions; done?: boolean }
 	| { op: "update"; id: string; title?: string; notes?: string; status?: QueueTaskStatus }
 	| { op: "remove"; id: string }
 	| { op: "move"; id: string; index: number }
@@ -90,7 +122,15 @@ export type QueueOp =
 	| { op: "moveSubtask"; id: string; subtaskId: string; index: number }
 	| { op: "run"; id?: string }
 	| { op: "autoRun"; value: boolean }
-	| { op: "clearDone" };
+	| { op: "clearDone" }
+	/** Replaces the task's options (normalized; empty clears them). */
+	| { op: "setOptions"; id: string; options: QueueTaskOptions }
+	/** Inserts a pending copy (title, notes, subtasks unchecked, options) right after the task. */
+	| { op: "duplicate"; id: string }
+	/** Every failed task back to pending. */
+	| { op: "retryFailed" }
+	/** Start the queue at this time (epoch ms); null cancels. */
+	| { op: "schedule"; at: number | null };
 
 // ---- host -> client ----
 export type HostToClient =

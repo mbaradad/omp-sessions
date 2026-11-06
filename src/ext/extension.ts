@@ -1,15 +1,28 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { type LaunchOptions, sendToHost } from "../shared/launch";
+import { OrganizeStore, organizeFile } from "../shared/organize";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import { registerBoard } from "./board";
+import { registerBridge } from "./bridge";
+import { registerChatContext } from "./chat-context";
+import { registerDashboard } from "./dashboard";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
+import { registerDoctor } from "./doctor";
+import { registerEditorPlus } from "./editor-plus";
 import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
-import { SessionManager, listOmpHistory, sendToHost } from "./sessions";
+import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
+import { registerOrganize } from "./organize";
+import { registerScheduler } from "./scheduler";
+import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
+import { registerToolbox } from "./toolbox";
+import { registerWorktrees } from "./worktree";
 
 const panels = new Map<string, ChatPanel>();
 let lastActive: ChatPanel | undefined;
@@ -38,8 +51,12 @@ export function activate(context: vscode.ExtensionContext): void {
 		tree.refresh();
 		updateStatus();
 	};
-	const tree = new SessionTree(sessions, id => unread.has(id));
-	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, showCollapseAll: true });
+	// User organization (groups, colors, pins, priorities); shared with other windows through the file.
+	const organize = new OrganizeStore(organizeFile(), id => sessions.get(id)?.createdAt);
+	const organizeWatch = organize.watch();
+	context.subscriptions.push({ dispose: () => organizeWatch.dispose() });
+	const tree = new SessionTree(sessions, id => unread.has(id), organize);
+	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(sessions, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
@@ -135,7 +152,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			VIEW_TYPE,
 			meta.title,
 			{ viewColumn: column, preserveFocus: false },
-			{ enableScripts: true, retainContextWhenHidden: true, enableFindWidget: true },
+			// The chat's own find bar (Ctrl/Cmd+F) also searches earlier, not yet rendered messages.
+			{ enableScripts: true, retainContextWhenHidden: true },
 		);
 		return adopt(id, webviewPanel);
 	}
@@ -176,12 +194,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		return chosen?.[0]?.fsPath;
 	}
 
-	async function launchAndOpen(opts: { cwd: string; id?: string; resumeFile?: string; title?: string; goal?: string; ompArgs?: string[] }): Promise<ChatPanel | undefined> {
+	async function launchAndOpen(opts: LaunchOptions): Promise<ChatPanel | undefined> {
 		let id: string;
 		try {
 			id = sessions.launch(opts);
 		} catch (err) {
-			void vscode.window.showErrorMessage(String((err as Error).message ?? err));
+			// A missing omp gets the doctor's install/set-path notification instead.
+			if (!(err instanceof OmpMissingError)) void vscode.window.showErrorMessage(String((err as Error).message ?? err));
 			return undefined;
 		}
 		const ok = await sessions.waitForSocket(id);
@@ -405,13 +424,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		target.insertText(text);
 	});
 
-	reg("omp.toggleGrouping", async () => {
-		const cfg = vscode.workspace.getConfiguration("omp");
-		await cfg.update("groupBy", (cfg.get<string>("groupBy") ?? "project") === "project" ? "none" : "project", vscode.ConfigurationTarget.Global);
-	});
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.showAllSessions")) tree.refresh();
+			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sortBy") || e.affectsConfiguration("omp.showAllSessions")) tree.refresh();
 		}),
 	);
 
@@ -459,15 +474,32 @@ export function activate(context: vscode.ExtensionContext): void {
 		targetPanel,
 		idFrom,
 		refreshTree: () => tree.refresh(),
+		closePanel: id => panels.get(id)?.dispose(),
+		isUnread: id => unread.has(id),
+		organize,
+		sessionTree: tree,
+		sessionsView: treeView,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
-	registerTasks(context, sessions, pickSession);
+	registerTasks(api);
 	// Feature modules: one `register*(api)` line each.
+	registerScheduler(api);
+	registerOrganize(api);
+	registerWorktrees(api);
+	registerDoctor(api);
+	registerEditorPlus(api);
+	registerToolbox(api);
+	registerDashboard(api);
+	registerChatContext(api);
+	registerBoard(api);
+	registerBridge(api);
+	registerSessionConfig(api);
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
 	status.command = "omp.openSession";
 	context.subscriptions.push(status);
+	const COMMAND_CENTER_HINT = `\n\nAll omp commands: omp: Command Center (${process.platform === "darwin" ? "⌘⌥P" : "Ctrl+Alt+P"})`;
 	const updateStatus = () => {
 		const local = sessions.all().filter(m => m.status !== "stopped" && sessions.inWorkspace(m));
 		const working = local.filter(m => m.status === "working" || m.status === "starting").length;
@@ -475,12 +507,12 @@ export function activate(context: vscode.ExtensionContext): void {
 		const idle = local.length - working - waiting;
 		if (local.length === 0) {
 			status.text = "$(hubot) omp";
-			status.tooltip = "No omp sessions running for this workspace. Click to open one.";
+			status.tooltip = `No omp sessions running for this workspace. Click to open one.${COMMAND_CENTER_HINT}`;
 			status.command = "omp.focus";
 		} else {
 			const parts = [working ? `$(loading~spin) ${working}` : "", waiting ? `$(bell-dot) ${waiting}` : "", idle ? `$(pass) ${idle}` : ""].filter(Boolean);
 			status.text = `$(hubot) omp ${parts.join(" ")}`;
-			status.tooltip = local.map(m => `${m.status.padEnd(8)} ${m.title}`).join("\n");
+			status.tooltip = local.map(m => `${m.status.padEnd(8)} ${m.title}`).join("\n") + COMMAND_CENTER_HINT;
 			status.command = "omp.openSession";
 		}
 		status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;

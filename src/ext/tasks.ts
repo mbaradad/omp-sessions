@@ -3,8 +3,12 @@
 // sessions), checkboxes to complete, inline run/pause. Being a regular view, it can be moved to
 // the panel or the secondary side bar.
 import * as vscode from "vscode";
+import { sendToHost } from "../shared/launch";
 import type { QueueOp, QueueSubtask, QueueTask, SessionMeta } from "../shared/protocol";
-import { type SessionManager, sendToHost } from "./sessions";
+import { describeOptions, formatDuration, formatStartTime } from "../shared/task-text";
+import type { OmpApi } from "./api";
+import type { SessionManager } from "./sessions";
+import { registerTaskExtras } from "./task-extras";
 
 type PlanPhase = NonNullable<SessionMeta["plan"]>[number];
 
@@ -27,7 +31,7 @@ const TASK_ICON: Record<QueueTask["status"], vscode.ThemeIcon> = {
 
 const PLAN_GLYPH: Record<string, string> = { completed: "✔", in_progress: "◐", pending: "○", abandoned: "✕", blocked: "⛔" };
 
-function isNode(v: unknown): v is TaskNode {
+export function isNode(v: unknown): v is TaskNode {
 	return !!v && typeof v === "object" && "kind" in v && typeof v.kind === "string";
 }
 
@@ -90,9 +94,18 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				const item = new vscode.TreeItem(m.title, hasKids ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
 				item.id = `tasks:session:${m.id}`;
 				item.iconPath = m.status === "stopped" ? new vscode.ThemeIcon("circle-outline") : m.status === "working" ? new vscode.ThemeIcon("loading~spin") : new vscode.ThemeIcon("comment-discussion");
-				const parts = [q?.running ? "running" : "", q?.pending ? `${q.pending} pending` : "", q?.total ? `${q.done}/${q.total} done` : "no tasks", q?.autoRun ? "▶ auto-run" : q?.pending ? "⏸ paused" : "", m.status === "stopped" ? "stopped" : ""];
+				const parts = [
+					q?.running ? "running" : "",
+					q?.waiting ? `⏳ waiting for a slot (#${q.waiting.position})` : "",
+					q?.pending ? `${q.pending} pending` : "",
+					q?.total ? `${q.done}/${q.total} done` : "no tasks",
+					q?.autoRun ? "▶ auto-run" : q?.startAt ? `⏰ starts ${formatStartTime(q.startAt)}` : q?.pending ? "⏸ paused" : "",
+					m.status === "stopped" ? "stopped" : "",
+				];
 				item.description = parts.filter(Boolean).join(" · ");
-				item.tooltip = `${m.title}\n${m.cwd}\n\nTasks run one after another in the background${q?.autoRun ? " (auto-run on)" : " when you start the queue"}.`;
+				const when = q?.autoRun ? " (auto-run on)" : q?.startAt ? ` starting ${new Date(q.startAt).toLocaleString()}` : " when you start the queue";
+				const waiting = q?.waiting ? `\n\nWaiting for a free slot (position ${q.waiting.position}): the global limit of concurrently running queued tasks is reached.` : "";
+				item.tooltip = `${m.title}\n${m.cwd}\n\nTasks run one after another in the background${when}.${waiting}`;
 				item.contextValue = q?.autoRun ? "tasks.session.auto" : "tasks.session.paused";
 				return item;
 			}
@@ -103,11 +116,32 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				item.id = `tasks:task:${node.sessionId}:${t.id}`;
 				item.iconPath = TASK_ICON[t.status];
 				item.checkboxState = t.status === "done" ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
-				item.description = [t.status === "pending" ? "" : t.status, t.subtasks.length ? `${subsDone}/${t.subtasks.length}` : "", t.status === "done" || t.status === "failed" ? fmtAgo(t.finishedAt) : t.status === "running" ? fmtAgo(t.startedAt) : ""]
+				const results = t.status === "done" || t.status === "failed" ? [t.durationMs ? formatDuration(t.durationMs) : "", t.cost ? `$${t.cost.toFixed(t.cost < 0.01 ? 4 : 2)}` : ""] : [];
+				const retrying = t.status === "pending" && t.attempts ? `↻ retry ${t.attempts}/${t.options?.retries ?? t.attempts}` : "";
+				item.description = [
+					t.status === "pending" ? "" : t.status,
+					retrying,
+					t.subtasks.length ? `${subsDone}/${t.subtasks.length}` : "",
+					t.status === "done" || t.status === "failed" ? fmtAgo(t.finishedAt) : t.status === "running" ? fmtAgo(t.startedAt) : "",
+					...results,
+					...describeOptions(t.options),
+				]
 					.filter(Boolean)
 					.join(" · ");
 				const tip = new vscode.MarkdownString(undefined, true);
 				tip.appendMarkdown(`**${t.title.replace(/[*_`[\]]/g, "\\$&")}**  \n$(pulse) ${t.status}`);
+				if (results.some(Boolean)) tip.appendMarkdown(`  \n$(watch) ${results.filter(Boolean).join(" · ")}${t.attempts ? ` · ${t.attempts} attempt(s)` : ""}`);
+				const opts = t.options;
+				if (opts) {
+					const lines = [
+						opts.model ? `model \`${opts.model}\` (restored afterwards)` : "",
+						opts.thinking ? `thinking \`${opts.thinking}\` (restored afterwards)` : "",
+						opts.freshContext ? "fresh context: starts a new omp session (earlier conversation is not visible to it)" : "",
+						opts.retries ? `up to ${opts.retries} automatic retr${opts.retries === 1 ? "y" : "ies"} on failure` : "",
+						opts.timeoutMinutes ? `stopped after ${opts.timeoutMinutes} min` : "",
+					].filter(Boolean);
+					tip.appendMarkdown(`\n\n$(settings-gear) ${lines.join("  \n")}`);
+				}
 				if (t.notes) tip.appendMarkdown(`\n\n${t.notes}`);
 				if (t.summary) {
 					tip.appendMarkdown("\n\n---\n");
@@ -180,7 +214,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				} else {
 					// Moving across sessions: re-create in the target queue, then drop the original.
 					if (t.task.status === "running") continue;
-					await this.sessions.editQueue(targetSession, [{ op: "add", title: t.task.title, notes: t.task.notes, subtasks: t.task.subtasks.map(s => s.title), index }]);
+					await this.sessions.editQueue(targetSession, [{ op: "add", title: t.task.title, notes: t.task.notes, subtasks: t.task.subtasks.map(s => ({ title: s.title, done: s.done })), options: t.task.options, index }]);
 					await this.sessions.editQueue(t.sessionId, [{ op: "remove", id: t.task.id }]);
 				}
 				if (Number.isFinite(index)) index++;
@@ -204,10 +238,12 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 }
 
 /** Registers the Tasks view and its commands. */
-export function registerTasks(context: vscode.ExtensionContext, sessions: SessionManager, pickSession: (placeHolder: string, filter?: (m: SessionMeta) => boolean) => Promise<string | undefined>): TasksProvider {
+export function registerTasks(api: OmpApi): TasksProvider {
+	const { context, sessions, pickSession } = api;
 	const provider = new TasksProvider(sessions);
 	const view = vscode.window.createTreeView("omp.tasks", { treeDataProvider: provider, dragAndDropController: provider, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(view);
+	registerTaskExtras(api, view);
 
 	const updateBadge = () => {
 		const pending = sessions

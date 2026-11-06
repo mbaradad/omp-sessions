@@ -5,7 +5,8 @@
 //   npm run test:e2e:desktop
 //
 // Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_KEEP=1 keeps the temp dir,
-// OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log).
+// OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log),
+// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI).
 //
 // VS Code is downloaded once into .vscode-test/. Without a DISPLAY the run is re-executed
 // under `xvfb-run`. All state (user data, extensions, OMP_VSCODE_HOME, HOME, workspace) lives
@@ -176,11 +177,32 @@ try {
 	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");
 	console.log("\n── desktop e2e summary ──");
 	for (const r of results) console.log(r);
-	vscodeLog.end();
+	const logClosed = Promise.withResolvers();
+	vscodeLog.end(logClosed.resolve);
+	await logClosed.promise;
+	if (failed && process.env.OMP_E2E_ARTIFACTS) saveArtifacts(path.resolve(process.env.OMP_E2E_ARTIFACTS));
 	if (failed || process.env.OMP_E2E_KEEP) console.log(`state kept in ${tmp} (full VS Code output: ${vscodeLogPath})`);
 	else fs.rmSync(tmp, { recursive: true, force: true });
 }
 process.exit(failed ? 1 : 0);
+
+/** Copies the run's logs and session state (not the VS Code install or user-data caches) to `dest`. */
+function saveArtifacts(dest) {
+	const keep = /(\.log|\.json|\.jsonl)$/;
+	const sources = [vscodeLogPath, fakeLog, stateFile, path.join(dirs.userData, "logs"), sessionsRoot];
+	for (const src of sources) {
+		if (!fs.existsSync(src)) continue;
+		try {
+			fs.cpSync(src, path.join(dest, path.relative(tmp, src)), {
+				recursive: true,
+				filter: f => fs.lstatSync(f).isDirectory() || keep.test(f),
+			});
+		} catch (err) {
+			console.error(`could not copy ${src}: ${err?.message ?? err}`);
+		}
+	}
+	console.log(`logs copied to ${dest}`);
+}
 
 // ---------- helpers ----------
 async function checkSurvivor(state) {

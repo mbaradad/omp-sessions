@@ -1,67 +1,24 @@
-import { spawn } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { type ClientToHost, type FileChange, type QueueOp, type SessionMeta, type TaskQueue, sessionDir, sessionsRoot } from "../shared/protocol";
+import { settleDeadHost } from "../shared/health";
+import { type LaunchOptions, canConnect, findOmp, launchHost, pidAlive, readHostVersion, sendToHost } from "../shared/launch";
+import { type FileChange, type QueueOp, type SessionMeta, type TaskQueue, sessionDir, sessionsRoot } from "../shared/protocol";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
+import { type ProjectInfo, findProject } from "./worktree-git";
 
-/** Fire-and-forget control message to a running host; false when it is unreachable. */
-export function sendToHost(meta: SessionMeta, msg: ClientToHost): Promise<boolean> {
-	const { promise, resolve } = Promise.withResolvers<boolean>();
-	const sock = net.createConnection(meta.socket, () => {
-		sock.end(`${JSON.stringify(msg)}\n`);
-		resolve(true);
-	});
-	sock.setTimeout(3000, () => {
-		sock.destroy();
-		resolve(false);
-	});
-	sock.on("error", () => resolve(false));
-	return promise;
-}
+const rootCache = new Map<string, ProjectInfo>();
 
-function canConnect(socket: string): Promise<boolean> {
-	const { promise, resolve } = Promise.withResolvers<boolean>();
-	const sock = net.createConnection(socket, () => {
-		sock.destroy();
-		resolve(true);
-	});
-	sock.setTimeout(1000, () => {
-		sock.destroy();
-		resolve(false);
-	});
-	sock.on("error", () => resolve(false));
-	return promise;
-}
-
-function pidAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
-
-const rootCache = new Map<string, { root: string; isRepo: boolean }>();
-
-/** Project a folder belongs to: the enclosing git repository, else the folder itself. */
-export function projectRoot(cwd: string): { root: string; isRepo: boolean } {
+/**
+ * Project a folder belongs to: the enclosing git repository, else the folder itself. Linked git
+ * worktrees map to their main repository (with `worktree` set), so they group under it.
+ */
+export function projectRoot(cwd: string): ProjectInfo {
 	const cached = rootCache.get(cwd);
 	if (cached) return cached;
-	let dir = cwd;
-	let found: { root: string; isRepo: boolean } = { root: cwd, isRepo: false };
-	while (dir !== path.dirname(dir) && dir !== os.homedir()) {
-		if (fs.existsSync(path.join(dir, ".git"))) {
-			found = { root: dir, isRepo: true };
-			break;
-		}
-		dir = path.dirname(dir);
-	}
+	const found = findProject(cwd);
 	rootCache.set(cwd, found);
 	return found;
 }
@@ -71,27 +28,16 @@ function isWithin(child: string, parent: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-/** Finds the omp executable: explicit setting, PATH, then common install locations. */
+/** Finds the omp executable: `omp.path` setting, PATH, then common install locations. */
 export function resolveOmpPath(): string | undefined {
-	const configured = vscode.workspace.getConfiguration("omp").get<string>("path")?.trim();
-	if (configured) return configured.startsWith("~/") ? path.join(os.homedir(), configured.slice(2)) : configured;
-	const dirs = (process.env.PATH ?? "").split(path.delimiter);
-	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
-	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
-	const names = process.platform === "win32" ? ["omp.exe", "omp.cmd", "omp.bat", "omp"] : ["omp"];
-	for (const d of dirs) {
-		if (!d) continue;
-		for (const name of names) {
-			const candidate = path.join(d, name);
-			try {
-				fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-				return candidate;
-			} catch {
-				/* keep looking */
-			}
-		}
+	return findOmp(vscode.workspace.getConfiguration("omp").get<string>("path"));
+}
+
+/** Thrown by `SessionManager.launch` when no omp executable is found (see `onOmpMissing`). */
+export class OmpMissingError extends Error {
+	constructor() {
+		super("Could not find the `omp` executable. Install omp or set `omp.path` in settings.");
 	}
-	return undefined;
 }
 
 export class SessionManager implements vscode.Disposable {
@@ -104,7 +50,14 @@ export class SessionManager implements vscode.Disposable {
 	private timer: NodeJS.Timeout;
 	private watcher: fs.FSWatcher | undefined;
 
+	/** Version of this extension (from the package.json next to `out/host.js`), recorded by hosts it starts. */
+	readonly version: string;
+	private readonly missingEmitter = new vscode.EventEmitter<void>();
+	/** Fires when a launch fails because the omp executable cannot be found. */
+	readonly onOmpMissing = this.missingEmitter.event;
+
 	constructor(private readonly hostScript: string) {
+		this.version = readHostVersion(hostScript);
 		fs.mkdirSync(sessionsRoot(), { recursive: true, mode: 0o700 });
 		this.refresh();
 		this.timer = setInterval(() => this.refresh(), 1000);
@@ -138,9 +91,7 @@ export class SessionManager implements vscode.Disposable {
 			} catch {
 				continue;
 			}
-			if (meta.status !== "stopped" && !pidAlive(meta.pid)) {
-				meta = { ...meta, status: "stopped", exitReason: meta.exitReason ?? "host process died" };
-			}
+			if (meta.status !== "stopped") meta = settleDeadHost(meta, pidAlive(meta.pid));
 			next.set(id, meta);
 		}
 		let changed = next.size !== this.sessions.size;
@@ -165,8 +116,11 @@ export class SessionManager implements vscode.Disposable {
 		});
 	}
 
+	/** Session folder overlaps a workspace folder; sessions in linked git worktrees count for their main repository. */
 	inWorkspace(meta: SessionMeta): boolean {
-		return (vscode.workspace.workspaceFolders ?? []).some(f => f.uri.scheme === "file" && (isWithin(meta.cwd, f.uri.fsPath) || isWithin(f.uri.fsPath, meta.cwd)));
+		const project = projectRoot(meta.cwd);
+		const dirs = project.worktree ? [meta.cwd, project.root] : [meta.cwd];
+		return (vscode.workspace.workspaceFolders ?? []).some(f => f.uri.scheme === "file" && dirs.some(d => isWithin(d, f.uri.fsPath) || isWithin(f.uri.fsPath, d)));
 	}
 
 	changes(id: string): FileChange[] {
@@ -192,37 +146,24 @@ export class SessionManager implements vscode.Disposable {
 	 * Launch a detached host. Reusing an existing id resumes that session's omp transcript with
 	 * the omp arguments it was created with (persisted in `launch.json`).
 	 */
-	launch(opts: { cwd: string; id?: string; resumeFile?: string; title?: string; goal?: string; ompArgs?: string[] }): string {
+	launch(opts: LaunchOptions): string {
 		const omp = resolveOmpPath();
-		if (!omp) throw new Error("Could not find the `omp` executable. Set `omp.path` in settings.");
-		const id = opts.id ?? `${Date.now().toString(36)}${crypto.randomBytes(3).toString("hex")}`;
-		const launchFile = path.join(sessionDir(id), "launch.json");
-		let ompArgs = opts.ompArgs;
-		if (!ompArgs && opts.id) {
-			try {
-				ompArgs = (JSON.parse(fs.readFileSync(launchFile, "utf8")) as { ompArgs?: string[] }).ompArgs;
-			} catch {
-				/* sessions created before launch.json existed */
-			}
+		if (!omp) {
+			this.missingEmitter.fire();
+			throw new OmpMissingError();
 		}
-		ompArgs ??= vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
-		const argv = [this.hostScript, "--daemonize", "--id", id, "--cwd", opts.cwd, "--omp", omp];
-		if (opts.resumeFile) argv.push("--resume", opts.resumeFile);
-		if (opts.title) argv.push("--title", opts.title);
-		if (opts.goal) argv.push("--goal", opts.goal);
-		for (const a of ompArgs) argv.push("--omp-arg", a);
-		fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
-		fs.writeFileSync(launchFile, JSON.stringify({ ompArgs }));
-		// The launcher's cwd is irrelevant (the host chdirs omp itself) and must exist.
-		const child = spawn(process.execPath, argv, {
-			cwd: os.homedir(),
-			detached: true,
-			stdio: "ignore",
-			windowsHide: true,
-			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-		});
-		child.on("error", err => void vscode.window.showErrorMessage(`Could not start the omp session host: ${err.message}`));
-		child.unref();
+		const extraArgs = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
+		const id = launchHost(
+			{
+				hostScript: this.hostScript,
+				omp,
+				hostVersion: this.version,
+				extraArgs,
+				onError: err => void vscode.window.showErrorMessage(`Could not start the omp session host: ${err.message}`),
+			},
+			opts,
+		);
+		if (opts.id) this.refresh();
 		return id;
 	}
 
@@ -279,6 +220,7 @@ export class SessionManager implements vscode.Disposable {
 		this.watcher?.close();
 		this.emitter.dispose();
 		this.transitionEmitter.dispose();
+		this.missingEmitter.dispose();
 	}
 }
 

@@ -2,14 +2,18 @@
 // attachments, and a composer with slash-command / @file completion.
 import { Marked, type Tokens } from "marked";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
+import { CONTEXT_MENTIONS, findMentions, splitContext } from "../shared/mentions";
 import type { FileChange, OmpFrame, SessionMeta, TaskQueue, UiRequest } from "../shared/protocol";
+import { SNIPPET_PREFIX } from "../shared/snippets";
 import type { DiffsByPath, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { hasAnsi, renderAnsi } from "./ansi";
 import { AttachmentTray } from "./attachments";
 import { renderFileDiff } from "./diffview";
 import { copyButton, escapeHtml, h, icon, post, rec, str, vscode } from "./dom";
+import { FindBar, countMatches } from "./find";
 import { highlight, languageFor } from "./highlight";
 import { fileLink, installLinkHandler, linkify, onPathsResolved, splitLine } from "./links";
+import { dayKey, dayLabel, messageTime } from "./time";
 
 // ---------- markdown ----------
 const md = new Marked({ gfm: true, breaks: false });
@@ -66,20 +70,39 @@ const widgets = new Map<string, string[]>();
 const statuses = new Map<string, string>();
 let agentBusy = false;
 let totalCost = 0;
+/** `omp.chat.toolCardsCollapsed`: new non-edit tool cards start closed. */
+let toolCardsCollapsed = true;
 const logoUrl = document.body.dataset.logo ?? "";
+
+/** Empty-state cards that fill the composer (context mentions expand when sent). */
+const STARTERS: Array<{ title: string; detail: string; prompt: string }> = [
+	{ title: "Explain this project", detail: "Purpose, layout, how to build and test", prompt: "Explain this project: what it does, how the code is organized, the main entry points, and how to build, run and test it." },
+	{ title: "Find bugs in the open file", detail: "Sends the active editor's file", prompt: "Find bugs in @file. For each one give the line, why it is wrong, and a fix." },
+	{ title: "Write tests for…", detail: "Sends your editor selection", prompt: "Write tests for @selection, following this project's existing test setup. Cover edge cases." },
+	{ title: "Review my uncommitted changes", detail: "Sends the git diff", prompt: "Review my uncommitted changes for bugs, risky edits and missing tests: @git" },
+	{ title: "Plan a feature", detail: "Questions first, then a step-by-step plan", prompt: "Plan this feature before writing any code. Ask me clarifying questions first, then propose a step-by-step plan: " },
+];
 
 // ---------- layout ----------
 const app = document.getElementById("app") as HTMLElement;
 const header = h("div", { class: "header" });
 const banner = h("div", { class: "banner hidden" });
-const transcript = h("div", { class: "transcript" });
+const transcript = h("div", { class: "transcript", role: "region", "aria-label": "Conversation", tabindex: "-1" });
+const starters = h(
+	"div",
+	{ class: "starters" },
+	...STARTERS.map(s => h("button", { class: "starter", onclick: () => fillComposer(s.prompt) }, h("span", { class: "starter-title" }, s.title), h("span", { class: "starter-detail" }, s.detail))),
+);
 const emptyState = h(
 	"div",
 	{ class: "empty" },
 	logoUrl ? h("img", { class: "empty-logo", src: logoUrl, alt: "" }) : "",
 	h("div", { class: "empty-title" }, "What should omp do?"),
-	h("div", { class: "empty-hints" }, "Runs in the background on this machine — close the laptop, come back later.", h("br"), "/ commands · @ files · ! shell · paste images & files"),
+	starters,
+	h("div", { class: "empty-hints" }, "Runs in the background on this machine — close the laptop, come back later.", h("br"), "/ commands · @ files & context (@selection @file @problems @git @terminal) · ! shell · paste images & files"),
 );
+/** Screen-reader announcements for agent status changes (not the streaming text itself). */
+const liveRegion = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
 const jumpBtn = h("button", { class: "jump hidden", title: "Scroll to bottom", onclick: () => scrollToBottom(true) }, "↓");
 const dialogs = h("div", { class: "dialogs" });
 const todoBox = h("div", { class: "todos hidden" });
@@ -87,7 +110,8 @@ const widgetBox = h("div", { class: "widgets hidden" });
 const queueBox = h("div", { class: "queue hidden" });
 const taskBar = h("div", { class: "taskbar hidden" });
 const popup = h("div", { class: "popup hidden" });
-const input = h("textarea", { class: "input", rows: "1", placeholder: "Ask omp…   / commands · @ files · ! shell · paste images or files" });
+const input = h("textarea", { class: "input", rows: "1", "aria-label": "Message omp", placeholder: "Ask omp…   / commands · @ files & context · ! shell · paste images or files" });
+const mentionChips = h("div", { class: "mention-chips hidden", "aria-label": "Context attached when sending" });
 const attachBtn = h("button", { class: "icon-btn attach", title: "Attach images or files" }, icon("clip"));
 const sendBtn = h("button", { class: "send", title: "Send (Enter)" }, icon("send"));
 const stopBtn = h("button", { class: "stop hidden", title: "Interrupt (Esc)" }, icon("stop"));
@@ -96,14 +120,70 @@ const tray = new AttachmentTray(
 	() => updateSendState(),
 	msg => appendNotice(msg, "warning"),
 );
-const inputBox = h("div", { class: "input-box" }, tray.el, input, h("div", { class: "input-actions" }, attachBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
+const inputBox = h("div", { class: "input-box" }, tray.el, mentionChips, input, h("div", { class: "input-actions" }, attachBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
 const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, inputBox, footer);
-const main = h("div", { class: "main" }, transcript, jumpBtn);
-app.append(header, banner, main, dialogs, todoBox, widgetBox, composer);
+const findBar = new FindBar(transcript, {
+	hiddenMatches: query => countMatches(hiddenMessages, query),
+	loadAll: () => {
+		while (hiddenMessages.length) showEarlier();
+	},
+	onClose: () => input.focus(),
+});
+const main = h("div", { class: "main" }, findBar.el, transcript, jumpBtn);
+app.append(header, banner, main, dialogs, todoBox, widgetBox, composer, liveRegion);
 installLinkHandler();
+
+let lastAnnounced = "";
+function announce(text: string): void {
+	if (text === lastAnnounced) return;
+	lastAnnounced = text;
+	liveRegion.textContent = text;
+}
+
+function fillComposer(text: string): void {
+	input.value = text;
+	autosize();
+	input.focus();
+	input.selectionStart = input.selectionEnd = input.value.length;
+	saveDraft();
+}
 
 function setAllCards(open: boolean): void {
 	for (const card of cards.values()) card.el.open = open;
+}
+
+/** Alt+T / menu: collapse every tool card if any is open, else expand all. */
+function toggleAllCards(): void {
+	setAllCards(![...cards.values()].some(c => c.el.open));
+}
+
+/** Composer chips for the context @mentions that will be expanded when sending. */
+function renderMentionChips(): void {
+	const kinds = findMentions(input.value);
+	mentionChips.classList.toggle("hidden", kinds.length === 0);
+	mentionChips.replaceChildren(
+		...kinds.map(kind =>
+			h(
+				"span",
+				{ class: "mchip", title: CONTEXT_MENTIONS.find(c => c.name === kind)?.description ?? "" },
+				`@${kind}`,
+				h(
+					"button",
+					{
+						class: "x",
+						title: `Remove @${kind}`,
+						onclick: () => {
+							input.value = input.value.replace(new RegExp(`(^|[\\s(\\[{,;])@${kind}(?![\\w/-]|\\.\\w) ?`, "g"), "$1");
+							autosize();
+							saveDraft();
+							input.focus();
+						},
+					},
+					"×",
+				),
+			),
+		),
+	);
 }
 
 // Click any chat image to view it full size.
@@ -284,7 +364,7 @@ function getCard(id: string, name: string): ToolCard {
 	el.addEventListener("toggle", () => {
 		card.userToggled = true;
 	});
-	if (EDIT_TOOLS[name] || name === "ask") el.open = true;
+	if (EDIT_TOOLS[name] || name === "ask" || !toolCardsCollapsed) el.open = true;
 	cards.set(id, card);
 	return card;
 }
@@ -448,7 +528,7 @@ function loadMessages(list: unknown[]): void {
 		const cost = rec(r?.usage)?.cost;
 		if (r?.role === "assistant" && typeof cost === "number") totalCost += cost;
 		if (r?.role === "user" && r.attribution !== "agent") {
-			const text = contentText(r.content);
+			const text = splitContext(contentText(r.content)).text;
 			if (text.trim()) promptHistory.push(text);
 		}
 	}
@@ -474,23 +554,52 @@ function showEarlier(): void {
 	earlierBtn.after(box);
 	const height = transcript.scrollHeight;
 	const top = transcript.scrollTop;
+	const laterDay = lastDay;
 	sink = box;
 	accounting = false;
+	lastDay = "";
 	try {
 		for (const m of chunk) addMessage(m);
 	} finally {
 		sink = transcript;
 		accounting = true;
 	}
+	// The day separator that used to open the transcript is redundant if the loaded turns end on that day.
+	const boxDay = lastDay;
+	lastDay = laterDay;
+	const next = [...transcript.querySelectorAll<HTMLElement>(".day-sep")].find(s => !box.contains(s) && box.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING);
+	if (next && next.dataset.day === boxDay) next.remove();
 	linkify(box);
 	// Keep what the reader was looking at in place.
 	transcript.scrollTop = top + (transcript.scrollHeight - height);
 	updateEarlier();
+	findBar.refresh();
+}
+
+/** Last day a separator was inserted for (in the block being rendered). */
+let lastDay = "";
+function daySeparator(m: Record<string, unknown>): HTMLElement | undefined {
+	const ts = messageTime(m.timestamp);
+	if (ts === undefined || dayKey(ts) === lastDay) return undefined;
+	lastDay = dayKey(ts);
+	return h("div", { class: "divider day-sep", "data-day": lastDay, role: "separator" }, dayLabel(ts));
+}
+
+function timeTitle(m: Record<string, unknown>): string | undefined {
+	const ts = messageTime(m.timestamp);
+	return ts === undefined ? undefined : new Date(ts).toLocaleString();
+}
+
+function shortTime(m: Record<string, unknown>): string {
+	const ts = messageTime(m.timestamp);
+	return ts === undefined ? "" : new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function renderUser(m: Record<string, unknown>): HTMLElement {
-	const text = contentText(m.content);
-	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}` });
+	const full = contentText(m.content);
+	// Context expanded from @mentions is collapsed below what the user typed.
+	const { text, context } = splitContext(full);
+	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}`, title: timeTitle(m) });
 	const bubble = h("div", { class: "bubble" });
 	const queued = /^\[Task (\d+)\/(\d+) from the queue\] /.exec(text);
 	if (queued) {
@@ -498,6 +607,18 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		renderMarkdownInto(bubble, text.slice(queued[0].length).replace(/\n\nWork through this task completely[\s\S]*$/, ""));
 		bubble.prepend(h("div", { class: "task-chip" }, `Queued task ${queued[1]}/${queued[2]}`));
 	} else renderMarkdownInto(bubble, text);
+	if (context) {
+		const body = h("div", { class: "md" });
+		const kinds = findMentions(text);
+		const details = h("details", { class: "ctx" }, h("summary", {}, `Context from VS Code${kinds.length ? `: ${kinds.map(k => `@${k}`).join(" ")}` : ""}`), body);
+		details.addEventListener("toggle", () => {
+			if (details.open && !body.childElementCount) {
+				renderMarkdownInto(body, context);
+				linkify(body);
+			}
+		});
+		bubble.append(details);
+	}
 	const imgs = Array.isArray(m.content) ? m.content.map(b => rec(b)).filter(b => b?.type === "image") : [];
 	if (imgs.length) {
 		const row = h("div", { class: "user-images" });
@@ -510,9 +631,10 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		h(
 			"div",
 			{ class: "msg-actions" },
-			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text }) }, icon("edit")) : "",
-			userAuthored ? h("button", { class: "icon-btn", title: "Fork: continue from this message in a new transcript", onclick: () => post({ type: "forkFrom", text }) }, icon("fork")) : "",
+			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text: full }) }, icon("edit")) : "",
+			userAuthored ? h("button", { class: "icon-btn", title: "Fork: continue from this message in a new transcript", onclick: () => post({ type: "forkFrom", text: full }) }, icon("fork")) : "",
 			copyButton(() => text, "Copy message"),
+			shortTime(m) ? h("span", { class: "msg-meta" }, shortTime(m)) : "",
 		),
 	);
 	if (accounting && userAuthored && text.trim()) promptHistory.push(text);
@@ -583,7 +705,7 @@ function renderAssistantInto(el: HTMLElement, m: Record<string, unknown>, live: 
 		const usage = rec(m.usage);
 		const cost = typeof usage?.cost === "number" ? `$${usage.cost.toFixed(4)}` : "";
 		const tokens = typeof usage?.totalTokens === "number" ? `${Math.round(usage.totalTokens / 100) / 10}k tok` : "";
-		const info = [str(m.model), tokens, cost].filter(Boolean).join(" · ");
+		const info = [shortTime(m), str(m.model), tokens, cost].filter(Boolean).join(" · ");
 		el.append(h("div", { class: "msg-actions" }, copyButton(() => text, "Copy response"), info ? h("span", { class: "msg-meta" }, info) : ""));
 	}
 }
@@ -654,6 +776,8 @@ function addMessage(message: unknown, messageId?: string, live = false): void {
 		if (!el) {
 			el = renderUser(m);
 			messageEls.set(key, el);
+			const sep = daySeparator(m);
+			if (sep) sink.append(sep);
 			sink.append(el);
 		}
 	} else if (role === "assistant") {
@@ -662,6 +786,8 @@ function addMessage(message: unknown, messageId?: string, live = false): void {
 			messageEls.set(key, el);
 			sink.append(el);
 		}
+		const title = timeTitle(m);
+		if (title) el.title = title;
 		renderAssistantInto(el, m, live);
 		const cost = rec(m.usage)?.cost;
 		if (!live && accounting && typeof cost === "number") {
@@ -856,16 +982,30 @@ document.addEventListener("mousedown", e => {
 type MenuItem = [string, () => void, string?] | null;
 function openMenu(anchor: HTMLElement, groups: MenuItem[]): void {
 	closeMenus();
-	const menu = h("div", { class: "menu" });
+	const menu = h("div", { class: "menu", role: "menu" });
 	for (const it of groups) {
-		if (!it) menu.append(h("div", { class: "sep" }));
-		else menu.append(h("button", { onclick: () => (closeMenus(), it[1]()) }, h("span", {}, it[0]), it[2] ? h("span", { class: "kbd" }, it[2]) : ""));
+		if (!it) menu.append(h("div", { class: "sep", role: "separator" }));
+		else menu.append(h("button", { role: "menuitem", onclick: () => (closeMenus(), it[1]()) }, h("span", {}, it[0]), it[2] ? h("span", { class: "kbd" }, it[2]) : ""));
 	}
 	document.body.append(menu);
 	const r = anchor.getBoundingClientRect();
 	menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
 	menu.style.right = `${Math.max(4, window.innerWidth - r.right)}px`;
 	menuEl = menu;
+	menuKeys(menu);
+	menu.querySelector("button")?.focus();
+}
+
+/** Arrow keys / Home / End move focus between a menu's buttons. */
+function menuKeys(menu: HTMLElement): void {
+	menu.addEventListener("keydown", e => {
+		const items = [...menu.querySelectorAll<HTMLButtonElement>(":scope > button, .levels > button, .plist > button")];
+		const at = items.findIndex(b => b === document.activeElement);
+		const target = e.key === "ArrowDown" ? at + 1 : e.key === "ArrowUp" ? (at < 0 ? items.length - 1 : at - 1) : e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : null;
+		if (target === null || !items.length || (e.target instanceof HTMLInputElement && e.key !== "ArrowDown")) return;
+		e.preventDefault();
+		items[(target + items.length) % items.length].focus();
+	});
 }
 
 const cmd = (name: PanelCommand) => () => post({ type: "command", name });
@@ -884,8 +1024,8 @@ function renderHeader(): void {
 			["Switch to earlier transcript…", cmd("resumeTranscript"), "/resume"],
 			null,
 			["Compact context", cmd("compact"), "/compact"],
-			["Collapse all tool cards", () => setAllCards(false)],
-			["Expand all tool cards", () => setAllCards(true)],
+			["Collapse / expand all tool cards", toggleAllCards, "Alt+T"],
+			["Find in conversation", () => findBar.open(), "Ctrl/⌘+F"],
 			["Goal…", cmd("goal"), "/goal"],
 			["Subagents…", cmd("agents"), "/agents"],
 			[`Fast mode: ${state?.fastModeEnabled ? "on" : "off"}`, cmd("toggleFast"), "/fast"],
@@ -893,7 +1033,9 @@ function renderHeader(): void {
 			null,
 			["Copy last response", cmd("copyLast"), "/copy"],
 			["Session stats", cmd("stats"), "/cost"],
-			["Export HTML", cmd("export"), "/export"],
+			["Copy as Markdown", cmd("exportMarkdownCopy"), "/export copy"],
+			["Save as Markdown…", cmd("exportMarkdownSave"), "/export md"],
+			["Export HTML", cmd("export"), "/export html"],
 			["Rename…", cmd("rename")],
 			null,
 			["Log in to provider…", cmd("login"), "/login"],
@@ -926,16 +1068,24 @@ function renderHeader(): void {
 		banner.replaceChildren(h("span", { class: "spinner" }), h("span", {}, "Connecting to the session host…"));
 	} else banner.className = "banner hidden";
 	input.disabled = stopped;
+	starters.classList.toggle("hidden", stopped);
 	updateSendState();
 	vscode.setState({ ...(rec(vscode.getState()) ?? {}), sessionId: meta?.id });
 }
 
 function renderFooter(): void {
 	const model = state?.model;
-	const modelBtn = h("button", { class: "model-btn", title: "Model & thinking level" }, model ? model.name || model.id : "model", state?.thinkingLevel ? h("span", { class: "dim" }, ` · ${state.thinkingLevel}`) : "");
+	const modelBtn = h("button", { class: "model-btn", title: "Switch model", "aria-haspopup": "menu" }, model ? model.name || model.id : "model");
 	modelBtn.addEventListener("click", () => {
 		post({ type: "getModels" });
 		showModelPicker(modelBtn);
+	});
+	const thinkingBtn = state?.thinkingLevel
+		? h("button", { class: "model-btn thinking-btn", title: "Thinking level", "aria-haspopup": "menu", "aria-label": `Thinking level: ${state.thinkingLevel}` }, h("span", { class: "dim" }, "thinking "), state.thinkingLevel)
+		: null;
+	thinkingBtn?.addEventListener("click", () => {
+		post({ type: "getModels" });
+		showThinkingMenu(thinkingBtn);
 	});
 	const ctx = state?.contextUsage;
 	const pct = ctx ? Math.round(ctx.percent) : null;
@@ -943,6 +1093,7 @@ function renderFooter(): void {
 	const goal = rec(state?.goal);
 	footer.replaceChildren(
 		modelBtn,
+		thinkingBtn ?? "",
 		pct !== null ? h("span", { class: `pill${pct > 80 ? " warn" : ""}`, title: `${ctx?.tokens?.toLocaleString()} / ${ctx?.contextWindow?.toLocaleString()} tokens` }, h("span", { class: "meter" }, h("span", { style: `width:${Math.min(100, pct)}%` })), `${pct}%`) : "",
 		totalCost > 0 ? h("span", { class: "pill", title: "Cost of the messages shown" }, `$${totalCost.toFixed(2)}`) : "",
 		state?.fastModeEnabled ? h("span", { class: "pill accent" }, "fast") : "",
@@ -954,6 +1105,7 @@ function renderFooter(): void {
 			: h("span", { class: "dim" }, meta?.status === "stopped" ? "stopped" : "ready"),
 	);
 	stopBtn.classList.toggle("hidden", !busy);
+	announce(meta?.status === "waiting" ? "omp needs your input" : busy ? (state?.isCompacting ? "omp is compacting context" : "omp is working") : meta?.status === "stopped" ? "Session stopped" : "omp is ready");
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
 }
 
@@ -1051,8 +1203,8 @@ let modelsCache: Array<{ provider: string; id: string; name?: string }> = [];
 let levelsCache: string[] = [];
 function showModelPicker(anchor: HTMLElement): void {
 	closeMenus();
-	const menu: HTMLElement & { refill?: () => void } = h("div", { class: "menu picker" });
-	const filter = h("input", { class: "dinput", type: "text", placeholder: "Filter models…" });
+	const menu: HTMLElement & { refill?: () => void } = h("div", { class: "menu picker", role: "menu" });
+	const filter = h("input", { class: "dinput", type: "text", placeholder: "Filter models…", "aria-label": "Filter models" });
 	const list = h("div", { class: "plist" });
 	const levels = h("div", { class: "levels" });
 	const fill = () => {
@@ -1084,8 +1236,32 @@ function showModelPicker(anchor: HTMLElement): void {
 	document.body.append(menu);
 	menuEl = menu;
 	menu.refill = fill;
+	menuKeys(menu);
 	fill();
 	filter.focus();
+}
+
+/** Thinking level only (footer pill); levels arrive with the model list. */
+function showThinkingMenu(anchor: HTMLElement): void {
+	closeMenus();
+	const menu: HTMLElement & { refill?: () => void } = h("div", { class: "menu", role: "menu" });
+	const fill = () => {
+		const focused = menu.contains(document.activeElement);
+		menu.replaceChildren(
+			h("div", { class: "small dim pad" }, "Thinking level"),
+			...levelsCache.map(l => h("button", { role: "menuitemradio", "aria-checked": String(state?.thinkingLevel === l), class: state?.thinkingLevel === l ? "current" : "", onclick: () => (closeMenus(), post({ type: "setThinking", level: l })) }, l)),
+		);
+		if (!levelsCache.length) menu.append(h("div", { class: "dim small pad" }, "Loading…"));
+		if (!focused) (menu.querySelector<HTMLElement>("button.current") ?? menu.querySelector("button"))?.focus();
+	};
+	const r = anchor.getBoundingClientRect();
+	menu.style.bottom = `${window.innerHeight - r.top + 4}px`;
+	menu.style.left = `${r.left}px`;
+	document.body.append(menu);
+	menuEl = menu;
+	menu.refill = fill;
+	menuKeys(menu);
+	fill();
 }
 
 // ---------- composer ----------
@@ -1094,9 +1270,12 @@ let popupItems: Array<{ label: string; detail?: string; insert: string; badge?: 
 let popupIndex = 0;
 let fileReq = 0;
 let fileTimer: number | undefined;
+/** Context mentions matching the pending `@` query; shown first, files follow when they arrive. */
+let mentionItems: typeof popupItems = [];
 
 function hidePopup(): void {
 	popup.classList.add("hidden");
+	input.setAttribute("aria-expanded", "false");
 	popupKind = null;
 	popupItems = [];
 }
@@ -1110,11 +1289,12 @@ function showPopup(kind: "slash" | "file", items: typeof popupItems): void {
 	popupItems = items;
 	popupIndex = Math.min(popupIndex, items.length - 1);
 	popup.classList.remove("hidden");
+	input.setAttribute("aria-expanded", "true");
 	popup.replaceChildren(
 		...items.map((it, i) =>
 			h(
 				"div",
-				{ class: `pitem${i === popupIndex ? " active" : ""}`, onmousedown: (e: Event) => (e.preventDefault(), acceptPopup(i)) },
+				{ class: `pitem${i === popupIndex ? " active" : ""}`, role: "option", "aria-selected": String(i === popupIndex), onmousedown: (e: Event) => (e.preventDefault(), acceptPopup(i)) },
 				h("span", { class: "plabel" }, it.label),
 				it.badge ? h("span", { class: "pbadge" }, it.badge) : "",
 				it.detail ? h("span", { class: "pdetail" }, it.detail) : "",
@@ -1130,7 +1310,12 @@ function acceptPopup(i = popupIndex): void {
 	const pos = input.selectionStart ?? input.value.length;
 	const before = input.value.slice(0, pos);
 	const after = input.value.slice(pos);
-	if (popupKind === "slash") {
+	if (popupKind === "slash" && it.insert.startsWith(`/${SNIPPET_PREFIX}`)) {
+		// Snippets replace the command with their text (placeholders filled by the extension).
+		input.value = after.trimStart();
+		input.selectionStart = input.selectionEnd = 0;
+		post({ type: "expandSnippet", name: it.insert.slice(SNIPPET_PREFIX.length + 1) });
+	} else if (popupKind === "slash") {
 		input.value = `${it.insert} ${after.trimStart()}`;
 		input.selectionStart = input.selectionEnd = it.insert.length + 1;
 	} else if (popupKind === "file") {
@@ -1154,7 +1339,7 @@ function updateCompletion(): void {
 			.filter(c => c.name.toLowerCase().includes(q))
 			.sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name))
 			.slice(0, 60)
-			.map(c => ({ label: `/${c.name}${c.input?.hint ? ` ${c.input.hint}` : ""}`, detail: c.description, insert: `/${c.name}`, badge: c.local ? "vscode" : undefined }));
+			.map(c => ({ label: `/${c.name}${c.input?.hint ? ` ${c.input.hint}` : ""}`, detail: c.description, insert: `/${c.name}`, badge: c.name.startsWith(SNIPPET_PREFIX) ? "snippet" : c.local ? "vscode" : undefined }));
 		showPopup("slash", items);
 		return;
 	}
@@ -1162,6 +1347,8 @@ function updateCompletion(): void {
 	if (at) {
 		clearTimeout(fileTimer);
 		const q = at[1];
+		mentionItems = CONTEXT_MENTIONS.filter(c => c.name.startsWith(q.toLowerCase())).map(c => ({ label: `@${c.name}`, detail: c.description, insert: c.name, badge: "context" }));
+		if (mentionItems.length) showPopup("file", mentionItems);
 		fileTimer = window.setTimeout(() => post({ type: "suggestFiles", reqId: ++fileReq, query: q }), 120);
 		return;
 	}
@@ -1172,6 +1359,7 @@ function autosize(): void {
 	input.style.height = "auto";
 	input.style.height = `${Math.min(input.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
 	updateSendState();
+	renderMentionChips();
 }
 
 function send(): void {
@@ -1300,6 +1488,12 @@ document.addEventListener("keydown", e => {
 		e.preventDefault();
 		closeMenus();
 		input.focus();
+	} else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+		e.preventDefault();
+		findBar.open();
+	} else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === "KeyT") {
+		e.preventDefault();
+		toggleAllCards();
 	}
 });
 
@@ -1312,6 +1506,7 @@ function resetTranscript(): void {
 	sideQuestions.clear();
 	totalCost = 0;
 	promptHistory.length = 0;
+	lastDay = "";
 }
 
 // Live clocks: turn elapsed time in the footer and running tool durations.
@@ -1420,7 +1615,7 @@ function handleEvent(ev: OmpFrame): void {
 			appendNotice(`Switched model ${str(ev.from)} → ${str(ev.to)}${ev.reason ? ` (${str(ev.reason)})` : ""}`, "warning");
 			return;
 		case "notice":
-			appendNotice(str(ev.message), (str(ev.level) as "info" | "warning" | "error") || "info");
+			appendNotice(str(ev.message), (str(ev.level) as "info" | "warning" | "error") || "info", ev.markdown === true);
 			return;
 		case "command_output":
 			transcript.append(commandOutputEl(str(ev.text)));
@@ -1513,6 +1708,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			renderQueue(state?.queuedMessages?.steering ?? [], state?.queuedMessages?.followUp ?? []);
 			renderTaskBar(msg.queue);
 			linkify(transcript);
+			findBar.refresh();
 			updateEmpty();
 			requestAnimationFrame(() => scrollToBottom(true));
 			if (meta.status !== "stopped") input.focus();
@@ -1574,6 +1770,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			resetTranscript();
 			loadMessages(msg.messages);
 			linkify(transcript);
+			findBar.refresh();
 			updateEmpty();
 			renderFooter();
 			renderTodos();
@@ -1587,10 +1784,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "fileSuggestions":
 			if (msg.reqId !== fileReq) return;
-			showPopup(
-				"file",
-				msg.files.map(f => ({ label: f, insert: f })),
-			);
+			showPopup("file", [...mentionItems, ...msg.files.map(f => ({ label: f, insert: f }))]);
 			return;
 		case "models":
 			modelsCache = msg.models;
@@ -1599,6 +1793,11 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "commands":
 			commands = msg.commands;
+			return;
+		case "chatConfig":
+			toolCardsCollapsed = msg.toolCardsCollapsed;
+			// Apply to cards the user has not opened or closed themselves.
+			for (const card of cards.values()) if (!card.userToggled && !EDIT_TOOLS[card.name] && card.name !== "ask") card.el.open = !toolCardsCollapsed;
 			return;
 		case "queue":
 			renderTaskBar(msg.queue);

@@ -3,14 +3,14 @@ import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { resolveOmpPath } from "./sessions";
 
-interface ModelEntry {
+export interface ModelEntry {
 	selector: string;
 	name: string;
 	provider: string;
 	contextWindow?: number;
 }
 
-function listModels(cwd: string): Promise<ModelEntry[]> {
+export function listModels(cwd: string): Promise<ModelEntry[]> {
 	const omp = resolveOmpPath();
 	const { promise, resolve } = Promise.withResolvers<ModelEntry[]>();
 	if (!omp) {

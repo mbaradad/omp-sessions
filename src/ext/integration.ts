@@ -306,11 +306,8 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 			if (diff.added === 0 && diff.removed === 0) return;
 			fileStats.push({ session, added: diff.added, removed: diff.removed });
 			if (index > 0) return; // gutter shows the most relevant session only
-			const hover = new vscode.MarkdownString(`Changed by omp · ${session.title.replace(/[*_`[\]\\]/g, "\\$&")}`);
-			const at = (n: number): vscode.DecorationOptions => {
-				const line = Math.min(Math.max(0, n - 1), doc.lineCount - 1);
-				return { range: doc.lineAt(line).range, hoverMessage: hover };
-			};
+			// Hovers for these lines come from editor-plus.ts (session, prompt, links).
+			const at = (n: number): vscode.DecorationOptions => ({ range: doc.lineAt(Math.min(Math.max(0, n - 1), doc.lineCount - 1)).range });
 			// Walk each run of consecutive -/+ lines: + lines are "added" (pure insert) or "modified" (replaced
 			// something); a run with only - lines marks the line after the last kept one.
 			for (const hunk of diff.hunks) {
