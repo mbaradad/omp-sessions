@@ -152,8 +152,13 @@ function saveMeta(now = false): void {
 	const write = () => {
 		metaTimer = undefined;
 		const tmp = `${metaPath}.${process.pid}.tmp`;
-		fs.writeFileSync(tmp, JSON.stringify(meta, null, 1));
-		fs.renameSync(tmp, metaPath);
+		// A failed write (session folder deleted, disk full) must not throw out of shutdown and wedge the host.
+		try {
+			fs.writeFileSync(tmp, JSON.stringify(meta, null, 1));
+			fs.renameSync(tmp, metaPath);
+		} catch (err) {
+			log("meta write failed", String(err));
+		}
 	};
 	if (now) {
 		clearTimeout(metaTimer);
@@ -917,5 +922,7 @@ function finish(code: number | null, reason: string): void {
 			}
 		}
 		logStream.end(() => process.exit(0));
+		// The log may never flush (its folder is gone, disk full): don't outlive the session regardless.
+		setTimeout(() => process.exit(0), 2000);
 	}, 200);
 }

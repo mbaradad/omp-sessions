@@ -417,12 +417,76 @@ function scheduleCard(card: ToolCard): void {
 }
 
 function attachCard(card: ToolCard): void {
-	if (!card.el.isConnected) transcript.append(h("div", { class: "msg assistant" }, card.el));
+	if (!card.el.isConnected) sink.append(h("div", { class: "msg assistant" }, card.el));
 }
 
 // ---------- messages ----------
 const messageEls = new Map<string, HTMLElement>();
 let anonSeq = 0;
+/** Where addMessage puts new elements: the transcript, or a block above it while loading earlier turns. */
+let sink: ParentNode = transcript;
+/** Off while rendering earlier turns: their cost and prompts were already counted when they were hidden. */
+let accounting = true;
+
+/** Long transcripts render their last turns first; older turns load on demand so attaching stays fast. */
+const TAIL_MESSAGES = 160;
+let hiddenMessages: unknown[] = [];
+const earlierBtn = h("button", { class: "earlier-btn", onclick: () => showEarlier() });
+
+/** Index of the user message that starts the turn containing `from` (so tool calls and results stay together). */
+function turnStart(list: unknown[], from: number): number {
+	let i = Math.max(0, from);
+	while (i > 0 && rec(list[i])?.role !== "user") i--;
+	return i;
+}
+
+function loadMessages(list: unknown[]): void {
+	const start = turnStart(list, list.length - TAIL_MESSAGES);
+	hiddenMessages = list.slice(0, start);
+	for (const m of hiddenMessages) {
+		const r = rec(m);
+		const cost = rec(r?.usage)?.cost;
+		if (r?.role === "assistant" && typeof cost === "number") totalCost += cost;
+		if (r?.role === "user" && r.attribution !== "agent") {
+			const text = contentText(r.content);
+			if (text.trim()) promptHistory.push(text);
+		}
+	}
+	for (const m of list.slice(start)) addMessage(m);
+	renderFooter();
+	updateEarlier();
+}
+
+function updateEarlier(): void {
+	if (!hiddenMessages.length) {
+		earlierBtn.remove();
+		return;
+	}
+	earlierBtn.textContent = `Show ${hiddenMessages.length} earlier messages`;
+	if (!earlierBtn.isConnected) transcript.prepend(earlierBtn);
+}
+
+function showEarlier(): void {
+	const start = turnStart(hiddenMessages, hiddenMessages.length - TAIL_MESSAGES);
+	const chunk = hiddenMessages.slice(start);
+	hiddenMessages = hiddenMessages.slice(0, start);
+	const box = h("div", { class: "earlier" });
+	earlierBtn.after(box);
+	const height = transcript.scrollHeight;
+	const top = transcript.scrollTop;
+	sink = box;
+	accounting = false;
+	try {
+		for (const m of chunk) addMessage(m);
+	} finally {
+		sink = transcript;
+		accounting = true;
+	}
+	linkify(box);
+	// Keep what the reader was looking at in place.
+	transcript.scrollTop = top + (transcript.scrollHeight - height);
+	updateEarlier();
+}
 
 function renderUser(m: Record<string, unknown>): HTMLElement {
 	const text = contentText(m.content);
@@ -451,7 +515,7 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 			copyButton(() => text, "Copy message"),
 		),
 	);
-	if (userAuthored && text.trim()) promptHistory.push(text);
+	if (accounting && userAuthored && text.trim()) promptHistory.push(text);
 	linkify(bubble);
 	return el;
 }
@@ -590,17 +654,17 @@ function addMessage(message: unknown, messageId?: string, live = false): void {
 		if (!el) {
 			el = renderUser(m);
 			messageEls.set(key, el);
-			transcript.append(el);
+			sink.append(el);
 		}
 	} else if (role === "assistant") {
 		if (!el) {
 			el = h("div", { class: "msg assistant" });
 			messageEls.set(key, el);
-			transcript.append(el);
+			sink.append(el);
 		}
 		renderAssistantInto(el, m, live);
 		const cost = rec(m.usage)?.cost;
-		if (!live && typeof cost === "number") {
+		if (!live && accounting && typeof cost === "number") {
 			totalCost += cost;
 			renderFooter();
 		}
@@ -608,7 +672,7 @@ function addMessage(message: unknown, messageId?: string, live = false): void {
 		const other = renderOther(m);
 		if (other) {
 			messageEls.set(key, other);
-			transcript.append(other);
+			sink.append(other);
 		}
 	}
 	updateEmpty();
@@ -648,7 +712,7 @@ function onBtwRecord(record: Record<string, unknown>): void {
 		const el = h("div", { class: "side-q" }, h("div", { class: "side-q-head" }, h("span", { class: "chip" }, "side question"), h("span", {}, str(record.question))), answer);
 		sq = { el, answer, text: "" };
 		sideQuestions.set(id, sq);
-		transcript.append(el);
+		sink.append(el);
 	}
 	const followUps = Array.isArray(record.followUps) ? record.followUps.map(f => rec(f) ?? {}) : [];
 	const latest = followUps.length ? followUps[followUps.length - 1] : record;
@@ -1242,6 +1306,7 @@ document.addEventListener("keydown", e => {
 // ---------- events from omp ----------
 function resetTranscript(): void {
 	transcript.replaceChildren(emptyState);
+	hiddenMessages = [];
 	messageEls.clear();
 	cards.clear();
 	sideQuestions.clear();
@@ -1426,7 +1491,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			for (const c of msg.changes) changesByTool.set(c.toolCallId, c);
 			applyDiffs(msg.diffs);
 			resetTranscript();
-			for (const m of msg.messages) addMessage(m);
+			loadMessages(msg.messages);
 			if (msg.inflight) addMessage(msg.inflight.message, msg.inflight.messageId, true);
 			for (const t of msg.runningTools) {
 				const card = getCard(t.toolCallId, t.toolName);
@@ -1507,7 +1572,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			state = msg.state;
 			applyDiffs(msg.diffs);
 			resetTranscript();
-			for (const m of msg.messages) addMessage(m);
+			loadMessages(msg.messages);
 			linkify(transcript);
 			updateEmpty();
 			renderFooter();

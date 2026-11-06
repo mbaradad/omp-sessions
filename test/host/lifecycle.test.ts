@@ -92,3 +92,12 @@ test("omp dying takes the host down cleanly: meta stopped with the exit reason",
 	await until(() => !alive(pid) && !fs.existsSync(h.socket), "host exit");
 	assert.equal(h.meta().status, "stopped");
 });
+
+test("session folder deleted under a running host: stopping still exits host and omp", async t => {
+	const h = await launch(t);
+	const { client: c } = await h.connect();
+	const { pid, ompPid } = h.meta();
+	fs.rmSync(h.dir, { recursive: true, force: true });
+	c.send({ t: "stop" });
+	await until(() => !alive(pid) && !alive(ompPid), "host and omp exit");
+});

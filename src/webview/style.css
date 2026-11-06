@@ -97,7 +97,7 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 /* ---------- transcript ---------- */
 .main { position: relative; flex: 1; min-height: 0; }
 .transcript { height: 100%; overflow-y: auto; padding: 16px 16px 28px; scroll-behavior: auto; }
-.transcript > * { max-width: 980px; margin-left: auto; margin-right: auto; }
+.transcript > *, .earlier > * { max-width: 980px; margin-left: auto; margin-right: auto; }
 .jump {
 	position: absolute; right: 18px; bottom: 14px; border-radius: 50%; width: 30px; height: 30px; padding: 0; justify-content: center;
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -108,7 +108,7 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 .empty-title { font-size: 1.35em; font-weight: 600; color: var(--vscode-foreground); }
 .empty-hints { font-size: 0.92em; line-height: 1.6; }
 
-.msg { position: relative; margin: 0 0 14px; }
+.msg { position: relative; margin-top: 0; margin-bottom: 14px; }
 .msg.user { display: flex; flex-direction: column; align-items: flex-end; }
 .msg.user .bubble {
 	max-width: 85%;
@@ -175,6 +175,13 @@ code.file-link { color: var(--link); }
 .notice.warning { border-color: var(--vscode-charts-yellow, #cca700); }
 .notice.error { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
 .divider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.88em; margin: 14px auto; }
+.earlier { display: contents; }
+.earlier-btn {
+	display: block; margin: 6px auto 14px; padding: 4px 12px;
+	background: none; color: var(--vscode-textLink-foreground); border: 1px solid var(--border); border-radius: 999px;
+	font: inherit; font-size: 0.88em; cursor: pointer;
+}
+.earlier-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
 .note { margin: 8px auto; color: var(--muted); font-size: 0.92em; }
 .note > summary { cursor: pointer; }
