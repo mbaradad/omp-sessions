@@ -446,3 +446,17 @@ button.mini.danger:hover { background: color-mix(in srgb, var(--del-fg) 14%, tra
 .thumb, .att-image img, .md-img { cursor: zoom-in; }
 .lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.72); display: flex; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px; }
 .lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+
+/* ---------- task queue ---------- */
+.taskbar {
+	display: flex; align-items: center; gap: 8px;
+	margin: 0 auto 6px; padding: 5px 8px 5px 10px;
+	border: 1px solid color-mix(in srgb, var(--brand-2) 40%, var(--border));
+	border-radius: var(--radius);
+	background: color-mix(in srgb, var(--brand-2) 7%, transparent);
+	font-size: 0.9em;
+}
+.tb-icon { color: var(--brand-2); display: inline-flex; }
+.tb-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.user.queued-task .bubble { border-color: color-mix(in srgb, var(--brand-2) 55%, var(--border)); }
+.task-chip { display: inline-block; font-size: 0.75em; font-weight: 600; letter-spacing: 0.02em; padding: 0 7px; margin-bottom: 4px; border-radius: 999px; background: var(--brand); color: #fff; }

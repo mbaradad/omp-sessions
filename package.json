@@ -2,7 +2,7 @@
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
 	"description": "Run oh-my-pi (omp) agent sessions in the background per folder, detach/reattach from VS Code, with clickable files and native diffs.",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -60,6 +60,17 @@
 					"id": "omp.sessions",
 					"name": "Sessions",
 					"icon": "media/omp.svg"
+				},
+				{
+					"type": "webview",
+					"id": "omp.chatView",
+					"name": "Chat",
+					"icon": "media/omp.svg"
+				},
+				{
+					"id": "omp.tasks",
+					"name": "Tasks",
+					"icon": "$(checklist)"
 				}
 			]
 		},
@@ -67,6 +78,10 @@
 			{
 				"view": "omp.sessions",
 				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\n[Resume an omp transcript](command:omp.resumeFromHistory)\nSessions keep running on this machine when VS Code disconnects."
+			},
+			{
+				"view": "omp.tasks",
+				"contents": "Queue work for omp: tasks run one after another in the background, even with VS Code closed. Subtasks, drag & drop to reorder, check to complete.\n[Add task](command:omp.tasks.add)"
 			}
 		],
 		"commands": [
@@ -198,6 +213,101 @@
 				"title": "Revert File to Before Session",
 				"category": "omp",
 				"icon": "$(discard)"
+			},
+			{ "command": "omp.openInSidebar", "title": "Open in Side Bar", "category": "omp", "icon": "$(layout-sidebar-left)" },
+			{ "command": "omp.openInEditor", "title": "Open in Editor Tab", "category": "omp", "icon": "$(go-to-file)" },
+			{ "command": "omp.scm.commit", "title": "Commit with omp", "category": "omp", "icon": "$(git-commit)" },
+			{ "command": "omp.scm.review", "title": "Review Uncommitted Changes with omp", "category": "omp", "icon": "$(checklist)" },
+			{ "command": "omp.scm.pr", "title": "Write PR Description with omp", "category": "omp", "icon": "$(git-pull-request)" },
+			{
+				"command": "omp.tasks.add",
+				"title": "Add Task…",
+				"category": "omp",
+				"icon": "$(add)"
+			},
+			{
+				"command": "omp.tasks.addSubtask",
+				"title": "Add Subtask…",
+				"category": "omp",
+				"icon": "$(list-tree)"
+			},
+			{
+				"command": "omp.tasks.edit",
+				"title": "Rename…",
+				"category": "omp",
+				"icon": "$(edit)"
+			},
+			{
+				"command": "omp.tasks.editNotes",
+				"title": "Edit Details…",
+				"category": "omp",
+				"icon": "$(note)"
+			},
+			{
+				"command": "omp.tasks.delete",
+				"title": "Delete",
+				"category": "omp",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "omp.tasks.runNow",
+				"title": "Run Now",
+				"category": "omp",
+				"icon": "$(play)"
+			},
+			{
+				"command": "omp.tasks.start",
+				"title": "Start Queue",
+				"category": "omp",
+				"icon": "$(run-all)"
+			},
+			{
+				"command": "omp.tasks.pause",
+				"title": "Pause Queue",
+				"category": "omp",
+				"icon": "$(debug-pause)"
+			},
+			{
+				"command": "omp.tasks.markDone",
+				"title": "Mark Done",
+				"category": "omp",
+				"icon": "$(check)"
+			},
+			{
+				"command": "omp.tasks.markPending",
+				"title": "Mark Pending (re-run)",
+				"category": "omp",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "omp.tasks.skip",
+				"title": "Skip",
+				"category": "omp",
+				"icon": "$(circle-slash)"
+			},
+			{
+				"command": "omp.tasks.moveUp",
+				"title": "Move Up",
+				"category": "omp",
+				"icon": "$(arrow-up)"
+			},
+			{
+				"command": "omp.tasks.moveDown",
+				"title": "Move Down",
+				"category": "omp",
+				"icon": "$(arrow-down)"
+			},
+			{
+				"command": "omp.tasks.clearDone",
+				"title": "Clear Finished Tasks",
+				"category": "omp",
+				"icon": "$(clear-all)"
+			},
+			{
+				"command": "omp.tasks.openChat",
+				"title": "Open Chat",
+				"category": "omp",
+				"icon": "$(comment-discussion)"
 			}
 		],
 		"menus": {
@@ -226,9 +336,116 @@
 					"command": "omp.toggleGrouping",
 					"when": "view == omp.sessions",
 					"group": "2_view@1"
+				},
+				{
+					"command": "omp.tasks.add",
+					"when": "view == omp.tasks",
+					"group": "navigation@1"
+				},
+				{
+					"command": "omp.tasks.start",
+					"when": "view == omp.tasks",
+					"group": "navigation@2"
+				},
+				{
+					"command": "omp.tasks.pause",
+					"when": "view == omp.tasks",
+					"group": "navigation@3"
+				},
+				{
+					"command": "omp.tasks.clearDone",
+					"when": "view == omp.tasks",
+					"group": "1_tasks@1"
 				}
 			],
 			"view/item/context": [
+				{ "command": "omp.openInSidebar", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "0_open@1" },
+				{ "command": "omp.openInEditor", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "0_open@2" },
+				{
+					"command": "omp.tasks.add",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"group": "inline@1"
+				},
+				{
+					"command": "omp.tasks.start",
+					"when": "view == omp.tasks && viewItem == tasks.session.paused",
+					"group": "inline@2"
+				},
+				{
+					"command": "omp.tasks.pause",
+					"when": "view == omp.tasks && viewItem == tasks.session.auto",
+					"group": "inline@2"
+				},
+				{
+					"command": "omp.tasks.openChat",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"group": "inline@3"
+				},
+				{
+					"command": "omp.tasks.clearDone",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"group": "1_session@1"
+				},
+				{
+					"command": "omp.tasks.runNow",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped|done)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "omp.tasks.addSubtask",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "inline@2"
+				},
+				{
+					"command": "omp.tasks.delete",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
+					"group": "inline@3"
+				},
+				{
+					"command": "omp.tasks.edit",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"group": "1_edit@1"
+				},
+				{
+					"command": "omp.tasks.editNotes",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "1_edit@2"
+				},
+				{
+					"command": "omp.tasks.moveUp",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"group": "2_move@1"
+				},
+				{
+					"command": "omp.tasks.moveDown",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"group": "2_move@2"
+				},
+				{
+					"command": "omp.tasks.markDone",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped)$/",
+					"group": "3_status@1"
+				},
+				{
+					"command": "omp.tasks.markPending",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed|skipped)$/",
+					"group": "3_status@2"
+				},
+				{
+					"command": "omp.tasks.skip",
+					"when": "view == omp.tasks && viewItem == tasks.task.pending",
+					"group": "3_status@3"
+				},
+				{
+					"command": "omp.tasks.openChat",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "4_open@1"
+				},
+				{
+					"command": "omp.tasks.delete",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
+					"group": "5_delete@1"
+				},
 				{
 					"command": "omp.stopSession",
 					"when": "view == omp.sessions && viewItem == session.running",
@@ -327,6 +544,11 @@
 					"group": "omp@4"
 				}
 			],
+			"scm/title": [
+				{ "command": "omp.scm.commit", "when": "scmProvider == git", "group": "omp@1" },
+				{ "command": "omp.scm.review", "when": "scmProvider == git", "group": "omp@2" },
+				{ "command": "omp.scm.pr", "when": "scmProvider == git", "group": "omp@3" }
+			],
 			"explorer/context": [
 				{
 					"command": "omp.newSession",
@@ -345,6 +567,50 @@
 				}
 			],
 			"commandPalette": [
+				{
+					"command": "omp.tasks.addSubtask",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.edit",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.editNotes",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.delete",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.runNow",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.markDone",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.markPending",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.skip",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.moveUp",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.moveDown",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.openChat",
+					"when": "false"
+				},
 				{
 					"command": "omp.openSessionFileDiff",
 					"when": "false"
@@ -381,6 +647,20 @@
 				}
 			]
 		},
+		"walkthroughs": [
+			{
+				"id": "omp.gettingStarted",
+				"title": "omp: background coding agent",
+				"description": "Run omp sessions that keep working while VS Code is closed, review their changes, and queue work.",
+				"steps": [
+					{ "id": "start", "title": "Start a background session", "description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)", "media": { "markdown": "media/walkthrough/start.md" }, "completionEvents": ["onCommand:omp.newSession", "onCommand:omp.newSessionWithOptions"] },
+					{ "id": "chat", "title": "Talk to omp", "description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:omp.focus)", "media": { "markdown": "media/walkthrough/chat.md" }, "completionEvents": ["onCommand:omp.focus", "onCommand:omp.openSession"] },
+					{ "id": "review", "title": "Review and revert changes", "description": "Inline diffs, VS Code diffs, change markers, revert.\n[Review changes](command:omp.reviewChanges)", "media": { "markdown": "media/walkthrough/review.md" }, "completionEvents": ["onCommand:omp.reviewChanges"] },
+					{ "id": "tasks", "title": "Queue tasks", "description": "Tasks with subtasks that run one after another in the background.\n[Add a task](command:omp.tasks.add)", "media": { "markdown": "media/walkthrough/tasks.md" }, "completionEvents": ["onCommand:omp.tasks.add"] },
+					{ "id": "editor", "title": "Use omp from the editor", "description": "Fix with omp, add files, terminal output, git chores.", "media": { "markdown": "media/walkthrough/editor.md" }, "completionEvents": ["onCommand:omp.fixDiagnostics", "onCommand:omp.addToChat", "onCommand:omp.scm.commit"] }
+				]
+			}
+		],
 		"keybindings": [
 			{
 				"command": "omp.focus",
@@ -432,6 +712,13 @@
 					"default": "beside",
 					"description": "Editor column for chat panels."
 				},
+				"omp.chatLocation": {
+					"type": "string",
+					"enum": ["editor", "sidebar"],
+					"default": "editor",
+					"enumDescriptions": ["Open chats as editor tabs (several side by side).", "Open chats in the omp Chat view (move it to the secondary side bar to keep it next to your code)."],
+					"description": "Where clicking a session opens its chat."
+				},
 				"omp.groupBy": {
 					"type": "string",
 					"enum": [
@@ -476,15 +763,22 @@
 		"package": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && vsce package --no-dependencies -o dist/",
 		"install-local": "npm run package && sh scripts/install-local.sh",
 		"publish:vsce": "vsce publish --no-dependencies",
-		"publish:ovsx": "npx --yes ovsx publish --no-dependencies"
+		"publish:ovsx": "npx --yes ovsx publish --no-dependencies",
+		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
+		"test": "node test/run.mjs",
+		"test:unit": "node test/run.mjs unit",
+		"test:host": "node test/run.mjs host"
 	},
 	"devDependencies": {
+		"@types/mocha": "^10.0.10",
 		"@types/node": "^22.20.5",
 		"@types/vscode": "^1.100.0",
+		"@vscode/test-electron": "^3.1.0",
 		"@vscode/vsce": "^4.1.0",
 		"esbuild": "^0.28.2",
 		"highlight.js": "^11.12.0",
 		"marked": "^18.1.3",
+		"mocha": "^11.8.0",
 		"typescript": "^7.0.2"
 	}
 }

@@ -23,6 +23,7 @@ import {
 	blobPath,
 	sessionDir,
 } from "../shared/protocol";
+import { applyQueueOps, nextPending, queueSummary, readQueueFile, taskPrompt, writeQueueFile } from "../shared/queue";
 
 // ---------- args ----------
 interface HostArgs {
@@ -59,7 +60,7 @@ const rawArgs = process.argv.slice(2);
 if (rawArgs[0] === "--daemonize") {
 	// Re-exec in a new session and exit, so the host is reparented to init: VS Code killing its
 	// extension-host process tree on disconnect/shutdown can no longer reach the host or omp.
-	spawn(process.execPath, [process.argv[1], ...rawArgs.slice(1)], { detached: true, stdio: "ignore", env: process.env }).unref();
+	spawn(process.execPath, [process.argv[1], ...rawArgs.slice(1)], { detached: true, stdio: "ignore", env: process.env, windowsHide: true }).unref();
 	process.exit(0);
 }
 const args = parseArgs(rawArgs);
@@ -76,9 +77,35 @@ process.on("SIGTERM", () => void stop("SIGTERM"));
 process.on("SIGINT", () => void stop("SIGINT"));
 
 // ---------- meta ----------
-const socketPath = path.join(dir, "s.sock");
+const IS_WINDOWS = process.platform === "win32";
+/** Windows uses a named pipe; elsewhere a Unix socket (falling back to a short tmp path when the
+ * state dir would exceed the ~104-byte sun_path limit). */
+function computeSocketPath(): string {
+	if (IS_WINDOWS) return `\\\\.\\pipe\\omp-vscode-${args.id}`;
+	const preferred = path.join(dir, "s.sock");
+	if (Buffer.byteLength(preferred) < 100) return preferred;
+	const short = path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`);
+	fs.mkdirSync(short, { recursive: true, mode: 0o700 });
+	return path.join(short, `${args.id}.sock`);
+}
+const socketPath = computeSocketPath();
 const metaPath = path.join(dir, "meta.json");
 const previous = readJson<SessionMeta>(metaPath);
+// Never run two hosts (two omp processes) for one session: a double "resume" exits here.
+if (previous && previous.status !== "stopped" && previous.pid !== process.pid && pidAlive(previous.pid)) {
+	// Synchronous: the log stream isn't open yet and nothing below may run.
+	fs.appendFileSync(path.join(dir, "host.log"), `[${new Date().toISOString()}] another host is already running for this session: ${previous.pid}\n`);
+	process.exit(0);
+}
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return rec(err)?.code === "EPERM";
+	}
+}
 const meta: SessionMeta = {
 	id: args.id,
 	cwd: args.cwd,
@@ -153,6 +180,82 @@ let state: Record<string, unknown> | null = null;
 let agentActive = false;
 const changes: FileChange[] = [];
 const changesPath = path.join(dir, "changes.jsonl");
+
+// ---------- task queue ----------
+const queuePath = path.join(dir, "queue.json");
+let queue = readQueueFile(queuePath);
+// A task left "running" by a crashed/restarted host goes back to pending; don't auto-run it again
+// unattended, the user decides.
+if (queue.tasks.some(t => t.status === "running")) {
+	for (const t of queue.tasks) if (t.status === "running") Object.assign(t, { status: "pending", summary: "Interrupted: the session host restarted." });
+	queue.autoRun = false;
+}
+/** The queue task currently driving omp, keyed by its prompt id. */
+let activeTask: { id: string; promptId: string; result?: "completed" | "aborted" | "error"; error?: string } | null = null;
+let dispatchTimer: NodeJS.Timeout | undefined;
+
+function saveQueue(): void {
+	try {
+		writeQueueFile(queuePath, queue);
+	} catch (err) {
+		log("queue save failed", String(err));
+	}
+	meta.queue = queueSummary(queue);
+	broadcast({ t: "queue", queue });
+	publishMeta();
+}
+
+/** Feeds the next pending task to omp when the queue is armed and the session is idle. */
+function scheduleDispatch(delay = 400): void {
+	clearTimeout(dispatchTimer);
+	dispatchTimer = setTimeout(dispatchNext, delay);
+}
+
+function dispatchNext(): void {
+	if (!queue.autoRun || activeTask || stopping || finished) return;
+	if (meta.status === "starting" || agentActive || pendingUi.length > 0) return;
+	const task = nextPending(queue);
+	if (!task) return;
+	const index = queue.tasks.indexOf(task) + 1;
+	task.status = "running";
+	task.startedAt = Date.now();
+	task.finishedAt = undefined;
+	task.summary = undefined;
+	activeTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}` };
+	agentActive = true;
+	recomputeStatus();
+	log("queue dispatch", task.id, task.title);
+	sendOmp({ type: "prompt", id: activeTask.promptId, message: taskPrompt(task, { index, total: queue.tasks.length }) });
+	saveQueue();
+}
+
+function finishActiveTask(): void {
+	if (!activeTask?.result) return;
+	const task = queue.tasks.find(t => t.id === activeTask?.id);
+	const { result, error } = activeTask;
+	activeTask = null;
+	if (task) {
+		task.finishedAt = Date.now();
+		if (result === "completed") {
+			task.status = "done";
+			for (const s of task.subtasks) s.done = true;
+			task.summary = meta.lastText;
+		} else if (result === "aborted") {
+			// The user interrupted: keep the task, stop the runner until they resume it.
+			task.status = "pending";
+			task.startedAt = undefined;
+			task.finishedAt = undefined;
+			task.summary = "Interrupted.";
+			queue.autoRun = false;
+		} else {
+			task.status = "failed";
+			task.summary = error ?? "The model request failed.";
+			queue.autoRun = false;
+		}
+	}
+	saveQueue();
+	scheduleDispatch(800);
+}
 for (const line of safeRead(changesPath).split("\n")) {
 	if (!line) continue;
 	try {
@@ -247,8 +350,13 @@ function detailPaths(details: unknown): { paths: string[]; oldText: Map<string, 
 	return { paths: [...paths], oldText };
 }
 
+/**
+ * Takes "before" snapshots for a mutating tool call. Called when the assistant message that
+ * contains the call ends (omp runs tools only after that), and again at tool_execution_start as a
+ * fallback; the first snapshot wins, so a fast tool can't race the host into a stale "before".
+ */
 function onToolStart(toolCallId: string, toolName: string, toolArgs: unknown): void {
-	if (!MUTATING_TOOLS[toolName]) return;
+	if (!MUTATING_TOOLS[toolName] || beforeSnapshots.has(toolCallId)) return;
 	const snaps = new Map<string, string | null>();
 	for (const p of candidatePaths(toolArgs)) {
 		const h = snapshotFile(p);
@@ -266,11 +374,9 @@ function onToolEnd(toolCallId: string, toolName: string, result: unknown): void 
 	const all = new Set([...snaps.keys(), ...fromDetails.paths]);
 	const files: FileChangeEntry[] = [];
 	for (const p of all) {
-		let before = snaps.get(p);
-		if (before === undefined) {
-			const old = fromDetails.oldText.get(p);
-			if (old !== undefined) before = old.length === 0 ? EMPTY_BLOB : storeBlob(Buffer.from(old));
-		}
+		// omp's own oldText is authoritative when present; the host snapshot covers everything else.
+		const old = fromDetails.oldText.get(p);
+		const before = old !== undefined ? (old.length === 0 ? EMPTY_BLOB : storeBlob(Buffer.from(old))) : snaps.get(p);
 		const after = snapshotFile(p);
 		if (after === undefined || before === undefined || before === after) continue;
 		files.push({ path: p, op: before === null ? "create" : after === null ? "delete" : "update", before, after });
@@ -301,12 +407,27 @@ const ompArgv = [
 	...args.ompArgs,
 ];
 const env = { ...process.env };
-const extraPath = [path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".local", "bin")];
-env.PATH = [...extraPath.filter(p => !(env.PATH ?? "").split(":").includes(p)), env.PATH ?? ""].join(":");
+// GUI-launched editors (macOS Dock, Windows Start) often lack the shell PATH that holds omp/bun.
+const extraPath = [
+	path.join(os.homedir(), ".bun", "bin"),
+	path.join(os.homedir(), ".local", "bin"),
+	path.join(os.homedir(), ".npm-global", "bin"),
+	...(IS_WINDOWS ? [] : ["/opt/homebrew/bin", "/usr/local/bin"]),
+];
+const pathKey = Object.keys(env).find(k => k.toUpperCase() === "PATH") ?? "PATH";
+const currentPath = env[pathKey] ?? "";
+env[pathKey] = [...extraPath.filter(p => !currentPath.split(path.delimiter).includes(p) && fs.existsSync(p)), currentPath].filter(Boolean).join(path.delimiter);
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VSCODE_IPC_HOOK_CLI;
+if (!fs.existsSync(args.cwd)) {
+	log("folder does not exist:", args.cwd);
+	Object.assign(meta, { status: "stopped", exitCode: 1, exitReason: `folder not found: ${args.cwd}` });
+	saveMeta(true);
+	process.exit(1);
+}
 log("spawn", args.omp, ompArgv);
-const child: ChildProcessWithoutNullStreams = spawn(args.omp, ompArgv, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+// npm/bun shims on Windows are .cmd files, which need a shell to start.
+const child: ChildProcessWithoutNullStreams = spawn(args.omp, ompArgv, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: IS_WINDOWS && /\.(cmd|bat)$/i.test(args.omp) });
 meta.ompPid = child.pid;
 saveMeta(true);
 
@@ -365,7 +486,10 @@ function onLine(line: string): void {
 	}
 	handleFrame(frame);
 }
-readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", onLine);
+readline
+	.createInterface({ input: child.stdout, crlfDelay: Infinity })
+	.on("line", onLine)
+	.on("error", err => log("stdout reader error", String(err)));
 
 const STATE_KEYS = [
 	"model",
@@ -406,6 +530,7 @@ function refreshState(): void {
 		meta.model = label ?? meta.model;
 		meta.ompSessionFile = str(next.sessionFile) ?? meta.ompSessionFile;
 		meta.ompSessionId = str(next.sessionId) ?? meta.ompSessionId;
+		meta.plan = Array.isArray(next.todoPhases) ? (next.todoPhases as SessionMeta["plan"]) : meta.plan;
 		if (typeof next.sessionName === "string" && next.sessionName && next.sessionName !== meta.title) meta.title = next.sessionName;
 		publishMeta();
 		if (prevSession && next.sessionId && prevSession !== next.sessionId) await resync();
@@ -436,12 +561,15 @@ async function onReady(): Promise<void> {
 	meta.model = modelLabel(state?.model) ?? meta.model;
 	meta.ompSessionFile = str(state?.sessionFile) ?? meta.ompSessionFile;
 	meta.ompSessionId = str(state?.sessionId) ?? meta.ompSessionId;
+	meta.plan = Array.isArray(state?.todoPhases) ? (state.todoPhases as SessionMeta["plan"]) : meta.plan;
 	if (typeof state?.sessionName === "string" && state.sessionName) meta.title = state.sessionName;
 	else if (meta.title !== "New session") sendOmp({ type: "set_session_name", name: meta.title });
 	meta.status = "idle";
+	meta.queue = queueSummary(queue);
 	recomputeStatus();
 	publishMeta();
 	for (const c of clients) if (c.helloed) sendSnapshot(c);
+	scheduleDispatch(1000);
 	if (args.goal && !previous) {
 		if (meta.title === "New session") {
 			meta.title = titleFromPrompt(`Goal: ${args.goal}`);
@@ -479,6 +607,15 @@ function handleFrame(frame: OmpFrame): void {
 				resolve?.(frame);
 				return;
 			}
+			if (activeTask && id === activeTask.promptId && !frame.success) {
+				// The queued prompt was rejected before reaching the agent.
+				activeTask.result = "error";
+				activeTask.error = str(frame.error);
+				agentActive = false;
+				recomputeStatus();
+				finishActiveTask();
+				return;
+			}
 			const m = /^c(\d+):(.*)$/s.exec(id);
 			const res = { ...frame, id: m ? m[2] : frame.id };
 			const client = m ? clients.find(c => c.num === Number(m[1])) : undefined;
@@ -512,6 +649,13 @@ function handleFrame(frame: OmpFrame): void {
 				const cost = rec(rec(msg.usage)?.cost)?.total;
 				if (typeof cost === "number") meta.cost = (meta.cost ?? 0) + cost;
 				saveMeta();
+				// Snapshot files the upcoming tool calls will touch before omp executes them.
+				if (Array.isArray(msg.content)) {
+					for (const block of msg.content) {
+						const b = rec(block);
+						if (b?.type === "toolCall" && typeof b.id === "string" && typeof b.name === "string") onToolStart(b.id, b.name, b.arguments);
+					}
+				}
 			}
 			break;
 		}
@@ -544,15 +688,24 @@ function handleFrame(frame: OmpFrame): void {
 			return;
 		}
 		case "prompt_result":
+			if (activeTask && frame.id === activeTask.promptId) {
+				const status = frame.status === "completed" ? "completed" : frame.status === "aborted" ? "aborted" : "error";
+				activeTask.result = status;
+				activeTask.error = str(rec(frame.error)?.message);
+				if (frame.sessionSettled || status !== "completed") finishActiveTask();
+			}
 			if (frame.sessionSettled) {
 				agentActive = false;
 				recomputeStatus();
+				scheduleDispatch();
 			}
 			refreshState();
 			break;
 		case "session_settled":
 			agentActive = false;
 			recomputeStatus();
+			finishActiveTask();
+			scheduleDispatch();
 			refreshState();
 			break;
 		case "extension_ui_request": {
@@ -635,6 +788,7 @@ function sendSnapshot(c: Client): void {
 		state,
 		commands,
 		changes,
+		queue,
 	});
 }
 
@@ -666,6 +820,12 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 		case "ui_response":
 			sendOmp({ ...msg.res, type: "extension_ui_response" });
 			removePending(msg.res.id);
+			scheduleDispatch();
+			return;
+		case "queue":
+			queue = applyQueueOps(queue, msg.ops);
+			saveQueue();
+			scheduleDispatch();
 			return;
 		case "note":
 			messages.push({ role: "notice", level: msg.level, message: msg.message, markdown: msg.markdown, timestamp: Date.now() });
@@ -681,15 +841,19 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 	}
 }
 
-try {
-	fs.unlinkSync(socketPath);
-} catch {
-	/* not present */
+if (!IS_WINDOWS) {
+	try {
+		fs.unlinkSync(socketPath);
+	} catch {
+		/* not present */
+	}
 }
 const server = net.createServer(sock => {
 	const c: Client = { num: ++clientSeq, sock, helloed: false, name: "" };
 	clients.push(c);
-	readline.createInterface({ input: sock, crlfDelay: Infinity }).on("line", line => {
+	const rl = readline.createInterface({ input: sock, crlfDelay: Infinity });
+	rl.on("error", () => {});
+	rl.on("line", line => {
 		if (!line.trim()) return;
 		try {
 			onClientMessage(c, JSON.parse(line) as ClientToHost);
@@ -704,8 +868,18 @@ const server = net.createServer(sock => {
 	sock.on("close", drop);
 	sock.on("error", drop);
 });
+server.on("error", err => {
+	log("socket server error", String(err));
+	if (!finished) void stop("socket unavailable");
+});
 server.listen(socketPath, () => {
-	fs.chmodSync(socketPath, 0o600);
+	if (!IS_WINDOWS) {
+		try {
+			fs.chmodSync(socketPath, 0o600);
+		} catch (err) {
+			log("chmod failed", String(err));
+		}
+	}
 	log("listening", socketPath);
 });
 
@@ -735,10 +909,12 @@ function finish(code: number | null, reason: string): void {
 	setTimeout(() => {
 		for (const c of clients) c.sock.end();
 		server.close();
-		try {
-			fs.unlinkSync(socketPath);
-		} catch {
-			/* gone */
+		if (!IS_WINDOWS) {
+			try {
+				fs.unlinkSync(socketPath);
+			} catch {
+				/* gone */
+			}
 		}
 		logStream.end(() => process.exit(0));
 	}, 200);

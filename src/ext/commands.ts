@@ -43,6 +43,8 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "logout", description: "Remove a stored provider credential", local: true },
 	{ name: "agents", description: "Subagents: watch, steer, cancel", local: true },
 	{ name: "hub", description: "Same as /agents", local: true },
+	{ name: "queue", description: "Add a task to this session's background queue (Title :: sub; sub)", input: { hint: "<task>" }, local: true },
+	{ name: "tasks", description: "Show the task queue", local: true },
 	{ name: "changes", description: "Review every file this session changed (multi-file diff)", local: true },
 	{ name: "diff", description: "Same as /changes", local: true },
 	{ name: "copy", description: "Copy the last assistant response", local: true },

@@ -1,11 +1,42 @@
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { type FileChange, type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
+import { type ClientToHost, type FileChange, type QueueOp, type SessionMeta, type TaskQueue, sessionDir, sessionsRoot } from "../shared/protocol";
+import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
+
+/** Fire-and-forget control message to a running host; false when it is unreachable. */
+export function sendToHost(meta: SessionMeta, msg: ClientToHost): Promise<boolean> {
+	const { promise, resolve } = Promise.withResolvers<boolean>();
+	const sock = net.createConnection(meta.socket, () => {
+		sock.end(`${JSON.stringify(msg)}\n`);
+		resolve(true);
+	});
+	sock.setTimeout(3000, () => {
+		sock.destroy();
+		resolve(false);
+	});
+	sock.on("error", () => resolve(false));
+	return promise;
+}
+
+function canConnect(socket: string): Promise<boolean> {
+	const { promise, resolve } = Promise.withResolvers<boolean>();
+	const sock = net.createConnection(socket, () => {
+		sock.destroy();
+		resolve(true);
+	});
+	sock.setTimeout(1000, () => {
+		sock.destroy();
+		resolve(false);
+	});
+	sock.on("error", () => resolve(false));
+	return promise;
+}
 
 function pidAlive(pid: number): boolean {
 	try {
@@ -45,15 +76,19 @@ export function resolveOmpPath(): string | undefined {
 	const configured = vscode.workspace.getConfiguration("omp").get<string>("path")?.trim();
 	if (configured) return configured.startsWith("~/") ? path.join(os.homedir(), configured.slice(2)) : configured;
 	const dirs = (process.env.PATH ?? "").split(path.delimiter);
-	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/usr/local/bin");
+	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
+	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+	const names = process.platform === "win32" ? ["omp.exe", "omp.cmd", "omp.bat", "omp"] : ["omp"];
 	for (const d of dirs) {
 		if (!d) continue;
-		const candidate = path.join(d, "omp");
-		try {
-			fs.accessSync(candidate, fs.constants.X_OK);
-			return candidate;
-		} catch {
-			/* keep looking */
+		for (const name of names) {
+			const candidate = path.join(d, name);
+			try {
+				fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+				return candidate;
+			} catch {
+				/* keep looking */
+			}
 		}
 	}
 	return undefined;
@@ -178,24 +213,59 @@ export class SessionManager implements vscode.Disposable {
 		for (const a of ompArgs) argv.push("--omp-arg", a);
 		fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
 		fs.writeFileSync(launchFile, JSON.stringify({ ompArgs }));
+		// The launcher's cwd is irrelevant (the host chdirs omp itself) and must exist.
 		const child = spawn(process.execPath, argv, {
-			cwd: opts.cwd,
+			cwd: os.homedir(),
 			detached: true,
 			stdio: "ignore",
+			windowsHide: true,
 			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
 		});
+		child.on("error", err => void vscode.window.showErrorMessage(`Could not start the omp session host: ${err.message}`));
 		child.unref();
 		return id;
 	}
 
-	async waitForSocket(id: string, timeoutMs = 15000): Promise<boolean> {
-		const sock = path.join(sessionDir(id), "s.sock");
+	/** Waits until the host accepts connections (Unix sockets and Windows pipes alike). */
+	async waitForSocket(id: string, timeoutMs = 20000): Promise<boolean> {
 		const deadline = Date.now() + timeoutMs;
+		const started = Date.now();
 		while (Date.now() < deadline) {
-			if (fs.existsSync(sock)) return true;
-			await sleep(100);
+			this.refresh();
+			const meta = this.get(id);
+			// The host already gave up (missing folder, omp failed to start).
+			if (meta?.status === "stopped" && meta.updatedAt >= started) return false;
+			if (meta && meta.status !== "stopped" && (await canConnect(meta.socket))) return true;
+			await sleep(150);
 		}
 		return false;
+	}
+
+	queue(id: string): TaskQueue {
+		return readQueueFile(path.join(sessionDir(id), "queue.json"));
+	}
+
+	/**
+	 * Edits a session's task queue: through the host when it runs (so it can dispatch), else on
+	 * disk — the host picks the file up when the session is resumed.
+	 */
+	async editQueue(id: string, ops: QueueOp[]): Promise<void> {
+		const meta = this.get(id);
+		if (!meta) return;
+		if (meta.status !== "stopped" && (await sendToHost(meta, { t: "queue", ops }))) return;
+		const file = path.join(sessionDir(id), "queue.json");
+		const next = applyQueueOps(readQueueFile(file), ops);
+		writeQueueFile(file, next);
+		const metaFile = path.join(sessionDir(id), "meta.json");
+		try {
+			const onDisk = JSON.parse(fs.readFileSync(metaFile, "utf8")) as SessionMeta;
+			const tmp = `${metaFile}.ext.tmp`;
+			fs.writeFileSync(tmp, JSON.stringify({ ...onDisk, queue: queueSummary(next), updatedAt: Date.now() }, null, 1));
+			fs.renameSync(tmp, metaFile);
+		} catch {
+			/* meta unreadable: the tree still re-reads queue.json */
+		}
+		this.refresh();
 	}
 
 	remove(id: string): void {

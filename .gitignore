@@ -3,3 +3,6 @@ out/
 dist/
 *.vsix
 .dev-state/
+.vscode-test/
+test/e2e-desktop/out/
+.test-out/

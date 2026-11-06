@@ -1,28 +1,17 @@
 import * as fs from "node:fs";
-import * as net from "node:net";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type ClientToHost, type SessionMeta, sessionDir } from "../shared/protocol";
+import { type SessionMeta, sessionDir } from "../shared/protocol";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
 import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
-import { ChatPanel, VIEW_TYPE } from "./panel";
-import { SessionManager, listOmpHistory } from "./sessions";
+import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
+import { SessionManager, listOmpHistory, sendToHost } from "./sessions";
+import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
 
 const panels = new Map<string, ChatPanel>();
 let lastActive: ChatPanel | undefined;
-
-/** Fire-and-forget control message to a running host without holding a connection. */
-function sendToHost(meta: SessionMeta, msg: ClientToHost): Promise<boolean> {
-	const { promise, resolve } = Promise.withResolvers<boolean>();
-	const sock = net.createConnection(meta.socket, () => {
-		sock.end(`${JSON.stringify(msg)}\n`);
-		resolve(true);
-	});
-	sock.on("error", () => resolve(false));
-	return promise;
-}
 
 function idFrom(arg: unknown): string | undefined {
 	if (typeof arg === "string") return arg;
@@ -53,8 +42,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(sessions, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
+	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, webviewPanel, sessions, snapshots, context.extensionUri);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -69,12 +59,71 @@ export function activate(context: vscode.ExtensionContext): void {
 		return panel;
 	}
 
-	function openPanel(id: string): ChatPanel | undefined {
+	// ---------- side bar chat (a view, so it can live in the side bar, panel or secondary side bar) ----------
+	let sideView: vscode.WebviewView | undefined;
+	let sideChat: ChatPanel | undefined;
+	let pendingSide: string | undefined;
+	const sidePlaceholder = (view: vscode.WebviewView) => {
+		view.webview.options = { enableCommandUris: true };
+		view.description = undefined;
+		view.webview.html = `<!DOCTYPE html><html><body style="font-family:var(--vscode-font-family);color:var(--vscode-descriptionForeground);padding:16px;line-height:1.6">
+<p>Open an omp session here: pick one in the Sessions view and choose <b>Open in Side Bar</b>, or set <code>omp.chatLocation</code> to <code>sidebar</code>.</p>
+<p><a href="command:omp.openInSidebar">Choose a session…</a> · <a href="command:omp.newSession">New session</a></p></body></html>`;
+	};
+	function showInSidebar(id: string): ChatPanel | undefined {
+		pendingSide = id;
+		void context.workspaceState.update("omp.sidebarSession", id);
+		if (!sideView) {
+			void vscode.commands.executeCommand("omp.chatView.focus");
+			return undefined;
+		}
+		if (sideChat?.sessionId !== id) {
+			sideChat?.dispose();
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri);
+			chat.onDidDispose(() => {
+				if (sideChat === chat) sideChat = undefined;
+				if (lastActive === chat) lastActive = undefined;
+			});
+			sideChat = chat;
+		}
+		setUnread(id, false);
+		lastActive = sideChat;
+		sideView.show(false);
+		return sideChat;
+	}
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			"omp.chatView",
+			{
+				resolveWebviewView(view) {
+					sideView = view;
+					view.onDidDispose(() => {
+						sideChat?.dispose();
+						sideChat = undefined;
+						sideView = undefined;
+					});
+					view.onDidChangeVisibility(() => {
+						if (view.visible && sideChat) {
+							lastActive = sideChat;
+							setUnread(sideChat.sessionId, false);
+						}
+					});
+					const id = pendingSide ?? context.workspaceState.get<string>("omp.sidebarSession");
+					if (id && sessions.get(id)) showInSidebar(id);
+					else sidePlaceholder(view);
+				},
+			},
+			{ webviewOptions: { retainContextWhenHidden: true } },
+		),
+	);
+
+	function openPanel(id: string, where?: "editor" | "sidebar"): ChatPanel | undefined {
 		const meta = sessions.get(id);
 		if (!meta) {
 			void vscode.window.showWarningMessage("That omp session no longer exists.");
 			return undefined;
 		}
+		if ((where ?? vscode.workspace.getConfiguration("omp").get<string>("chatLocation")) === "sidebar") return showInSidebar(id);
 		const existing = panels.get(id);
 		if (existing) {
 			existing.reveal();
@@ -137,7 +186,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		const ok = await sessions.waitForSocket(id);
 		sessions.refresh();
 		if (!ok) {
-			void vscode.window.showErrorMessage("omp session host did not start. See the session log for details.", "Open log").then(a => {
+			const reason = sessions.get(id)?.exitReason;
+			void vscode.window.showErrorMessage(`omp session did not start${reason ? `: ${reason}` : ""}.`, "Open log").then(a => {
 				if (a) void vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(id), "host.log")));
 			});
 		}
@@ -192,6 +242,16 @@ export function activate(context: vscode.ExtensionContext): void {
 	reg("omp.openSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open omp session"));
 		if (id) openPanel(id)?.focusComposer();
+	});
+
+	reg("omp.openInSidebar", async (arg?: unknown) => {
+		const id = idFrom(arg) ?? (await pickSession("Open which session in the side bar?"));
+		if (id) showInSidebar(id)?.focusComposer();
+	});
+
+	reg("omp.openInEditor", async (arg?: unknown) => {
+		const id = idFrom(arg) ?? (await pickSession("Open which session in an editor tab?"));
+		if (id) openPanel(id, "editor")?.focusComposer();
 	});
 
 	reg("omp.focus", async () => {
@@ -279,12 +339,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			files.map(f => ({ label: path.basename(f), description: path.relative(meta.cwd, path.dirname(f)) || ".", file: f, iconPath: vscode.ThemeIcon.File, resourceUri: vscode.Uri.file(f) })),
 			{ placeHolder: `${files.length} file(s) changed by "${meta.title}"` },
 		);
-		if (pick) await openSessionDiff(snapshots, meta.id, changes, pick.file, panels.get(meta.id)?.panel.viewColumn);
+		if (pick) await openSessionDiff(snapshots, meta.id, changes, pick.file, panels.get(meta.id)?.surface.viewColumn);
 	});
 
 	reg("omp.openSessionFileDiff", async (sessionId: unknown, file: unknown) => {
 		if (typeof sessionId !== "string" || typeof file !== "string") return;
-		await openSessionDiff(snapshots, sessionId, sessions.changes(sessionId), file, panels.get(sessionId)?.panel.viewColumn);
+		await openSessionDiff(snapshots, sessionId, sessions.changes(sessionId), file, panels.get(sessionId)?.surface.viewColumn);
 	});
 
 	reg("omp.reviewChanges", async (arg?: unknown) => {
@@ -354,6 +414,28 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
+	// ---------- Source Control: hand git chores to the session working in that repository ----------
+	const repoRoot = (arg: unknown): string | undefined => {
+		const root = arg && typeof arg === "object" && "rootUri" in arg && arg.rootUri instanceof vscode.Uri ? arg.rootUri : undefined;
+		return root?.fsPath ?? vscode.workspace.workspaceFolders?.find(f => f.uri.scheme === "file")?.uri.fsPath;
+	};
+	const scmPrompt = (prompt: string) => async (arg?: unknown) => {
+		const panel = await targetPanel(repoRoot(arg));
+		if (!panel) {
+			void vscode.window.showInformationMessage("Start an omp session for this repository first.");
+			return;
+		}
+		await panel.sendPrompt(prompt);
+	};
+	reg(
+		"omp.scm.commit",
+		scmPrompt(
+			"Look at the git changes in this repository (`git status`, `git diff`, `git diff --staged`). Group them into sensible commits if they are unrelated; for each, stage the files and commit with a concise, conventional commit message explaining why. Don't push. Report the commits you made.",
+		),
+	);
+	reg("omp.scm.review", scmPrompt("Review the uncommitted changes in this repository (`git diff` and `git diff --staged`) like a senior reviewer: correctness bugs, edge cases, security, missing tests. Report findings with file:line references, most severe first. Don't change files."));
+	reg("omp.scm.pr", scmPrompt("Write a pull request title and description for the work on the current branch compared to its upstream/main (`git log` and `git diff` against the merge base): summary, motivation, notable changes, testing done, risks. Don't push or open anything."));
+
 	reg("omp.refresh", () => {
 		sessions.refresh();
 		tree.refresh();
@@ -366,6 +448,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	});
 
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
+	registerTasks(context, sessions, pickSession);
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

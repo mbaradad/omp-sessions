@@ -10,3 +10,6 @@ build.mjs
 tsconfig.json
 *.vsix
 .gitignore
+.vscode-test/**
+test/**
+.test-out/**

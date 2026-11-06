@@ -9,12 +9,71 @@ import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { HostClient } from "./client";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
+import { parseTaskInput } from "./tasks";
 import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
 import { openLink } from "./links";
 import type { SessionManager } from "./sessions";
 import { slimFrame, slimMessage, slimRunningTool } from "./slim";
 
 export const VIEW_TYPE = "omp.chat";
+
+/** Where a chat renders: an editor tab or the side bar view. */
+export interface ChatSurface {
+	readonly webview: vscode.Webview;
+	readonly visible: boolean;
+	/** Editor column of the chat (undefined in the side bar: files open in the active column). */
+	readonly viewColumn: vscode.ViewColumn | undefined;
+	title: string;
+	reveal(): void;
+	readonly onDidDispose: vscode.Event<void>;
+	/** Called when the controller is done: editor tabs close, the side bar view stays. */
+	release(): void;
+}
+
+export function panelSurface(panel: vscode.WebviewPanel, icon: vscode.Uri): ChatSurface {
+	panel.iconPath = icon;
+	return {
+		get webview() {
+			return panel.webview;
+		},
+		get visible() {
+			return panel.visible;
+		},
+		get viewColumn() {
+			return panel.viewColumn;
+		},
+		get title() {
+			return panel.title;
+		},
+		set title(t: string) {
+			panel.title = t;
+		},
+		reveal: () => panel.reveal(undefined, false),
+		onDidDispose: panel.onDidDispose,
+		release: () => panel.dispose(),
+	};
+}
+
+export function viewSurface(view: vscode.WebviewView): ChatSurface {
+	return {
+		get webview() {
+			return view.webview;
+		},
+		get visible() {
+			return view.visible;
+		},
+		viewColumn: undefined,
+		get title() {
+			return view.description ?? "";
+		},
+		set title(t: string) {
+			view.description = t;
+		},
+		reveal: () => view.show(false),
+		onDidDispose: view.onDidDispose,
+		release: () => {},
+	};
+}
 
 /** Files larger than this are not diffed line-by-line in the chat (the editor diff still works). */
 const MAX_INLINE_DIFF_BYTES = 2 * 1024 * 1024;
@@ -75,17 +134,16 @@ export class ChatPanel implements vscode.Disposable {
 
 	constructor(
 		readonly sessionId: string,
-		readonly panel: vscode.WebviewPanel,
+		readonly surface: ChatSurface,
 		private readonly sessions: SessionManager,
 		private readonly snapshots: SnapshotProvider,
 		private readonly extensionUri: vscode.Uri,
 	) {
-		panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
-		panel.iconPath = vscode.Uri.joinPath(extensionUri, "media", "omp-color.svg");
-		panel.webview.html = this.html();
+		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
+		surface.webview.html = this.html();
 		this.subs.push(
-			panel.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
-			panel.onDidDispose(() => this.dispose()),
+			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
+			surface.onDidDispose(() => this.dispose()),
 			sessions.onDidChange(() => this.onSessionsChanged()),
 		);
 		this.updateTitle();
@@ -98,11 +156,11 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	get isVisible(): boolean {
-		return this.panel.visible;
+		return this.surface.visible;
 	}
 
 	reveal(): void {
-		this.panel.reveal(undefined, false);
+		this.surface.reveal();
 	}
 
 	post(msg: ToWebview): void {
@@ -122,7 +180,7 @@ export class ChatPanel implements vscode.Disposable {
 		this.flushTimer = undefined;
 		const batch = this.outbox;
 		this.outbox = [];
-		for (const m of batch) void this.panel.webview.postMessage(m);
+		for (const m of batch) void this.surface.webview.postMessage(m);
 	}
 
 	/** (Re)connect to the session host if it is running; otherwise show the recorded transcript. */
@@ -161,7 +219,7 @@ export class ChatPanel implements vscode.Disposable {
 		const meta = this.meta;
 		if (!meta) return;
 		const mark = meta.status === "working" ? "● " : meta.status === "waiting" ? "◆ " : "";
-		this.panel.title = `${mark}${meta.title}`;
+		this.surface.title = `${mark}${meta.title}`;
 	}
 
 	// ---------- diffs ----------
@@ -277,6 +335,9 @@ export class ChatPanel implements vscode.Disposable {
 			case "ui_resolved":
 				this.post({ type: "uiResolved", id: m.id });
 				return;
+			case "queue":
+				this.post({ type: "queue", queue: m.queue });
+				return;
 			case "reset":
 				this.state = (m.state as SlimState) ?? null;
 				this.indexEdits(m.messages);
@@ -314,6 +375,7 @@ export class ChatPanel implements vscode.Disposable {
 			diffs: this.allDiffs(),
 			connected: !!this.client?.connected,
 			home: os.homedir(),
+			queue: snap?.queue ?? this.sessions.queue(this.sessionId),
 		});
 	}
 
@@ -388,6 +450,18 @@ export class ChatPanel implements vscode.Disposable {
 			case "prompt": {
 				const images = m.images ?? [];
 				const files = m.files ?? [];
+				const queued = /^\/(queue|task)\s+([\s\S]+)$/.exec(m.text.trim());
+				if (queued) {
+					const [first, ...rest] = queued[2].trim().split("\n");
+					const { title, subtasks } = parseTaskInput(first);
+					await this.sessions.editQueue(this.sessionId, [{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
+					this.commandContext.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
+					return;
+				}
+				if (/^\/tasks\s*$/.test(m.text.trim())) {
+					await vscode.commands.executeCommand("omp.tasks.focus");
+					return;
+				}
 				if (!images.length && !files.length && (await handleComposerInput(m.text, this.commandContext, name => this.runCommand(name)))) return;
 				if (!client?.connected) {
 					this.post({ type: "error", message: "Session is not running. Resume it first." });
@@ -419,11 +493,11 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			case "openFile": {
 				const abs = this.resolveCandidate(m.path) ?? path.resolve(this.meta?.cwd ?? "", m.path);
-				await openFile(abs, m.line, m.column, this.panel.viewColumn);
+				await openFile(abs, m.line, m.column, this.surface.viewColumn);
 				return;
 			}
 			case "openLink":
-				await openLink(m.url, this.meta, this.panel.viewColumn);
+				await openLink(m.url, this.meta, this.surface.viewColumn);
 				return;
 			case "openDiff":
 				await this.openDiff(m.toolCallId, m.path);
@@ -513,6 +587,13 @@ export class ChatPanel implements vscode.Disposable {
 			case "revertFile":
 				await this.revertFile(m.toolCallId, m.path);
 				return;
+			case "queueOp":
+				await this.sessions.editQueue(this.sessionId, m.ops);
+				if (this.meta?.status === "stopped") this.post({ type: "queue", queue: this.sessions.queue(this.sessionId) });
+				return;
+			case "focusTasks":
+				await vscode.commands.executeCommand("omp.tasks.focus");
+				return;
 			case "command":
 				await this.runCommand(m.name);
 				return;
@@ -587,23 +668,23 @@ export class ChatPanel implements vscode.Disposable {
 		if (change) {
 			const target = file ? (this.resolveCandidate(file) ?? file) : undefined;
 			const entry = change.files.find(f => f.path === target) ?? change.files.find(f => file && f.path.endsWith(file)) ?? change.files[0];
-			await openToolDiff(this.snapshots, this.sessionId, change, entry.path, this.panel.viewColumn);
+			await openToolDiff(this.snapshots, this.sessionId, change, entry.path, this.surface.viewColumn);
 			return;
 		}
 		const texts = this.editTexts.get(toolCallId);
 		const t = texts?.find(x => !file || x.path === file || x.path.endsWith(file)) ?? texts?.[0];
 		if (t) {
-			await openTextDiff(this.snapshots, t.path, t.oldText, t.newText, `${path.basename(t.path)} (omp edit)`, this.panel.viewColumn);
+			await openTextDiff(this.snapshots, t.path, t.oldText, t.newText, `${path.basename(t.path)} (omp edit)`, this.surface.viewColumn);
 			return;
 		}
 		if (file) {
 			const abs = this.resolveCandidate(file);
-			if (abs) await openFile(abs, undefined, undefined, this.panel.viewColumn);
+			if (abs) await openFile(abs, undefined, undefined, this.surface.viewColumn);
 		}
 	}
 
 	private html(): string {
-		const webview = this.panel.webview;
+		const webview = this.surface.webview;
 		const nonce = crypto.randomBytes(16).toString("base64");
 		const js = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.js"));
 		const css = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.css"));
@@ -631,7 +712,7 @@ export class ChatPanel implements vscode.Disposable {
 		for (const d of this.clientSubs) d.dispose();
 		for (const d of this.subs) d.dispose();
 		this.client?.dispose();
-		this.panel.dispose();
+		this.surface.release();
 		this.disposeEmitter.fire();
 		this.disposeEmitter.dispose();
 	}

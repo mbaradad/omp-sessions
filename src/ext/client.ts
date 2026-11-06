@@ -48,7 +48,10 @@ export class HostClient implements vscode.Disposable {
 			this.write({ t: "hello", client: this.clientName });
 			this.connEmitter.fire(true);
 		});
-		readline.createInterface({ input: sock, crlfDelay: Infinity }).on("line", line => {
+		const rl = readline.createInterface({ input: sock, crlfDelay: Infinity });
+		// readline re-emits input errors; the socket's own error/close handlers drive reconnects.
+		rl.on("error", () => {});
+		rl.on("line", line => {
 			if (!line) return;
 			let msg: HostToClient;
 			try {

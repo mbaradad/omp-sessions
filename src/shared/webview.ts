@@ -1,6 +1,6 @@
 // Extension <-> webview postMessage contract.
 import type { FileDiff } from "./diff";
-import type { FileChange, OmpFrame, RunningTool, SessionMeta, UiRequest } from "./protocol";
+import type { FileChange, OmpFrame, QueueOp, RunningTool, SessionMeta, TaskQueue, UiRequest } from "./protocol";
 
 export interface SlimState {
 	model?: { provider: string; id: string; name?: string; contextWindow?: number; reasoning?: boolean };
@@ -60,6 +60,7 @@ export type ToWebview =
 			diffs: Record<string, DiffsByPath>;
 			connected: boolean;
 			home: string;
+			queue: TaskQueue | null;
 	  }
 	| { type: "event"; ev: OmpFrame }
 	| { type: "state"; state: SlimState | null }
@@ -78,6 +79,7 @@ export type ToWebview =
 	| { type: "notice"; level: "info" | "warning" | "error"; text: string; markdown?: boolean }
 	| { type: "attachFiles"; images: ImageAttachment[]; files: FileAttachment[] }
 	| { type: "commands"; commands: SlashCommand[] }
+	| { type: "queue"; queue: TaskQueue }
 	| { type: "error"; message: string };
 
 export type PanelCommand =
@@ -126,4 +128,6 @@ export type FromWebview =
 	| { type: "rewindTo"; text: string }
 	| { type: "forkFrom"; text: string }
 	/** Restore one file to its content before a given tool call. */
-	| { type: "revertFile"; toolCallId: string; path: string };
+	| { type: "revertFile"; toolCallId: string; path: string }
+	| { type: "queueOp"; ops: QueueOp[] }
+	| { type: "focusTasks" };

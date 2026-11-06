@@ -2,7 +2,7 @@
 // attachments, and a composer with slash-command / @file completion.
 import { Marked, type Tokens } from "marked";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
-import type { FileChange, OmpFrame, SessionMeta, UiRequest } from "../shared/protocol";
+import type { FileChange, OmpFrame, SessionMeta, TaskQueue, UiRequest } from "../shared/protocol";
 import type { DiffsByPath, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { hasAnsi, renderAnsi } from "./ansi";
 import { AttachmentTray } from "./attachments";
@@ -85,6 +85,7 @@ const dialogs = h("div", { class: "dialogs" });
 const todoBox = h("div", { class: "todos hidden" });
 const widgetBox = h("div", { class: "widgets hidden" });
 const queueBox = h("div", { class: "queue hidden" });
+const taskBar = h("div", { class: "taskbar hidden" });
 const popup = h("div", { class: "popup hidden" });
 const input = h("textarea", { class: "input", rows: "1", placeholder: "Ask omp…   / commands · @ files · ! shell · paste images or files" });
 const attachBtn = h("button", { class: "icon-btn attach", title: "Attach images or files" }, icon("clip"));
@@ -96,7 +97,7 @@ const tray = new AttachmentTray(
 	msg => appendNotice(msg, "warning"),
 );
 const inputBox = h("div", { class: "input-box" }, tray.el, input, h("div", { class: "input-actions" }, attachBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
-const composer = h("div", { class: "composer" }, popup, queueBox, inputBox, footer);
+const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, inputBox, footer);
 const main = h("div", { class: "main" }, transcript, jumpBtn);
 app.append(header, banner, main, dialogs, todoBox, widgetBox, composer);
 installLinkHandler();
@@ -427,7 +428,12 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 	const text = contentText(m.content);
 	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}` });
 	const bubble = h("div", { class: "bubble" });
-	renderMarkdownInto(bubble, text);
+	const queued = /^\[Task (\d+)\/(\d+) from the queue\] /.exec(text);
+	if (queued) {
+		el.classList.add("queued-task");
+		renderMarkdownInto(bubble, text.slice(queued[0].length).replace(/\n\nWork through this task completely[\s\S]*$/, ""));
+		bubble.prepend(h("div", { class: "task-chip" }, `Queued task ${queued[1]}/${queued[2]}`));
+	} else renderMarkdownInto(bubble, text);
 	const imgs = Array.isArray(m.content) ? m.content.map(b => rec(b)).filter(b => b?.type === "image") : [];
 	if (imgs.length) {
 		const row = h("div", { class: "user-images" });
@@ -893,6 +899,46 @@ function updateSendState(): void {
 	attachBtn.disabled = stopped;
 }
 
+/** Background task queue strip: what's running, what's next, run/pause. */
+function renderTaskBar(queue: TaskQueue | null): void {
+	const tasks = queue?.tasks ?? [];
+	const open = tasks.filter(t => t.status === "pending" || t.status === "running");
+	if (!queue || !tasks.length) {
+		taskBar.classList.add("hidden");
+		return;
+	}
+	const running = tasks.find(t => t.status === "running");
+	const next = tasks.find(t => t.status === "pending");
+	const done = tasks.filter(t => t.status === "done").length;
+	const failed = tasks.filter(t => t.status === "failed").length;
+	taskBar.classList.remove("hidden");
+	taskBar.replaceChildren(
+		h("span", { class: "tb-icon" }, running ? h("span", { class: "spinner" }) : "☰"),
+		h(
+			"span",
+			{ class: "tb-text", title: tasks.map(t => `${t.status.padEnd(8)} ${t.title}`).join("\n") },
+			running ? h("b", {}, running.title) : next ? `Next: ${next.title}` : "Queue finished",
+			h("span", { class: "dim" }, ` · ${done}/${tasks.length} done${open.length ? ` · ${open.length} open` : ""}${failed ? ` · ${failed} failed` : ""}`),
+		),
+		h("span", { class: "spacer" }),
+		open.length
+			? queue.autoRun
+				? h("button", { class: "mini ghost", title: "Stop feeding tasks after the current one", onclick: () => post({ type: "queueOp", ops: [{ op: "autoRun", value: false }] }) }, "Pause")
+				: h("button", { class: "mini", title: "Run queued tasks one after another in the background", onclick: () => post({ type: "queueOp", ops: [{ op: "autoRun", value: true }] }) }, "Run queue")
+			: "",
+		h("button", { class: "mini ghost", title: "Open the Tasks view", onclick: () => post({ type: "focusTasks" }) }, "Tasks"),
+	);
+}
+
+function queueComposer(): void {
+	const text = input.value.trim();
+	if (!text || meta?.status === "stopped") return;
+	post({ type: "prompt", text: `/queue ${text}` });
+	input.value = "";
+	saveDraft();
+	autosize();
+}
+
 function renderQueue(steering: string[], followUp: string[]): void {
 	const chips = [...steering.map(t => ({ t, q: "steering" as const })), ...followUp.map(t => ({ t, q: "followUp" as const }))];
 	queueBox.classList.toggle("hidden", chips.length === 0);
@@ -1136,7 +1182,11 @@ input.addEventListener("keydown", e => {
 		e.preventDefault();
 		return;
 	}
-	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+	if (e.key === "Enter" && (e.altKey || ((e.metaKey || e.ctrlKey) && e.shiftKey)) && !e.isComposing) {
+		// Alt+Enter / Cmd+Shift+Enter: queue instead of sending now.
+		e.preventDefault();
+		queueComposer();
+	} else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
 		e.preventDefault();
 		send();
 	} else if (e.key === "Escape" && (agentBusy || state?.isStreaming)) {
@@ -1396,6 +1446,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			renderFooter();
 			renderTodos();
 			renderQueue(state?.queuedMessages?.steering ?? [], state?.queuedMessages?.followUp ?? []);
+			renderTaskBar(msg.queue);
 			linkify(transcript);
 			updateEmpty();
 			requestAnimationFrame(() => scrollToBottom(true));
@@ -1483,6 +1534,9 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "commands":
 			commands = msg.commands;
+			return;
+		case "queue":
+			renderTaskBar(msg.queue);
 			return;
 		case "insertText": {
 			const pos = input.selectionStart ?? input.value.length;

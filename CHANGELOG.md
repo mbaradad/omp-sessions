@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Task queue owned by the background session host: tasks with subtasks run one after another even with VS Code closed. **Tasks** view with drag & drop (also across sessions), checkboxes, run now / start / pause, details editing and omp's own plan; `/queue`, Alt+Enter and a queue bar in the chat.
+- **Chat** view in the omp side bar (movable to the secondary side bar); *Open in Side Bar* / *Open in Editor Tab*, `omp.chatLocation`.
+- Source Control menu: *Commit with omp*, *Review Uncommitted Changes with omp*, *Write PR Description with omp*.
+- Getting-started walkthrough.
+- Local desktop VS Code (macOS/Linux) supported alongside Remote-SSH; Windows named pipes and `.cmd` shims handled.
+- Robustness: duplicate-host guard, missing folder / omp binary reported as the stop reason, stale sockets replaced, readline/socket error handling, snapshots taken before omp's edit lands.
+- Tests: unit + session-host suites against a scripted fake omp, desktop VS Code end-to-end suite.
+
 ## 0.2.0
 
 - Editor integration: *Fix with omp* / *Explain with omp* / *Ask omp about this…* code actions, *Add to omp Chat* (Explorer, editor tab, editor menu), *Send Terminal Selection to omp*.
