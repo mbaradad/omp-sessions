@@ -1,0 +1,253 @@
+import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as vscode from "vscode";
+import { type FileChange, type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+function isWithin(child: string, parent: string): boolean {
+	const rel = path.relative(parent, child);
+	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/** Finds the omp executable: explicit setting, PATH, then common install locations. */
+export function resolveOmpPath(): string | undefined {
+	const configured = vscode.workspace.getConfiguration("omp").get<string>("path")?.trim();
+	if (configured) return configured.startsWith("~/") ? path.join(os.homedir(), configured.slice(2)) : configured;
+	const dirs = (process.env.PATH ?? "").split(path.delimiter);
+	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/usr/local/bin");
+	for (const d of dirs) {
+		if (!d) continue;
+		const candidate = path.join(d, "omp");
+		try {
+			fs.accessSync(candidate, fs.constants.X_OK);
+			return candidate;
+		} catch {
+			/* keep looking */
+		}
+	}
+	return undefined;
+}
+
+export class SessionManager implements vscode.Disposable {
+	private sessions = new Map<string, SessionMeta>();
+	private readonly emitter = new vscode.EventEmitter<void>();
+	readonly onDidChange = this.emitter.event;
+	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
+	/** Fires when a known session changes status (not on first observation). */
+	readonly onDidTransition = this.transitionEmitter.event;
+	private timer: NodeJS.Timeout;
+	private watcher: fs.FSWatcher | undefined;
+
+	constructor(private readonly hostScript: string) {
+		fs.mkdirSync(sessionsRoot(), { recursive: true, mode: 0o700 });
+		this.refresh();
+		this.timer = setInterval(() => this.refresh(), 1000);
+		try {
+			this.watcher = fs.watch(sessionsRoot(), { recursive: true }, () => this.scheduleRefresh());
+		} catch {
+			/* polling still covers it */
+		}
+	}
+
+	private pending: NodeJS.Timeout | undefined;
+	private scheduleRefresh(): void {
+		this.pending ??= setTimeout(() => {
+			this.pending = undefined;
+			this.refresh();
+		}, 80);
+	}
+
+	refresh(): void {
+		const next = new Map<string, SessionMeta>();
+		let entries: string[] = [];
+		try {
+			entries = fs.readdirSync(sessionsRoot());
+		} catch {
+			/* no sessions yet */
+		}
+		for (const id of entries) {
+			let meta: SessionMeta;
+			try {
+				meta = JSON.parse(fs.readFileSync(path.join(sessionDir(id), "meta.json"), "utf8")) as SessionMeta;
+			} catch {
+				continue;
+			}
+			if (meta.status !== "stopped" && !pidAlive(meta.pid)) {
+				meta = { ...meta, status: "stopped", exitReason: meta.exitReason ?? "host process died" };
+			}
+			next.set(id, meta);
+		}
+		let changed = next.size !== this.sessions.size;
+		for (const [id, meta] of next) {
+			const prev = this.sessions.get(id);
+			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title) changed = true;
+			if (prev && prev.status !== meta.status) this.transitionEmitter.fire({ meta, from: prev.status });
+		}
+		this.sessions = next;
+		if (changed) this.emitter.fire();
+	}
+
+	get(id: string): SessionMeta | undefined {
+		return this.sessions.get(id);
+	}
+
+	all(): SessionMeta[] {
+		return [...this.sessions.values()].sort((a, b) => {
+			const ra = a.status === "stopped" ? 1 : 0;
+			const rb = b.status === "stopped" ? 1 : 0;
+			return ra - rb || b.updatedAt - a.updatedAt;
+		});
+	}
+
+	inWorkspace(meta: SessionMeta): boolean {
+		return (vscode.workspace.workspaceFolders ?? []).some(f => f.uri.scheme === "file" && (isWithin(meta.cwd, f.uri.fsPath) || isWithin(f.uri.fsPath, meta.cwd)));
+	}
+
+	changes(id: string): FileChange[] {
+		let raw = "";
+		try {
+			raw = fs.readFileSync(path.join(sessionDir(id), "changes.jsonl"), "utf8");
+		} catch {
+			return [];
+		}
+		const out: FileChange[] = [];
+		for (const line of raw.split("\n")) {
+			if (!line) continue;
+			try {
+				out.push(JSON.parse(line) as FileChange);
+			} catch {
+				/* torn write */
+			}
+		}
+		return out;
+	}
+
+	/** Launch a detached host. Reusing an existing id resumes that session's omp transcript. */
+	launch(opts: { cwd: string; id?: string; resumeFile?: string; title?: string }): string {
+		const omp = resolveOmpPath();
+		if (!omp) throw new Error("Could not find the `omp` executable. Set `omp.path` in settings.");
+		const id = opts.id ?? `${Date.now().toString(36)}${crypto.randomBytes(3).toString("hex")}`;
+		const extra = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
+		const argv = [this.hostScript, "--daemonize", "--id", id, "--cwd", opts.cwd, "--omp", omp];
+		if (opts.resumeFile) argv.push("--resume", opts.resumeFile);
+		if (opts.title) argv.push("--title", opts.title);
+		for (const a of extra) argv.push("--omp-arg", a);
+		fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
+		const child = spawn(process.execPath, argv, {
+			cwd: opts.cwd,
+			detached: true,
+			stdio: "ignore",
+			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+		});
+		child.unref();
+		return id;
+	}
+
+	async waitForSocket(id: string, timeoutMs = 15000): Promise<boolean> {
+		const sock = path.join(sessionDir(id), "s.sock");
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (fs.existsSync(sock)) return true;
+			await new Promise(r => setTimeout(r, 100));
+		}
+		return false;
+	}
+
+	remove(id: string): void {
+		fs.rmSync(sessionDir(id), { recursive: true, force: true });
+		this.refresh();
+	}
+
+	dispose(): void {
+		clearInterval(this.timer);
+		clearTimeout(this.pending);
+		this.watcher?.close();
+		this.emitter.dispose();
+		this.transitionEmitter.dispose();
+	}
+}
+
+export interface HistoryEntry {
+	file: string;
+	cwd: string;
+	title: string;
+	mtime: number;
+}
+
+/** omp session transcripts recorded for `cwd` (from TUI or other hosts), newest first. */
+export function listOmpHistory(cwd: string): HistoryEntry[] {
+	const root = path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".omp", "agent"), "sessions");
+	const out: HistoryEntry[] = [];
+	let dirs: string[] = [];
+	try {
+		dirs = fs.readdirSync(root);
+	} catch {
+		return out;
+	}
+	for (const d of dirs) {
+		const full = path.join(root, d);
+		let files: string[] = [];
+		try {
+			files = fs.readdirSync(full).filter(f => f.endsWith(".jsonl"));
+		} catch {
+			continue;
+		}
+		for (const f of files) {
+			const file = path.join(full, f);
+			const head = readHead(file, 4096);
+			let title = "";
+			let sessionCwd = "";
+			for (const line of head.split("\n").slice(0, 3)) {
+				try {
+					const o = JSON.parse(line) as { type?: string; title?: string; cwd?: string };
+					if (o.type === "title" && o.title) title = o.title;
+					if (o.type === "session" && o.cwd) sessionCwd = o.cwd;
+				} catch {
+					/* partial line */
+				}
+			}
+			if (sessionCwd !== cwd) continue;
+			const st = fs.statSync(file);
+			if (st.size < 600) continue;
+			out.push({ file, cwd: sessionCwd, title: title || firstUserText(file) || path.basename(f, ".jsonl"), mtime: st.mtimeMs });
+		}
+	}
+	return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+function readHead(file: string, bytes: number): string {
+	const fd = fs.openSync(file, "r");
+	try {
+		const buf = Buffer.alloc(bytes);
+		const n = fs.readSync(fd, buf, 0, bytes, 0);
+		return buf.subarray(0, n).toString("utf8");
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+function firstUserText(file: string): string {
+	const head = readHead(file, 64 * 1024);
+	for (const line of head.split("\n")) {
+		if (!line.includes('"role":"user"')) continue;
+		try {
+			const o = JSON.parse(line) as { message?: { content?: Array<{ type: string; text?: string }> } };
+			const text = o.message?.content?.find(c => c.type === "text")?.text;
+			if (text) return text.split("\n")[0].slice(0, 80);
+		} catch {
+			/* skip */
+		}
+	}
+	return "";
+}
