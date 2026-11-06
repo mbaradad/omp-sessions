@@ -7,7 +7,8 @@
 - Source Control menu: *Commit with omp*, *Review Uncommitted Changes with omp*, *Write PR Description with omp*.
 - Getting-started walkthrough.
 - Local desktop VS Code (macOS/Linux) supported alongside Remote-SSH; Windows named pipes and `.cmd` shims handled.
-- Robustness: duplicate-host guard, missing folder / omp binary reported as the stop reason, stale sockets replaced, readline/socket error handling, snapshots taken before omp's edit lands.
+- Robustness: duplicate-host guard, missing folder / omp binary reported as the stop reason, stale sockets replaced, readline/socket error handling, snapshots taken before omp's edit lands; a host whose session folder was deleted still shuts down cleanly.
+- Long transcripts render their last turns first with *Show earlier messages* (a 1000-message session attaches in under 100 ms); chat messages stay centered with the composer on wide panels.
 - Tests: unit + session-host suites against a scripted fake omp, desktop VS Code end-to-end suite.
 
 ## 0.2.0
