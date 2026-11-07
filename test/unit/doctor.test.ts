@@ -121,15 +121,17 @@ test("isAuthError: recognizes omp's login/API-key failures, not ordinary errors"
 // ---------- redaction ----------
 
 test("redact: API keys, tokens, passwords, URL credentials, auth headers, home folder", () => {
+	// Fake secrets, assembled at runtime so secret scanners don't flag this file as a leak.
+	const fake = (...parts: string[]) => parts.join("");
 	const input = [
-		"ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
-		'{"apiKey": "AIzaSyA1234567890abcdefghijklmnopqrstuv"}',
-		"token: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+		`ANTHROPIC_API_KEY=${fake("sk-ant-", "api03-abcdefghijklmnopqrstuvwxyz0123")}`,
+		`{"apiKey": "${fake("AIza", "SyA1234567890abcdefghijklmnopqrstuv")}"}`,
+		`token: ${fake("ghp_", "abcdefghijklmnopqrstuvwxyz0123456789")}`,
 		"password=hunter2hunter2",
 		"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
 		"proxy https://user:s3cret@proxy.example.com:8080",
-		"aws AKIAABCDEFGHIJKLMNOP",
-		"slack xoxb-1234567890-abcdefghij",
+		`aws ${fake("AKIA", "ABCDEFGHIJKLMNOP")}`,
+		`slack ${fake("xoxb-", "1234567890-abcdefghij")}`,
 		"spawn /home/alice/.bun/bin/omp in /home/alice/proj",
 		"other user /home/alicex/file",
 	].join("\n");

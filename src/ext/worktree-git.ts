@@ -106,6 +106,30 @@ export interface ProjectInfo {
 }
 
 /**
+ * Rewrites a path git reported (symlinks resolved, e.g. macOS `/private/var/…`) into the
+ * spelling `dir` uses (`/var/…`), so worktrees group with their main checkout and match
+ * workspace folders. The symlink mapping is `dir` vs its real path minus their common tail.
+ */
+export function inSpellingOf(p: string, dir: string): string {
+	let real: string;
+	try {
+		real = fs.realpathSync(dir);
+	} catch {
+		return p;
+	}
+	if (real === dir) return p;
+	const logical = dir.split(path.sep);
+	const resolved = real.split(path.sep);
+	while (logical.length > 1 && resolved.length > 1 && logical[logical.length - 1] === resolved[resolved.length - 1]) {
+		logical.pop();
+		resolved.pop();
+	}
+	const from = resolved.join(path.sep);
+	const to = logical.join(path.sep);
+	return p === from || p.startsWith(from + path.sep) ? to + p.slice(from.length) : p;
+}
+
+/**
  * The linked worktree whose root is `dir`, read from git's own files: `<dir>/.git` is a file
  * `gitdir: <main>/.git/worktrees/<name>`, and that directory's `commondir` points at the main
  * `.git` — exactly what `git rev-parse --git-common-dir` reports, without spawning git. A `.git`
@@ -129,7 +153,7 @@ export function linkedWorktreeAt(dir: string): { mainRoot: string; gitDir: strin
 	}
 	// Non-bare repositories keep the common dir at `<root>/.git`; bare ones are the root.
 	const mainRoot = path.basename(common) === ".git" ? path.dirname(common) : common;
-	return { mainRoot, gitDir };
+	return { mainRoot: inSpellingOf(mainRoot, dir), gitDir: inSpellingOf(gitDir, dir) };
 }
 
 /** Project a folder belongs to: the enclosing git repository (its main checkout for worktrees), else the folder. */
@@ -163,7 +187,7 @@ export async function mainRepoRoot(cwd: string): Promise<string | undefined> {
 	const res = await git(cwd, ["rev-parse", "--git-common-dir"]);
 	if (res.code !== 0) return undefined;
 	const common = path.resolve(cwd, res.stdout.trim());
-	return path.basename(common) === ".git" ? path.dirname(common) : common;
+	return inSpellingOf(path.basename(common) === ".git" ? path.dirname(common) : common, cwd);
 }
 
 /** Current branch name, undefined when detached (or not a repository). */
