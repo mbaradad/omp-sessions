@@ -19,14 +19,18 @@ Releases are automated by `.github/workflows/release.yml`: pushing a tag `v<vers
 5. Check that the **CI** workflow passes on `main` (Actions tab).
 6. Optional: Settings → Branches → protect `main` and require the `test (ubuntu-latest)`, `test (macos-latest)`, `desktop e2e (ubuntu, xvfb)` and `package vsix` checks.
 
-### 2. VS Code Marketplace publisher and token
+### 2. VS Code Marketplace publisher and Trusted Publishing
+
+Azure DevOps retires global Personal Access Tokens on December 1, 2026, so releases authenticate with **Trusted Publishing** (GitHub OIDC): no token is stored anywhere. `release.yml` has `id-token: write` and runs `vsce publish --oidc`.
 
 1. Sign in at <https://marketplace.visualstudio.com/manage/createpublisher> with a Microsoft account and create the publisher with ID **`mbaradad`**. It must equal `publisher` in `package.json`.
-2. Open <https://dev.azure.com> with the same account (create an organization if asked). Go to *User settings* → **Personal access tokens** → *New token*:
-   - Organization: **All accessible organizations**
-   - Scopes: *Custom defined* → **Marketplace → Manage**
-   - Expiration: the maximum allowed. Note the date: releases fail once it expires.
-3. Check it: `npx vsce verify-pat mbaradad` (paste the token when asked).
+2. <https://marketplace.visualstudio.com/manage> → publisher **mbaradad** → **Trusted Publishing** → *Create*:
+   - Policy name: `Release workflow`
+   - Repository owner: `mbaradad`
+   - Repository: `omp-vscode`
+   - Workflow: `release.yml`
+   - Environment: empty
+3. Renaming the workflow file or moving the repository needs a new policy.
 
 ### 3. Open VSX namespace and token (Cursor, VSCodium, Windsurf, Gitpod, …)
 
@@ -42,10 +46,9 @@ Settings → Secrets and variables → **Actions** → *New repository secret* (
 
 | Secret | Value | If missing |
 | --- | --- | --- |
-| `VSCE_PAT` | Azure DevOps token from step 2 | release fails before publishing anywhere |
 | `OVSX_PAT` | Open VSX token from step 3 | Open VSX is skipped with a warning |
 
-The workflow uses the built-in `GITHUB_TOKEN` for the GitHub release. Nothing else is needed.
+The Marketplace needs no secret (Trusted Publishing, step 2). The workflow uses the built-in `GITHUB_TOKEN` for the GitHub release.
 
 ### 5. Marketplace listing assets
 
@@ -84,7 +87,7 @@ Optional: a 10–20 s GIF of starting a session, closing VS Code, reopening and 
 
 If the Marketplace publish succeeded but a later step failed, do not re-push the tag (the version already exists there). Finish by hand: `npx ovsx publish <vsix> -p <token>` and/or `gh release create v<x.y.z> <vsix> --notes-file …`.
 
-Manual fallback without CI: `npx vsce login mbaradad && npm run publish:vsce`, then `OVSX_PAT=… npm run publish:ovsx`. Both run `vscode:prepublish` (typecheck and minified build).
+Manual fallback without CI: upload the VSIX from `npx vsce package` at <https://marketplace.visualstudio.com/manage> (*New extension → Visual Studio Code*), then `OVSX_PAT=… npm run publish:ovsx`.
 
 ## Listing flags to revisit
 

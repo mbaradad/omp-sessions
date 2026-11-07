@@ -1972,7 +1972,6 @@
 		"vscode:prepublish": "npm run typecheck && node build.mjs --production",
 		"package": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && vsce package --no-dependencies -o dist/",
 		"install-local": "npm run package && sh scripts/install-local.sh",
-		"publish:vsce": "vsce publish --no-dependencies",
 		"publish:ovsx": "npx --yes ovsx publish --no-dependencies",
 		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
 		"test": "node test/run.mjs",

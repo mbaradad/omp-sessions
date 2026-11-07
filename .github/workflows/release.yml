@@ -1,12 +1,16 @@
 name: Release
 
-# Push a tag `v<version>` matching package.json's version (e.g. `git tag v0.4.0 && git push origin v0.4.0`).
+# Push a tag `v<version>` matching package.json's version (e.g. `git tag v0.5.0 && git push origin v0.5.0`).
+# Marketplace auth: Trusted Publishing (OIDC), no stored token — the publisher has a policy for
+# mbaradad/omp-vscode, workflow release.yml (docs/PUBLISHING.md).
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  # OIDC token exchanged by `vsce publish --oidc` for a 15-minute Marketplace credential.
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v5
@@ -55,10 +58,8 @@ jobs:
       - name: Package (vscode:prepublish typechecks and builds minified)
         run: npx vsce package --no-dependencies -o "${{ steps.version.outputs.vsix }}"
 
-      - name: Publish to VS Code Marketplace
-        run: |
-          if [ -z "$VSCE_PAT" ]; then echo "::error::secret VSCE_PAT is not set"; exit 1; fi
-          npx vsce publish --no-dependencies --packagePath "${{ steps.version.outputs.vsix }}"
+      - name: Publish to VS Code Marketplace (Trusted Publishing)
+        run: npx vsce publish --oidc --no-dependencies --packagePath "${{ steps.version.outputs.vsix }}"
 
       - name: Publish to Open VSX
         run: |

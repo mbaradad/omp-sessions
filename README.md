@@ -110,12 +110,10 @@ npm run install-local  # production build → dist/omp-sessions-<version>.vsix �
 
 ## Publishing
 
-1. Bump `version` in `package.json` and add a `CHANGELOG.md` entry.
-2. VS Code Marketplace: create publisher `mbaradad` at <https://marketplace.visualstudio.com/manage>, make an Azure DevOps PAT (scope *Marketplace → Manage*), then `npx vsce login mbaradad` and `npm run publish:vsce`.
-3. Open VSX (Cursor, VSCodium, …): create a token at <https://open-vsx.org>, then `OVSX_PAT=… npm run publish:ovsx`.
+1. Bump `version` in `package.json` and add a `## <version>` section to `CHANGELOG.md`.
+2. `git tag v<version> && git push origin main v<version>`: the Release workflow runs the tests, packages the VSIX, publishes to the VS Code Marketplace via Trusted Publishing (GitHub OIDC, no stored token) and to Open VSX (`OVSX_PAT` secret), and opens a GitHub release with the VSIX attached.
 
-`vscode:prepublish` runs the typecheck and a minified build automatically for `package` and both publish targets.
-Full checklist (repository setup, publisher + Open VSX tokens, repository secrets, screenshots, and the per-release tag-push routine) is in [`docs/PUBLISHING.md`](docs/PUBLISHING.md). Releases are automated: pushing a `v<version>` tag runs the tests, packages the VSIX, publishes to the Marketplace and Open VSX, and opens a GitHub release with the VSIX attached.
+One-time setup (publisher, Trusted Publishing policy, Open VSX namespace, screenshots) is in [`docs/PUBLISHING.md`](docs/PUBLISHING.md). All of it is free.
 
 ## Limits
 
