@@ -1,7 +1,7 @@
 {
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
-	"description": "Run oh-my-pi (omp) coding-agent sessions in the background, locally or over Remote-SSH. Detach and reattach, queue tasks, review native diffs and revert changes.",
+	"description": "Run oh-my-pi (omp) coding-agent sessions in the background — locally or over Remote-SSH — that keep working when you close VS Code and reattach when you return. Queue tasks with a global concurrency limit, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
 	"version": "0.4.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
