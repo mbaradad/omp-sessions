@@ -81,6 +81,14 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 	filter = "";
 	/** Whether archived sessions are listed (organize.ts). */
 	showArchived = false;
+	/** Whether stopped sessions are hidden; unread ones stay until looked at (organize.ts). */
+	hideFinished = false;
+	/** Stopped sessions the last render hid because of `hideFinished`. */
+	hiddenFinished = 0;
+	/** Root nodes the last render produced. */
+	rootCount = 0;
+	/** Called after each root render, e.g. to refresh the view description (organize.ts). */
+	onRender: (() => void) | undefined;
 	/** Handles drops of sessions/groups (organize.ts). */
 	onDrop: ((target: Node | undefined, dragged: Node[]) => Promise<void> | void) | undefined;
 	/** Root nodes of the last render. */
@@ -276,6 +284,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
 			const groupBy = cfg.get<string>("groupBy");
 			const sortBy = cfg.get<string>("sortBy");
+			let hidden = 0;
 			this.layout = buildView({
 				sessions: this.sessions.all(),
 				data: this.organize.data,
@@ -283,12 +292,22 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				sortBy: isSortMode(sortBy) ? sortBy : "auto",
 				filter: this.filter,
 				showArchived: this.showArchived,
-				visible: m => showAll || noWorkspace || m.status !== "stopped" || this.sessions.inWorkspace(m),
+				visible: m => {
+					if (!(showAll || noWorkspace || m.status !== "stopped" || this.sessions.inWorkspace(m))) return false;
+					if (this.hideFinished && m.status === "stopped" && !this.isUnread(m.id)) {
+						hidden++;
+						return false;
+					}
+					return true;
+				},
 				inWorkspace: m => this.sessions.inWorkspace(m),
 				project: m => projectRoot(m.cwd),
 				noWorkspace,
 				showAll,
 			});
+			this.hiddenFinished = hidden;
+			this.rootCount = this.layout.length;
+			this.onRender?.();
 			return this.layout;
 		}
 		if (node.kind !== "session" && node.kind !== "file") return node.children;

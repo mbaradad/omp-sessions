@@ -149,11 +149,20 @@ export function registerOrganize(api: OmpApi): void {
 
 	// ---------- view state: filter, archived, context keys ----------
 	tree.showArchived = context.globalState.get<boolean>("omp.organize.showArchived") ?? false;
+	tree.hideFinished = context.globalState.get<boolean>("omp.organize.hideFinished") ?? false;
+	/** Description and empty message from the last render (no extra tree build). */
+	const updateDescription = () => {
+		const hidden = tree.hideFinished && tree.hiddenFinished ? `${tree.hiddenFinished} finished hidden` : "";
+		view.description = [tree.filter ? `Filtered: ${tree.filter}` : "", hidden].filter(Boolean).join(" · ") || undefined;
+		view.message =
+			tree.rootCount > 0 ? undefined : tree.filter ? `No sessions match “${tree.filter}”.` : hidden ? `All sessions are finished (${tree.hiddenFinished} hidden). Show Finished Sessions lists them.` : undefined;
+	};
+	tree.onRender = updateDescription;
 	const updateChrome = () => {
-		view.description = tree.filter ? `Filtered: ${tree.filter}` : undefined;
-		view.message = tree.filter && tree.getChildren().length === 0 ? `No sessions match “${tree.filter}”.` : undefined;
+		updateDescription();
 		void vscode.commands.executeCommand("setContext", "omp.sessions.filtered", !!tree.filter);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.showArchived", tree.showArchived);
+		void vscode.commands.executeCommand("setContext", "omp.sessions.hideFinished", tree.hideFinished);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.groupBy", groupBy());
 	};
 	const setFilter = (text: string) => {
@@ -415,6 +424,14 @@ export function registerOrganize(api: OmpApi): void {
 	};
 	reg("omp.organize.showArchived", () => setShowArchived(true));
 	reg("omp.organize.hideArchived", () => setShowArchived(false));
+	const setHideFinished = (value: boolean) => {
+		tree.hideFinished = value;
+		void context.globalState.update("omp.organize.hideFinished", value);
+		tree.refresh();
+		updateChrome();
+	};
+	reg("omp.organize.hideFinished", () => setHideFinished(true));
+	reg("omp.organize.showFinished", () => setHideFinished(false));
 
 	reg("omp.organize.newGroup", async (arg?: unknown, all?: unknown) => {
 		const nodes = pickedNodes(arg, all);
