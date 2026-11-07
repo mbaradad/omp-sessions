@@ -133,6 +133,7 @@ const meta: SessionMeta = {
 	hostVersion: args.hostVersion,
 	hostPath: path.resolve(process.argv[1]),
 	launchedBy: args.launchedBy,
+	userActiveAt: previous?.userActiveAt,
 	changedFiles: 0,
 };
 
@@ -785,6 +786,19 @@ function titleFromPrompt(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line;
 }
 
+/** Clients that are people looking at the session (chat panels, `omp-vs attach`), not the omp-vs server. */
+function updateViewers(): void {
+	const viewers = clients.filter(c => c.helloed && !c.name.startsWith("omp-vs-server")).length;
+	if ((meta.viewers ?? 0) === viewers) return;
+	meta.viewers = viewers;
+	publishMeta();
+}
+
+function markUserActive(): void {
+	meta.userActiveAt = Date.now();
+	saveMeta();
+}
+
 function onClientMessage(c: Client, msg: ClientToHost): void {
 	switch (msg.t) {
 		case "hello":
@@ -792,9 +806,12 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 			c.name = msg.client;
 			log("client hello", c.num, c.name);
 			sendSnapshot(c);
+			updateViewers();
 			return;
 		case "rpc": {
 			const cmd = { ...msg.cmd, id: `c${c.num}:${msg.cmd.id ?? ""}` };
+			// Queries (get_*) are clients syncing; anything else is a person acting on the session.
+			if (!cmd.type.startsWith("get_")) markUserActive();
 			const text = msg.cmd.message;
 			if (cmd.type === "prompt" && meta.title === "New session" && typeof text === "string" && !text.startsWith("/")) {
 				meta.title = titleFromPrompt(text);
@@ -807,6 +824,7 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 		}
 		case "ui_response":
 			sendOmp({ ...msg.res, type: "extension_ui_response" });
+			markUserActive();
 			removePending(msg.res.id);
 			queueRunner.schedule();
 			return;
@@ -849,7 +867,9 @@ const server = net.createServer(sock => {
 	});
 	const drop = () => {
 		const idx = clients.indexOf(c);
-		if (idx >= 0) clients.splice(idx, 1);
+		if (idx < 0) return;
+		clients.splice(idx, 1);
+		updateViewers();
 	};
 	sock.on("close", drop);
 	sock.on("error", drop);

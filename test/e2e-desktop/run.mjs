@@ -158,6 +158,8 @@ try {
 				OMP_E2E_WORKSPACE: dirs.workspace,
 				OMP_E2E_STATE: stateFile,
 				FAKE_OMP_DELAY: "5",
+				// The omp-vs server would outlive the test VS Code; the server has its own host tests.
+				OMP_VS_NO_SERVER: "1",
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),

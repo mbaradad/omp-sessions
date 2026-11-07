@@ -41,6 +41,10 @@ export interface SessionMeta {
 	authProblem?: string;
 	/** Who started this host when not a person (e.g. "scheduler": the omp-vs server ran its queue). */
 	launchedBy?: string;
+	/** Clients attached right now that are people (chat panels, `omp-vs attach`), not the omp-vs server. */
+	viewers?: number;
+	/** Last time a person prompted, steered, aborted or answered a dialog in this session (epoch ms). */
+	userActiveAt?: number;
 }
 
 /** One file touched by one tool call. `before`/`after` are blob hashes; null = file absent. */

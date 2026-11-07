@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- **`omp-vs` terminal command** (*omp: Install omp-vs Command*): `ls`, `board`, `new` (prompt, or `--task` to queue), `attach` (streaming chat with inline dialogs, Ctrl-C aborts, Ctrl-D detaches), `send [--wait]`, `tail [-f]`, `stop`/`resume`/`rm`/`abort`, `queue …` (add/run/start/pause/retry/done/skip/`at +30m`), `prio`/`color`/`group`/`move`/`archive`, `sched …`, `server …`. Sessions are named by id prefix, title words or `.`; `ls` hides finished sessions unless `--all`.
+- **omp-vs server**: a per-user daemon that starts stopped sessions whose queue has runnable work when a concurrency slot frees up (priority + manual order, ranked together with hosts already waiting), so queued work also resumes after a reboot. It stops the sessions it launched once their queue is done and no chat/`attach` is open, backs off exponentially from sessions that die right after launch, and never reruns a task a crash interrupted. The extension installs a stable runtime copy and keeps the server at its version (`omp.server.autoStart`); `omp-vs server install` adds a systemd user unit / launchd agent. *Restart omp-vs Server*, *Show omp-vs Server Log*.
+- **Hide Finished Sessions** (eye button in the Sessions view): hides stopped sessions; unread ones stay until seen, and the view header shows how many are hidden.
+- Sessions view: *Group Sessions By…* now offers custom groups and status, the new `omp.sortBy` setting backs *Sort Sessions By…*, and the organize/scheduler commands (filter, groups, color, priority, tags, lanes, pin, archive, move, bulk stop/resume/remove, concurrency) appear in the view and context menus.
+- Session hosts publish how many people are attached (`viewers`) and when someone last typed (`userActiveAt`).
+
 ## 0.4.0
 
 - **Command Center** (`Ctrl/Cmd+Alt+P`): a searchable, grouped index of every omp command — session, task, worktree, queue, git, dashboard, session — plus omp's own CLI features surfaced as VS Code commands (*login, update, setup, plugins, skills, usage, stats, models, cleanse, commit in terminal, git UI, continue in terminal, import Claude/Codex, open docs/config, keyboard shortcuts*). *Fix with omp / Explain / Ask about…* code actions join the existing editor integration; new *Edit with omp* (`Ctrl/Cmd+Alt+E`), *Fix File/Workspace Problems*, *Fix Failed Command*, *Write Tests*, *Add Docs*.

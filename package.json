@@ -2,7 +2,7 @@
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
 	"description": "Run oh-my-pi (omp) coding-agent sessions in the background — locally or over Remote-SSH — that keep working when you close VS Code and reattach when you return. Queue tasks with a global concurrency limit, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -425,7 +425,10 @@
 			{ "command": "omp.scheduler.increase", "title": "Increase Concurrent Queued Tasks", "category": "omp", "icon": "$(add)" },
 			{ "command": "omp.scheduler.decrease", "title": "Decrease Concurrent Queued Tasks", "category": "omp", "icon": "$(remove)" },
 			{ "command": "omp.scheduler.togglePause", "title": "Pause / Resume Queued Tasks", "category": "omp", "icon": "$(debug-pause)" },
-			{ "command": "omp.doctor.markStopped", "title": "Mark Session Stopped", "category": "omp" }
+			{ "command": "omp.doctor.markStopped", "title": "Mark Session Stopped", "category": "omp" },
+			{ "command": "omp.installCli", "title": "Install omp-vs Command (Terminal CLI)", "category": "omp", "icon": "$(terminal)" },
+			{ "command": "omp.server.restart", "title": "Restart omp-vs Server", "category": "omp", "icon": "$(debug-restart)" },
+			{ "command": "omp.server.showLog", "title": "Show omp-vs Server Log", "category": "omp", "icon": "$(output)" }
 		],
 		"menus": {
 			"view/title": [
@@ -442,6 +445,7 @@
 				{ "command": "omp.scheduler.togglePause", "when": "view == omp.tasks", "group": "2_scheduler@2" },
 				{ "command": "omp.doctor", "when": "view == omp.sessions", "group": "9_help@1" },
 				{ "command": "omp.reportIssue", "when": "view == omp.sessions", "group": "9_help@2" },
+				{ "command": "omp.installCli", "when": "view == omp.sessions", "group": "9_help@3" },
 				{ "command": "omp.searchHistory", "when": "view == omp.sessions", "group": "3_usage@1" },
 				{ "command": "omp.dashboard", "when": "view == omp.sessions", "group": "3_usage@2" },
 				{ "command": "omp.newWorktreeSession", "when": "view == omp.sessions", "group": "1_new@2" },
@@ -994,6 +998,11 @@
 						"Most expensive first."
 					],
 					"description": "How sessions are sorted within each group of the Sessions view."
+				},
+				"omp.server.autoStart": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Keep the per-user `omp-vs` server running: it starts stopped sessions whose task queue has work when a concurrency slot is free (also after a reboot), stops the sessions it started once their queue is done, and serves the `omp-vs` terminal command (`omp: Install omp-vs Command`)."
 				},
 				"omp.showAllSessions": {
 					"type": "boolean",

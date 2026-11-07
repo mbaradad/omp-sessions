@@ -18,6 +18,7 @@ import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
+import { registerServer } from "./server";
 import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
@@ -494,6 +495,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerBoard(api);
 	registerBridge(api);
 	registerSessionConfig(api);
+	registerServer(api);
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

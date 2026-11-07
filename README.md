@@ -17,12 +17,13 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 - **Session host** owns the `omp` process, mirrors the transcript, tracks in-flight messages/tools and pending dialogs, and snapshots every file before/after `edit`/`write`/`ast_edit`/`notebook` tool calls into content-addressed blobs. Any number of VS Code windows can attach; late attachers get a full snapshot.
 - **Extension** lists sessions (tree view + status bar), opens chats (editor tabs or the side bar Chat view), renders diffs from the snapshots, and restores open chats after a reload/reconnect.
 - **Task queue** (`queue.json`) belongs to the host, which feeds pending tasks to omp one by one whenever the session is idle — VS Code doesn't need to be open.
-- State lives in `~/.omp/vscode/sessions/<id>/` (`meta.json`, `launch.json`, `queue.json`, `changes.jsonl`, `blobs/`, `attachments/`, `host.log`), plus top-level files under `~/.omp/vscode/`: `organize.json` (groups/colors/priority/pins/tags/lanes), `scheduler.json` (global concurrency) and `slots/` (per-task leases), and `launcher.json` (last `omp.path`/`omp.extraArgs`, so terminal launches match VS Code's). The omp transcript itself stays in `~/.omp/agent/sessions/`.
+- **omp-vs server** (`out/server.js`, one per user, socket `~/.omp/vscode/server.sock`): starts *stopped* sessions whose queue has work when a concurrency slot frees up (by priority and manual order, also after a reboot), stops the sessions it started once their queue is done and nobody is watching, and backs off from sessions that die right after launch. It serves the `omp-vs` terminal command. Sessions never depend on it. The extension keeps it running at its own version (`omp.server.autoStart`).
+- State lives in `~/.omp/vscode/sessions/<id>/` (`meta.json`, `launch.json`, `queue.json`, `changes.jsonl`, `blobs/`, `attachments/`, `host.log`), plus top-level files under `~/.omp/vscode/`: `organize.json` (groups/colors/priority/pins/tags/lanes), `scheduler.json` (global concurrency) and `slots/` (per-task leases), `launcher.json` (last `omp.path`/`omp.extraArgs`, so terminal launches match VS Code's), `runtime/` (host/server/CLI copies that survive extension updates), and `server.log`. The omp transcript itself stays in `~/.omp/agent/sessions/`.
 - Robustness: one host per session (a second launch exits), stale sockets are replaced, a missing folder or omp binary stops the session with a readable reason, a crashed host shows as stopped and resumes cleanly, malformed client input is ignored.
 
 ## Using it
 
-- **Sessions view** groups sessions by project (git repository, else folder) with working / needs-input counts; `+` on a project starts a session there. *Toggle Group by Project* switches to a flat list. *Open in Side Bar* / *Open in Editor Tab* choose where a chat opens (`omp.chatLocation` sets the default); the **Chat** view can be dragged to the secondary side bar to sit next to your code.
+- **Sessions view** groups sessions by project (git repository, else folder) with working / needs-input counts; `+` on a project starts a session there. *Group Sessions By…* switches between project, your groups, status, or a flat list; *Sort Sessions By…* picks the order inside each group. The eye button (*Hide Finished Sessions*) hides stopped sessions; ones with unseen activity stay until you look, and the view header counts how many are hidden. *Open in Side Bar* / *Open in Editor Tab* choose where a chat opens (`omp.chatLocation` sets the default); the **Chat** view can be dragged to the secondary side bar to sit next to your code.
 - **Sessions Board** (*Open Sessions Board*): a kanban of every session — columns by status, by lanes you define (Backlog / To Do / In Progress / Review / Done), by group, or by priority; swimlane mode shows one row per project. Drag cards (or arrow them) to move them; set priority (P to cycle), color, pin, archive and tags per card or in bulk. Cards show queue progress, cost, last text and unread; the header carries the global concurrency counter; *Maximize* fills the panel.
 - **Git worktrees**: *New Session in Git Worktree…* starts a session in a sibling `<repo>.worktrees` checkout on an `omp/…` branch (any base branch/tag/commit); *Best-of-N* runs the same task in N parallel worktree sessions. Worktrees group under the main repo in the Sessions view; *Compare Branch with Base*, *Merge into Main Checkout…*, *Open in New Window*, *Remove Worktree and Session* (deletes the branch + worktree, keeps the transcript).
 - **Organization**: nest **groups** (each with a color and an icon) and set **color / priority / pin / archive / tags** per session — from the tree (drag, context menus) or the board. The Sessions view filter box accepts free text, `#tag` and `project:name`; manual ordering and group collapse persist in `organize.json`.
@@ -49,6 +50,26 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 - **Doctor** (*Run Doctor*): a health report — missing omp, auth problems (no API key / not logged in), outdated session hosts, hosts that died mid-turn — each with one-click fixes (*mark stopped*, *resume*, *upgrade host*). *Copy Diagnostics*, *Upgrade Session Host(s)*, *Clean Up File Snapshots*; a crashed session offers *--restore* on resume.
 - **Get started**: *Help → Get Started → omp: background coding agent* walks through the features.
 
+## Terminal: `omp-vs`
+
+*omp: Install omp-vs Command* puts `omp-vs` in `~/.local/bin`. It runs on Node 22+ from PATH, else on VS Code's own runtime. The command reaches the same sessions without VS Code: over SSH, from scripts, or after a reboot.
+
+```bash
+omp-vs ls                       # running sessions (stopped ones hidden: --all shows them)
+omp-vs new . -p "fix the flaky test"          # start a session with a prompt
+omp-vs new ~/repo --task "upgrade deps" --sub "bump" --sub "run tests" --priority high
+                                # queue-only: the server starts it when a slot is free
+omp-vs attach .                 # chat in the terminal; dialogs answer inline; Ctrl-D detaches
+omp-vs send fix "also update the docs" --wait  # prompt by title words; stream the reply
+omp-vs tail <id> -f             # follow output
+omp-vs queue <id> add "write the changelog" --run
+omp-vs board                    # waiting / working / needs input / idle
+omp-vs sched set 2              # at most 2 queued tasks at once, across all sessions
+omp-vs server status|log -f|install   # install: systemd user unit / launchd agent
+```
+
+Sessions are named by id, id prefix, title words, or `.` (latest in this folder). Commands start the server on demand and restart it when it is older than the CLI. Without it (`OMP_VS_NO_SERVER=1`) they work in-process, but queued stopped sessions wait until someone resumes them. The server stops the sessions it launched once their queue is done (after a minute idle, with no chat or `attach` open, and 10 minutes after anyone last typed in them). `omp-vs sched stop-when-done off` keeps them running. Tasks interrupted by a host crash are never rerun unattended.
+
 ## Settings
 
 | Setting | Default | Meaning |
@@ -58,7 +79,8 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 | `omp.sendWhileBusy` | `steer` | Enter while working: `steer` or `followUp` |
 | `omp.panelLocation` | `beside` | Chat column for editor-tab chats |
 | `omp.chatLocation` | `editor` | Where clicking a session opens its chat: `editor` or `sidebar` |
-| `omp.groupBy` | `project` | Sessions view: `project` groups or flat `none` |
+| `omp.groupBy` | `project` | Sessions view: `project`, your custom `group`s, `status`, or flat `none` |
+| `omp.sortBy` | `auto` | Order within each group: `auto`, `manual`, `activity`, `priority`, `name`, `created`, `cost` |
 | `omp.showAllSessions` | `false` | List stopped sessions from other projects |
 | `omp.notifications` | `true` | Notify on finish / needs input |
 | `omp.saveBeforePrompt` | `true` | Save unsaved editors in the session folder before sending a prompt |
@@ -68,6 +90,7 @@ VS Code (Mac) ──Remote-SSH──▶ extension host (remote)
 | `omp.snapshotRetentionDays` | `14` | Days a stopped session must be unused before *Clean Up File Snapshots* (and the Doctor) offer to delete its blobs |
 | `omp.chat.snippets` | `[]` | Prompt snippets offered in the chat composer: `/p:name`, with `{{selection}}` / `{{file}}` |
 | `omp.terminalHints` | `true` | After a command fails in a terminal in a running session's folder, offer *omp: fix failed command?* in the status bar (needs VS Code shell integration) |
+| `omp.server.autoStart` | `true` | Keep the `omp-vs` server running: it starts queued stopped sessions when slots free up and serves the `omp-vs` command |
 
 ## Development
 
@@ -98,4 +121,4 @@ Full checklist (repository setup, publisher + Open VSX tokens, repository secret
 
 - File changes made through `bash` (e.g. `sed -i`, codegen) are not snapshotted; only omp's file-editing tools are.
 - omp's terminal-only plan mode (`/plan`) is not exposed over its RPC protocol; use *New Session with Options… → Plan first* (`--plan-yolo`).
-- A machine reboot stops sessions; their transcripts remain resumable.
+- A machine reboot stops sessions; their transcripts remain resumable. Queued work restarts once the `omp-vs` server runs again (`omp-vs server install` starts it at login).
