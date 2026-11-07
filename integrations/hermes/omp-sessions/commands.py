@@ -6,11 +6,11 @@ import argparse
 import json
 import os
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from .lane import Lane, short
 from .ompvs import OmpVs, OmpVsError, find_omp_vs
-from .settings import MODES, Settings
+from .settings import MODES, Settings, update_setting
 from .store import Store
 
 
@@ -164,9 +164,94 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     notify.add_argument("value", choices=("on", "off"))
 
 
-def _lane_raw(ctx: Any) -> dict:
-    v = ctx.get_config("lane", None)
-    return dict(v) if isinstance(v, dict) else {}
+def _lane(raw: Any) -> dict:
+    lane = dict(raw) if isinstance(raw, dict) else {}
+    boards = lane.get("boards")
+    if isinstance(boards, list):  # the short form: a list of slugs
+        lane["boards"] = {str(k): {} for k in boards if str(k).strip()}
+    elif isinstance(boards, dict):
+        lane["boards"] = {str(k): dict(v) if isinstance(v, dict) else {} for k, v in boards.items()}
+    else:
+        lane["boards"] = {}
+    return lane
+
+
+def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[str] = None, boards: Sequence[str] = ()) -> None:
+    """Turns the lane on or off (plus, when turning it on, its assignee, mode and extra boards)."""
+
+    def change(raw: Any) -> dict:
+        lane = _lane(raw)
+        lane["enabled"] = enabled
+        if assignee:
+            lane["assignee"] = assignee.lower()
+        if mode:
+            lane["mode"] = mode
+        for b in boards:
+            lane["boards"].setdefault(b, {})
+        return lane
+
+    update_setting("lane", change)
+
+
+def set_board(
+    slug: str,
+    *,
+    folder: Optional[str] = None,
+    group: Optional[str] = None,
+    mode: Optional[str] = None,
+    assignee: Optional[str] = None,
+    remove: bool = False,
+) -> None:
+    """Per-board lane settings: None leaves a field alone, "" clears it; `remove` drops the board
+    from the lane's list. Raises ValueError for a folder that doesn't exist or an unknown mode."""
+    if mode and mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}")
+    path = os.path.abspath(os.path.expanduser(folder.strip())) if folder and folder.strip() else None
+    if path and not os.path.isdir(path):
+        raise ValueError(f"not a folder: {path}")
+
+    def change(raw: Any) -> dict:
+        lane = _lane(raw)
+        if remove:
+            lane["boards"].pop(slug, None)
+            return lane
+        entry = lane["boards"].setdefault(slug, {})
+        if folder is not None:
+            if path:
+                entry["folder"] = path
+            else:
+                entry.pop("folder", None)
+        for key, value in (("group", group), ("mode", mode), ("assignee", assignee)):
+            if value is None:
+                continue
+            if value.strip():
+                entry[key] = value.strip().lower() if key == "assignee" else value.strip()
+            else:
+                entry.pop(key, None)
+        return lane
+
+    update_setting("lane", change)
+
+
+def set_board_in_lane(slug: str, on: bool, all_slugs: Sequence[str]) -> None:
+    """Adds a board to the lane's list or takes it out. An empty list means every board, so taking
+    one out of it lists every other board explicitly."""
+
+    def change(raw: Any) -> dict:
+        lane = _lane(raw)
+        boards = lane["boards"]
+        if on:
+            if boards:  # empty: every board already
+                boards.setdefault(slug, {})
+        elif slug in boards or not boards:
+            if not boards:
+                boards.update({s: {} for s in all_slugs if s != slug})
+            boards.pop(slug, None)
+            if not boards:
+                raise ValueError("the lane needs at least one board: turn the lane off instead")
+        return lane
+
+    update_setting("lane", change)
 
 
 def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings], store: Store, omp: Callable[[], OmpVs], lane: Lane) -> int:
@@ -180,22 +265,10 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         return 0
     if cmd == "lane":
         sub = getattr(args, "lane_cmd", None)
-        raw = _lane_raw(ctx)
         if sub == "on":
-            raw["enabled"] = True
-            if args.assignee:
-                raw["assignee"] = args.assignee.lower()
-            if args.mode:
-                raw["mode"] = args.mode
-            if args.board:
-                boards = dict(raw.get("boards") or {}) if isinstance(raw.get("boards"), dict) else {}
-                for b in args.board:
-                    boards.setdefault(b, {})
-                raw["boards"] = boards
-            ctx.set_config("lane", raw)
+            set_lane(enabled=True, assignee=args.assignee, mode=args.mode, boards=args.board)
         elif sub == "off":
-            raw["enabled"] = False
-            ctx.set_config("lane", raw)
+            set_lane(enabled=False)
         elif sub == "run":
             from hermes_cli import kanban_db as kb
 
@@ -208,24 +281,11 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         print(status_text(status_data(ctx, settings(), store, lane, omp())))
         return 0
     if cmd == "board":
-        raw = _lane_raw(ctx)
-        boards = dict(raw.get("boards") or {}) if isinstance(raw.get("boards"), dict) else {}
-        if args.remove:
-            boards.pop(args.slug, None)
-        else:
-            entry = dict(boards.get(args.slug) or {})
-            if args.folder:
-                folder = os.path.abspath(os.path.expanduser(args.folder))
-                if not os.path.isdir(folder):
-                    print(f"not a folder: {folder}")
-                    return 1
-                entry["folder"] = folder
-            for key in ("group", "mode", "assignee"):
-                if getattr(args, key):
-                    entry[key] = getattr(args, key)
-            boards[args.slug] = entry
-        raw["boards"] = boards
-        ctx.set_config("lane", raw)
+        try:
+            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, remove=args.remove)
+        except ValueError as exc:
+            print(exc)
+            return 1
         print(status_text(status_data(ctx, settings(), store, lane, omp())))
         return 0
     if cmd == "project":
@@ -242,7 +302,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         else:
             print(projects.get(args.name, f"{args.name}: no folder set"))
             return 0
-        ctx.set_config("projects", projects)
+        update_setting("projects", lambda _: projects)
         print("project folders: " + (", ".join(f"{k} → {p}" for k, p in projects.items()) or "none"))
         return 0
     if cmd == "notify":

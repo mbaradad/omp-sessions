@@ -2043,7 +2043,8 @@
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",
-		"test:hermes": "node integrations/hermes/tests/run.mjs"
+		"test:hermes": "node integrations/hermes/tests/run.mjs",
+		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",

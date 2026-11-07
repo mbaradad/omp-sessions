@@ -2165,6 +2165,253 @@ h2 .grad {
 	}
 }
 
+/* How it fits together */
+
+.fit {
+	margin: 0 0 clamp(48px, 6vw, 72px);
+	padding: clamp(22px, 3.5vw, 40px);
+	border-radius: 22px;
+	border: 1px solid var(--line);
+	background:
+		radial-gradient(55% 60% at 50% 52%, color-mix(in srgb, var(--violet) 11%, transparent), transparent 70%),
+		color-mix(in srgb, var(--surface) 65%, transparent);
+}
+
+.fit__clients,
+.fit__hosts {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.fit__clients,
+.fit__bus {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.fitc {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 18px 12px 16px;
+	border-radius: 16px;
+	border: 1px solid var(--line);
+	background: var(--surface);
+	text-align: center;
+}
+
+.fitc__ic,
+.fit__srv-ic {
+	display: grid;
+	place-items: center;
+	width: 46px;
+	height: 46px;
+	border-radius: 13px;
+	border: 1px solid var(--line-2);
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.fitc__ic .i,
+.fit__srv-ic .i {
+	width: 22px;
+	height: 22px;
+}
+
+.fitc--hermes {
+	border-color: color-mix(in srgb, var(--violet) 45%, var(--line));
+}
+
+.fitc--hermes .fitc__ic {
+	color: var(--accent);
+}
+
+.fitc__t {
+	margin-top: 11px;
+	font-weight: 620;
+	font-size: 15px;
+}
+
+.fitc__s {
+	margin-top: 3px;
+	color: var(--text-3);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.fitc__s code {
+	font-size: 12px;
+}
+
+.fit__bus {
+	height: 48px;
+}
+
+.fit__bus i {
+	position: relative;
+	justify-self: center;
+	width: 2px;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--line-2);
+	overflow: hidden;
+}
+
+.fit__bus i::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: -45%;
+	width: 100%;
+	height: 45%;
+	background: linear-gradient(180deg, transparent, var(--violet), var(--cyan));
+	opacity: 0;
+}
+
+.fit__bus--hosts,
+.fit__hosts {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 250px));
+	justify-content: center;
+	gap: 18px;
+}
+
+.fit__server {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: center;
+	gap: 14px 18px;
+	padding: 20px 24px;
+	border-radius: 18px;
+	border: 1px solid transparent;
+	background:
+		linear-gradient(var(--surface-2), var(--surface-2)) padding-box,
+		var(--grad) border-box;
+	box-shadow: 0 0 60px -14px color-mix(in srgb, var(--violet) 55%, transparent);
+}
+
+.fit__srv-ic {
+	color: var(--accent);
+}
+
+.fit__srv-t {
+	font-weight: 650;
+	font-size: 17px;
+}
+
+.fit__srv-t small {
+	display: block;
+	color: var(--text-3);
+	font-weight: 400;
+	font-size: 13px;
+}
+
+.fit__chips {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 8px;
+}
+
+.fit__chips span {
+	padding: 5px 11px;
+	border-radius: 999px;
+	border: 1px solid var(--line-2);
+	color: var(--text-2);
+	font: 12.5px/1.3 var(--mono);
+}
+
+.fit__hosts li {
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	padding: 12px 15px;
+	border-radius: 14px;
+	border: 1px solid var(--line);
+	background: var(--surface);
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.fit__hosts .i {
+	flex: none;
+	width: 20px;
+	height: 20px;
+	color: var(--accent);
+}
+
+.fit__hosts small {
+	display: block;
+	color: var(--text-3);
+	font: 400 12.5px/1.4 var(--mono);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.fit__bus i::after {
+		animation: fit-flow 2.4s linear infinite;
+	}
+
+	.fit__bus i:nth-child(2)::after {
+		animation-delay: 0.5s;
+	}
+
+	.fit__bus i:nth-child(3)::after {
+		animation-delay: 1s;
+	}
+
+	.fit__bus i:nth-child(4)::after {
+		animation-delay: 1.5s;
+	}
+
+	.fit__bus i:nth-child(5)::after {
+		animation-delay: 2s;
+	}
+}
+
+@keyframes fit-flow {
+	0% {
+		top: -45%;
+		opacity: 0;
+	}
+
+	15% {
+		opacity: 1;
+	}
+
+	100% {
+		top: 100%;
+		opacity: 1;
+	}
+}
+
+@media (max-width: 900px) {
+	.fit__clients {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.fit__clients .fitc:last-child {
+		grid-column: span 2;
+	}
+
+	.fit__bus,
+	.fit__bus--hosts {
+		grid-template-columns: 1fr;
+		height: 36px;
+	}
+
+	.fit__bus i:not(:first-child) {
+		display: none;
+	}
+
+	.fit__hosts {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+	}
+}
+
 /* Toolbox */
 
 .tools {

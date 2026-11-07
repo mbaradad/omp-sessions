@@ -92,6 +92,23 @@ If the Marketplace publish succeeded but a later step failed, do not re-push the
 
 Manual fallback without CI: upload the VSIX from `npx vsce package` at <https://marketplace.visualstudio.com/manage> (*New extension → Visual Studio Code*), then `OVSX_PAT=… npm run publish:ovsx`.
 
+## Hermes plugin
+
+The plugin in `integrations/hermes/omp-sessions/` ships three ways. Its `plugin.yaml` `version` must equal `package.json`'s (`node build.mjs` fails otherwise), so bump both together.
+
+1. **Inside the extension.** `build.mjs` copies the folder into `out/hermes-plugin/`; `omp-vs hermes install` and *omp: Install Hermes Plugin…* install it from there. Nothing to do beyond the extension release.
+2. **From Git.** `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/omp-sessions/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update omp-sessions`.
+3. **The Hermes plugin catalog** (`hermes plugins install omp-sessions`, listed on <https://hermes-agent.nousresearch.com/docs/plugins>). Entries are YAML files in [`NousResearch/hermes-agent/plugin-catalog/`](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog), added by a reviewed pull request that pins an exact commit. To submit, or to move it to a new release:
+   1. Validate the plugin at the commit you'll pin (the same check catalog CI runs):
+      ```sh
+      HERMES_HOME=$(mktemp -d) hermes plugins validate integrations/hermes/omp-sessions --install-deps
+      ```
+      It must pass. The two warnings about private core imports (`hermes_cli.kanban_db*`, used by the lane) and `ctx._gateway_injection_allowed` (used by `hermes omp status`) are expected; mention them in the PR.
+   2. Generate the entry for the release tag: `npm run -s hermes:catalog -- v<x.y.z> > omp-sessions.yaml` (the tag must be pushed; screenshots are pinned to the same commit).
+   3. Fork `NousResearch/hermes-agent`, add the file as `plugin-catalog/omp-sessions.yaml`, and open a pull request. For a new release, the same file with the new `sha` and `version` is a new pull request.
+   4. In the description, say what the plugin does, which surfaces it uses (tools, the `on_kanban_dispatch_tick` hook, a slash command, a CLI command, a skill, a dashboard tab with a FastAPI router, a Desktop page), and the disclosures from the plugin README's *What it does on your machine* section. Attach `site/assets/shots/hermes-dashboard.png` and `hermes-detail.png`.
+   5. Wait for the catalog CI job and the maintainers' review. Listing is at their discretion.
+
 ## Listing flags to revisit
 
 - `"preview": true` shows a *Preview* badge. Remove it once Windows is tested and the feature set is stable (1.0).

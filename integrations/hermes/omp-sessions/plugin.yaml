@@ -1,8 +1,12 @@
 name: omp-sessions
-version: 0.1.0
+label: omp Sessions
+version: 0.6.0
 description: Start, schedule and supervise omp coding sessions (omp-vs) from Hermes, hear back when they settle, and run kanban cards assigned to omp as omp sessions.
 author: Manel Baradad
-requires_hermes: ">=0.23"
+license: MIT
+homepage: https://mbaradad.github.io/omp-vscode/
+tags: [coding, omp, sessions, kanban, scheduling]
+requires_hermes: ">=0.23.0"
 provides_tools:
   - omp_sessions_list
   - omp_projects_list

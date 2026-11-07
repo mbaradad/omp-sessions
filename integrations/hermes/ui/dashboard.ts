@@ -1,0 +1,41 @@
+// Hermes dashboard entry (bundled as an IIFE to omp-sessions/dashboard/dist/index.js): the page as the
+// "omp Sessions" tab, on the dashboard's React and authenticated fetch (window.__HERMES_PLUGIN_SDK__).
+// The dashboard loads dist/style.css itself (manifest "css").
+import { createPage } from "./app";
+import type { ReactLike } from "./react";
+
+interface DashboardSdk {
+	React: ReactLike;
+	fetchJSON<T>(url: string, init?: RequestInit): Promise<T>;
+}
+
+interface DashboardRegistry {
+	register(name: string, component: unknown): void;
+}
+
+declare global {
+	interface Window {
+		__HERMES_PLUGIN_SDK__?: DashboardSdk;
+		__HERMES_PLUGINS__?: DashboardRegistry;
+	}
+}
+
+const BASE = "/api/plugins/omp-sessions";
+const sdk = window.__HERMES_PLUGIN_SDK__;
+const registry = window.__HERMES_PLUGINS__;
+if (sdk && registry) {
+	registry.register(
+		"omp-sessions",
+		createPage({
+			kind: "dashboard",
+			React: sdk.React,
+			request: (path, options) =>
+				sdk.fetchJSON(
+					BASE + path,
+					options?.body === undefined
+						? { method: options?.method ?? "GET" }
+						: { method: options.method ?? "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options.body) },
+				),
+		}),
+	);
+}

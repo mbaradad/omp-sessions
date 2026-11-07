@@ -11,13 +11,25 @@ The plugin drives the `omp-vs` CLI, so every session it starts is an ordinary om
 
 ## Install
 
-You need `omp-vs` (VS Code: **omp: Install omp-vs Command**) and Hermes Agent 0.23 or later.
+You need `omp-vs` (VS Code: **omp: Install omp-vs Command**) and Hermes Agent 0.23 or later. Install the plugin either from omp-vs or with Hermes's own plugin installer.
+
+**From omp-vs** (the copy that ships with the extension, always matching your `omp-vs`):
 
 ```sh
 omp-vs hermes install     # copy the plugin into $HERMES_HOME/plugins (default ~/.hermes) and enable it
 omp-vs hermes status      # per profile: installed, current or outdated, enabled, lane on or off
 omp-vs hermes uninstall
 ```
+
+**From Git**, with Hermes (it fetches only the plugin folder of this repository):
+
+```sh
+hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable
+hermes config set plugins.entries.omp-sessions.allow_gateway_injection true
+hermes plugins update omp-sessions      # later, to update
+```
+
+Add `-p <profile>` (`hermes -p <profile> plugins install …`) for other profiles. Once the plugin is listed in the [Hermes plugin catalog](https://hermes-agent.nousresearch.com/docs/plugins), `hermes plugins install omp-sessions` installs the reviewed version by name.
 
 `install` copies the plugin to `<home>/plugins/omp-sessions/` and runs these two commands against that profile:
 
@@ -204,6 +216,29 @@ hermes cron create "every 1d" "Create a kanban card on board lightscale, assigne
 ```
 
 For a one-off later start, `omp_session_start` with `task` and `at` (e.g. `"at": "22:00"`) is enough.
+
+## Dashboard and Desktop
+
+The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web dashboard (`hermes dashboard`, next to Kanban) and of Hermes Desktop.
+
+![omp Sessions in the Hermes dashboard](images/hermes-dashboard.png)
+
+- **Status strip:** `omp-vs` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane, and how many sessions need you.
+- **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply. Filter by board, group or project, or search (`/`).
+- **Detail panel** (click a card): the question with one button per answer, the full last reply, a follow-up box (it steers a working session, or queues the text after the turn), the permission mode switch, and Stop.
+- **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
+- **Boards:** the lane switch, and per board the lane's folder, omp group, mode and assignee, the cards it runs as omp sessions with their status, and the ready cards it takes next.
+
+![A session that needs an answer](images/hermes-detail.png)
+
+The page refreshes every few seconds while it is visible. Lane settings it changes are the active profile's, like `hermes omp lane` and `hermes omp board`.
+
+What it takes:
+
+- **Dashboard:** the plugin must be enabled (`hermes plugins enable omp-sessions`; `omp-vs hermes install` does it). Hermes mounts the page's backend (`dashboard/plugin_api.py`, under `/api/plugins/omp-sessions/`) when the dashboard or gateway starts, so restart it after enabling (`hermes gateway restart`, or restart `hermes dashboard`).
+- **Desktop:** the desktop half (`desktop/plugin.js`) ships off. Turn on **omp Sessions** in **Capabilities → Plugins** (use **Rescan** there if it isn't listed). It uses the same backend, so the plugin must also be enabled in that profile.
+
+The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashboard/dist/` and `desktop/plugin.js`; those files are committed because Hermes installs the plugin folder without a build step.
 
 ## Troubleshooting
 

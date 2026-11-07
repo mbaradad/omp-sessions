@@ -30,12 +30,29 @@ SKILL_DESCRIPTION = (
 )
 
 
+class _ProfileState:
+    """ctx.state, looked up on first use (it touches the profile's plugin-data; register() must not)."""
+
+    def __init__(self, ctx: Any) -> None:
+        self._ctx = ctx
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._ctx.state.get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        self._ctx.state.set(key, value)
+
+    @property
+    def data_dir(self) -> Path:
+        return Path(self._ctx.state.data_dir)
+
+
 class Plugin:
     """Everything register() wires up; tests build one around a stub ctx."""
 
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
-        self.store = Store(ctx.state)
+        self.store = Store(_ProfileState(ctx))
         self.notifier = Notifier(self.store, self.omp, inject_with(ctx), lambda: self.settings().notify)
         # Machine-wide (shared by every profile that runs the plugin), like the kanban boards.
         self.lane = Lane(Store(FileState(lane_data_dir)), self.settings, self.omp)

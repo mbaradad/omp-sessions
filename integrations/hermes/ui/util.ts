@@ -1,0 +1,221 @@
+// Formatting, a small safe Markdown renderer (React elements, never HTML strings) and icons.
+import type { Session, State } from "./api";
+import { type Child, h, type ReactElement } from "./react";
+
+export function cx(...names: Array<string | false | null | undefined>): string {
+	return names.filter(Boolean).join(" ");
+}
+
+/** Epoch ms or s → ms. */
+function ms(t: number): number {
+	return t < 1e12 ? t * 1000 : t;
+}
+
+export function ago(t: number | null | undefined, now = Date.now()): string {
+	if (!t) return "";
+	const s = Math.round((now - ms(t)) / 1000);
+	if (s < 0) return until(t, now);
+	if (s < 45) return "just now";
+	if (s < 90 * 60) return `${Math.max(1, Math.round(s / 60))}m ago`;
+	if (s < 36 * 3600) return `${Math.round(s / 3600)}h ago`;
+	return `${Math.round(s / 86400)}d ago`;
+}
+
+export function until(t: number, now = Date.now()): string {
+	const s = Math.round((ms(t) - now) / 1000);
+	if (s <= 30) return "any moment";
+	if (s < 90 * 60) return `in ${Math.max(1, Math.round(s / 60))}m`;
+	if (s < 36 * 3600) return `in ${Math.round(s / 3600)}h`;
+	return `in ${Math.round(s / 86400)}d`;
+}
+
+export function clock(t: number): string {
+	const d = new Date(ms(t));
+	const today = new Date();
+	const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	if (d.toDateString() === today.toDateString()) return time;
+	return `${d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ${time}`;
+}
+
+/** A one-line excerpt with its Markdown marks removed (code ticks, emphasis, headings, link targets). */
+export function plain(excerpt: string): string {
+	return excerpt.replace(/[`*#>]+|\[|\]\([^)]*\)/g, "");
+}
+
+export function money(cost: number): string {
+	if (!cost || cost < 0.005) return "";
+	return `$${cost < 10 ? cost.toFixed(2) : cost.toFixed(0)}`;
+}
+
+export function shortId(id: string): string {
+	return id.slice(0, 8);
+}
+
+export const STATE_LABEL: Record<State, string> = {
+	needs_input: "Needs you",
+	working: "Working",
+	starting: "Starting",
+	queued: "Queued",
+	idle: "Done",
+	stopped: "Stopped",
+};
+
+/** The card's status line: what the session is doing in a few words. */
+export function stateText(s: Session, now = Date.now()): string {
+	switch (s.state) {
+		case "needs_input":
+			return s.question?.kind === "select" && /^allow tool/i.test(s.question.title) ? "Approval needed" : "Question";
+		case "working":
+			return s.queue.total > 1 ? `Task ${Math.min(s.queue.done + 1, s.queue.total)} of ${s.queue.total}` : "Working";
+		case "starting":
+			return "Starting";
+		case "queued":
+			if (s.startAt) return `Starts ${until(s.startAt, now)}`;
+			return s.waiting ? `Waiting for a slot${s.waiting.position ? ` · #${s.waiting.position}` : ""}` : "Queued";
+		case "idle":
+			return "Done for now";
+		case "stopped":
+			return s.queue.total > 0 && s.queue.done >= s.queue.total ? "Finished" : "Stopped";
+	}
+}
+
+// ---------- Markdown (subset): headings, lists, quotes, fenced code, inline code, bold, links ----------
+
+function inline(text: string, key: string): Child[] {
+	const out: Child[] = [];
+	const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+	let last = 0;
+	let i = 0;
+	for (let m = re.exec(text); m; m = re.exec(text)) {
+		if (m.index > last) out.push(text.slice(last, m.index));
+		const k = `${key}-${i++}`;
+		if (m[1]) out.push(h("code", { key: k }, m[1].slice(1, -1)));
+		else if (m[2]) out.push(h("strong", { key: k }, m[2].slice(2, -2)));
+		else if (m[3] && m[4]) out.push(h("a", { key: k, href: m[4], target: "_blank", rel: "noreferrer noopener" }, m[3].slice(1, m[3].indexOf("]"))));
+		last = m.index + m[0].length;
+	}
+	if (last < text.length) out.push(text.slice(last));
+	return out;
+}
+
+export function markdown(text: string): ReactElement[] {
+	const lines = text.replace(/\r\n/g, "\n").split("\n");
+	const blocks: ReactElement[] = [];
+	let i = 0;
+	let n = 0;
+	while (i < lines.length) {
+		const line = lines[i];
+		const key = `b${n++}`;
+		const fence = /^\s*```(\S*)/.exec(line);
+		if (fence) {
+			const body: string[] = [];
+			i++;
+			while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
+			i++;
+			blocks.push(h("pre", { key }, h("code", null, body.join("\n"))));
+			continue;
+		}
+		const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+		if (heading) {
+			blocks.push(h(`h${Math.min(6, heading[1].length + 3)}`, { key }, ...inline(heading[2], key)));
+			i++;
+			continue;
+		}
+		if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+			const ordered = /^\s*\d/.test(line);
+			const items: ReactElement[] = [];
+			while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+				const content = lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, "");
+				items.push(h("li", { key: `${key}-${items.length}` }, ...inline(content, `${key}-${items.length}`)));
+				i++;
+			}
+			blocks.push(h(ordered ? "ol" : "ul", { key }, ...items));
+			continue;
+		}
+		if (/^\s*>/.test(line)) {
+			const quote: string[] = [];
+			while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+			blocks.push(h("blockquote", { key }, ...inline(quote.join(" "), key)));
+			continue;
+		}
+		if (!line.trim()) {
+			i++;
+			continue;
+		}
+		const para: string[] = [];
+		while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,4}\s|[-*+]\s|\d+[.)]\s|>)/.test(lines[i])) para.push(lines[i++]);
+		if (para.length === 0) para.push(lines[i++]);
+		blocks.push(h("p", { key }, ...inline(para.join(" "), key)));
+	}
+	return blocks;
+}
+
+// ---------- icons (24×24 strokes) ----------
+
+const PATHS = {
+	plus: "M12 5v14M5 12h14",
+	search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
+	x: "M6 6l12 12M18 6L6 18",
+	folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+	kanban: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v6h-4z",
+	clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+	stop: "M7 7h10v10H7z",
+	send: "M4 12l16-8-6 16-2-6z",
+	check: "M5 12l5 5 9-10",
+	alert: "M12 4l9 16H3zM12 10v4M12 17v.5",
+	ask: "M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.5V14M12 17.5v.5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
+	refresh: "M20 11a8 8 0 0 0-14.6-4.5M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5M20 20v-4h-4",
+	server: "M4 5h16v6H4zM4 13h16v6H4zM8 8h.01M8 16h.01",
+	slots: "M4 6h16M4 12h16M4 18h10",
+	lane: "M5 4v16M12 4v16M19 4v16",
+	dollar: "M12 3v18M16 7.5c0-1.4-1.8-2.5-4-2.5s-4 1.1-4 2.5S9.8 10 12 10s4 1.1 4 2.5S14.2 15 12 15s-4-1.1-4-2.5",
+	file: "M6 3h8l4 4v14H6zM14 3v4h4",
+	chevron: "M9 6l6 6-6 6",
+	terminal: "M4 6l6 6-6 6M12 18h8",
+	sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
+	external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
+	pause: "M8 5v14M16 5v14",
+	tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01",
+} as const;
+export type IconName = keyof typeof PATHS;
+
+export function icon(name: IconName, size = 14, title?: string): ReactElement {
+	return h(
+		"svg",
+		{
+			className: "omps-icon",
+			width: size,
+			height: size,
+			viewBox: "0 0 24 24",
+			fill: "none",
+			stroke: "currentColor",
+			strokeWidth: 2,
+			strokeLinecap: "round",
+			strokeLinejoin: "round",
+			"aria-hidden": title ? undefined : true,
+			role: title ? "img" : undefined,
+			"aria-label": title,
+		},
+		h("path", { d: PATHS[name] }),
+	);
+}
+
+/** The omp mark (the site's logo glyph) in the brand gradient. */
+export function logo(size = 22): ReactElement {
+	return h(
+		"svg",
+		{ className: "omps-logo", width: size, height: size, viewBox: "8 8 48 48", "aria-hidden": true },
+		h(
+			"defs",
+			null,
+			h(
+				"linearGradient",
+				{ id: "omps-grad", x1: 0, y1: 0, x2: 1, y2: 1 },
+				h("stop", { offset: 0, stopColor: "#ed4abf" }),
+				h("stop", { offset: 0.5, stopColor: "#9b4dff" }),
+				h("stop", { offset: 1, stopColor: "#5ad8e6" }),
+			),
+		),
+		h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-grad)" }),
+	);
+}

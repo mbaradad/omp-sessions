@@ -60,6 +60,10 @@
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20 11.5-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.6 17.3a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/></symbol>
   <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4.5H8.5"/><rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9.2 4v16M14.8 4v16"/></symbol>
 </svg>
 
 <a class="skip" href="#main">Skip to content</a>
@@ -76,6 +80,7 @@
       <a href="#features">Features</a>
       <a href="#queue">Queue</a>
       <a href="#phone">Phone</a>
+      <a href="#hermes">Hermes</a>
       <a href="#cli">CLI</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -500,6 +505,110 @@
   </div>
 </section>
 
+<!-- ───────────────────────── Hermes ───────────────────────── -->
+<section class="section" id="hermes" aria-labelledby="hermes-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Hermes Agent plugin</p>
+      <h2 id="hermes-title">Hermes plans the work. <span class="grad">omp does the coding.</span></h2>
+      <p class="sub">With the <code>omp-sessions</code> plugin, <a href="https://github.com/NousResearch/hermes-agent">Hermes</a> schedules omp sessions instead of coding on its own. It starts them in the right folder, project or board, hears back when they finish, and runs kanban cards as omp sessions.</p>
+    </header>
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">In Hermes</p>
+        <h3>Schedule sessions from any chat or board.</h3>
+        <ul class="ticks">
+          <li>Tools to start, queue or schedule a session for later, check it, answer it, steer it and stop it</li>
+          <li>The chat that started a session gets a message when it finishes or needs you</li>
+          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board; the reply becomes the card's result</li>
+          <li>Each session runs in a folder, a known project or the board's folder, in the permission mode you pick</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes · omp Sessions</span></div>
+        <img src="assets/shots/hermes-dashboard.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped, with project, board, mode and cost on each card.">
+      </div>
+    </div>
+    <div class="row row--flip reveal">
+      <div class="row__text">
+        <p class="kicker">Dashboard &amp; Desktop</p>
+        <h3>An omp Sessions page in Hermes's sidebar.</h3>
+        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode or stop it; start new work now, queued or at a time; set up the kanban lane per board.</p>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
+        <img src="assets/shots/hermes-detail.png" width="1600" height="1000" loading="lazy" decoding="async" alt="A session's detail panel in the Hermes dashboard: omp asks which Redis client to use, with three answer buttons, the session's status, model, cost and tags, the permission mode, its last reply and a follow-up box.">
+      </div>
+    </div>
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">Install</p>
+        <h3>One command, every profile.</h3>
+        <p>From VS Code, run <em>omp: Install Hermes Plugin…</em> and pick the profiles (or <code>omp-vs hermes install --all-profiles</code>). Or install it with Hermes, straight from GitHub:</p>
+        <div class="cmd cmd--block" data-copy-root>
+          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable</span></code>
+          <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        </div>
+        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em>. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Full guide</a>.</p>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes Desktop · omp Sessions</span></div>
+        <img src="assets/shots/hermes-desktop.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions page in Hermes Desktop, opened from the left sidebar under Scheduled jobs: two sessions need input with their questions and answer options, three are working, two queued, two done and two stopped.">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── How it fits together ───────────────────────── -->
+<section class="section section--tint" id="fit" aria-labelledby="fit-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">How it fits together</p>
+      <h2 id="fit-title">One server. <span class="grad">Every way in.</span></h2>
+      <p class="sub">One <code>omp-vs</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session.</p>
+    </header>
+    <figure class="fit reveal">
+      <figcaption class="sr-only">Five clients (VS Code, the omp-vs terminal command, the phone app and HTTP API, Hermes Agent, and other agents through the omp-sessions skill) all talk to one omp-vs server per machine. The server starts and schedules sessions; each session runs in its own detached host process with omp.</figcaption>
+      <ul class="fit__clients" aria-hidden="true">
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-vscode"/></svg></span><span class="fitc__t">VS Code</span><span class="fitc__s">chat, board, diffs, checkpoints</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-terminal"/></svg></span><span class="fitc__t">Terminal</span><span class="fitc__s"><code>omp-vs</code> attach, queue, scripts</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-phone"/></svg></span><span class="fitc__t">Phone &amp; HTTP</span><span class="fitc__s">web app, JSON + SSE API</span></li>
+        <li class="fitc fitc--hermes"><span class="fitc__ic"><svg class="i"><use href="#i-bot"/></svg></span><span class="fitc__t">Hermes</span><span class="fitc__s">tools, kanban lane, sidebar page</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="fitc__t">Other agents</span><span class="fitc__s">omp, Claude Code, Codex via the skill</span></li>
+      </ul>
+      <div class="fit__bus" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="fit__server" aria-hidden="true">
+        <span class="fit__srv-ic"><svg class="i"><use href="#i-server"/></svg></span>
+        <span class="fit__srv-t">omp-vs server <small>one per machine</small></span>
+        <span class="fit__chips"><span>queue &amp; schedule</span><span>concurrency limit</span><span>groups &amp; tags</span><span>phone &amp; HTTP API</span></span>
+      </div>
+      <div class="fit__bus fit__bus--hosts" aria-hidden="true"><i></i><i></i><i></i></div>
+      <ul class="fit__hosts" aria-hidden="true">
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>auth refactor · working</small></span></li>
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>flaky test · needs you</small></span></li>
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>board card · queued</small></span></li>
+      </ul>
+    </figure>
+    <div class="trio">
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
+        <h3>Hermes plugin</h3>
+        <p>Tools, notifications, a kanban lane and a sidebar page. <a href="#hermes">See above</a>.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
+        <h3>A skill for other agents</h3>
+        <p><em>omp: Install omp Sessions Skill for Agents…</em> teaches omp, Claude Code and Codex to hand work to background omp sessions and pick up the result.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
+        <h3>Built for scripts</h3>
+        <p><code>omp-vs new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ───────────────────────── Dashboard ───────────────────────── -->
 <section class="section section--flush" aria-labelledby="usage-title">
   <div class="wrap">
@@ -585,21 +694,6 @@
         <h3>Sessions your way</h3>
         <p><em>New Session with Options</em>: model, thinking level, permission mode, plan-first, advisor, a goal and extra omp flags, remembered for resumes.</p>
       </article>
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-server"/></svg>
-        <h3>Hermes plugin</h3>
-        <p>Hermes agents start, schedule and check omp sessions with native tools and hear back when they finish. Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board.</p>
-      </article>
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-pi"/></svg>
-        <h3>A skill for other agents</h3>
-        <p>The <code>omp-sessions</code> skill teaches omp, Claude Code and Codex to hand work to background omp sessions and pick up the result.</p>
-      </article>
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
-        <h3>Built for scripts</h3>
-        <p><code>omp-vs new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
-      </article>
     </div>
   </div>
 </section>
@@ -676,6 +770,10 @@
       <details>
         <summary>Can I still use omp in the terminal?</summary>
         <p>Yes. <code>omp-vs attach</code> chats with a session in the terminal, the TUI switch opens omp's own terminal UI on the session, and <em>Resume omp Transcript in Background</em> adopts sessions you started in a terminal.</p>
+      </details>
+      <details>
+        <summary>Can I use the Hermes plugin without VS Code?</summary>
+        <p>Hermes installs the plugin from GitHub (<code>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions</code>), but the plugin drives <code>omp-vs</code>, which ships with the extension. Install the extension once on the machine that runs Hermes and run <em>omp: Install omp-vs Command</em>; after that, VS Code doesn't need to stay open.</p>
       </details>
       <details>
         <summary>Are all file changes tracked for diffs and revert?</summary>

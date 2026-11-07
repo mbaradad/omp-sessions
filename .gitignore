@@ -6,3 +6,4 @@ dist/
 .vscode-test/
 test/e2e-desktop/out/
 .test-out/
+__pycache__/

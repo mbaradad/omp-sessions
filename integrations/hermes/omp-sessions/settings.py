@@ -1,4 +1,5 @@
-"""Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (ctx.get_config / set_config).
+"""Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (read with ctx.get_config,
+written with update_setting).
 
     omp_vs: /path/to/omp-vs        # default: PATH, then ~/.local/bin/omp-vs
     notify: true                   # tell the Hermes session that started an omp session when it settles
@@ -18,9 +19,11 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
+PLUGIN_ID = "omp-sessions"
 MODES = ("ask", "edits", "plan", "auto")
 DEFAULT_ASSIGNEE = "omp"
 
@@ -121,3 +124,27 @@ def read_settings(ctx: Any) -> Settings:
         if v is not None:
             raw[key] = v
     return parse_settings(raw)
+
+
+def update_setting(key: str, change: Callable[[Any], Any]) -> None:
+    """Read-modify-write of `plugins.entries.omp-sessions.settings.<key>` in the active profile's
+    config.yaml: `change` gets the current value (a copy) and returns the new one, written as is.
+
+    ctx.set_config deep-merges into what is on disk, so it can't drop a board or clear a field.
+    Holds the lock Hermes's own plugin-setting writer takes (`.config.yaml.lock`)."""
+    from hermes_cli import config as cfg
+
+    from .store import file_lock
+
+    if cfg.is_managed():
+        raise PermissionError("plugin settings cannot be changed in a managed install")
+    path = cfg.get_config_path()
+    with file_lock(path.with_name(f".{path.name}.lock")):
+        raw = cfg.require_readable_config_before_write(path)
+        node = raw
+        for part in ("plugins", "entries", PLUGIN_ID, "settings"):
+            if not isinstance(node.get(part), dict):
+                node[part] = {}
+            node = node[part]
+        node[key] = change(copy.deepcopy(node.get(key)))
+        cfg.save_config(raw)

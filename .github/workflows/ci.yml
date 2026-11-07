@@ -38,6 +38,12 @@ jobs:
       - run: npm run typecheck
       # Unit + session-host suites against test/fake-omp.mjs (no omp, no model calls).
       - run: npm test
+      # `hermes plugins install …/integrations/hermes/omp-sessions` installs the folder as committed.
+      - name: Hermes plugin folder matches the build
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          node build.mjs
+          git status --porcelain -- integrations/hermes/omp-sessions | grep . && { git diff -- integrations/hermes/omp-sessions; exit 1; } || true
 
   e2e-desktop:
     name: desktop e2e (ubuntu, xvfb)

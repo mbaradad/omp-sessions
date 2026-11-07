@@ -1,0 +1,14 @@
+{
+  "name": "omp-sessions",
+  "label": "omp Sessions",
+  "description": "omp coding sessions at a glance: what needs you, what is working, queued and scheduled, done; answer, steer, start and stop them, and run kanban cards as omp sessions.",
+  "icon": "Terminal",
+  "version": "0.6.0",
+  "tab": {
+    "path": "/omp-sessions",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

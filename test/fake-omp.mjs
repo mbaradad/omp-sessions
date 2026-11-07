@@ -325,7 +325,8 @@ function waitUi(id, signal) {
 }
 
 // FAKE_OMP_REPLIES=<file.json>: { "<prompt>": [step…] } with steps {text}, {write: [rel, content]},
-// {edit: [rel, old, new]}, {bash: [command, output]}, {sleep: ms}, for realistic demos (screenshots).
+// {edit: [rel, old, new]}, {bash: [command, output]}, {ask: [question, [option…]]}, {sleep: ms}, for
+// realistic demos (screenshots).
 const REPLIES = process.env.FAKE_OMP_REPLIES ? JSON.parse(fs.readFileSync(process.env.FAKE_OMP_REPLIES, "utf8")) : {};
 
 async function runReply(steps, signal) {
@@ -336,8 +337,28 @@ async function runReply(steps, signal) {
 		else if (Array.isArray(step.bash)) {
 			const [command, output] = step.bash;
 			await toolCall("bash", { command }, async () => ({ text: output, details: { exitCode: 0 } }), signal);
-		} else if (typeof step.sleep === "number") await sleep(step.sleep, signal);
+		} else if (Array.isArray(step.ask)) await askTool(step.ask[0], step.ask[1], signal);
+		else if (typeof step.sleep === "number") await sleep(step.sleep, signal);
 	}
+}
+
+/** An `ask` tool call with one question; resolves to the label the user chose (or typed). */
+async function askTool(question, options, signal) {
+	let label = "";
+	const questions = [{ id: "q1", question, options: options.map(o => ({ label: o })) }];
+	await toolCall(
+		"ask",
+		{ questions },
+		async (_id, sig) => {
+			const id = `ui-${newId()}`;
+			out({ type: "extension_ui_request", id, method: "ask", questions });
+			const res = await waitUi(id, sig);
+			label = res.cancelled ? "nothing" : (res.answers?.[0]?.selectedOptions?.[0] ?? res.answers?.[0]?.customInput ?? "nothing");
+			return { text: `User chose: ${label}`, details: { answers: res.answers ?? [] } };
+		},
+		signal,
+	);
+	return label;
 }
 
 async function writeTool(rel, content) {
@@ -399,20 +420,7 @@ async function runScript(text, signal) {
 			return;
 		}
 		case "ask": {
-			let label = "";
-			const questions = [{ id: "q1", question: "Pick one", options: [{ label: "alpha" }, { label: "beta" }] }];
-			await toolCall(
-				"ask",
-				{ questions },
-				async (_id, sig) => {
-					const id = `ui-${newId()}`;
-					out({ type: "extension_ui_request", id, method: "ask", questions });
-					const res = await waitUi(id, sig);
-					label = res.cancelled ? "nothing" : (res.answers?.[0]?.selectedOptions?.[0] ?? res.answers?.[0]?.customInput ?? "nothing");
-					return { text: `User chose: ${label}`, details: { answers: res.answers ?? [] } };
-				},
-				signal,
-			);
+			const label = await askTool("Pick one", ["alpha", "beta"], signal);
 			await streamText(`chose ${label}`, signal);
 			return;
 		}

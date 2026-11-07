@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +13,28 @@ from typing import Any, Optional, Sequence
 
 # Exit codes of `omp-vs wait`.
 WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 124: "timeout"}
+
+
+def agent_state(info: dict) -> str:
+    """The session's state as `omp-vs show --json` reports it, from an `omp-vs ls --json` entry
+    (same rules as agentState in src/shared/session-report.ts): queued, starting, working,
+    needs_input, idle or stopped."""
+    meta = info.get("meta") if isinstance(info.get("meta"), dict) else {}
+    q = info.get("queue") if isinstance(info.get("queue"), dict) else {}
+    status = meta.get("status")
+    pending, running = int(q.get("pending") or 0), int(q.get("running") or 0)
+    auto_run, scheduled = q.get("autoRun") is True, q.get("startAt") is not None
+    if status == "waiting":
+        return "needs_input"
+    if status in ("starting", "working"):
+        return str(status)
+    if info.get("waiting"):
+        return "queued"
+    if status == "stopped":
+        return "queued" if pending > 0 and (auto_run or scheduled) else "stopped"
+    if running > 0 or (auto_run and pending > 0):
+        return "working"
+    return "queued" if pending > 0 and scheduled else "idle"
 
 
 class OmpVsError(RuntimeError):
@@ -116,6 +139,14 @@ class OmpVs:
     def projects(self) -> list[dict]:
         out = self.json(["projects", "--json"])
         return [p for p in out if isinstance(p, dict)] if isinstance(out, list) else []
+
+    def version(self) -> dict:
+        """{"cli": version, "server": version or None, "pid": server pid or None} from `omp-vs version`."""
+        out = self.ok(["version"], timeout=20).strip()
+        m = re.match(r"omp-vs (\S+)(?: · server (\S+) \(pid (\d+)\))?", out)
+        if not m:
+            raise OmpVsError(f"omp-vs version printed {out[:100]!r}")
+        return {"cli": m.group(1), "server": m.group(2), "pid": int(m.group(3)) if m.group(3) else None}
 
     def new(
         self,
