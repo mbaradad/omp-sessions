@@ -67,9 +67,13 @@ test("waiting sessions start in the user's order (organize.json priority), re-re
 	org.sessions[c.h.id] = { priority: "urgent" };
 	fs.writeFileSync(path.join(home, "organize.json"), JSON.stringify(org));
 	await c.c.waitFor("meta", m => m.meta.queue?.waiting?.position === 1, 0, 5000);
+	// Order without wall-clock timestamps (clocks can step, e.g. WSL2): B still pends when C runs.
+	await c.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running", 0, 15000);
+	const bNow = [...b.c.msgs].reverse().find(m => m.t === "queue");
+	assert.equal(bNow?.t === "queue" ? bNow.queue.tasks[0]?.status : undefined, "pending", "C (urgent) ran before B");
 	const [tb, tc] = await Promise.all([doneTask(b.c), doneTask(c.c)]);
-	assert.ok((tc.startedAt ?? 0) < (tb.startedAt ?? 0), "C (urgent) ran before B");
-	assert.ok(!overlaps(tb, tc));
+	assert.equal(tb.status, "done");
+	assert.equal(tc.status, "done");
 });
 
 test("a stale lease of a dead process doesn't take a slot", async t => {

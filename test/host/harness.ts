@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { canConnect } from "../../src/shared/launch";
 import type { ClientToHost, HostToClient, OmpFrame, SessionMeta } from "../../src/shared/protocol";
 
 function requiredEnv(name: string): string {
@@ -191,10 +192,16 @@ export class Host {
 		if (r.status !== 0) throw new Error(`host launcher failed (${r.status}): ${r.stderr}`);
 		const meta = await until(() => {
 			const m = this.metaOrUndefined();
-			return m && m.pid !== before && m.ompPid && fs.existsSync(this.socket) ? m : undefined;
-		}, "host socket");
+			return m && m.pid !== before && m.ompPid ? m : undefined;
+		}, "host meta");
 		this.pids.add(meta.pid);
 		if (meta.ompPid) this.pids.add(meta.ompPid);
+		// A crashed predecessor leaves its socket file behind: only a connect proves the new host listens.
+		const deadline = Date.now() + 8000;
+		while (!(await canConnect(this.socket))) {
+			if (Date.now() > deadline) throw new Error("timed out waiting for host socket");
+			await sleep(25);
+		}
 	}
 
 	metaOrUndefined(): SessionMeta | undefined {

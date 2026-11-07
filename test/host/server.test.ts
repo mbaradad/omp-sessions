@@ -82,21 +82,17 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	assert.equal(meta("urgent")?.launchedBy, "scheduler");
 
 	// Someone opens low's chat as soon as it runs: it must survive its queue finishing.
+	// Order without wall-clock timestamps (clocks can step, e.g. WSL2): with limit 1, low is only
+	// launched once urgent released its slot, so urgent's task is done by the time low runs.
 	const lowMeta = await until(() => {
 		const m = seen("low");
 		return m && m.status !== "stopped" && m.status !== "starting" && m.socket ? m : undefined;
 	}, "low launched after urgent", 20000);
+	assert.equal(queue("urgent")?.tasks[0].status, "done", "limit 1: low started only after urgent's task finished");
 	viewer = (await HostConnection.open(lowMeta.socket, "panel")).conn;
 
-	const u = await until(() => {
-		const t = queue("urgent")?.tasks[0];
-		return meta("urgent")?.status === "stopped" && t?.status === "done" ? t : undefined;
-	}, "urgent done and stopped", 20000);
-	const l = await until(() => {
-		const t = queue("low")?.tasks[0];
-		return t?.status === "done" ? t : undefined;
-	}, "low done", 20000);
-	assert.ok((u.finishedAt ?? Infinity) <= (l.startedAt ?? 0), `limit 1: low ran after urgent finished (${JSON.stringify({ u, l })})`);
+	await until(() => meta("urgent")?.status === "stopped", "urgent stopped once its queue was done", 20000);
+	await until(() => queue("low")?.tasks[0].status === "done", "low done", 20000);
 
 	await sleep(3000);
 	assert.notEqual(meta("low")?.status, "stopped", "a watched session is not stopped");
