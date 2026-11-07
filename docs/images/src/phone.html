@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { width: 1200px; height: 640px; }
+.left { position: absolute; left: 56px; top: 64px; width: 360px; }
+h2 { margin: 0; font-size: 36px; line-height: 1.08; letter-spacing: -0.035em; font-weight: 750; }
+.left p { margin: 18px 0 0; font-size: 16.5px; line-height: 1.55; }
+ul { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; font-size: 15px; color: #e6def2; }
+li { display: flex; gap: 10px; align-items: baseline; }
+li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: linear-gradient(135deg, #ed4abf, #9b4dff); flex: none; transform: translateY(-2px); }
+.note { margin-top: 22px; font-size: 13px; color: #9389a3; line-height: 1.5; }
+.phones { position: absolute; left: 450px; top: 40px; display: flex; gap: 26px; }
+figure { margin: 0; width: 220px; }
+figure .phone { width: 220px; }
+figcaption { margin-top: 12px; text-align: center; font-size: 14px; color: #bdb3cb; }
+figure:nth-child(2) { transform: translateY(-14px); }
+</style></head>
+<body><div class="glow"></div><div class="grid"></div>
+<div class="left">
+	<h2>Your sessions, <span class="g">in your pocket.</span></h2>
+	<p class="dim">The omp-vs server serves a small web app. Scan a QR code from VS Code and add it to your home screen.</p>
+	<ul>
+		<li>See what's working, waiting or done</li>
+		<li>Follow a session live and prompt or steer it</li>
+		<li>Approve or deny tool calls; switch the permission mode</li>
+		<li>Start a session in a recent folder, or queue it</li>
+	</ul>
+	<div class="note">Over Tailscale (free, encrypted) or your Wi-Fi. Token-protected; the same JSON + SSE API is open to your own apps.</div>
+</div>
+<div class="phones">
+	<figure><div class="phone"><img src="../phone/list.png" alt=""></div><figcaption>All sessions</figcaption></figure>
+	<figure><div class="phone"><img src="../phone/approval.png" alt=""></div><figcaption>Approve from anywhere</figcaption></figure>
+	<figure><div class="phone"><img src="../phone/new.png" alt=""></div><figcaption>Start new work</figcaption></figure>
+</div>
+</body></html>

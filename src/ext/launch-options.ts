@@ -1,6 +1,7 @@
 // "New Session with Options…": the omp CLI flags that shape a session, as a short wizard.
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
+import { pickPermissionMode } from "./permissions";
 import { resolveOmpPath } from "./sessions";
 
 export interface ModelEntry {
@@ -43,7 +44,6 @@ const FLAGS = [
 	{ label: "Plan first", description: "--plan-yolo: read-only plan, auto-approved, then implement", flag: "--plan-yolo" },
 	{ label: "Advisor", description: "--advisor: passive reviewer that injects notes each turn", flag: "--advisor" },
 	{ label: "Prewalk", description: "--prewalk: switch to a cheaper model once the plan exists", flag: "--prewalk" },
-	{ label: "Auto-approve all tool calls", description: "--auto-approve", flag: "--auto-approve" },
 	{ label: "No LSP", description: "--no-lsp", flag: "--no-lsp" },
 	{ label: "No extensions", description: "--no-extensions", flag: "--no-extensions" },
 	{ label: "No skills", description: "--no-skills", flag: "--no-skills" },
@@ -82,18 +82,9 @@ export async function askLaunchOptions(cwd: string): Promise<{ ompArgs: string[]
 	if (!thinking) return undefined;
 	if (thinking.value !== "default") args.push("--thinking", thinking.value);
 
-	const approval = await vscode.window.showQuickPick(
-		[
-			{ label: "$(settings) Default approvals", value: "" },
-			{ label: "always-ask", description: "confirm every tool call", value: "always-ask" },
-			{ label: "always-ask-cached", description: "confirm once per tool/command", value: "always-ask-cached" },
-			{ label: "write", description: "confirm writes only", value: "write" },
-			{ label: "yolo", description: "never ask", value: "yolo" },
-		],
-		{ title: step(3), placeHolder: "Approval mode (approval prompts appear in the chat)" },
-	);
-	if (!approval) return undefined;
-	if (approval.value) args.push("--approval-mode", approval.value);
+	const mode = await pickPermissionMode(undefined, step(3), "from omp's tools.approvalMode");
+	if (mode === undefined) return undefined;
+	if (mode) args.push("--approval-mode", mode);
 
 	const flags = await vscode.window.showQuickPick(FLAGS, { title: step(4), placeHolder: "Options (Enter to continue)", canPickMany: true });
 	if (!flags) return undefined;

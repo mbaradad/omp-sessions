@@ -4,13 +4,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { diffTexts } from "../shared/diff";
+import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
 import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { HostClient } from "./client";
+import { Checkpoints } from "./checkpoints";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
+import { setSessionPermissionMode } from "../shared/launch";
 import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
 import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
@@ -19,6 +22,8 @@ import { openLink } from "./links";
 import type { SessionManager } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage, slimRunningTool } from "./slim";
+
+const STARRED_MODELS_KEY = "omp.starredModels";
 
 export const VIEW_TYPE = "omp.chat";
 
@@ -173,6 +178,7 @@ export class ChatPanel implements vscode.Disposable {
 	private lastStatus: SessionMeta["status"] | undefined;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
+	private readonly checkpoints: Checkpoints;
 
 	constructor(
 		readonly sessionId: string,
@@ -180,8 +186,30 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly sessions: SessionManager,
 		private readonly snapshots: SnapshotProvider,
 		private readonly extensionUri: vscode.Uri,
+		private readonly globalState: vscode.Memento,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
+		const panel = this;
+		this.checkpoints = new Checkpoints({
+			sessionId,
+			get client() {
+				return panel.client;
+			},
+			get meta() {
+				return panel.meta;
+			},
+			get state() {
+				return panel.state;
+			},
+			get changes() {
+				return panel.changes;
+			},
+			transcript: () => this.transcriptMessages(),
+			findUserEntry: text => this.findUserEntry(text),
+			insertText: text => this.insertText(text),
+			post: msg => this.post(msg),
+			postAfterReset: msg => this.afterReset.push(msg),
+		});
 		surface.webview.html = this.html();
 		this.subs.push(
 			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
@@ -201,6 +229,56 @@ export class ChatPanel implements vscode.Disposable {
 		this.updateTitle();
 		this.lastStatus = this.meta?.status;
 		this.attach();
+	}
+
+	private starredModels(): string[] {
+		const v = this.globalState.get<unknown>(STARRED_MODELS_KEY);
+		return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string") : [];
+	}
+
+	private async postModels(): Promise<void> {
+		const client = this.client;
+		if (!client) return;
+		const [models, levels] = await Promise.all([client.rpc({ type: "get_available_models" }), client.rpc({ type: "get_available_thinking_levels" })]);
+		const list = rec(models.data)?.models;
+		const lv = rec(levels.data)?.levels;
+		this.post({
+			type: "models",
+			models: (Array.isArray(list) ? list : []).map(x => rec(x) ?? {}).map(x => ({ provider: String(x.provider), id: String(x.id), name: typeof x.name === "string" ? x.name : undefined })),
+			levels: Array.isArray(lv) ? lv.map(String) : [],
+			starred: this.starredModels(),
+		});
+	}
+
+	/** omp's realtime voice (`live_start`): the microphone and speaker of the machine omp runs on. */
+	private async startVoice(): Promise<void> {
+		const client = this.client;
+		if (!client?.connected) {
+			this.post({ type: "notice", level: "warning", text: "Resume the session first: voice talks to the running omp." });
+			return;
+		}
+		if (vscode.env.remoteName) {
+			const ok = await vscode.window.showWarningMessage(
+				"Start voice on the remote machine?",
+				{ modal: true, detail: `omp runs on the ${vscode.env.remoteName} side, so voice uses that machine's microphone and speaker, which a server usually lacks. Voice works best in a local window.` },
+				"Start Anyway",
+			);
+			if (ok !== "Start Anyway") return;
+		}
+		const voice = vscode.workspace.getConfiguration("omp").get<string>("voice.name");
+		const res = await client.rpc({ type: "live_start", ...(voice ? { voice } : {}) }, 60_000);
+		if (res.success) return;
+		const error = String(res.error ?? "live_start failed");
+		if (/already active/i.test(error)) {
+			this.post({ type: "event", ev: { type: "live_phase", phase: "listening" } });
+			return;
+		}
+		const hint = /unknown command|unsupported/i.test(error)
+			? "This omp has no realtime voice: update it (omp: Update omp)."
+			: /auth|login|credential|token|401|403/i.test(error)
+				? "Voice uses OpenAI's realtime model through a ChatGPT login: run /login and pick OpenAI (ChatGPT)."
+				: "";
+		this.post({ type: "notice", level: "error", text: `Voice could not start: ${error}${hint ? `\n${hint}` : ""}` });
 	}
 
 	get meta(): SessionMeta | undefined {
@@ -441,6 +519,7 @@ export class ChatPanel implements vscode.Disposable {
 			home: os.homedir(),
 			queue: snap?.queue ?? this.sessions.queue(this.sessionId),
 		});
+		this.post({ type: "checkpoints", redo: this.checkpoints.redoCount });
 	}
 
 	/** Send a prompt as if typed in the composer (used by editor integrations). */
@@ -544,6 +623,7 @@ export class ChatPanel implements vscode.Disposable {
 				}
 				if (!message.trim() && images.length) message = images.length === 1 ? "(see attached image)" : "(see attached images)";
 				const busy = !!this.state?.isStreaming;
+				this.checkpoints.clearRedo();
 				const behavior = vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer";
 				const res = await client.rpc({
 					type: "prompt",
@@ -620,18 +700,9 @@ export class ChatPanel implements vscode.Disposable {
 				this.post({ type: "fileSuggestions", reqId: m.reqId, files });
 				return;
 			}
-			case "getModels": {
-				if (!client) return;
-				const [models, levels] = await Promise.all([client.rpc({ type: "get_available_models" }), client.rpc({ type: "get_available_thinking_levels" })]);
-				const list = Array.isArray(rec(models.data)?.models) ? (rec(models.data)?.models as unknown[]) : [];
-				const lv = rec(levels.data)?.levels;
-				this.post({
-					type: "models",
-					models: list.map(x => rec(x) ?? {}).map(x => ({ provider: String(x.provider), id: String(x.id), name: typeof x.name === "string" ? x.name : undefined })),
-					levels: Array.isArray(lv) ? lv.map(String) : [],
-				});
+			case "getModels":
+				await this.postModels();
 				return;
-			}
 			case "setModel": {
 				const res = await client?.rpc({ type: "set_model", provider: m.provider, modelId: m.id });
 				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
@@ -656,7 +727,7 @@ export class ChatPanel implements vscode.Disposable {
 					const res = await client.rpc({ type: "branch", entryId });
 					const data = rec(res.data) ?? {};
 					if (!res.success) this.post({ type: "error", message: String(res.error) });
-					else if (!data.cancelled) this.insertText(String(data.text ?? m.text));
+					else if (!data.cancelled) this.insertText(String(data.text ?? m.text).replace(PLAN_PROMPT_PREFIX, ""));
 				} else {
 					const res = await client.rpc({ type: "fork", entryId });
 					if (!res.success) this.post({ type: "error", message: String(res.error) });
@@ -677,6 +748,19 @@ export class ChatPanel implements vscode.Disposable {
 			case "command":
 				await this.runCommand(m.name);
 				return;
+			case "setMode":
+				if (this.meta && !(await setSessionPermissionMode(this.meta, m.mode))) this.post({ type: "notice", level: "warning", text: "Could not switch the permission mode: the session host is unreachable." });
+				return;
+			case "restoreCheckpoint":
+				await this.checkpoints.restore(m.text);
+				return;
+			case "starModel": {
+				const key = `${m.provider}/${m.id}`;
+				const starred = this.starredModels();
+				await this.globalState.update(STARRED_MODELS_KEY, starred.includes(key) ? starred.filter(k => k !== key) : [...starred, key]);
+				await this.postModels();
+				return;
+			}
 		}
 	}
 
@@ -684,6 +768,28 @@ export class ChatPanel implements vscode.Disposable {
 		if (await runSessionAction(name, this.commandContext)) return;
 		const meta = this.meta;
 		switch (name) {
+			case "undoTurn":
+				await this.checkpoints.restore();
+				return;
+			case "redoTurn":
+				await this.checkpoints.redo();
+				return;
+			case "voiceStart":
+				await this.startVoice();
+				return;
+			case "voiceStop": {
+				const res = await this.client?.rpc({ type: "live_stop" });
+				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
+				return;
+			}
+			case "voiceMute": {
+				const res = await this.client?.rpc({ type: "live_mute" });
+				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
+				return;
+			}
+			case "openTui":
+				await vscode.commands.executeCommand("omp.continueInTerminal", this.sessionId);
+				return;
 			case "compact": {
 				const res = await this.client?.rpc({ type: "compact" }, 15 * 60_000);
 				if (res && !res.success) this.post({ type: "error", message: String(res.error) });

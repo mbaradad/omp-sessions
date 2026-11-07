@@ -7,15 +7,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Control, resolveSession, waitForHost } from "../shared/control";
 import { HostConnection } from "../shared/host-conn";
-import { type HostLauncher, findOmp, listMetas, readHostVersion, readLauncherSettings, readMeta } from "../shared/launch";
+import { type HostLauncher, findOmp, listMetas, readHostVersion, readLauncherSettings, readMeta, sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
+import { PERMISSION_MODES, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import { ORG_COLORS, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
 import { type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, stateRoot } from "../shared/protocol";
+import { type RemoteStatus, isRemoteBind, newRemoteToken, pairingUrl, readRemoteConfig, updateRemoteConfig } from "../shared/remote";
+import { qrHalfBlocks } from "../shared/remote-qr";
+import { transcriptMessages } from "../shared/remote-snapshot";
 import { ServerClient, compareVersions, ensureServer, readServerLog, stopServer } from "../shared/server-client";
 import { COLUMNS, type OpName, type ServerOps, type SessionInfo, serverLogPath, serverSocketPath } from "../shared/server-protocol";
 import { type Args, UsageError, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
 import { renderMessage } from "./render";
-import { PRIORITY_MARK, STATUS_COLOR, ago, c, confirm, errorLine, oneLine, pad, priorityLabel, setColor, shortId, termWidth, truncate } from "./term";
+import { PRIORITY_MARK, STATUS_COLOR, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, shortId, termWidth, truncate } from "./term";
 
 const HOST_SCRIPT = path.join(__dirname, "host.js");
 const SERVER_SCRIPT = path.join(__dirname, "server.js");
@@ -54,6 +58,10 @@ function localBackend(): Backend {
 		queue: a => control.queue(a),
 		organize: a => control.organize(a),
 		scheduler: a => control.scheduler(a),
+		remote: () => {
+			const { enabled, bind, port } = readRemoteConfig();
+			return { enabled, bind, port, ...(enabled ? { error: "the omp-vs server is not running (it serves remote access)" } : {}) };
+		},
 		shutdown: () => ({}),
 	};
 	return {
@@ -249,28 +257,6 @@ async function cmdAttach(args: Args): Promise<number> {
 	return attach(meta, { history: Number.isFinite(lines) ? lines : 20, readOnly: !process.stdin.isTTY });
 }
 
-/** Transcript entries of a stopped session's omp session file. */
-function transcriptMessages(file: string | undefined): unknown[] {
-	if (!file) return [];
-	let text = "";
-	try {
-		text = fs.readFileSync(file, "utf8");
-	} catch {
-		return [];
-	}
-	const out: unknown[] = [];
-	for (const line of text.split("\n")) {
-		if (!line.includes('"message"')) continue;
-		try {
-			const entry: unknown = JSON.parse(line);
-			if (entry && typeof entry === "object" && "message" in entry && entry.message && typeof entry.message === "object") out.push(entry.message);
-		} catch {
-			/* torn line */
-		}
-	}
-	return out;
-}
-
 async function cmdTail(args: Args): Promise<number> {
 	const meta = findSession(args._[0] ?? ".");
 	const n = Number(value(args, "lines") ?? 10);
@@ -331,6 +317,22 @@ async function cmdAbort(args: Args): Promise<void> {
 	const meta = findSession(args._[0] ?? ".");
 	const res = await (await backend()).call("abort", { id: meta.id });
 	process.stdout.write(res.sent ? `${c.yellow("aborted")} ${shortId(meta.id)} ${meta.title}\n` : c.dim("not running\n"));
+}
+
+async function cmdMode(args: Args): Promise<void> {
+	// `omp-vs mode plan` = the latest session in this folder.
+	const [ref, want] = args._.length === 1 && permissionModeOf(args._[0].toLowerCase()) ? [".", args._[0]] : [args._[0] ?? ".", args._[1]];
+	const meta = findSession(ref);
+	if (!want) {
+		const current = sessionPermissionMode(meta);
+		process.stdout.write(`${c.bold(meta.title)} ${c.dim(shortId(meta.id))} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("omp default")}\n`);
+		for (const m of PERMISSION_MODES) process.stdout.write(`  ${m === current ? c.green("●") : c.dim("·")} ${pad(m, 6)} ${c.dim(PERMISSION_MODE_INFO[m].detail)}\n`);
+		return;
+	}
+	const mode = permissionModeOf(want.toLowerCase());
+	if (!mode) throw new UsageError(`unknown mode "${want}" (${PERMISSION_MODES.join(", ")})`);
+	if (!(await setSessionPermissionMode(meta, mode))) throw new Error(meta.permissionMode ? "the session host is unreachable" : "this session's host predates permission modes; restart it (omp-vs stop + resume) to switch live");
+	process.stdout.write(`${c.green(PERMISSION_MODE_INFO[mode].label)} ${shortId(meta.id)} ${meta.title}${meta.status === "stopped" ? c.dim(" (applies when resumed)") : ""}\n`);
 }
 
 const TASK_MARK: Record<QueueTask["status"], string> = { pending: "·", running: "▶", done: "✓", failed: "✗", skipped: "−" };
@@ -577,6 +579,62 @@ async function cmdServer(args: Args): Promise<number> {
 	}
 }
 
+// ---------- remote access (phone app + HTTP API, docs/REMOTE-API.md) ----------
+
+function printRemote(s: RemoteStatus): void {
+	const state = !s.enabled ? c.dim("off") : s.listening ? c.green("on") : c.red("not listening");
+	const rows = [`remote  ${state}  ${c.dim(`bind ${s.bind} · port ${s.listening?.port ?? s.port}`)}`];
+	if (s.url) rows.push(`url     ${s.url}`);
+	if (s.error) rows.push(`error   ${c.red(s.error)}`);
+	if (s.listening && s.bind === "lan") rows.push(c.yellow("plain HTTP: anyone on this network can see the traffic; prefer --bind tailscale"));
+	if (s.url) rows.push(c.dim("pair a phone: omp-vs remote qr (scan it, or open the pairing URL on the phone)"));
+	process.stdout.write(`${rows.join("\n")}\n`);
+}
+
+async function cmdRemote(args: Args): Promise<number> {
+	const sub = args._[0] ?? "status";
+	const apply = async () => (await backend()).call("remote", {});
+	switch (sub) {
+		case "on": {
+			const bind = value(args, "bind");
+			if (bind !== undefined && !isRemoteBind(bind)) throw new UsageError("--bind must be tailscale, lan, localhost or an IP address");
+			const portText = value(args, "port");
+			const port = portText === undefined ? undefined : Number(portText);
+			if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new UsageError("--port must be 1-65535");
+			updateRemoteConfig({ enabled: true, ...(bind !== undefined && isRemoteBind(bind) ? { bind } : {}), ...(port !== undefined ? { port } : {}) });
+			const s = await apply();
+			printRemote(s);
+			return s.listening ? 0 : 1;
+		}
+		case "off":
+			updateRemoteConfig({ enabled: false });
+			await apply();
+			process.stdout.write(`remote  ${c.dim("off")}\n`);
+			return 0;
+		case "status": {
+			const s = await apply();
+			printRemote(s);
+			return s.enabled && !s.listening ? 1 : 0;
+		}
+		case "qr": {
+			if (!readRemoteConfig().enabled) throw new Error("remote access is off (omp-vs remote on)");
+			const s = await apply();
+			if (!s.url) throw new Error(s.error ?? "remote access is not listening");
+			const url = pairingUrl(s.url, readRemoteConfig().token);
+			process.stdout.write(`${qrHalfBlocks(url, colorEnabled())}\n${url}\n${c.dim("Scan with the phone's camera, or open the URL on it. Anyone with this URL can control your sessions.")}\n`);
+			return 0;
+		}
+		case "rotate": {
+			const cfg = updateRemoteConfig({ token: newRemoteToken() });
+			await apply();
+			process.stdout.write(`${c.green("new token")} · paired phones must pair again${cfg.enabled ? c.dim(" (omp-vs remote qr)") : ""}\n`);
+			return 0;
+		}
+		default:
+			throw new UsageError(`unknown remote command "${sub}" (on, off, status, qr, rotate)`);
+	}
+}
+
 function installService(): number {
 	const env = [`ELECTRON_RUN_AS_NODE=1`, ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${process.env.PATH ?? ""}`];
 	const { systemd, launchd } = unitPaths();
@@ -669,6 +727,8 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
   tail [session] [-n N] [-f]      last messages; -f follows live output
   stop|resume <session>…          stop or resume sessions
   abort [session]                 abort the current turn
+  mode [session] [ask|edits|plan|auto]
+                                  show or switch the permission mode (live, also while working)
   rm <session>… [-y]              remove sessions and their history
 
 ${c.bold("Queue")}
@@ -692,6 +752,11 @@ ${c.bold("Scheduler")}  ${c.dim("(global limit on queued tasks running at once)"
 
 ${c.bold("Server")}  ${c.dim("(started on demand; launches queued sessions when slots free up)")}
   server status|start|stop|restart|log [-f]|install|uninstall
+
+${c.bold("Remote")}  ${c.dim("(phone app + HTTP API on this machine; prefer Tailscale, LAN is plain HTTP)")}
+  remote on [--bind tailscale|lan|localhost|<ip>] [--port n]
+                                  turn on remote access (default bind tailscale, port 7413)
+  remote off|status|qr|rotate     turn off · show state · pairing QR + URL · new token (unpairs phones)
 
   --no-color, NO_COLOR=1          plain output · OMP_VS_NO_SERVER=1 runs without the server
 `;
@@ -737,6 +802,9 @@ async function main(argv: string[]): Promise<number> {
 		case "abort":
 			await cmdAbort(args);
 			return 0;
+		case "mode":
+			await cmdMode(args);
+			return 0;
 		case "queue":
 		case "q":
 			await cmdQueue(args);
@@ -756,6 +824,8 @@ async function main(argv: string[]): Promise<number> {
 			return 0;
 		case "server":
 			return cmdServer(args);
+		case "remote":
+			return cmdRemote(args);
 		case "version":
 		case "--version": {
 			const client = await ServerClient.connect();

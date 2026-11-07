@@ -52,18 +52,21 @@ The Marketplace needs no secret (Trusted Publishing, step 2). The workflow uses 
 
 ### 5. Marketplace listing assets
 
-Capture the screenshots below, save them as PNGs under `docs/images/` and embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`). `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-vscode/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
+The README and the website (`site/assets/shots/`) use the same seven PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-vscode/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
 
-Capture guidelines: a dark theme (it matches the `#1a1124` gallery banner and the icon), a window about 1600×1000 cropped to the relevant area, editor font around 15 px, a small demo repository, and no personal paths, hostnames, keys or costs you would rather not show. The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
+Capture guidelines: 1600×1000 (16:10; the website crops with `object-fit: cover` anchored top-left), Dark Modern, zoom level 1, a real VS Code with the released VSIX installed in an isolated profile (`--user-data-dir`/`--extensions-dir`) so the title bar shows no *Extension Development Host*, and no OS window chrome. Drive omp with `test/fake-omp.mjs` (`FAKE_OMP_DEMO=1` gives real-looking model names, prices and tok/s; `FAKE_OMP_REPLIES` scripts the answers) in a throwaway `OMP_VSCODE_HOME`, so no personal paths, keys or costs appear. The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
 
-| # | File | What to capture | Caption |
-| --- | --- | --- | --- |
-| 1 | `chat.png` | A chat tab mid-turn: streaming answer, a collapsed tool call, clickable `file:line` links and an inline diff | Chat with omp in an editor tab or the side bar: streaming answers, tool calls, clickable files and inline diffs. |
-| 2 | `sessions.png` | The omp activity bar with the Sessions view: several sessions across two projects (running, waiting for input, stopped), a **● new** marker and the badge count | Every session at a glance: running, waiting for you, or finished while you were away. |
-| 3 | `remote.png` | A Remote-SSH window just reconnected to a session that kept working while disconnected (status bar shows `SSH: <host>`) | Close the laptop or drop SSH: sessions keep running on the machine and reattach with everything that happened meanwhile. |
-| 4 | `review.png` | *Review Changes*: VS Code's native diff of a session edit, with change markers in the gutter and the CodeLens *Revert* | Review every edit in VS Code's own diff editor and revert per file or per change. |
-| 5 | `tasks.png` | The Tasks view with a queued task, nested subtasks, one running and one checked off | Queue tasks and subtasks. omp works through them one after another, even with VS Code closed. |
-| 6 | `editor.png` | A red squiggle with the lightbulb menu open on *Fix with omp*, plus *Add to omp Chat* in the editor context menu | Fix with omp, Explain, Add to Chat: right from the editor, Problems, terminal and Source Control. |
+| # | File | What it shows |
+| --- | --- | --- |
+| 1 | `chat.png` | A chat tab with the Sessions view: inline diff, tool call, Markdown answer with `file:line` links, and the footer (model, thinking, permission mode, context, cost, tok/s) |
+| 2 | `sessions.png` | Sessions across two projects (working, needs input, idle, stopped) and a pending tool approval card in Ask mode |
+| 3 | `board.png` | The Sessions Board by status |
+| 4 | `review.png` | *Review Changes*: the session's edits in VS Code's multi-file diff |
+| 5 | `tasks.png` | The Tasks view with a running queue, subtasks and pending tasks |
+| 6 | `checkpoints.png` | The *Restore the checkpoint before this prompt?* confirmation listing the files that go back |
+| 7 | `dashboard.png` | The usage dashboard: spend cards, per-day chart, projects and models |
+
+Phone screenshots (`docs/images/phone/*.png`, copied to `site/assets/shots/phone-*.png`) are 390×844 at 3× from the phone app against the same demo state (`omp-vs remote on --bind localhost`, then open the pairing URL in a mobile browser viewport). The README graphics (`hero.png`, `a-day.png`, `how-it-works.png`, `phone.png`) are rendered from HTML in `docs/images/src/`, which embeds these screenshots: re-render them after a retake (commands in `docs/images/src/README.md`).
 
 Optional: a 10–20 s GIF of starting a session, closing VS Code, reopening and finding the finished work (keep it under about 5 MB).
 

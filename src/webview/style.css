@@ -377,6 +377,13 @@ button.stop { background: var(--vscode-inputValidation-errorBorder, #be1100); co
 .footer { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.84em; color: var(--muted); flex-wrap: wrap; }
 .model-btn { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--border); padding: 0 9px; border-radius: 999px; }
 .model-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.mode-btn.mode-edits { border-color: var(--brand-2); }
+.mode-btn.mode-plan { border-color: var(--vscode-charts-blue, #3794ff); color: var(--vscode-charts-blue, #3794ff); }
+.mode-btn.mode-auto { border-color: var(--vscode-charts-yellow, #cca700); color: var(--vscode-charts-yellow, #cca700); }
+.mode-menu button { display: grid; grid-template-columns: 4.5em 1fr; gap: 8px; text-align: left; align-items: baseline; }
+.mode-menu .mode-label { font-weight: 600; }
+.mode-menu .mode-detail { color: var(--muted); font-size: 0.92em; white-space: normal; }
+.mode-menu { max-width: 360px; }
 .pill { border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; display: inline-flex; align-items: center; }
 .pill.warn { color: var(--vscode-charts-yellow, #cca700); border-color: currentColor; }
 .pill.accent { border-color: var(--brand-2); color: var(--vscode-foreground); }
@@ -423,6 +430,26 @@ button.stop { background: var(--vscode-inputValidation-errorBorder, #be1100); co
 .picker .plist { overflow-y: auto; display: flex; flex-direction: column; min-height: 60px; }
 .picker .levels { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0 8px; padding: 0 4px; }
 .picker .lvl { border: 1px solid var(--border); padding: 0 9px; }
+.picker .prow { display: flex; align-items: stretch; }
+.picker .prow .pick { flex: 1; min-width: 0; }
+.picker .prow .star { flex: none; padding: 0 8px; color: var(--muted); }
+.picker .prow .star.on { color: var(--vscode-charts-yellow, #cca700); }
+
+.voice-btn.active { color: var(--brand-2); }
+.voicebar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 5px 8px; border: 1px solid var(--brand-2); border-radius: var(--radius-sm); background: var(--vscode-editorWidget-background); font-size: 0.88em; min-width: 0; }
+.vb-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+.vb-dot.listening { background: var(--vscode-charts-green, #89d185); animation: vb-pulse 1.4s ease-in-out infinite; }
+.vb-dot.speaking { background: var(--brand-2); animation: vb-pulse 0.8s ease-in-out infinite; }
+.vb-dot.working { background: var(--vscode-charts-yellow, #cca700); }
+.vb-dot.error { background: var(--vscode-charts-red, #f14c4c); }
+@keyframes vb-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .vb-dot { animation: none !important; } }
+.vb-phase { font-weight: 600; white-space: nowrap; }
+.vb-level { width: 48px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
+.vb-level > span { display: block; height: 100%; background: var(--brand-2); transition: width 0.1s linear; }
+.vb-text { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.vb-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.vb-line.user { color: var(--vscode-foreground); }
 
 /* ---------- timing / actions ---------- */
 .tdur { color: var(--muted); font-size: 0.82em; font-variant-numeric: tabular-nums; flex: none; min-width: 2.5em; text-align: right; }

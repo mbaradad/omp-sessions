@@ -6,7 +6,9 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { OrgColor, Priority } from "./organize";
+import type { PermissionMode } from "./permissions";
 import { type QueueOp, type SessionMeta, type TaskQueue, stateRoot } from "./protocol";
+import type { RemoteStatus } from "./remote";
 import type { SchedulerConfig } from "./scheduler";
 
 /** Board column of a session (kanban + `omp-vs board`). */
@@ -65,6 +67,8 @@ export interface CreateArgs {
 	/** Subtasks of `task`. */
 	subtasks?: string[];
 	priority?: Priority;
+	/** Starting permission mode: appended as the `--approval-mode` launch flag. */
+	mode?: PermissionMode;
 }
 
 export type OrganizeAction =
@@ -92,6 +96,8 @@ export interface ServerOps {
 	queue: { args: { id: string; ops: QueueOp[] }; result: TaskQueue };
 	organize: { args: { id: string } & OrganizeAction; result: { changed: boolean } };
 	scheduler: { args: { set?: Partial<SchedulerConfig> }; result: SchedulerStatus };
+	/** Re-reads remote.json, applies it to the HTTP listener and reports what it does. */
+	remote: { args: Record<string, never>; result: RemoteStatus };
 	/** Stops the server (sessions keep running). */
 	shutdown: { args: Record<string, never>; result: Record<string, never> };
 }

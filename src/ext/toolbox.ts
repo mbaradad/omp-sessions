@@ -168,6 +168,30 @@ export function registerToolbox(api: OmpApi): void {
 		return terminal;
 	}
 
+	/**
+	 * omp's own terminal UI on a transcript, in an editor-area terminal beside the chat. The terminal
+	 * process is omp itself, so the terminal closes when omp exits (Windows: a shell runs the shim).
+	 */
+	function openTui(title: string, sessionFile: string, cwd: string): vscode.Terminal | undefined {
+		const omp = resolveOmpPath();
+		if (!omp) {
+			void showOmpMissing();
+			return undefined;
+		}
+		const args = ["--resume", sessionFile];
+		const viaShell = process.platform === "win32";
+		const terminal = vscode.window.createTerminal({
+			name: `omp · ${title}`,
+			cwd: fs.existsSync(cwd) ? cwd : os.homedir(),
+			iconPath: new vscode.ThemeIcon("hubot"),
+			location: { viewColumn: vscode.ViewColumn.Beside },
+			...(viaShell ? {} : { shellPath: omp, shellArgs: args }),
+		});
+		if (viaShell) terminal.sendText(commandLine(omp, args, shellKind(vscode.env.shell, process.platform)));
+		terminal.show();
+		return terminal;
+	}
+
 	function onTerminalClosed(terminal: vscode.Terminal, fn: () => void): void {
 		const sub = vscode.window.onDidCloseTerminal(t => {
 			if (t !== terminal) return;
@@ -455,19 +479,18 @@ export function registerToolbox(api: OmpApi): void {
 	});
 
 	reg("omp.continueInTerminal", async (arg?: unknown) => {
-		const meta = await transcriptSession(arg, "Continue which session in a terminal?");
+		const meta = await transcriptSession(arg, "Continue which session in omp's terminal UI?");
 		if (!meta) return;
-		if (meta.status !== "stopped") {
+		if (meta.status === "working" || meta.status === "waiting") {
 			const ok = await vscode.window.showWarningMessage(
-				`Move "${meta.title}" to a terminal?`,
-				{
-					modal: true,
-					detail: `${meta.status === "working" ? "omp is working; its current turn is interrupted. " : ""}The background session stops and omp continues the same transcript interactively in a terminal. To bring it back to the background later, exit omp in the terminal and use Resume in the Sessions view.`,
-				},
+				`Move "${meta.title}" to omp's terminal UI?`,
+				{ modal: true, detail: `omp is ${meta.status === "working" ? "working; its current turn is interrupted" : "waiting for your answer, which you then give in the terminal"}. The session comes back to the background when you exit omp in the terminal.` },
 				"Continue in Terminal",
 			);
 			if (ok !== "Continue in Terminal") return;
-			const stopped = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Stopping "${meta.title}"…` }, async () => {
+		}
+		if (meta.status !== "stopped") {
+			const stopped = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Moving "${meta.title}" to the terminal…` }, async () => {
 				if (!(await sendToHost(meta, { t: "stop" }))) {
 					try {
 						process.kill(meta.pid, "SIGTERM");
@@ -488,13 +511,13 @@ export function registerToolbox(api: OmpApi): void {
 				return;
 			}
 		}
-		const terminal = runInTerminal("resume", ["--resume", meta.ompSessionFile], meta.cwd);
+		const terminal = openTui(meta.title, meta.ompSessionFile, meta.cwd);
 		if (!terminal) return;
 		onTerminalClosed(terminal, () => {
+			// omp exited (or the terminal was closed): the session goes back to the background.
 			if (api.sessions.get(meta.id)?.status !== "stopped") return;
-			void vscode.window.showInformationMessage(`The omp terminal for "${meta.title}" closed.`, "Resume in Background").then(a => {
-				if (a) void vscode.commands.executeCommand("omp.resumeSession", meta.id);
-			});
+			void vscode.commands.executeCommand("omp.resumeSession", meta.id);
+			void vscode.window.showInformationMessage(`"${meta.title}" is back in the background.`);
 		});
 	});
 

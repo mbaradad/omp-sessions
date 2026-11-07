@@ -16,8 +16,10 @@ import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
+import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
+import { registerRemote } from "./remote";
 import { registerServer } from "./server";
 import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
@@ -63,7 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -98,7 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;
@@ -495,7 +497,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerBoard(api);
 	registerBridge(api);
 	registerSessionConfig(api);
-	registerServer(api);
+	registerPermissions(api);
+	registerRemote(api, registerServer(api));
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

@@ -1,12 +1,12 @@
 // "omp: Session Settings…": per-session skills / tools / MCP servers / rules / extensions / LSP,
-// plus model, thinking, approval mode and max time. Saved to the session's launch.json (flags)
+// plus model, thinking, permission mode and max time. Saved to the session's launch.json (flags)
 // and session-config.json (the host turns it into an omp settings overlay on every start).
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { sendToHost } from "../shared/launch";
+import { sendToHost, setSessionPermissionMode } from "../shared/launch";
+import { PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import { sessionDir } from "../shared/protocol";
 import {
-	APPROVAL_MODES,
 	type SessionFlags,
 	type SessionToggles,
 	THINKING_LEVELS,
@@ -28,6 +28,7 @@ import {
 import { type Capabilities, discoverCapabilities } from "../shared/session-discovery";
 import type { OmpApi } from "./api";
 import { listModels } from "./launch-options";
+import { pickPermissionMode } from "./permissions";
 import { projectRoot, resolveOmpPath } from "./sessions";
 
 /** The editable state: managed launch flags plus overlay toggles. */
@@ -199,7 +200,7 @@ async function hub(draft: SettingsDraft, o: HubOptions): Promise<string | undefi
 						{ label: "Launch", kind: SEP },
 						{ label: "$(hubot) Model", description: f.model ?? `omp default${o.runningModel ? ` (now ${o.runningModel})` : ""}`, action: "model" },
 						{ label: "$(lightbulb) Thinking", description: f.thinking ?? `omp default${typeof cfg.get("defaultThinkingLevel") === "string" ? ` (${String(cfg.get("defaultThinkingLevel"))})` : ""}`, action: "thinking" },
-						{ label: "$(shield) Approval mode", description: f.approvalMode ?? `omp default${typeof cfg.get("tools.approvalMode") === "string" ? ` (${String(cfg.get("tools.approvalMode"))})` : ""}`, action: "approval" },
+						{ label: "$(shield) Permission mode", description: modeLabel(f.approvalMode) ?? `omp default${modeLabel(cfg.get("tools.approvalMode")) ? ` (${modeLabel(cfg.get("tools.approvalMode"))})` : ""}`, action: "approval" },
 						{ label: "$(watch) Max time", description: f.maxTime ?? "no limit", action: "maxTime" },
 					]
 				: []),
@@ -228,7 +229,7 @@ async function hub(draft: SettingsDraft, o: HubOptions): Promise<string | undefi
 				break;
 			}
 			case "approval": {
-				const v = await pickValue(APPROVAL_MODES, f.approvalMode, cfg.get("tools.approvalMode"), o.title, "Approval mode (approval prompts appear in the chat)");
+				const v = await pickPermissionMode(permissionModeOf(f.approvalMode), o.title, modeLabel(cfg.get("tools.approvalMode")) ?? "Auto");
 				if (v !== undefined) f.approvalMode = v ?? undefined;
 				break;
 			}
@@ -295,7 +296,12 @@ export async function editCapabilities(cwd: string, draft: SettingsDraft, title:
 
 // ---------- Session Settings command ----------
 
-const RESTART_FLAGS: ReadonlyArray<keyof SessionFlags> = ["approvalMode", "maxTime", "noLsp", "noRules", "noExtensions", "noSkills"];
+const RESTART_FLAGS: ReadonlyArray<keyof SessionFlags> = ["maxTime", "noLsp", "noRules", "noExtensions", "noSkills"];
+
+function modeLabel(value: unknown): string | undefined {
+	const mode = permissionModeOf(value);
+	return mode ? PERMISSION_MODE_INFO[mode].label : undefined;
+}
 
 async function stopAndWait(api: OmpApi, id: string): Promise<void> {
 	const meta = api.sessions.get(id);
@@ -347,7 +353,12 @@ async function applyToSession(api: OmpApi, id: string, original: string[], befor
 	if (draft.flags.thinking && draft.flags.thinking !== before.flags.thinking) {
 		if (await sendToHost(meta, { t: "rpc", cmd: { type: "set_thinking_level", level: draft.flags.thinking } })) live.push(`thinking ${draft.flags.thinking}`);
 	}
-	const restartNeeded = JSON.stringify(normalizeToggles(before.toggles)) !== JSON.stringify(normalizeToggles(draft.toggles)) || RESTART_FLAGS.some(k => before.flags[k] !== draft.flags[k]);
+	const mode = permissionModeOf(draft.flags.approvalMode);
+	const modeChanged = draft.flags.approvalMode !== before.flags.approvalMode;
+	if (mode && modeChanged && (await setSessionPermissionMode(meta, mode))) live.push(`to ${PERMISSION_MODE_INFO[mode].label} mode`);
+	// Hosts that predate permission modes take the approval flag only at start.
+	const restartNeeded =
+		JSON.stringify(normalizeToggles(before.toggles)) !== JSON.stringify(normalizeToggles(draft.toggles)) || RESTART_FLAGS.some(k => before.flags[k] !== draft.flags[k]) || (modeChanged && meta.permissionMode === undefined);
 	const liveNote = live.length ? `Switched ${live.join(" and ")} now. ` : "";
 	if (!restartNeeded) {
 		void vscode.window.showInformationMessage(`${liveNote}Saved settings of "${meta.title}".`);

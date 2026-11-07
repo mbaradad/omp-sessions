@@ -24,6 +24,12 @@
 //   FAKE_OMP_READY_DELAY  ms to wait before emitting `ready` (default 0), to simulate slow startup
 //   FAKE_OMP_NO_MODELS=1  `get_available_models` returns none (like a fresh install with no login)
 //   FAKE_OMP_DISABLED_EXTENSIONS  JSON array `omp config get disabledExtensions --json` reports (default [])
+//   FAKE_OMP_NO_LIVE=1    `live_start` fails like an omp without realtime voice (default: scripted live_* frames)
+//   FAKE_OMP_REPLIES      JSON file of scripted replies per prompt (see runReply), for demos
+//   FAKE_OMP_DEMO=1       real-looking model names and token prices, for screenshots
+//
+// `--approval-mode always-ask` (what the host passes) makes write/edit/bash tool calls wait for an
+// approval `select` ("Allow tool: <name>", Approve / … / Deny) like omp does.
 //
 // `--restore <file>` loads the transcript like `--resume <file>`.
 
@@ -42,6 +48,7 @@ function flag(name) {
 }
 const cwd = path.resolve(flag("--cwd") ?? process.cwd());
 const resumeFile = flag("--resume") ?? flag("--restore");
+const approvalMode = flag("--approval-mode");
 const sessionsDir = process.env.FAKE_OMP_SESSIONS || path.join(os.tmpdir(), "fake-omp-sessions");
 const logFile = process.env.FAKE_OMP_LOG;
 const DELAY = Number(process.env.FAKE_OMP_DELAY ?? 15);
@@ -63,10 +70,18 @@ if (argv[0] === "config") {
 debug({ kind: "argv", argv, cwd: process.cwd() });
 
 // ---------- models ----------
-const MODELS = [
-	{ provider: "fake", id: "fake-model", name: "Fake Model", api: "fake", contextWindow: 200000, maxTokens: 32000, reasoning: true, input: ["text", "image"] },
-	{ provider: "fake", id: "fake-mini", name: "Fake Mini", api: "fake", contextWindow: 100000, maxTokens: 8000, reasoning: false, input: ["text"] },
-];
+const DEMO = process.env.FAKE_OMP_DEMO === "1";
+const MODELS = DEMO
+	? [
+			{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", api: "fake", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+			{ provider: "anthropic", id: "claude-opus-4-5", name: "Claude Opus 4.5", api: "fake", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+			{ provider: "openai", id: "gpt-5.1", name: "GPT-5.1", api: "fake", contextWindow: 400000, maxTokens: 128000, reasoning: true, input: ["text", "image"] },
+			{ provider: "google", id: "gemini-3-pro", name: "Gemini 3 Pro", api: "fake", contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+		]
+	: [
+			{ provider: "fake", id: "fake-model", name: "Fake Model", api: "fake", contextWindow: 200000, maxTokens: 32000, reasoning: true, input: ["text", "image"] },
+			{ provider: "fake", id: "fake-mini", name: "Fake Mini", api: "fake", contextWindow: 100000, maxTokens: 8000, reasoning: false, input: ["text"] },
+		];
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"];
 let model = MODELS[0];
 let thinkingLevel = "medium";
@@ -158,7 +173,7 @@ const queue = [];
 const uiWaiters = new Map();
 
 function contextUsage() {
-	const tokens = messages.reduce((n, m) => n + JSON.stringify(m).length / 4, 0) | 0;
+	const tokens = (messages.reduce((n, m) => n + JSON.stringify(m).length / 4, 0) | 0) + (DEMO ? 46_000 : 0);
 	return { tokens, contextWindow: model.contextWindow, percent: Math.round((tokens / model.contextWindow) * 1000) / 10 };
 }
 
@@ -168,6 +183,7 @@ function getState() {
 		thinkingLevel,
 		isStreaming: streaming,
 		isCompacting: false,
+		...(DEMO ? { tokensPerSecond: 84.6 } : {}),
 		isSettled: !streaming && queue.length === 0,
 		sessionFile,
 		sessionId,
@@ -184,6 +200,12 @@ function getState() {
 
 function usage(text) {
 	const output = Math.max(1, Math.ceil(text.length / 4));
+	if (DEMO) {
+		// FAKE_OMP_DEMO: plausible token counts and prices for screenshots.
+		const input = 18_000 + messages.length * 900;
+		const cost = { input: input * 3e-6, output: output * 15e-6, cacheRead: 0, cacheWrite: 0 };
+		return { input, output, cacheRead: 0, cacheWrite: 0, totalTokens: input + output, cost: { ...cost, total: cost.input + cost.output } };
+	}
 	return { input: 10, output, cacheRead: 0, cacheWrite: 0, totalTokens: 10 + output, cost: { input: 0.0001, output: 0.0002, cacheRead: 0, cacheWrite: 0, total: 0.0003 } };
 }
 
@@ -255,11 +277,12 @@ async function toolCall(toolName, args, run, signal) {
 	out({ type: "tool_execution_start", toolCallId, toolName, args });
 	// Gap between announcing the tool and touching files; 0 runs the tool in the same tick.
 	if (TOOL_DELAY > 0) await sleep(TOOL_DELAY);
+	const denied = await approve(toolName, args, signal ?? new AbortController().signal);
 	let result;
 	let isError = false;
 	let abortedErr;
 	try {
-		const r = await run(toolCallId, signal);
+		const r = denied ? { text: `Tool call denied: ${toolName}`, isError: true } : await run(toolCallId, signal);
 		result = { content: [{ type: "text", text: r.text }], details: r.details };
 		isError = !!r.isError;
 	} catch (err) {
@@ -272,6 +295,18 @@ async function toolCall(toolName, args, run, signal) {
 	emitWhole({ role: "toolResult", toolCallId, toolName, content: result.content, details: result.details, isError, timestamp: Date.now() });
 	if (abortedErr) throw abortedErr;
 	return result;
+}
+
+// `--approval-mode always-ask`: like omp, ask before write- and exec-tier tools (read-only ones run).
+const APPROVAL_TIER = { write: "write", edit: "write", bash: "exec" };
+/** True when the call was denied; resolves once the host answers the approval select. */
+async function approve(toolName, args, signal) {
+	if (approvalMode !== "always-ask" || !APPROVAL_TIER[toolName]) return false;
+	const id = `approve-${newId()}`;
+	const detail = toolName === "bash" ? `Command: ${args.command}` : `Path: ${args.path ?? "(edit)"}`;
+	out({ type: "extension_ui_request", id, method: "select", title: `Allow tool: ${toolName}\n${detail}`, options: ["Approve", `Approve ${toolName} for this session`, "Deny"] });
+	const res = await waitUi(id, signal);
+	return !(typeof res.value === "string" && res.value.startsWith("Approve"));
 }
 
 function waitUi(id, signal) {
@@ -289,8 +324,60 @@ function waitUi(id, signal) {
 	});
 }
 
+// FAKE_OMP_REPLIES=<file.json>: { "<prompt>": [step…] } with steps {text}, {write: [rel, content]},
+// {edit: [rel, old, new]}, {bash: [command, output]}, {sleep: ms}, for realistic demos (screenshots).
+const REPLIES = process.env.FAKE_OMP_REPLIES ? JSON.parse(fs.readFileSync(process.env.FAKE_OMP_REPLIES, "utf8")) : {};
+
+async function runReply(steps, signal) {
+	for (const step of steps) {
+		if (typeof step.text === "string") await streamText(step.text, signal);
+		else if (Array.isArray(step.write)) await writeTool(step.write[0], step.write[1]);
+		else if (Array.isArray(step.edit)) await editTool(step.edit[0], step.edit[1], step.edit[2]);
+		else if (Array.isArray(step.bash)) {
+			const [command, output] = step.bash;
+			await toolCall("bash", { command }, async () => ({ text: output, details: { exitCode: 0 } }), signal);
+		} else if (typeof step.sleep === "number") await sleep(step.sleep, signal);
+	}
+}
+
+async function writeTool(rel, content) {
+	const abs = path.resolve(cwd, rel);
+	await toolCall("write", { path: rel, content }, async () => {
+		fs.mkdirSync(path.dirname(abs), { recursive: true });
+		fs.writeFileSync(abs, content);
+		return { text: `Wrote ${Buffer.byteLength(content)} bytes to ${rel}`, details: { resolvedPath: abs } };
+	});
+}
+
+/** `edit` tool call replacing the first `oldText` (one line) with `newText`, with omp-style diff details. */
+async function editTool(rel, oldText, newText) {
+	const abs = path.resolve(cwd, rel);
+	const before = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
+	const at = before.indexOf(oldText);
+	const lineNo = at >= 0 ? before.slice(0, at).split("\n").length : 1;
+	const oldLines = before.split("\n");
+	const input = `[${rel}#ABCD]\nPUT ${lineNo}.=${lineNo}:\n+${(oldLines[lineNo - 1] ?? "").replace(oldText, newText)}`;
+	await toolCall("edit", { input }, async () => {
+		if (!oldText || at < 0) return { text: `Text not found in ${rel}: ${oldText}`, isError: true };
+		const after = before.slice(0, at) + newText + before.slice(at + oldText.length);
+		fs.writeFileSync(abs, after);
+		const newLines = after.split("\n");
+		const rows = [];
+		if (lineNo > 1) rows.push(` ${lineNo - 1}|${oldLines[lineNo - 2]}`);
+		rows.push(`-${lineNo}|${oldLines[lineNo - 1]}`);
+		rows.push(`+${lineNo}|${newLines[lineNo - 1]}`);
+		if (lineNo < newLines.length && newLines[lineNo] !== undefined && newLines[lineNo] !== "") rows.push(` ${lineNo + 1}|${newLines[lineNo]}`);
+		return {
+			text: `Updated ${rel}`,
+			details: { path: abs, diff: rows.join("\n"), oldText: before, newText: after, firstChangedLine: lineNo, op: "update" },
+		};
+	});
+}
+
 // ---------- scripts ----------
 async function runScript(text, signal) {
+	const reply = REPLIES[text.trim()];
+	if (reply) return runReply(reply, signal);
 	const [word, ...rest] = text.trim().split(/\s+/);
 	const arg = text.trim().slice(word.length).trim();
 	switch (word) {
@@ -299,13 +386,7 @@ async function runScript(text, signal) {
 			return;
 		case "write": {
 			const [rel, ...words] = rest;
-			const content = `${words.join(" ")}\n`;
-			const abs = path.resolve(cwd, rel);
-			await toolCall("write", { path: rel, content }, async () => {
-				fs.mkdirSync(path.dirname(abs), { recursive: true });
-				fs.writeFileSync(abs, content);
-				return { text: `Wrote ${Buffer.byteLength(content)} bytes to ${rel}`, details: { resolvedPath: abs } };
-			});
+			await writeTool(rel, `${words.join(" ")}\n`);
 			await streamText(`Wrote ${rel}`, signal);
 			return;
 		}
@@ -313,29 +394,7 @@ async function runScript(text, signal) {
 			const rel = rest[0];
 			const body = arg.slice(rel.length).trim();
 			const sep = body.indexOf(" => ");
-			const oldText = sep >= 0 ? body.slice(0, sep) : body;
-			const newText = sep >= 0 ? body.slice(sep + 4) : "";
-			const abs = path.resolve(cwd, rel);
-			const before = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
-			const at = before.indexOf(oldText);
-			const lineNo = at >= 0 ? before.slice(0, at).split("\n").length : 1;
-			const oldLines = before.split("\n");
-			const input = `[${rel}#ABCD]\nPUT ${lineNo}.=${lineNo}:\n+${(oldLines[lineNo - 1] ?? "").replace(oldText, newText)}`;
-			await toolCall("edit", { input }, async () => {
-				if (!oldText || at < 0) return { text: `Text not found in ${rel}: ${oldText}`, isError: true };
-				const after = before.slice(0, at) + newText + before.slice(at + oldText.length);
-				fs.writeFileSync(abs, after);
-				const newLines = after.split("\n");
-				const rows = [];
-				if (lineNo > 1) rows.push(` ${lineNo - 1}|${oldLines[lineNo - 2]}`);
-				rows.push(`-${lineNo}|${oldLines[lineNo - 1]}`);
-				rows.push(`+${lineNo}|${newLines[lineNo - 1]}`);
-				if (lineNo < newLines.length && newLines[lineNo] !== undefined && newLines[lineNo] !== "") rows.push(` ${lineNo + 1}|${newLines[lineNo]}`);
-				return {
-					text: `Updated ${rel}`,
-					details: { path: abs, diff: rows.join("\n"), oldText: before, newText: after, firstChangedLine: lineNo, op: "update" },
-				};
-			});
+			await editTool(rel, sep >= 0 ? body.slice(0, sep) : body, sep >= 0 ? body.slice(sep + 4) : "");
 			await streamText(`Edited ${rel}`, signal);
 			return;
 		}
@@ -397,9 +456,11 @@ async function runPrompt(cmd, text) {
 	let status = "completed";
 	let error;
 	try {
-		// Queue tasks arrive wrapped: "[Task i/n from the queue] <title>\n…" → script on the title.
-		const task = /^\[Task \d+\/\d+[^\]]*\] (.*)/.exec(text);
-		await runScript(task ? task[1] : text, signal);
+		// Queue tasks arrive wrapped: "[Task i/n from the queue] <title>\n…" → script on the title;
+		// plan-mode prompts carry the host's "[Plan mode: …]" preamble first.
+		const unplanned = text.replace(/^\[Plan mode:[^\]]*\]\n\n/, "");
+		const task = /^\[Task \d+\/\d+[^\]]*\] (.*)/.exec(unplanned);
+		await runScript(task ? task[1] : unplanned, signal);
 	} catch (err) {
 		if (err instanceof ModelError) {
 			status = "error";
@@ -510,6 +571,10 @@ function handle(cmd) {
 			return respond(cmd, {
 				messages: messages.flatMap((m, i) => (m.role === "user" ? [{ entryId: entryIds[i], text: textOfMessage(m) }] : [])),
 			});
+		case "switch_session":
+			if (typeof cmd.sessionPath !== "string" || !fs.existsSync(cmd.sessionPath)) return fail(cmd, `Session file not found: ${cmd.sessionPath}`);
+			loadSession(cmd.sessionPath);
+			return respond(cmd, { cancelled: false });
 		case "branch":
 		case "fork": {
 			const idx = cmd.entryId === undefined ? messages.length : entryIds.indexOf(cmd.entryId);
@@ -562,6 +627,15 @@ function handle(cmd) {
 				return out({ type: "goal_updated", goal });
 			}
 			return fail(cmd, `Unsupported goal op: ${cmd.op}`);
+		case "live_start":
+			return liveStart(cmd);
+		case "live_stop":
+			return liveStop(cmd);
+		case "live_mute":
+			if (!live) return fail(cmd, "No live session is active");
+			live.muted = typeof cmd.muted === "boolean" ? cmd.muted : !live.muted;
+			respond(cmd, { muted: live.muted });
+			return out({ type: "live_phase", phase: live.muted ? "muted" : "listening" });
 		case "extension_ui_response": {
 			const waiter = uiWaiters.get(cmd.id);
 			uiWaiters.delete(cmd.id);
@@ -571,6 +645,36 @@ function handle(cmd) {
 		default:
 			return fail(cmd, `Unknown command: ${cmd.type}`);
 	}
+}
+
+// ---------- live voice (FAKE_OMP_NO_LIVE=1: unsupported, like an omp without it) ----------
+let live = null;
+function liveStart(cmd) {
+	if (process.env.FAKE_OMP_NO_LIVE === "1") return fail(cmd, `Unknown command: ${cmd.type}`);
+	if (live) return fail(cmd, "A live session is already active");
+	live = { muted: false, timer: undefined };
+	out({ type: "live_phase", phase: "connecting" });
+	respond(cmd, { voice: typeof cmd.voice === "string" && cmd.voice ? cmd.voice : "sol" });
+	out({ type: "live_phase", phase: "listening" });
+	let tick = 0;
+	live.timer = setInterval(() => {
+		tick++;
+		out({ type: "live_levels", input: live?.muted ? 0 : (tick % 5) / 10, output: tick % 7 === 0 ? 0.3 : 0 });
+		if (tick === 3) out({ type: "live_transcript", role: "user", turn: 1, text: "fake spoken words", final: true });
+		if (tick === 5) {
+			out({ type: "live_phase", phase: "speaking" });
+			out({ type: "live_transcript", role: "assistant", turn: 1, text: "fake spoken reply", final: true });
+		}
+		if (tick === 7) out({ type: "live_phase", phase: "listening" });
+	}, 50);
+}
+function liveStop(cmd) {
+	if (live) {
+		clearInterval(live.timer);
+		live = null;
+		out({ type: "live_end" });
+	}
+	respond(cmd);
 }
 
 // ---------- main ----------

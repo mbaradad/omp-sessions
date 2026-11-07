@@ -5,10 +5,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import type { OmpFrame, SessionMeta } from "../shared/protocol";
 import type { PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import type { HostClient } from "./client";
 import { listOmpHistory } from "./sessions";
+import { pickPermissionMode } from "./permissions";
+import { sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
 
 export interface CommandContext {
 	readonly client: HostClient | undefined;
@@ -36,6 +39,10 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "resume", description: "Switch this session to an earlier omp transcript of this folder", local: true },
 	{ name: "tree", description: "Rewind to an earlier user message (branch from there)", local: true },
 	{ name: "branch", description: "Same as /tree", local: true },
+	{ name: "undo", description: "Undo the last turn: revert its file edits and rewind the conversation", local: true },
+	{ name: "redo", description: "Bring back what the last undo / checkpoint restore removed", local: true },
+	{ name: "voice", description: "Voice mode: talk with omp (omp's realtime voice)", local: true },
+	{ name: "tui", description: "Continue this session in omp's terminal UI; it returns to the background when you exit", local: true },
 	{ name: "fork", description: "Copy this conversation into a new transcript and continue there", local: true },
 	{ name: "goal", description: "Goal mode: /goal <objective> | pause | resume | drop | status", input: { hint: "<objective|pause|resume|drop|status>" }, local: true },
 	{ name: "btw", description: "Ask a side question without interrupting the agent", input: { hint: "<question>" }, local: true },
@@ -51,7 +58,8 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "cost", description: "Tokens, cost and message counts for this session", local: true },
 	{ name: "export", description: "Export the conversation: copy or save as Markdown, or HTML", input: { hint: "[md|copy|html]" }, local: true },
 	{ name: "settings", description: "Open omp's config.yml", local: true },
-	{ name: "plan", description: "Plan mode (see note)", local: true },
+	{ name: "mode", description: "Permission mode: ask | edits | plan | auto (Shift+Tab cycles)", input: { hint: "[ask|edits|plan|auto]" }, local: true },
+	{ name: "plan", description: "Switch to Plan mode: read-only, file edits are refused", local: true },
 	{ name: "help", description: "Commands and keyboard shortcuts", local: true },
 	{ name: "hotkeys", description: "Same as /help", local: true },
 	{ name: "exit", description: "Stop this session (transcript is kept)", local: true },
@@ -77,7 +85,10 @@ const SLASH_TO_PANEL: Record<string, PanelCommand> = {
 	help: "help",
 	hotkeys: "help",
 	exit: "stopSession",
-	quit: "stopSession",
+	undo: "undoTurn",
+	redo: "redoTurn",
+	voice: "voiceStart",
+	tui: "openTui",
 };
 
 function fail(ctx: CommandContext, res: OmpFrame): boolean {
@@ -122,13 +133,8 @@ export async function handleComposerInput(text: string, ctx: CommandContext, run
 		await login(ctx, args);
 		return true;
 	}
-	if (name === "plan") {
-		ctx.post({
-			type: "notice",
-			level: "info",
-			markdown: true,
-			text: "Plan mode is a terminal-UI mode that omp does not expose over its RPC protocol. Use **omp: New Session with Options… → Plan first (plan-yolo)** to start a session that plans read-only, then implements.",
-		});
+	if (name === "mode" || name === "plan") {
+		await permissionMode(ctx, name === "plan" ? "plan" : args);
 		return true;
 	}
 	if (name === "export") {
@@ -193,6 +199,20 @@ async function goal(ctx: CommandContext, args: string): Promise<void> {
 	}
 	const res = await client.rpc({ type: "goal", op: "create", objective });
 	if (!fail(ctx, res)) ctx.post({ type: "notice", level: "info", text: `Goal set: ${objective}` });
+}
+
+async function permissionMode(ctx: CommandContext, arg: string): Promise<void> {
+	const meta = ctx.meta;
+	if (!meta) return;
+	const current = sessionPermissionMode(meta);
+	const mode = arg ? permissionModeOf(arg.toLowerCase()) : await pickPermissionMode(current, `Permission mode · ${meta.title}`);
+	if (mode === undefined && arg) {
+		ctx.post({ type: "notice", level: "warning", text: `Unknown mode "${arg}": use ask, edits, plan or auto.` });
+		return;
+	}
+	if (!mode || mode === current) return;
+	if (!(await setSessionPermissionMode(meta, mode))) ctx.post({ type: "notice", level: "warning", text: "This session runs an older host without permission modes. Restart it to switch modes live." });
+	else if (meta.status === "stopped") ctx.post({ type: "notice", level: "info", text: `Resumes in ${PERMISSION_MODE_INFO[mode].label} mode.` });
 }
 
 async function btw(ctx: CommandContext, args: string): Promise<void> {
@@ -453,6 +473,7 @@ function helpText(): string {
 		"|---|---|",
 		"| `Enter` / `Shift+Enter` | send / newline |",
 		"| `Esc` | interrupt the agent |",
+		"| `Shift+Tab` | cycle the permission mode: Ask → Edits → Plan → Auto |",
 		"| `/` | omp + extension commands |",
 		"| `@path` | file completion |",
 		"| `@selection` `@file` `@problems` `@git` `@terminal` | attach editor selection, active file, diagnostics, uncommitted diff or terminal output when sending |",

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- **Permission modes**: Ask / Edits / Plan / Auto, switchable live from the chat footer, **Shift+Tab**, `/mode`, `/plan`, *Set Permission Mode…* and `omp-vs mode`. omp now always runs with `--approval-mode always-ask` and the session host answers its approval prompts by mode, so the mode holds with VS Code closed and switching resolves approvals already waiting. Plan mode refuses file edits and asks the model for a plan. The mode is remembered across resumes; new sessions start in omp's `tools.approvalMode`, else Auto. Replaces the wizard's *Auto-approve* flag and the approval-mode restart setting.
+- **Checkpoints**: undo any turn from the prompt's undo button, *Undo last turn* or `/undo` — the conversation rewinds to before that prompt and the files omp's edit tools changed go back; *Redo* / `/redo` restores both.
+- **Voice** (`/voice`, mic button): omp's realtime voice with a live transcript, level meter, mute and end; `omp.voice.name` picks the voice.
+- **Terminal UI**: *Continue Session in omp's Terminal UI* (chat header button, `/tui`) opens the session in omp's own TUI beside the chat and hands it back to the background host when the terminal closes.
+- **Chat footer**: starred models pinned on top of the model picker, tokens per second, and the provider usage limit when omp reports it.
+- **Phone app and HTTP API**: *Connect Phone…* turns on remote access in the `omp-vs` server (Tailscale, local network or localhost) and shows a QR code. The phone web app (installable to the home screen) lists every session by status, follows one live, prompts or steers it, answers approvals and questions, switches its permission mode, stops or resumes it, and starts or queues new sessions in recent folders. The token-authenticated JSON + Server-Sent Events API behind it is documented in `docs/REMOTE-API.md` for other apps and servers. *Disable Remote Access*, *Rotate Remote Access Token*, and `omp-vs remote on|off|status|qr|rotate`.
+- Sessions Board: columns lay out as a grid again (cards no longer collapse into one row), and card excerpts drop Markdown markup (also in the phone app).
+- README rewritten around use cases, with screenshots and graphics; website at <https://mbaradad.github.io/omp-vscode/>.
+
 ## 0.5.0
 
 - **`omp-vs` terminal command** (*omp: Install omp-vs Command*): `ls`, `board`, `new` (prompt, or `--task` to queue), `attach` (streaming chat with inline dialogs, Ctrl-C aborts, Ctrl-D detaches), `send [--wait]`, `tail [-f]`, `stop`/`resume`/`rm`/`abort`, `queue …` (add/run/start/pause/retry/done/skip/`at +30m`), `prio`/`color`/`group`/`move`/`archive`, `sched …`, `server …`. Sessions are named by id prefix, title words or `.`; `ls` hides finished sessions unless `--all`.

@@ -1,4 +1,5 @@
 // Sessions board webview: columns per mode, cards, drag & drop, keyboard moves, filters, swimlanes.
+import { plainExcerpt } from "../shared/excerpt";
 import {
 	BOARD_MODES,
 	type BoardCard,
@@ -411,7 +412,7 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 	meta.title = c.cwd;
 
 	const parts: Node[] = [top, meta];
-	if (c.lastText) parts.push(el("div", "excerpt", c.lastText.replace(/\s+/g, " ").slice(0, 240)));
+	if (c.lastText) parts.push(el("div", "excerpt", plainExcerpt(c.lastText)));
 
 	const foot = el("div", "card-foot");
 	if (c.queue && c.queue.total > 0) {

@@ -2,7 +2,7 @@
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
 	"description": "Run oh-my-pi (omp) coding-agent sessions in the background — locally or over Remote-SSH — that keep working when you close VS Code and reattach when you return. Queue tasks with a global concurrency limit, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -232,6 +232,12 @@
 				"title": "Session Settings…",
 				"category": "omp",
 				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "omp.setPermissionMode",
+				"title": "Set Permission Mode…",
+				"category": "omp",
+				"icon": "$(shield)"
 			},
 			{
 				"command": "omp.bridgeStatus",
@@ -640,7 +646,7 @@
 			},
 			{
 				"command": "omp.continueInTerminal",
-				"title": "Continue Session in Terminal",
+				"title": "Continue Session in omp's Terminal UI",
 				"category": "omp",
 				"icon": "$(terminal)"
 			},
@@ -894,6 +900,22 @@
 				"title": "Show omp-vs Server Log",
 				"category": "omp",
 				"icon": "$(output)"
+			},
+			{
+				"command": "omp.remote.connectPhone",
+				"title": "Connect Phone…",
+				"category": "omp",
+				"icon": "$(device-mobile)"
+			},
+			{
+				"command": "omp.remote.disable",
+				"title": "Disable Remote Access",
+				"category": "omp"
+			},
+			{
+				"command": "omp.remote.rotateToken",
+				"title": "Rotate Remote Access Token",
+				"category": "omp"
 			}
 		],
 		"menus": {
@@ -1359,6 +1381,11 @@
 					"command": "omp.sessionSettings",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@9"
+				},
+				{
+					"command": "omp.setPermissionMode",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@8"
 				},
 				{
 					"command": "omp.showChanges",
@@ -1961,6 +1988,35 @@
 					"type": "boolean",
 					"default": true,
 					"description": "After a command fails in a terminal inside a running session's folder, show \"omp: fix failed command?\" in the status bar for 15 seconds. (Fix Failed Command with omp works either way; needs VS Code shell integration.)"
+				},
+				"omp.voice.name": {
+					"type": "string",
+					"default": "",
+					"enum": [
+						"",
+						"arbor",
+						"breeze",
+						"cove",
+						"ember",
+						"juniper",
+						"maple",
+						"sol",
+						"spruce",
+						"vale"
+					],
+					"enumItemLabels": [
+						"omp default",
+						"Arbor",
+						"Breeze",
+						"Cove",
+						"Ember",
+						"Juniper",
+						"Maple",
+						"Sol",
+						"Spruce",
+						"Vale"
+					],
+					"markdownDescription": "Voice of voice mode (the microphone button in the chat). Voice mode is omp's realtime voice: it runs on the machine omp runs on and uses OpenAI's realtime model through a ChatGPT login (`/login`). Empty: omp's `live.voice` setting."
 				}
 			}
 		}
@@ -1988,6 +2044,7 @@
 		"highlight.js": "^11.12.0",
 		"marked": "^18.1.3",
 		"mocha": "^11.8.0",
+		"qrcode-generator": "^2.0.4",
 		"typescript": "^7.0.2"
 	}
 }

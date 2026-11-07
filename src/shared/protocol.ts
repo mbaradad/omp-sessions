@@ -4,6 +4,7 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
+import type { PermissionMode } from "./permissions";
 
 export type SessionStatus = "starting" | "idle" | "working" | "waiting" | "stopped";
 
@@ -45,6 +46,8 @@ export interface SessionMeta {
 	viewers?: number;
 	/** Last time a person prompted, steered, aborted or answered a dialog in this session (epoch ms). */
 	userActiveAt?: number;
+	/** How the host answers omp's tool-approval prompts (absent: hosts that predate permission modes). */
+	permissionMode?: PermissionMode;
 }
 
 /** One file touched by one tool call. `before`/`after` are blob hashes; null = file absent. */
@@ -183,6 +186,8 @@ export type ClientToHost =
 	/** Persist an extension-generated notice into the session timeline (shown again after reloads). */
 	| { t: "note"; level: "info" | "warning" | "error"; message: string; markdown?: boolean }
 	| { t: "queue"; ops: QueueOp[] }
+	/** Switch the permission mode; applies to pending approval prompts too. */
+	| { t: "mode"; mode: PermissionMode }
 	| { t: "stop" };
 
 /** UI request methods that need an answer from the user. */

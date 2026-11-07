@@ -56,6 +56,10 @@ const ICONS: Record<string, string> = {
 	edit: '<path d="M10.5 2.5l3 3L6 13H3v-3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	fork: '<circle cx="4" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 5.1v1.4c0 1.4 1 2.2 2.4 2.6L8 9.5v1.4M12 5.1v1.4c0 1.4-1 2.2-2.4 2.6L8 9.5" fill="none" stroke="currentColor" stroke-width="1.3"/>',
 	chevron: '<path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+	undo: '<path d="M5.5 3L2.5 6l3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 6h6.5a3.5 3.5 0 010 7H6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+	redo: '<path d="M10.5 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 6H6.5a3.5 3.5 0 000 7H10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+	mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 7.5a5 5 0 0010 0M8 12.5v2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+	terminal: '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 6l2.5 2L4 10M8 10.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 export function icon(name: string, cls = ""): HTMLElement {
 	const span = h("span", { class: `ic ${cls}`.trim(), "aria-hidden": "true" });

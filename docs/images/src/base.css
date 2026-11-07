@@ -1,0 +1,61 @@
+/* Shared look of the README graphics (same palette as site/styles.css). Render: see README.md here. */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+	background: #0c0812;
+	color: #f4f0f9;
+	font-family: Inter, ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	position: relative;
+	overflow: hidden;
+}
+.glow {
+	position: absolute;
+	inset: 0;
+	background:
+		radial-gradient(38% 55% at 8% 8%, rgba(237, 74, 191, 0.22), transparent 70%),
+		radial-gradient(45% 60% at 55% -5%, rgba(155, 77, 255, 0.26), transparent 70%),
+		radial-gradient(40% 55% at 100% 100%, rgba(90, 216, 230, 0.14), transparent 70%);
+}
+.grid {
+	position: absolute;
+	inset: 0;
+	background-image: linear-gradient(rgba(236, 225, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(236, 225, 255, 0.05) 1px, transparent 1px);
+	background-size: 48px 48px;
+	-webkit-mask-image: radial-gradient(75% 75% at 30% 30%, #000, transparent 85%);
+}
+.g { background: linear-gradient(100deg, #f06ccb, #b07bff 50%, #6fe0ec); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.brand img { width: 34px; height: 34px; }
+.brand span { color: #9389a3; font-weight: 500; }
+.mono { font-family: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, monospace; }
+.dim { color: #bdb3cb; }
+.dimmer { color: #9389a3; }
+.win {
+	border-radius: 12px;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 40px 90px -40px rgba(0, 0, 0, 0.9), 0 30px 110px -50px rgba(155, 77, 255, 0.6);
+	background: #1f1f1f;
+}
+.win img { display: block; width: 100%; }
+.phone {
+	border-radius: 34px;
+	padding: 9px;
+	background: #05030a;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95), 0 0 90px -30px rgba(237, 74, 191, 0.55);
+}
+.phone img { display: block; width: 100%; border-radius: 26px; }
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 6px 12px;
+	border-radius: 999px;
+	font-size: 14px;
+	color: #e6def2;
+	background: rgba(42, 31, 57, 0.75);
+	border: 1px solid rgba(236, 225, 255, 0.14);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

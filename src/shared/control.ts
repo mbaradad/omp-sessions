@@ -255,7 +255,7 @@ export class Control {
 		if (args.prompt && args.task) throw new Error("give either a prompt or a task, not both");
 		const launcher = this.env.launcher();
 		const defaults = newSessionLaunch(cwd, launcher.extraArgs);
-		const ompArgs = [...(args.ompArgs ?? defaults.ompArgs), ...(args.model ? ["--model", args.model] : [])];
+		const ompArgs = [...(args.ompArgs ?? defaults.ompArgs), ...(args.model ? ["--model", args.model] : []), ...(args.mode ? ["--approval-mode", args.mode] : [])];
 		const toggles = args.ompArgs ? undefined : defaults.toggles;
 		const org = new OrganizeStore();
 		if (args.task) {

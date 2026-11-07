@@ -25,7 +25,8 @@ import {
 	sessionDir,
 } from "../shared/protocol";
 import { QueueRunner } from "./queue-runner";
-import { sessionOverlayArgs } from "../shared/session-config";
+import { EDIT_TOOLS, PLAN_PROMPT_PREFIX, type PermissionMode, PERMISSION_MODE_INFO, autoApproval, isPermissionMode, permissionModeInArgs, permissionModeOf, withoutApprovalArgs } from "../shared/permissions";
+import { applyFlags, readFlags, readOmpSetting, sessionOverlayArgs } from "../shared/session-config";
 
 // ---------- args ----------
 interface HostArgs {
@@ -258,7 +259,6 @@ function recomputeStatus(): void {
 
 // ---------- blobs / file snapshots ----------
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
-const MUTATING_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, notebook: true, apply_patch: true };
 const beforeSnapshots = new Map<string, Map<string, string | null>>();
 
 function storeBlob(content: Buffer): string {
@@ -328,7 +328,7 @@ function detailPaths(details: unknown): { paths: string[]; oldText: Map<string, 
  * fallback; the first snapshot wins, so a fast tool can't race the host into a stale "before".
  */
 function onToolStart(toolCallId: string, toolName: string, toolArgs: unknown): void {
-	if (!MUTATING_TOOLS[toolName] || beforeSnapshots.has(toolCallId)) return;
+	if (!EDIT_TOOLS[toolName] || beforeSnapshots.has(toolCallId)) return;
 	const snaps = new Map<string, string | null>();
 	for (const p of candidatePaths(toolArgs)) {
 		const h = snapshotFile(p);
@@ -338,7 +338,7 @@ function onToolStart(toolCallId: string, toolName: string, toolArgs: unknown): v
 }
 
 function onToolEnd(toolCallId: string, toolName: string, result: unknown): void {
-	if (!MUTATING_TOOLS[toolName]) return;
+	if (!EDIT_TOOLS[toolName]) return;
 	const snaps = beforeSnapshots.get(toolCallId) ?? new Map<string, string | null>();
 	beforeSnapshots.delete(toolCallId);
 	const details = rec(result)?.details;
@@ -376,7 +376,10 @@ const ompArgv = [
 	"--config",
 	overlayPath,
 	...(meta.ompSessionFile ? [args.restore ? "--restore" : "--resume", meta.ompSessionFile] : []),
-	...args.ompArgs,
+	// The host answers approval prompts by the session's permission mode (extension_ui_request below).
+	...withoutApprovalArgs(args.ompArgs),
+	"--approval-mode",
+	"always-ask",
 ];
 const env = { ...process.env };
 // GUI-launched editors (macOS Dock, Windows Start) often lack the shell PATH that holds omp/bun.
@@ -399,6 +402,8 @@ if (!fs.existsSync(args.cwd)) {
 }
 // Per-session skills/tools/MCP toggles (omp: Session Settings) as one more settings overlay.
 ompArgv.push(...sessionOverlayArgs(dir, args.omp, args.cwd, env, log));
+// Starting permission mode: the session's launch flag, else omp's own setting (default yolo = auto).
+meta.permissionMode = permissionModeInArgs(args.ompArgs) ?? permissionModeOf(readOmpSetting(args.omp, "tools.approvalMode", args.cwd, env, log)) ?? "auto";
 log("spawn", args.omp, ompArgv);
 // npm/bun shims on Windows are .cmd files, which need a shell to start.
 const child: ChildProcessWithoutNullStreams = spawn(args.omp, ompArgv, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: IS_WINDOWS && /\.(cmd|bat)$/i.test(args.omp) });
@@ -479,6 +484,8 @@ const STATE_KEYS = [
 	"queuedMessages",
 	"todoPhases",
 	"contextUsage",
+	"tokensPerSecond",
+	"usageLimit",
 	"goal",
 	"isSettled",
 ];
@@ -699,6 +706,13 @@ function handleFrame(frame: OmpFrame): void {
 			break;
 		case "extension_ui_request": {
 			const method = frame.method as string;
+			const auto = autoApproval(meta.permissionMode ?? "ask", { ...frame, id: String(frame.id) });
+			if (auto) {
+				// Answered by the permission mode: never shown, so not broadcast either.
+				log("approval", meta.permissionMode, String(frame.title).split("\n")[0], "→", auto.value);
+				sendOmp({ type: "extension_ui_response", ...auto });
+				return;
+			}
 			if (DIALOG_METHODS[method]) {
 				pendingUi.push(frame as unknown as UiRequest);
 				recomputeStatus();
@@ -809,7 +823,7 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 			updateViewers();
 			return;
 		case "rpc": {
-			const cmd = { ...msg.cmd, id: `c${c.num}:${msg.cmd.id ?? ""}` };
+			const cmd: { type: string; id: string; [k: string]: unknown } = { ...msg.cmd, id: `c${c.num}:${msg.cmd.id ?? ""}` };
 			// Queries (get_*) are clients syncing; anything else is a person acting on the session.
 			if (!cmd.type.startsWith("get_")) markUserActive();
 			const text = msg.cmd.message;
@@ -818,6 +832,7 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 				sendOmp({ type: "set_session_name", name: meta.title });
 				publishMeta();
 			}
+			if (cmd.type === "prompt" && meta.permissionMode === "plan" && typeof text === "string" && !/^[/!]/.test(text) && !text.startsWith(PLAN_PROMPT_PREFIX)) cmd.message = PLAN_PROMPT_PREFIX + text;
 			if (cmd.type === "bash" && typeof msg.cmd.command === "string") pendingBash.set(cmd.id, msg.cmd.command);
 			sendOmp(cmd);
 			return;
@@ -831,6 +846,12 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 		case "queue":
 			queueRunner.apply(msg.ops);
 			return;
+		case "mode":
+			if (isPermissionMode(msg.mode) && msg.mode !== meta.permissionMode) {
+				markUserActive();
+				setPermissionMode(msg.mode);
+			}
+			return;
 		case "note":
 			messages.push({ role: "notice", level: msg.level, message: msg.message, markdown: msg.markdown, timestamp: Date.now() });
 			return;
@@ -843,6 +864,30 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 			void stop("client request");
 			return;
 	}
+}
+
+/** Switches the permission mode: persisted as the session's launch flag, applied to waiting prompts. */
+function setPermissionMode(mode: PermissionMode): void {
+	meta.permissionMode = mode;
+	const launchFile = path.join(dir, "launch.json");
+	const launch = readJson<Record<string, unknown>>(launchFile) ?? {};
+	const current = Array.isArray(launch.ompArgs) ? launch.ompArgs.filter((a): a is string => typeof a === "string") : args.ompArgs;
+	try {
+		fs.writeFileSync(launchFile, JSON.stringify({ ...launch, ompArgs: applyFlags(current, { ...readFlags(current), approvalMode: mode }) }));
+	} catch (err) {
+		log("launch.json write failed", String(err));
+	}
+	const message = `Permission mode: ${PERMISSION_MODE_INFO[mode].label}. ${PERMISSION_MODE_INFO[mode].detail}.`;
+	messages.push({ role: "notice", level: "info", message, timestamp: Date.now() });
+	broadcast({ t: "event", ev: { type: "notice", level: "info", message } });
+	for (const req of [...pendingUi]) {
+		const auto = autoApproval(mode, req);
+		if (!auto) continue;
+		sendOmp({ type: "extension_ui_response", ...auto });
+		removePending(req.id);
+	}
+	publishMeta();
+	queueRunner.schedule();
 }
 
 if (!IS_WINDOWS) {

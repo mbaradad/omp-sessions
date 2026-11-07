@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { width: 1200px; height: 580px; }
+.left { position: absolute; left: 60px; top: 56px; width: 470px; }
+h1 { margin: 42px 0 0; font-size: 50px; line-height: 1.04; letter-spacing: -0.04em; font-weight: 750; }
+p { margin: 22px 0 0; font-size: 18px; line-height: 1.5; }
+p b { color: #f4f0f9; font-weight: 600; }
+.chips { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 9px; }
+.shot { position: absolute; left: 545px; top: 64px; width: 590px; }
+.phone { position: absolute; left: 992px; top: 160px; width: 172px; }
+.tag { position: absolute; left: 545px; top: 474px; }
+.tag .chip { background: rgba(21, 15, 30, 0.92); font-size: 13px; }
+</style></head>
+<body><div class="glow"></div><div class="grid"></div>
+<div class="left">
+	<div class="brand"><img src="../../../site/assets/logo.svg" alt="">omp Sessions <span>for VS Code</span></div>
+	<h1>Coding agents that keep working <span class="g">when you leave.</span></h1>
+	<p class="dim">Background <b>oh-my-pi</b> sessions per folder. Chat, queue, review and undo in VS Code; check in and approve from your phone. Close the laptop, drop SSH, reboot VS Code: the work goes on.</p>
+	<div class="chips">
+		<span class="chip"><span class="dot" style="background:#5ad8e6"></span>Runs in the background</span>
+		<span class="chip"><span class="dot" style="background:#b383ff"></span>Ask · Edits · Plan · Auto</span>
+		<span class="chip"><span class="dot" style="background:#ed4abf"></span>Undo any turn</span>
+		<span class="chip"><span class="dot" style="background:#e5c07b"></span>Task queues</span>
+		<span class="chip"><span class="dot" style="background:#89d185"></span>Phone app</span>
+	</div>
+</div>
+<div class="win shot"><img src="../chat.png" alt=""></div>
+<div class="phone"><img src="../phone/approval.png" alt=""></div>
+<div class="tag"><span class="chip mono"><span class="dot" style="background:#89d185"></span>VS Code closed · 3 sessions still running</span></div>
+</body></html>

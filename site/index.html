@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>omp Sessions · background coding agents for VS Code</title>
+<meta name="description" content="Run oh-my-pi (omp) coding-agent sessions in the background, locally or over Remote-SSH. They keep working when you close VS Code and reattach when you come back. Free, MIT, no telemetry.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0c0812" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf8fd" media="(prefers-color-scheme: light)">
+<link rel="canonical" href="https://mbaradad.github.io/omp-vscode/">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/icon.png" type="image/png" sizes="256x256">
+<link rel="apple-touch-icon" href="assets/icon.png">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="omp Sessions">
+<meta property="og:title" content="omp Sessions: coding agents that keep working when you leave">
+<meta property="og:description" content="Background oh-my-pi (omp) sessions for VS Code, locally or over Remote-SSH. Close VS Code, sleep the laptop, drop SSH; reopen and pick up where they are. Free, MIT, no telemetry.">
+<meta property="og:url" content="https://mbaradad.github.io/omp-vscode/">
+<meta property="og:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="omp Sessions: coding agents that keep working when you leave. Background omp sessions for VS Code.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="omp Sessions: coding agents that keep working when you leave">
+<meta name="twitter:description" content="Background oh-my-pi (omp) sessions for VS Code, locally or over Remote-SSH. Free, MIT, no telemetry.">
+<meta name="twitter:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
+<meta name="twitter:image:alt" content="omp Sessions: coding agents that keep working when you leave.">
+
+<link rel="stylesheet" href="styles.css">
+<script src="main.js" defer></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12 1.8a10.2 10.2 0 0 0-3.2 19.9c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.6-1.4-2.3-.3-4.7-1.1-4.7-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .9-.3 2.8 1a9.7 9.7 0 0 1 5.1 0c1.9-1.3 2.8-1 2.8-1 .6 1.4.2 2.4.1 2.7.7.7 1 1.6 1 2.7 0 3.9-2.4 4.8-4.7 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10.2 10.2 0 0 0 12 1.8Z"/></symbol>
+  <symbol id="i-vscode" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M17.6 2.2 9.3 9.8 4.5 6.1 2.6 7v10l1.9.9 4.8-3.7 8.3 7.6 3.8-1.8V4zM4.6 14.6V9.4L7.3 12zm12.8 1.9L12.2 12l5.2-4.5z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="11" rx="1.8"/><path d="M2 19.5h20"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="7" rx="2"/><rect x="3.5" y="13.5" width="17" height="7" rx="2"/><path d="M7.5 7h.01M7.5 17h.01M11 7h5.5M11 17h5.5"/></symbol>
+  <symbol id="i-pi" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M4 5h16v3.4h-4.3V20h-3.4V8.4h-2.6V18H6.3V8.4H4z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.4 7.5 9.5 4.4-1.1 7.5-4.9 7.5-9.5V6z"/></symbol>
+  <symbol id="i-rewind" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4v4.5H8"/><path d="M12 8v4.5l3 2"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="m6.5 9.5 3 2.5-3 2.5M12 15h5"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="8" r="2.2"/><path d="M6 7.7v8.6M18 10.2c0 4-6 3.3-11 6.6"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v4.5M15 3v4.5M6.5 7.5h11V11a5.5 5.5 0 0 1-11 0zM12 16.5V21"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2.5 12h4l2.5-6 5 12 2.5-6h5"/></symbol>
+  <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 9V6.5A2.5 2.5 0 1 0 6.5 9H9zm0 0h6m-6 0v6m6-6V6.5A2.5 2.5 0 1 1 17.5 9H15zm0 0v6m0 0h2.5a2.5 2.5 0 1 1-2.5 2.5zm0 0H9m0 0v2.5A2.5 2.5 0 1 1 6.5 15z"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></symbol>
+  <symbol id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M2.5 12h6M15.5 12h6"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.6V4.5a1 1 0 0 1 1-1h8.1l8 8a1.4 1.4 0 0 1 0 2l-7.1 7.1a1.4 1.4 0 0 1-2 0z"/><circle cx="8" cy="8" r="1.4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="13" height="11" rx="2"/><path d="M7.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h11A1.5 1.5 0 0 1 21.5 5v9a1.5 1.5 0 0 1-1.5 1.5h-4.5"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15zM10 21h4"/></symbol>
+  <symbol id="i-resume" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m10 8.5 5 3.5-5 3.5z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3.5 20.5h17M6.5 17v-5M11 17V7M15.5 17v-7M20 17V4"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20 11.5-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.6 17.3a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="./" aria-label="omp Sessions, home">
+      <img src="assets/logo.svg" width="22" height="22" alt="">
+      <span>omp Sessions</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#why">Why</a>
+      <a href="#new">New in 0.6</a>
+      <a href="#features">Features</a>
+      <a href="#queue">Queue</a>
+      <a href="#phone">Phone</a>
+      <a href="#cli">CLI</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="nav__cta">
+      <a class="btn btn--ghost btn--sm btn--icon-sm" href="https://github.com/mbaradad/omp-vscode" aria-label="omp Sessions on GitHub"><svg class="i"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
+      <a class="btn btn--primary btn--sm" href="#install">Install</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ───────────────────────── Hero ───────────────────────── -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero__glow" aria-hidden="true"></div>
+  <div class="wrap hero__in">
+    <a class="pill" href="#new">
+      <span class="pill__tag">New in 0.6</span>
+      <span class="pill__text">Permission modes, checkpoints, voice and a TUI switch</span>
+      <svg class="i i--sm" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+    <h1 id="hero-title" class="hero__title">Coding agents that keep working <span class="grad">when you leave.</span></h1>
+    <p class="lede">omp Sessions runs <a href="https://omp.sh">oh-my-pi</a> agent sessions from VS&nbsp;Code in detached background processes, on your computer or over <span class="nw">Remote-SSH</span>. Close VS&nbsp;Code, sleep the laptop, drop the connection. Reopen, and everything that happened meanwhile is there.</p>
+    <div class="ctas">
+      <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
+      <a class="btn btn--ghost btn--lg" href="https://open-vsx.org/extension/mbaradad/omp-sessions">Get it on Open VSX</a>
+    </div>
+    <div class="cmd" data-copy-root>
+      <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>code --install-extension mbaradad.omp-sessions</span></code>
+      <button class="cmd__btn" type="button" data-copy aria-label="Copy install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
+    </div>
+    <ul class="facts" aria-label="At a glance">
+      <li>Free &amp; MIT</li>
+      <li>No telemetry</li>
+      <li>Linux &amp; macOS</li>
+      <li>Local or Remote-SSH</li>
+    </ul>
+  </div>
+
+  <div class="wrap hero__stage">
+    <figure class="mock">
+      <figcaption class="sr-only">Illustration: VS Code connected over SSH to a build server. The Sessions list shows five sessions: one working, one needing input, one running its task queue, one with new activity and one idle. The open chat shows a prompt about a flaky login test, tool calls to grep, read, edit and run the tests, an inline word-level diff, and omp's answer. A queue bar holds two more tasks; the composer has an Edits permission chip and a voice button; the status bar shows queue concurrency and today's spend.</figcaption>
+      <div class="win win--hero" aria-hidden="true">
+        <div class="win__bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="win__title">api-server <span class="dim">[SSH: build-box]</span></span>
+        </div>
+        <div class="ide">
+          <div class="ide__side">
+            <div class="ide__head">Sessions</div>
+            <div class="proj"><span>api-server</span><span class="proj__n">3</span></div>
+            <ul class="sess">
+              <li class="is-active"><span class="st st--work"></span><span class="sess__t">Fix flaky auth test</span><span class="sess__m">working</span></li>
+              <li><span class="st st--input"></span><span class="sess__t">Migrate config</span><span class="sess__m sess__m--input">needs input</span></li>
+              <li><span class="st st--queue"></span><span class="sess__t">Upgrade dependencies</span><span class="sess__m">▶ 2/3</span></li>
+            </ul>
+            <div class="proj"><span>web-app</span><span class="proj__n">2</span></div>
+            <ul class="sess">
+              <li><span class="st st--new"></span><span class="sess__t">Dark mode toggle</span><span class="sess__m sess__m--new">● new</span></li>
+              <li><span class="st st--idle"></span><span class="sess__t">Write the changelog</span><span class="sess__m">idle</span></li>
+            </ul>
+          </div>
+          <div class="ide__chat">
+            <div class="chat">
+              <div class="msg msg--user seq" style="--i:0">The login test fails about one run in ten. Find out why and fix it.</div>
+              <div class="tool seq" style="--i:1"><span class="tool__ok"><svg class="i"><use href="#i-check"/></svg></span><b>grep</b><code>expiresAt</code><span class="tool__arg">src/auth</span><span class="tool__t">0.3s</span></div>
+              <div class="tool seq" style="--i:2"><span class="tool__ok"><svg class="i"><use href="#i-check"/></svg></span><b>read</b><span class="tool__arg">src/auth/session.ts:40-88</span><span class="tool__t">0.1s</span></div>
+              <div class="tool tool--edit seq" style="--i:3">
+                <div class="tool__row"><span class="tool__ok"><svg class="i"><use href="#i-check"/></svg></span><b>edit</b><span class="tool__arg tool__link">src/auth/session.ts</span><span class="tool__stat"><span class="add">+1</span> <span class="del">−1</span></span><span class="tool__acts"><span>Diff</span><span>Revert</span></span></div>
+                <div class="diff">
+                  <div class="dl dl--del"><span class="ln">52</span><span class="sg">−</span><span class="code"><span class="k">const</span> expiresAt = <del>Date</del>.now() + ttl;</span></div>
+                  <div class="dl dl--add"><span class="ln">52</span><span class="sg">+</span><span class="code"><span class="k">const</span> expiresAt = <ins>clock</ins>.now() + ttl;</span></div>
+                </div>
+              </div>
+              <div class="tool seq" style="--i:4"><span class="tool__ok"><svg class="i"><use href="#i-check"/></svg></span><b>bash</b><code>npm test -- auth</code><span class="tool__arg pass">48 passed</span><span class="tool__t">6.2s</span></div>
+              <div class="msg msg--bot seq" style="--i:5">The suite fakes the clock, but <span class="flink">session.ts:52</span> read the real one, so tokens expired early on slow runs. Both now use the injected clock; 20 runs in a row pass.<span class="caret"></span></div>
+            </div>
+            <div class="qbar">
+              <span class="qbar__tag">Queue</span>
+              <span class="qbar__n">2 tasks</span>
+              <span class="qbar__next">next: Cover the token refresh path</span>
+              <span class="qbar__hint"><kbd>Alt</kbd>+<kbd>Enter</kbd> queues</span>
+            </div>
+            <div class="composer">
+              <div class="composer__in">Ask omp… <span class="dim"><kbd>@</kbd> files · <kbd>/</kbd> commands</span></div>
+              <div class="composer__row">
+                <span class="chip chip--mode"><svg class="i"><use href="#i-shield"/></svg>Edits<span class="chev">▾</span></span>
+                <span class="chip chip--ghost"><svg class="i"><use href="#i-clip"/></svg></span>
+                <span class="sp"></span>
+                <span class="round round--mic"><svg class="i"><use href="#i-mic"/></svg></span>
+                <span class="round round--send"><svg class="i"><use href="#i-send"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="win__status">
+          <span class="sb sb--remote">SSH: build-box</span>
+          <span class="sb"><span class="pi">π</span> 1 working · 1 needs input</span>
+          <span class="sb sb--hide-sm">2/3 running · 4 waiting</span>
+          <span class="sb sb--right">$2.84 today</span>
+        </div>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Why ───────────────────────── -->
+<section class="section" id="why" aria-labelledby="why-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Built to be left alone</p>
+      <h2 id="why-title">Your laptop sleeps. <span class="grad">Your agents don't.</span></h2>
+      <p class="sub">Each session runs in its own detached host process on the machine where VS Code's extension host runs: your computer for local folders, the server over Remote-SSH. VS Code is a window onto the session, not its parent.</p>
+    </header>
+
+    <figure class="arch reveal">
+      <figcaption class="sr-only">Architecture: VS Code on your laptop connects over Remote-SSH to the extension host on the server. Each session has a detached session host process that talks to omp over stdio. When the SSH link drops, the host and omp keep running.</figcaption>
+      <div class="arch__row" aria-hidden="true">
+        <div class="node">
+          <span class="node__ic"><svg class="i"><use href="#i-laptop"/></svg></span>
+          <span class="node__t">VS Code</span>
+          <span class="node__s">your laptop</span>
+        </div>
+        <div class="link link--flaky">
+          <span class="link__line"><i></i><i></i><i></i></span>
+          <span class="link__label"><span class="on">Remote-SSH</span><span class="off">lid closed · still running</span></span>
+        </div>
+        <div class="node node--host">
+          <span class="node__ic"><svg class="i"><use href="#i-server"/></svg></span>
+          <span class="node__t">Session host</span>
+          <span class="node__s">detached · one per session</span>
+        </div>
+        <div class="link">
+          <span class="link__line"><i></i><i></i><i></i></span>
+          <span class="link__label">stdio JSONL</span>
+        </div>
+        <div class="node node--omp">
+          <span class="node__ic"><svg class="i"><use href="#i-pi"/></svg></span>
+          <span class="node__t">omp</span>
+          <span class="node__s">keeps working</span>
+        </div>
+      </div>
+    </figure>
+
+    <ol class="timeline">
+      <li class="tl reveal">
+        <span class="tl__time">6:02 pm</span>
+        <h3>Hand it off</h3>
+        <p>Prompt a session, or queue tasks from the chat, the Tasks view or the <code>omp-vs</code> command.</p>
+      </li>
+      <li class="tl reveal">
+        <span class="tl__time">6:05 pm</span>
+        <h3>Walk away</h3>
+        <p>Close VS Code, close the lid, lose the SSH connection. The host isn't a child of VS Code, so omp keeps going.</p>
+      </li>
+      <li class="tl reveal">
+        <span class="tl__time">9:40 pm</span>
+        <h3>Pick it back up</h3>
+        <p>Reopen, and every chat reattaches with what ran, what changed and what's waiting on you. Sessions with news are marked <span class="new-dot">● new</span>.</p>
+      </li>
+    </ol>
+
+    <div class="trio">
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-windows"/></svg>
+        <h3>Attach from any window</h3>
+        <p>Any number of VS Code windows can open the same session. Late arrivals get the full transcript, open dialogs and in-flight tools.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bell"/></svg>
+        <h3>Never silently stuck</h3>
+        <p>When omp asks something, the session shows <em>needs input</em> in the tree and status bar, and a notification fires if the chat isn't visible.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-resume"/></svg>
+        <h3>Resumable after anything</h3>
+        <p>Stopped sessions keep their transcript and resume on it. A crashed host shows as stopped and resumes cleanly. You can even adopt an omp session started in a terminal.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── New in 0.6 ───────────────────────── -->
+<section class="section section--tint" id="new" aria-labelledby="new-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow"><span class="ver">0.6</span> What's new</p>
+      <h2 id="new-title">More control, <span class="grad">fewer surprises.</span></h2>
+      <p class="sub">Decide how much omp may do on its own, rewind when it goes sideways, talk to it, or drop into its terminal UI without leaving the session.</p>
+    </header>
+
+    <div class="bento">
+      <article class="card card--perm reveal">
+        <div class="card__viz viz-perm">
+          <div class="seg" role="group" aria-label="Permission modes (interactive example)">
+            <button type="button" class="seg__b" data-mode="ask" aria-pressed="false">Ask</button>
+            <button type="button" class="seg__b" data-mode="edits" aria-pressed="true">Edits</button>
+            <button type="button" class="seg__b" data-mode="plan" aria-pressed="false">Plan</button>
+            <button type="button" class="seg__b" data-mode="auto" aria-pressed="false">Auto</button>
+          </div>
+          <p class="seg__desc" aria-live="polite" data-mode-desc>File edits go through; commands and other tools ask.</p>
+          <p class="seg__hint"><kbd>Shift</kbd>+<kbd>Tab</kbd> cycles modes in the composer</p>
+        </div>
+        <div class="card__body">
+          <h3><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Permission modes</h3>
+          <p>Ask, Edits, Plan or Auto, switchable live from a chip in the chat, even while omp is mid-turn. The background host enforces the mode, so it still applies with VS Code closed.</p>
+        </div>
+      </article>
+
+      <article class="card card--ckpt reveal">
+        <div class="card__body">
+          <h3><svg class="i" aria-hidden="true"><use href="#i-rewind"/></svg>Checkpoints</h3>
+          <p>Every prompt is a restore point. Roll back the files <em>and</em> the conversation to any of them, or undo and redo the last turn.</p>
+        </div>
+        <div class="shot shot--card">
+          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span></div>
+          <img src="assets/shots/checkpoints.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Restoring a checkpoint in the omp chat: a confirmation lists the two files that go back and explains that the conversation rewinds to before the prompt, with redo to bring everything back.">
+        </div>
+      </article>
+
+      <article class="card card--voice reveal">
+        <div class="card__viz viz-voice" aria-hidden="true">
+          <span class="orb"><svg class="i"><use href="#i-mic"/></svg></span>
+          <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </div>
+        <div class="card__body">
+          <h3><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg>Voice mode</h3>
+          <p>Talk it through out loud. omp's own realtime voice listens and hands the coding work to your session.</p>
+        </div>
+      </article>
+
+      <article class="card card--tui reveal">
+        <div class="card__viz viz-tui" aria-hidden="true">
+          <div class="tui">
+            <div class="tui__l"><span class="c-pi">π</span> omp <span class="dim">· api-server · same session</span></div>
+            <div class="tui__l"><span class="c-cy">›</span> also cover the refresh path</div>
+            <div class="tui__l dim">▸ edit src/auth/refresh.ts</div>
+            <div class="tui__l dim">▸ bash npm test -- auth</div>
+            <div class="tui__l"><span class="c-mg">/exit</span> <span class="dim">→ back to the background</span><span class="caret caret--sm"></span></div>
+          </div>
+        </div>
+        <div class="card__body">
+          <h3><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg>TUI switch</h3>
+          <p>Open the same session in omp's terminal UI beside the chat. Exit, and it goes back to running in the background.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Features ───────────────────────── -->
+<section class="section" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">In the editor</p>
+      <h2 id="features-title">Feels like part of VS&nbsp;Code, <span class="grad">because it is.</span></h2>
+      <p class="sub">Native views, native diffs, your theme's colors. omp works in the background; VS Code shows you what it did.</p>
+    </header>
+
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">Chat</p>
+        <h3>A chat that knows it lives in an editor.</h3>
+        <p>Open a session in an editor tab or the side bar, or drag the Chat view to the secondary side bar next to your code. Replies stream in; tool calls become cards with live durations.</p>
+        <ul class="ticks">
+          <li><code>file:line</code> links open in the editor; symbol links resolve through this window</li>
+          <li>Inline diffs with word-level highlights. Click a line to jump there</li>
+          <li><kbd>@</kbd> for files, <kbd>/</kbd> for commands, <kbd>!</kbd> for a shell command</li>
+          <li>Paste or drop images and any file: PDFs, docs, archives</li>
+          <li>Edit &amp; resend or fork from any prompt; <kbd>Enter</kbd> steers while omp works</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Chat</span></div>
+        <img src="assets/shots/chat.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp chat in VS Code: an inline diff, a bash tool call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context, cost and tokens per second.">
+      </div>
+    </div>
+
+    <div class="row row--flip reveal">
+      <div class="row__text">
+        <p class="kicker">Review</p>
+        <h3>See every change. Undo any of them.</h3>
+        <p>The session host snapshots each file before and after every omp edit, so reviews are exact and reverts are safe, even for changes made while you were away.</p>
+        <ul class="ticks">
+          <li><em>Diff</em> opens VS Code's own diff editor for any tool call; <em>Revert</em> restores the file to before it</li>
+          <li><em>N files changed</em> opens a multi-file review of everything the session touched</li>
+          <li>A <span class="pi-badge">π</span> badge in the Explorer and changed-line markers in open editors</li>
+          <li>CodeLens on changed lines: diff, revert, or jump to the chat</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Review</span></div>
+        <img src="assets/shots/review.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Review Changes: every file an omp session changed in VS Code's multi-file diff editor.">
+      </div>
+    </div>
+
+    <div class="duo-head reveal">
+      <p class="kicker">Overview</p>
+      <h3>Run ten sessions. <span class="keep">Know where each one stands.</span></h3>
+    </div>
+    <div class="duo">
+      <figure class="duo__item reveal">
+        <div class="shot">
+          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions</span></div>
+          <img src="assets/shots/sessions.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions view with sessions across two projects, and a chat waiting on a bash approval in Ask mode.">
+        </div>
+        <figcaption><strong>Sessions view.</strong> Grouped by project with working and needs-input counts, or by your own nested groups, by status, or flat. Filter with free text, <code>#tag</code> and <code>project:name</code>; hide finished sessions with one click.</figcaption>
+      </figure>
+      <figure class="duo__item reveal">
+        <div class="shot">
+          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions Board</span></div>
+          <img src="assets/shots/board.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Sessions Board: a kanban of omp sessions in columns, with priorities, colors, queue progress and cost on each card.">
+        </div>
+        <figcaption><strong>Sessions Board.</strong> A kanban of every session, by status, your own lanes, group or priority, with a swimlane per project. Drag cards; set priority, color, pins and tags; see queue progress, cost and unread at a glance.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Queue ───────────────────────── -->
+<section class="section section--tint" id="queue" aria-labelledby="queue-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Task queue &amp; scheduler</p>
+      <h2 id="queue-title">Queue it tonight. <span class="grad">Read the results tomorrow.</span></h2>
+      <p class="sub">Each session's queue belongs to its background host, which feeds tasks to omp one after another whenever the session is idle. VS Code doesn't need to be open.</p>
+    </header>
+
+    <div class="queue">
+      <div class="shot shot--big reveal">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">2/3 running · 5 waiting</span></div>
+        <img src="assets/shots/tasks.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Tasks view: queued tasks with subtasks across sessions, with progress and checkboxes.">
+      </div>
+      <div class="qgrid">
+        <div class="mini reveal">
+          <h3>Tasks with subtasks</h3>
+          <p>Write <code>Title :: step; step</code>, drag to reorder (also between sessions), or press <kbd>Alt</kbd>+<kbd>Enter</kbd> in the chat to queue instead of send.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Per-task options</h3>
+          <p>Model, thinking level, fresh context, 1–5 retries with backoff and a time limit. The host applies them task by task.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Scheduled starts</h3>
+          <p>Start a queue at <code>22:00</code>, at <code>2026-11-08 07:30</code>, or in <code>+2h</code>.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>One global limit</h3>
+          <p>Queues across all sessions share a concurrency limit that the hosts enforce themselves. The <code>omp-vs</code> server starts waiting sessions as slots free up, even after a reboot.</p>
+        </div>
+      </div>
+    </div>
+    <p class="fine reveal">A failure or an interruption pauses the queue. Tasks interrupted by a crash are never rerun unattended.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── CLI ───────────────────────── -->
+<section class="section" id="cli" aria-labelledby="cli-title">
+  <div class="wrap cli">
+    <div class="cli__text reveal">
+      <p class="eyebrow">omp-vs</p>
+      <h2 id="cli-title">Same sessions. <span class="grad">No VS&nbsp;Code required.</span></h2>
+      <p class="sub sub--left"><em>omp: Install omp-vs Command</em> puts <code>omp-vs</code> in <code>~/.local/bin</code>. Reach the same sessions over plain SSH, from scripts, or after a reboot. It runs on Node 22+, or on VS Code's own runtime.</p>
+      <dl class="cmds">
+        <div><dt><code>new . -p "…"</code></dt><dd>start a session with a prompt</dd></div>
+        <div><dt><code>attach .</code></dt><dd>chat in the terminal; <kbd>Ctrl</kbd>+<kbd>D</kbd> detaches</dd></div>
+        <div><dt><code>tail &lt;id&gt; -f</code></dt><dd>follow output</dd></div>
+        <div><dt><code>queue &lt;id&gt; add "…" --run</code></dt><dd>queue work and start it</dd></div>
+        <div><dt><code>board</code></dt><dd>waiting / working / needs input / idle</dd></div>
+        <div><dt><code>server install</code></dt><dd>systemd user unit or launchd agent</dd></div>
+      </dl>
+    </div>
+    <figure class="term reveal">
+      <figcaption class="sr-only">Terminal example: omp-vs ls lists three running sessions with status, title, queue progress, project, last activity and cost. omp-vs send prompts a session by title words and streams its tool calls and reply. omp-vs board groups sessions into waiting, working, needs input and idle. omp-vs sched set 2 limits queued tasks to two at once across all sessions.</figcaption>
+      <div class="term__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="term__title">mbaradad@build-box: ~/api-server</span></div>
+      <pre class="term__body" aria-hidden="true" data-term><span class="tline"><span class="tp">$</span> <span class="tc">omp-vs ls</span></span>
+<span class="tline tout dim">ID       STATUS        TITLE                 QUEUE    PROJECT         ACTIVE  COST</span>
+<span class="tline tout"><span class="dim">3f9c1a2e</span> <span class="c-yl">working</span>       Fix flaky auth test            <span class="dim">api-server      12s     $0.84</span></span>
+<span class="tline tout"><span class="dim">a07d55b1</span> <span class="c-mg">input</span>      <span class="c-yl">!</span>  Migrate config loader          <span class="dim">api-server      4m      $1.12</span></span>
+<span class="tline tout"><span class="dim">c2e8f019</span> <span class="c-yl">working</span>       Upgrade dependencies  <span class="c-yl">▶ 1/3</span>    <span class="dim">web-app         38s     $0.37</span></span>
+<span class="tline tout dim">2 finished sessions hidden · omp-vs ls --all</span>
+<span class="tline"><span class="tp">$</span> <span class="tc">omp-vs send flaky "also update the docs" --wait</span></span>
+<span class="tline tout dim">▸ read docs/testing.md</span>
+<span class="tline tout dim">▸ edit docs/testing.md</span>
+<span class="tline tout">Documented the injected clock in docs/testing.md.</span>
+<span class="tline"><span class="tp">$</span> <span class="tc">omp-vs board</span></span>
+<span class="tline tout"><b>Waiting</b> <span class="dim">(0)</span></span>
+<span class="tline tout dim">  —</span>
+<span class="tline tout"><b>Working</b> <span class="dim">(2)</span></span>
+<span class="tline tout">  <span class="dim">3f9c1a2e</span>  Fix flaky auth test</span>
+<span class="tline tout">  <span class="dim">c2e8f019</span>  Upgrade dependencies  <span class="c-yl">▶ 1/3</span></span>
+<span class="tline tout"><b>Needs input</b> <span class="dim">(1)</span></span>
+<span class="tline tout">  <span class="dim">a07d55b1</span>  Migrate config loader  <span class="c-yl">high</span></span>
+<span class="tline tout"><b>Idle</b> <span class="dim">(0)</span></span>
+<span class="tline tout dim">  —</span>
+<span class="tline"><span class="tp">$</span> <span class="tc">omp-vs sched set 2</span>   <span class="dim"># at most 2 queued tasks at once</span></span>
+<span class="tline"><span class="tp">$</span> <span class="caret caret--term"></span></span></pre>
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Phone ───────────────────────── -->
+<section class="section section--tint" id="phone" aria-labelledby="phone-title">
+  <div class="wrap phonesec">
+    <div class="phonesec__text reveal">
+      <p class="eyebrow">Phone app &amp; HTTP API</p>
+      <h2 id="phone-title">Your sessions, <span class="grad">in your pocket.</span></h2>
+      <p class="sub sub--left">Run <em>omp: Connect Phone…</em> and scan the QR code. The <code>omp-vs</code> server serves a small web app you can add to your home screen, on the same machine as your sessions.</p>
+      <ul class="ticks">
+        <li>See what's working, waiting for you, or done</li>
+        <li>Follow a session live; prompt, steer or queue</li>
+        <li>Approve or deny tool calls and switch the permission mode</li>
+        <li>Start a session in a recent folder, or queue it for later</li>
+      </ul>
+      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted) or your Wi-Fi, protected by a token. The same JSON + Server-Sent Events API is <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/REMOTE-API.md">documented</a> for your own apps and servers.</p>
+    </div>
+    <div class="phones reveal">
+      <figure class="phone"><img src="assets/shots/phone-list.png" width="1170" height="2532" loading="lazy" decoding="async" alt="The phone app's session list, grouped into needs input, working, idle and stopped, with project, cost and last reply."><figcaption>All sessions</figcaption></figure>
+      <figure class="phone phone--up"><img src="assets/shots/phone-approval.png" width="1170" height="2532" loading="lazy" decoding="async" alt="A session on the phone in Ask mode, asking to approve a bash command, with Approve, Approve for this session and Deny buttons."><figcaption>Approve from anywhere</figcaption></figure>
+      <figure class="phone"><img src="assets/shots/phone-new.png" width="1170" height="2532" loading="lazy" decoding="async" alt="The new-session form on the phone: recent folders, a prompt, the permission mode and a queue-only option."><figcaption>Start new work</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Dashboard ───────────────────────── -->
+<section class="section section--flush" aria-labelledby="usage-title">
+  <div class="wrap">
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">Usage</p>
+        <h3 id="usage-title">Know what your agents cost.</h3>
+        <p>The usage dashboard charts cost, tokens and sessions over any range. Today's spend sits in the status bar, and <em>Search Session History</em> finds anything in any transcript.</p>
+        <ul class="ticks">
+          <li>Cost per answer: hover a reply for model, tokens and cost</li>
+          <li>Sort sessions by cost; cost on every board card</li>
+          <li>Optionally count omp sessions started outside VS Code</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Usage Dashboard</span></div>
+        <img src="assets/shots/dashboard.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp usage dashboard with cost, token and session trends over a date range.">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Toolbox ───────────────────────── -->
+<section class="section" id="toolbox" aria-labelledby="toolbox-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">And the rest</p>
+      <h2 id="toolbox-title">The whole toolbox, <span class="grad">wired in.</span></h2>
+    </header>
+    <div class="tools">
+      <article class="tcard tcard--wide reveal">
+        <div class="tcard__text">
+          <svg class="i tcard__ic" aria-hidden="true"><use href="#i-branch"/></svg>
+          <h3>Git worktrees &amp; Best-of-N</h3>
+          <p>Start a session in its own worktree on an <code>omp/…</code> branch, or run the same task in N parallel worktree sessions and keep the best. Compare with base, merge into the main checkout, or remove it all in one step.</p>
+        </div>
+        <svg class="branches" viewBox="0 0 320 140" aria-hidden="true">
+          <defs><linearGradient id="bg-g" x1="0" x2="1"><stop offset="0" stop-color="#ed4abf"/><stop offset=".5" stop-color="#9b4dff"/><stop offset="1" stop-color="#5ad8e6"/></linearGradient></defs>
+          <path class="br br--main" d="M10 70H310"/>
+          <path class="br" d="M60 70C100 70 100 22 140 22H262"/>
+          <path class="br" d="M60 70H262"/>
+          <path class="br" d="M60 70C100 70 100 118 140 118H262"/>
+          <circle class="cm" cx="60" cy="70" r="5"/>
+          <circle class="cm cm--a" cx="262" cy="22" r="5"/>
+          <circle class="cm cm--win" cx="262" cy="70" r="6"/>
+          <circle class="cm cm--a" cx="262" cy="118" r="5"/>
+          <text x="146" y="14">omp/fix-1</text><text x="146" y="62">omp/fix-2</text><text x="146" y="110">omp/fix-3</text>
+          <text x="14" y="90">main</text>
+        </svg>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-plug"/></svg>
+        <h3>VS Code bridge</h3>
+        <p>A per-session MCP server lets omp use <em>this window's</em> language features: symbols, definitions, hover and diagnostics.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-pulse"/></svg>
+        <h3>Doctor</h3>
+        <p>A health report with one-click fixes: missing omp, auth problems, outdated session hosts, hosts that died mid-turn.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-command"/></svg>
+        <h3>Command Center</h3>
+        <p><kbd>Ctrl/Cmd</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>: a searchable index of every omp command, including omp's own CLI features.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-bulb"/></svg>
+        <h3>Code actions</h3>
+        <p><em>Fix with omp</em> on problems, <em>Explain with omp</em> on a selection, <em>Fix Failed Command</em> after a terminal error.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-commit"/></svg>
+        <h3>Source Control</h3>
+        <p><em>Commit with omp</em>, <em>Review Uncommitted Changes</em> and <em>Write PR Description</em>, from the Source Control menu.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-tag"/></svg>
+        <h3>Organization</h3>
+        <p>Nested groups with colors and icons; priority, pin, archive and tags per session, from the tree or the board.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-sliders"/></svg>
+        <h3>Sessions your way</h3>
+        <p><em>New Session with Options</em>: model, thinking level, permission mode, plan-first, advisor, a goal and extra omp flags, remembered for resumes.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Install ───────────────────────── -->
+<section class="section section--tint" id="install" aria-labelledby="install-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Get started</p>
+      <h2 id="install-title">Up and running <span class="grad">in a minute.</span></h2>
+    </header>
+    <ol class="steps">
+      <li class="step reveal">
+        <span class="step__n" aria-hidden="true">1</span>
+        <h3>Install omp</h3>
+        <p>On the machine where sessions will run: your computer, or the server you reach over Remote-SSH. Then log in to a model provider.</p>
+        <div class="cmd cmd--block" data-copy-root>
+          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>curl -fsSL https://omp.sh/install | sh</span></code>
+          <button class="cmd__btn" type="button" data-copy aria-label="Copy omp install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        </div>
+      </li>
+      <li class="step reveal">
+        <span class="step__n" aria-hidden="true">2</span>
+        <h3>Add the extension</h3>
+        <p>From the VS Code Marketplace or Open VSX. Over Remote-SSH, install it on the SSH host.</p>
+        <div class="step__btns">
+          <a class="btn btn--primary btn--sm" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i i--sm" aria-hidden="true"><use href="#i-vscode"/></svg>Marketplace</a>
+          <a class="btn btn--ghost btn--sm" href="https://open-vsx.org/extension/mbaradad/omp-sessions">Open VSX</a>
+        </div>
+        <div class="cmd cmd--block" data-copy-root>
+          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>code --install-extension mbaradad.omp-sessions</span></code>
+          <button class="cmd__btn" type="button" data-copy aria-label="Copy extension install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        </div>
+      </li>
+      <li class="step reveal">
+        <span class="step__n" aria-hidden="true">3</span>
+        <h3>Start a session</h3>
+        <p>Open a folder and press <strong>+</strong> in the omp Sessions view. <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> focuses the chat, and <em>Help → Get Started</em> walks you through the rest.</p>
+        <p class="step__more">Want the terminal too? Run <em>omp: Install omp-vs Command</em>, then <code>omp-vs server install</code> so queued work resumes after a reboot.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ───────────────────────── FAQ ───────────────────────── -->
+<section class="section" id="faq" aria-labelledby="faq-title">
+  <div class="wrap faq">
+    <header class="shead shead--left">
+      <p class="eyebrow">FAQ</p>
+      <h2 id="faq-title">Questions, answered.</h2>
+      <p class="sub sub--left">Anything else? <a href="https://github.com/mbaradad/omp-vscode/issues">Open an issue on GitHub</a>.</p>
+    </header>
+    <div class="faq__list">
+      <details>
+        <summary>What do I need?</summary>
+        <p>VS Code 1.100 or newer, and <a href="https://omp.sh">omp</a> installed on the machine where the extension host runs: your computer for local folders, the server for Remote-SSH. The optional <code>omp-vs</code> command runs on Node 22+ from your PATH, or on VS Code's own runtime.</p>
+      </details>
+      <details>
+        <summary>What does it cost?</summary>
+        <p>The extension is free and MIT-licensed. You bring your own omp and model provider, and pay that provider for model usage just as you would in omp's terminal UI. The usage dashboard and the status bar show what your sessions spend.</p>
+      </details>
+      <details>
+        <summary>Does it collect any data?</summary>
+        <p>No telemetry. Session state lives in <code>~/.omp/vscode/</code> on the machine that runs the sessions, and transcripts stay in omp's own <code>~/.omp/agent/sessions/</code>. VS Code talks to each session over a local Unix socket; omp talks to the model provider you configured.</p>
+      </details>
+      <details>
+        <summary>Which platforms are supported?</summary>
+        <p>Linux and macOS, as your local machine or as the Remote-SSH server. On Windows, named pipes and <code>.cmd</code> shims are handled, but it's untested.</p>
+      </details>
+      <details>
+        <summary>What happens when my machine reboots?</summary>
+        <p>A reboot stops sessions, but their transcripts stay resumable. Queued work restarts once the <code>omp-vs</code> server runs again; <code>omp-vs server install</code> starts it at login. Closing VS Code, sleeping or disconnecting doesn't stop anything.</p>
+      </details>
+      <details>
+        <summary>Can I still use omp in the terminal?</summary>
+        <p>Yes. <code>omp-vs attach</code> chats with a session in the terminal, the TUI switch opens omp's own terminal UI on the session, and <em>Resume omp Transcript in Background</em> adopts sessions you started in a terminal.</p>
+      </details>
+      <details>
+        <summary>Are all file changes tracked for diffs and revert?</summary>
+        <p>Changes made through omp's file-editing tools are snapshotted before and after every call. Changes made through shell commands (for example <code>sed -i</code> or code generators) are not.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── CTA ───────────────────────── -->
+<section class="cta" aria-labelledby="cta-title">
+  <div class="wrap cta__in reveal">
+    <img class="cta__logo" src="assets/logo.svg" width="56" height="56" alt="">
+    <h2 id="cta-title">Give your agents somewhere <span class="grad">to keep working.</span></h2>
+    <div class="ctas ctas--center">
+      <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
+      <a class="btn btn--ghost btn--lg" href="https://github.com/mbaradad/omp-vscode"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <div class="foot__brand">
+      <a class="brand" href="./"><img src="assets/logo.svg" width="20" height="20" alt=""><span>omp Sessions</span></a>
+      <p>Background <a href="https://omp.sh">oh-my-pi</a> sessions for VS Code. MIT licensed. No telemetry.</p>
+    </div>
+    <nav class="foot__nav" aria-label="Footer">
+      <div>
+        <h2>Get it</h2>
+        <ul>
+          <li><a href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions">VS Code Marketplace</a></li>
+          <li><a href="https://open-vsx.org/extension/mbaradad/omp-sessions">Open VSX</a></li>
+          <li><a href="https://omp.sh">oh-my-pi (omp)</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Project</h2>
+        <ul>
+          <li><a href="https://github.com/mbaradad/omp-vscode">GitHub</a></li>
+          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/mbaradad/omp-vscode/issues">Issues</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Legal</h2>
+        <ul>
+          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/LICENSE">MIT License</a></li>
+          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/SECURITY.md">Security policy</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

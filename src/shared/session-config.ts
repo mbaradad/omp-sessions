@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { PERMISSION_MODE_INFO, permissionModeOf } from "./permissions";
 import { sessionDir, stateRoot } from "./protocol";
 
 export interface SessionToggles {
@@ -74,7 +75,6 @@ export function gateBaseline(setting: string, config: ReadonlyMap<string, unknow
 }
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"] as const;
-export const APPROVAL_MODES = ["always-ask", "always-ask-cached", "write", "yolo"] as const;
 
 const VALUE_FLAGS: Record<string, "model" | "thinking" | "approvalMode" | "maxTime"> = {
 	"--model": "model",
@@ -298,6 +298,25 @@ export function parseConfigValue(stdout: string): unknown {
 	}
 }
 
+/** omp's effective value of one setting in `cwd` (`omp config get <key> --json`); undefined when unreadable. */
+export function readOmpSetting(omp: string, key: string, cwd: string, env: NodeJS.ProcessEnv, log: (...a: unknown[]) => void = () => {}): unknown {
+	try {
+		const out = execFileSync(omp, ["config", "get", key, "--json"], {
+			cwd,
+			env,
+			encoding: "utf8",
+			timeout: 15_000,
+			stdio: ["ignore", "pipe", "ignore"],
+			windowsHide: true,
+			shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(omp),
+		});
+		return parseConfigValue(out);
+	} catch (err) {
+		log(`session-config: could not read ${key}`, String(err));
+		return undefined;
+	}
+}
+
 /**
  * Host side: writes `<dir>/session-overlay.yml` from `<dir>/session-config.json` and returns the
  * extra omp arguments that load it (none when the session overrides nothing).
@@ -312,21 +331,8 @@ export function sessionOverlayArgs(dir: string, omp: string, cwd: string, env: N
 	let base: string[] = [];
 	if (toggles.disabled.length) {
 		// An overlay array replaces the user's list instead of extending it, so fold that in.
-		try {
-			const out = execFileSync(omp, ["config", "get", "disabledExtensions", "--json"], {
-				cwd,
-				env,
-				encoding: "utf8",
-				timeout: 15_000,
-				stdio: ["ignore", "pipe", "ignore"],
-				windowsHide: true,
-				shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(omp),
-			});
-			const value = parseConfigValue(out);
-			if (Array.isArray(value)) base = value.filter((x): x is string => typeof x === "string");
-		} catch (err) {
-			log("session-config: could not read disabledExtensions", String(err));
-		}
+		const value = readOmpSetting(omp, "disabledExtensions", cwd, env, log);
+		if (Array.isArray(value)) base = value.filter((x): x is string => typeof x === "string");
 	}
 	// JSON is valid YAML.
 	fs.writeFileSync(overlayFile, `${JSON.stringify(buildOverlay(toggles, base), null, 1)}\n`);
@@ -341,7 +347,8 @@ export function settingsSummary(args: readonly string[], toggles: SessionToggles
 	const parts: string[] = [];
 	if (f.model) parts.push(f.model);
 	if (f.thinking) parts.push(`think ${f.thinking}`);
-	if (f.approvalMode) parts.push(`approval ${f.approvalMode}`);
+	const mode = permissionModeOf(f.approvalMode);
+	if (mode) parts.push(`${PERMISSION_MODE_INFO[mode].label.toLowerCase()} mode`);
 	if (f.maxTime) parts.push(`max ${f.maxTime}`);
 	if (f.noSkills) parts.push("no skills");
 	if (f.noRules) parts.push("no rules");

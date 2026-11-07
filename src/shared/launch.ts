@@ -8,8 +8,9 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { needsRestore, settleDeadHost } from "./health";
+import { type PermissionMode, permissionModeInArgs } from "./permissions";
 import { type ClientToHost, type SessionMeta, sessionDir, sessionsRoot, stateRoot } from "./protocol";
-import { type SessionToggles, newSessionLaunch, readLaunchArgs, writeSessionToggles } from "./session-config";
+import { type SessionToggles, applyFlags, newSessionLaunch, readFlags, readLaunchArgs, writeLaunchArgs, writeSessionToggles } from "./session-config";
 
 /** Options for starting (or resuming, with `id`) a background session. */
 export interface LaunchOptions {
@@ -221,6 +222,24 @@ export function sendToHost(meta: SessionMeta, msg: ClientToHost): Promise<boolea
 	});
 	sock.on("error", () => resolve(false));
 	return promise;
+}
+
+// ---------- permission modes ----------
+
+/** The mode a session runs in now (running host) or resumes in (launch flag); undefined: omp's default. */
+export function sessionPermissionMode(meta: SessionMeta): PermissionMode | undefined {
+	return meta.status !== "stopped" && meta.permissionMode ? meta.permissionMode : permissionModeInArgs(readLaunchArgs(meta.id) ?? []);
+}
+
+/**
+ * Switches a session's mode: a running host applies it at once (and persists it); a stopped
+ * session gets it as its launch flag. False when a running host is unreachable or predates modes.
+ */
+export async function setSessionPermissionMode(meta: SessionMeta, mode: PermissionMode): Promise<boolean> {
+	if (meta.status !== "stopped") return meta.permissionMode !== undefined && sendToHost(meta, { t: "mode", mode });
+	const args = readLaunchArgs(meta.id) ?? [];
+	writeLaunchArgs(meta.id, applyFlags(args, { ...readFlags(args), approvalMode: mode }));
+	return true;
 }
 
 export function canConnect(socket: string): Promise<boolean> {

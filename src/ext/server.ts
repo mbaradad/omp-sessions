@@ -13,7 +13,14 @@ import { ServerClient, compareVersions, ensureServer, stopServer } from "../shar
 import { serverLogPath } from "../shared/server-protocol";
 import type { OmpApi } from "./api";
 
-const RUNTIME_FILES = ["host.js", "server.js", "cli.js"];
+/** Bundles the CLI and server run from, plus the phone app the server serves (next to server.js). */
+const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg"];
+
+/** What other extension modules need from the server side. */
+export interface ServerControl {
+	/** Starts the server (or restarts an older one); resolves with a status line, rejects when it does not come up. */
+	ensureRunning(): Promise<string>;
+}
 
 export function runtimeDir(): string {
 	return path.join(stateRoot(), "runtime");
@@ -86,7 +93,7 @@ function onPath(dir: string): boolean {
 	return (process.env.PATH ?? "").split(sep).some(p => p && path.resolve(p) === path.resolve(dir));
 }
 
-export function registerServer(api: OmpApi): void {
+export function registerServer(api: OmpApi): ServerControl {
 	const { context } = api;
 	const outDir = path.join(context.extensionPath, "out");
 	const version = api.sessions.version;
@@ -208,4 +215,5 @@ export function registerServer(api: OmpApi): void {
 			await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
 		}),
 	);
+	return { ensureRunning: () => startServer(false) };
 }

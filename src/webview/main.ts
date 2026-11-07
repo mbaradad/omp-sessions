@@ -3,6 +3,7 @@
 import { Marked, type Tokens } from "marked";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
 import { CONTEXT_MENTIONS, findMentions, splitContext } from "../shared/mentions";
+import { PERMISSION_MODES, PERMISSION_MODE_INFO, PLAN_PROMPT_PREFIX, type PermissionMode } from "../shared/permissions";
 import type { FileChange, OmpFrame, SessionMeta, TaskQueue, UiRequest } from "../shared/protocol";
 import { SNIPPET_PREFIX } from "../shared/snippets";
 import type { DiffsByPath, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
@@ -70,6 +71,8 @@ const widgets = new Map<string, string[]>();
 const statuses = new Map<string, string>();
 let agentBusy = false;
 let totalCost = 0;
+/** Checkpoint restores this chat can redo. */
+let redoCount = 0;
 /** `omp.chat.toolCardsCollapsed`: new non-edit tool cards start closed. */
 let toolCardsCollapsed = true;
 const logoUrl = document.body.dataset.logo ?? "";
@@ -113,6 +116,8 @@ const popup = h("div", { class: "popup hidden" });
 const input = h("textarea", { class: "input", rows: "1", "aria-label": "Message omp", placeholder: "Ask omp…   / commands · @ files & context · ! shell · paste images or files" });
 const mentionChips = h("div", { class: "mention-chips hidden", "aria-label": "Context attached when sending" });
 const attachBtn = h("button", { class: "icon-btn attach", title: "Attach images or files" }, icon("clip"));
+const voiceBtn = h("button", { class: "icon-btn voice-btn", title: "Voice mode: talk with omp (omp's realtime voice, on the machine omp runs on)", "aria-label": "Start voice mode", onclick: () => post({ type: "command", name: "voiceStart" }) }, icon("mic"));
+const voiceBar = h("div", { class: "voicebar hidden", role: "status", "aria-live": "polite" });
 const sendBtn = h("button", { class: "send", title: "Send (Enter)" }, icon("send"));
 const stopBtn = h("button", { class: "stop hidden", title: "Interrupt (Esc)" }, icon("stop"));
 const footer = h("div", { class: "footer" });
@@ -120,8 +125,8 @@ const tray = new AttachmentTray(
 	() => updateSendState(),
 	msg => appendNotice(msg, "warning"),
 );
-const inputBox = h("div", { class: "input-box" }, tray.el, mentionChips, input, h("div", { class: "input-actions" }, attachBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
-const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, inputBox, footer);
+const inputBox = h("div", { class: "input-box" }, tray.el, mentionChips, input, h("div", { class: "input-actions" }, attachBtn, voiceBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
+const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, voiceBar, inputBox, footer);
 const findBar = new FindBar(transcript, {
 	hiddenMatches: query => countMatches(hiddenMessages, query),
 	loadAll: () => {
@@ -598,7 +603,8 @@ function shortTime(m: Record<string, unknown>): string {
 function renderUser(m: Record<string, unknown>): HTMLElement {
 	const full = contentText(m.content);
 	// Context expanded from @mentions is collapsed below what the user typed.
-	const { text, context } = splitContext(full);
+	const planned = full.startsWith(PLAN_PROMPT_PREFIX);
+	const { text, context } = splitContext(planned ? full.slice(PLAN_PROMPT_PREFIX.length) : full);
 	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}`, title: timeTitle(m) });
 	const bubble = h("div", { class: "bubble" });
 	const queued = /^\[Task (\d+)\/(\d+) from the queue\] /.exec(text);
@@ -607,6 +613,7 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		renderMarkdownInto(bubble, text.slice(queued[0].length).replace(/\n\nWork through this task completely[\s\S]*$/, ""));
 		bubble.prepend(h("div", { class: "task-chip" }, `Queued task ${queued[1]}/${queued[2]}`));
 	} else renderMarkdownInto(bubble, text);
+	if (planned) bubble.prepend(h("div", { class: "task-chip", title: "Sent in Plan mode: read-only, file edits refused" }, "Plan mode"));
 	if (context) {
 		const body = h("div", { class: "md" });
 		const kinds = findMentions(text);
@@ -631,6 +638,7 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		h(
 			"div",
 			{ class: "msg-actions" },
+			userAuthored ? h("button", { class: "icon-btn", title: "Restore checkpoint: revert the file edits made since this prompt and rewind the conversation to before it (/redo brings them back)", onclick: () => post({ type: "restoreCheckpoint", text: full }) }, icon("undo")) : "",
 			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text: full }) }, icon("edit")) : "",
 			userAuthored ? h("button", { class: "icon-btn", title: "Fork: continue from this message in a new transcript", onclick: () => post({ type: "forkFrom", text: full }) }, icon("fork")) : "",
 			copyButton(() => text, "Copy message"),
@@ -999,7 +1007,7 @@ function openMenu(anchor: HTMLElement, groups: MenuItem[]): void {
 /** Arrow keys / Home / End move focus between a menu's buttons. */
 function menuKeys(menu: HTMLElement): void {
 	menu.addEventListener("keydown", e => {
-		const items = [...menu.querySelectorAll<HTMLButtonElement>(":scope > button, .levels > button, .plist > button")];
+		const items = [...menu.querySelectorAll<HTMLButtonElement>(":scope > button, .levels > button, .plist > button, .plist > .prow > button")];
 		const at = items.findIndex(b => b === document.activeElement);
 		const target = e.key === "ArrowDown" ? at + 1 : e.key === "ArrowUp" ? (at < 0 ? items.length - 1 : at - 1) : e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : null;
 		if (target === null || !items.length || (e.target instanceof HTMLInputElement && e.key !== "ArrowDown")) return;
@@ -1018,6 +1026,8 @@ function renderHeader(): void {
 	menuBtn.addEventListener("click", () =>
 		openMenu(menuBtn, [
 			["Review changes", cmd("reviewChanges"), "/changes"],
+			["Undo last turn (files + conversation)", cmd("undoTurn"), "/undo"],
+			...(redoCount ? [["Redo", cmd("redoTurn"), "/redo"] satisfies MenuItem] : []),
 			["Rewind to a message…", cmd("rewind"), "/tree"],
 			["Fork conversation", cmd("fork"), "/fork"],
 			["New conversation (same session)", cmd("newInPlace"), "/new"],
@@ -1028,6 +1038,9 @@ function renderHeader(): void {
 			["Find in conversation", () => findBar.open(), "Ctrl/⌘+F"],
 			["Goal…", cmd("goal"), "/goal"],
 			["Subagents…", cmd("agents"), "/agents"],
+			["Permission mode…", () => showModeMenu(menuBtn), "Shift+Tab"],
+			["Voice mode", cmd("voiceStart"), "/voice"],
+			["Continue in omp's terminal UI", cmd("openTui"), "/tui"],
 			[`Fast mode: ${state?.fastModeEnabled ? "on" : "off"}`, cmd("toggleFast"), "/fast"],
 			[`Auto-compaction: ${state?.autoCompactionEnabled === false ? "off" : "on"}`, cmd("toggleAutoCompact")],
 			null,
@@ -1055,6 +1068,8 @@ function renderHeader(): void {
 		h("span", { class: "cwd" }, meta ? meta.cwd.replace(home, "~") : ""),
 		h("span", { class: "spacer" }),
 		files > 0 ? h("button", { class: "chip-btn", title: "Review every change in a multi-file diff", onclick: cmd("reviewChanges") }, icon("diff"), `${files} file${files === 1 ? "" : "s"} changed`) : "",
+		redoCount ? h("button", { class: "chip-btn", title: "Bring back what the last checkpoint restore removed (files + conversation)", onclick: cmd("redoTurn") }, icon("redo"), "Redo") : "",
+		stopped ? "" : h("button", { class: "icon-btn", title: "Continue in omp's terminal UI (beside this chat); the session returns to the background when you exit omp", "aria-label": "Continue in omp's terminal UI", onclick: cmd("openTui") }, icon("terminal")),
 		menuBtn,
 	);
 	if (stopped) {
@@ -1094,8 +1109,11 @@ function renderFooter(): void {
 	footer.replaceChildren(
 		modelBtn,
 		thinkingBtn ?? "",
+		modeButton(),
 		pct !== null ? h("span", { class: `pill${pct > 80 ? " warn" : ""}`, title: `${ctx?.tokens?.toLocaleString()} / ${ctx?.contextWindow?.toLocaleString()} tokens` }, h("span", { class: "meter" }, h("span", { style: `width:${Math.min(100, pct)}%` })), `${pct}%`) : "",
 		totalCost > 0 ? h("span", { class: "pill", title: "Cost of the messages shown" }, `$${totalCost.toFixed(2)}`) : "",
+		typeof state?.tokensPerSecond === "number" && state.tokensPerSecond > 0 ? h("span", { class: "pill", title: "Output speed of the last response" }, `${Math.round(state.tokensPerSecond)} tok/s`) : "",
+		usageLimitPill(rec(state?.usageLimit)),
 		state?.fastModeEnabled ? h("span", { class: "pill accent" }, "fast") : "",
 		goal ? h("span", { class: "pill accent", title: str(goal.objective) }, `goal: ${str(goal.status) || "active"}`) : "",
 		...[...statuses.values()].filter(Boolean).map(s => h("span", { class: "pill dim" }, s)),
@@ -1109,9 +1127,63 @@ function renderFooter(): void {
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
 }
 
+/** The account is past its usage limit: requests run on a slow lane or a short wrap-up allowance. */
+function usageLimitPill(limit: Record<string, unknown> | undefined): HTMLElement | "" {
+	if (!limit) return "";
+	const resets = typeof limit.resetsAtSec === "number" ? ` · resets ${new Date(limit.resetsAtSec * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "";
+	if (limit.stage === "low_priority") {
+		const left = typeof limit.allowanceLeftPercent === "number" ? ` · ${limit.allowanceLeftPercent}% left` : "";
+		return h("span", { class: "pill warn", title: `Usage limit reached: requests run on the provider's low-priority lane${left}${resets}` }, "low priority");
+	}
+	return h("span", { class: "pill warn", title: `Usage limit reached: running on a short wrap-up allowance${limit.extraUsage ? " (paid extra usage continues after it)" : ""}${resets}` }, "wrap-up");
+}
+
+/** Footer chip with the session's permission mode (hosts that predate modes have none). */
+function modeButton(): HTMLElement | "" {
+	const mode = meta?.permissionMode;
+	if (!mode || meta?.status === "stopped") return "";
+	const info = PERMISSION_MODE_INFO[mode];
+	const btn = h("button", { class: `model-btn mode-btn mode-${mode}`, title: `Permission mode: ${info.detail}. Click or Shift+Tab to change.`, "aria-haspopup": "menu", "aria-label": `Permission mode: ${info.label}` }, h("span", { class: "dim" }, "mode "), info.label);
+	btn.addEventListener("click", () => showModeMenu(btn));
+	return btn;
+}
+
+function setMode(mode: PermissionMode): void {
+	if (meta && mode !== meta.permissionMode) post({ type: "setMode", mode });
+}
+
+function showModeMenu(anchor: HTMLElement): void {
+	closeMenus();
+	const menu = h("div", { class: "menu mode-menu", role: "menu" });
+	menu.append(
+		h("div", { class: "small dim pad" }, "Permission mode"),
+		...PERMISSION_MODES.map(m =>
+			h(
+				"button",
+				{ role: "menuitemradio", "aria-checked": String(meta?.permissionMode === m), class: meta?.permissionMode === m ? "current" : "", onclick: () => (closeMenus(), setMode(m)) },
+				h("span", { class: "mode-label" }, PERMISSION_MODE_INFO[m].label),
+				h("span", { class: "mode-detail" }, PERMISSION_MODE_INFO[m].detail),
+			),
+		),
+	);
+	const r = anchor.getBoundingClientRect();
+	if (r.top < window.innerHeight / 2) {
+		menu.style.top = `${r.bottom + 4}px`;
+		menu.style.right = `${Math.max(4, window.innerWidth - r.right)}px`;
+	} else {
+		menu.style.bottom = `${window.innerHeight - r.top + 4}px`;
+		menu.style.left = `${r.left}px`;
+	}
+	document.body.append(menu);
+	menuEl = menu;
+	menuKeys(menu);
+	(menu.querySelector<HTMLElement>("button.current") ?? menu.querySelector("button"))?.focus();
+}
+
 function updateSendState(): void {
 	const stopped = meta?.status === "stopped";
 	sendBtn.disabled = stopped || (!input.value.trim() && tray.count === 0);
+	voiceBtn.disabled = stopped;
 	attachBtn.disabled = stopped;
 }
 
@@ -1201,6 +1273,8 @@ function renderWidgets(): void {
 // ---------- model picker ----------
 let modelsCache: Array<{ provider: string; id: string; name?: string }> = [];
 let levelsCache: string[] = [];
+/** `provider/id` of starred models: listed first in the picker. */
+let starredModels = new Set<string>();
 function showModelPicker(anchor: HTMLElement): void {
 	closeMenus();
 	const menu: HTMLElement & { refill?: () => void } = h("div", { class: "menu picker", role: "menu" });
@@ -1209,18 +1283,27 @@ function showModelPicker(anchor: HTMLElement): void {
 	const levels = h("div", { class: "levels" });
 	const fill = () => {
 		const q = filter.value.toLowerCase();
+		const key = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
+		const shown = modelsCache.filter(m => `${m.provider}/${m.id} ${m.name ?? ""}`.toLowerCase().includes(q));
 		list.replaceChildren(
-			...modelsCache
-				.filter(m => `${m.provider}/${m.id} ${m.name ?? ""}`.toLowerCase().includes(q))
-				.slice(0, 300)
-				.map(m =>
+			...[...shown.filter(m => starredModels.has(key(m))), ...shown.filter(m => !starredModels.has(key(m)))].slice(0, 300).map(m => {
+				const starred = starredModels.has(key(m));
+				return h(
+					"div",
+					{ class: "prow" },
 					h(
 						"button",
-						{ class: state?.model?.id === m.id && state?.model?.provider === m.provider ? "current" : "", onclick: () => (closeMenus(), post({ type: "setModel", provider: m.provider, id: m.id })) },
+						{ class: `pick${state?.model?.id === m.id && state?.model?.provider === m.provider ? " current" : ""}`, onclick: () => (closeMenus(), post({ type: "setModel", provider: m.provider, id: m.id })) },
 						h("span", {}, m.name ?? m.id),
 						h("span", { class: "kbd" }, m.provider),
 					),
-				),
+					h(
+						"button",
+						{ class: `star${starred ? " on" : ""}`, title: starred ? "Unstar" : "Star: keep at the top of this list", "aria-label": `${starred ? "Unstar" : "Star"} ${m.name ?? m.id}`, "aria-pressed": String(starred), onclick: () => post({ type: "starModel", provider: m.provider, id: m.id }) },
+						starred ? "★" : "☆",
+					),
+				);
+			}),
 		);
 		if (!modelsCache.length) list.append(h("div", { class: "dim small pad" }, "Loading models…"));
 		levels.replaceChildren(...levelsCache.map(l => h("button", { class: `lvl${state?.thinkingLevel === l ? " current" : ""}`, onclick: () => (closeMenus(), post({ type: "setThinking", level: l })) }, l)));
@@ -1430,6 +1513,12 @@ input.addEventListener("keydown", e => {
 			return;
 		}
 	}
+	if (e.key === "Tab" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && meta?.permissionMode && meta.status !== "stopped") {
+		// Shift+Tab cycles the permission mode (Tab still moves focus on).
+		e.preventDefault();
+		setMode(PERMISSION_MODES[(PERMISSION_MODES.indexOf(meta.permissionMode) + 1) % PERMISSION_MODES.length]);
+		return;
+	}
 	if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && recallHistory(e.key === "ArrowUp" ? -1 : 1)) {
 		e.preventDefault();
 		return;
@@ -1628,7 +1717,60 @@ function handleEvent(ev: OmpFrame): void {
 		case "extension_ui_request":
 			handleUiRequest(ev as unknown as UiRequest);
 			return;
+		case "live_phase":
+			voice ??= { phase: "connecting", input: 0, lines: [] };
+			voice.phase = str(ev.phase) || "listening";
+			renderVoice();
+			return;
+		case "live_levels":
+			if (!voice) return;
+			voice.input = typeof ev.input === "number" ? ev.input : 0;
+			voiceBar.querySelector<HTMLElement>(".vb-level > span")?.style.setProperty("width", `${Math.round(Math.min(1, voice.input * 4) * 100)}%`);
+			return;
+		case "live_transcript": {
+			if (!voice) return;
+			const role = ev.role === "assistant" ? "assistant" : "user";
+			const turn = typeof ev.turn === "number" ? ev.turn : 0;
+			const line = voice.lines.find(l => l.role === role && l.turn === turn);
+			if (line) line.text = str(ev.text);
+			else voice.lines.push({ role, turn, text: str(ev.text) });
+			renderVoice();
+			return;
+		}
+		case "live_end": {
+			const ended = voice;
+			voice = null;
+			renderVoice();
+			if (ev.error) appendNotice(`Voice ended: ${str(ev.error)}`, "error");
+			const said = ended?.lines.filter(l => l.text.trim()) ?? [];
+			if (said.length) appendNotice(["**Voice conversation**", "", ...said.map(l => `> **${l.role === "user" ? "You" : "omp"}:** ${l.text.trim()}`)].join("\n"), "info", true);
+			return;
+		}
 	}
+}
+
+// ---------- voice (omp's realtime voice; frames come from the omp the session runs) ----------
+let voice: { phase: string; input: number; lines: Array<{ role: "user" | "assistant"; turn: number; text: string }> } | null = null;
+const VOICE_PHASES: Record<string, string> = { connecting: "Connecting…", listening: "Listening", working: "omp is working", speaking: "Speaking", muted: "Muted", error: "Error" };
+
+function renderVoice(): void {
+	voiceBtn.classList.toggle("active", !!voice);
+	if (!voice) {
+		voiceBar.classList.add("hidden");
+		voiceBar.replaceChildren();
+		return;
+	}
+	const last = voice.lines.slice(-2);
+	voiceBar.classList.remove("hidden");
+	voiceBar.replaceChildren(
+		h("span", { class: `vb-dot ${voice.phase}` }),
+		h("span", { class: "vb-phase" }, VOICE_PHASES[voice.phase] ?? voice.phase),
+		h("span", { class: "vb-level", "aria-hidden": "true" }, h("span", { style: `width:${Math.round(Math.min(1, voice.input * 4) * 100)}%` })),
+		h("span", { class: "vb-text" }, ...last.map(l => h("span", { class: `vb-line ${l.role}` }, h("b", {}, l.role === "user" ? "You " : "omp "), l.text))),
+		h("span", { class: "spacer" }),
+		h("button", { class: "mini ghost", title: "Mute or unmute the microphone", onclick: () => post({ type: "command", name: "voiceMute" }) }, voice.phase === "muted" ? "Unmute" : "Mute"),
+		h("button", { class: "mini", title: "End voice mode", onclick: () => post({ type: "command", name: "voiceStop" }) }, "End"),
+	);
 }
 
 function handleUiRequest(req: UiRequest): void {
@@ -1737,6 +1879,8 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			if (meta.status === "stopped") {
 				pendingUi.clear();
 				renderDialogs();
+				voice = null;
+				renderVoice();
 			}
 			renderHeader();
 			renderFooter();
@@ -1789,6 +1933,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 		case "models":
 			modelsCache = msg.models;
 			levelsCache = msg.levels;
+			starredModels = new Set(msg.starred);
 			menuEl?.refill?.();
 			return;
 		case "commands":
@@ -1798,6 +1943,18 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			toolCardsCollapsed = msg.toolCardsCollapsed;
 			// Apply to cards the user has not opened or closed themselves.
 			for (const card of cards.values()) if (!card.userToggled && !EDIT_TOOLS[card.name] && card.name !== "ask") card.el.open = !toolCardsCollapsed;
+			return;
+		case "checkpoints":
+			redoCount = msg.redo;
+			renderHeader();
+			return;
+		case "clearComposerIf":
+			if (input.value.trim() === msg.text.trim()) {
+				input.value = "";
+				autosize();
+				saveDraft();
+				updateSendState();
+			}
 			return;
 		case "queue":
 			renderTaskBar(msg.queue);

@@ -76,11 +76,11 @@ input {
 
 /* ---------- board ---------- */
 .board { flex: 1; overflow: auto; position: relative; }
-.grid { display: flex; align-items: flex-start; gap: 10px; padding: 10px; min-height: 100%; }
-.grid.swim { flex-direction: column; }
-.swim-head { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 6px; font-weight: 600; }
-.col { width: 280px; flex-shrink: 0; background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-panel-border); border-radius: 8px; }
-.grid.swim .col { width: auto; }
+.grid { display: grid; align-items: start; align-content: start; gap: 10px; padding: 10px; min-height: 100%; }
+/* Row-wide items: swimlane titles and notices span every column. */
+.grid > .swim-head, .grid > .notice { grid-column: 1 / -1; }
+.swim-head { display: inline-flex; justify-self: start; align-items: center; gap: 6px; margin: 4px 0 0; font-weight: 600; }
+.col { min-width: 0; background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-panel-border); border-radius: 8px; }
 .col.queued { border-style: dashed; }
 .col-head {
 	display: flex;

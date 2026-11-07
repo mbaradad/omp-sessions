@@ -14,10 +14,20 @@ const builds = [
 	{ ...common, entryPoints: ["src/kanban/style.css"], outfile: "out/kanban.css" },
 	{ ...common, entryPoints: ["src/server/main.ts"], outfile: "out/server.js", platform: "node", format: "cjs" },
 	{ ...common, entryPoints: ["src/cli/main.ts"], outfile: "out/cli.js", platform: "node", format: "cjs", banner: { js: "#!/usr/bin/env node" } },
+	{ ...common, entryPoints: ["src/mobile/main.ts"], outfile: "out/mobile.js", platform: "browser", format: "iife" },
+	{ ...common, entryPoints: ["src/mobile/style.css"], outfile: "out/mobile.css" },
+];
+/** Phone app files served next to server.js as they are. */
+const copies = [
+	["src/mobile/index.html", "out/mobile.html"],
+	["src/mobile/manifest.webmanifest", "out/manifest.webmanifest"],
+	["media/icon.png", "out/mobile-icon.png"],
+	["media/icon.svg", "out/mobile-icon.svg"],
 ];
 
 fs.rmSync("out", { recursive: true, force: true });
 fs.mkdirSync("out", { recursive: true });
+for (const [from, to] of copies) fs.copyFileSync(from, to);
 if (watch) {
 	for (const b of builds) await (await esbuild.context(b)).watch();
 } else {

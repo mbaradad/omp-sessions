@@ -16,6 +16,7 @@ import { schedulingOrder } from "../shared/organize";
 import { sessionsRoot, stateRoot } from "../shared/protocol";
 import { listLeases, readScheduler, schedulerPath, slotsDir } from "../shared/scheduler";
 import { type OpName, type ServerEvent, type ServerOps, type ServerRequest, type ServerResponse, serverLogPath, serverPidPath, serverSocketPath } from "../shared/server-protocol";
+import { RemoteServer } from "./remote";
 
 const HOST_SCRIPT = path.join(__dirname, "host.js");
 const VERSION = readHostVersion(HOST_SCRIPT);
@@ -160,6 +161,7 @@ async function tick(): Promise<void> {
 	ticking = true;
 	try {
 		pass();
+		remote.poll();
 	} catch (err) {
 		log("scheduling pass failed", String(err));
 	} finally {
@@ -293,13 +295,29 @@ function sendLine(c: Client, msg: ServerResponse | ServerEvent): void {
 
 function publishSessions(force?: Client): void {
 	const subs = [...clients].filter(c => c.sessionSubs.size > 0);
-	if (subs.length === 0) return;
+	if (subs.length === 0 && !remote.watchingSessions()) return;
 	const sessions = sessionInfos(readListContext(blocked), true);
 	const json = JSON.stringify(sessions);
 	if (json === lastList && !force) return;
 	lastList = json;
 	for (const c of force ? [force] : subs) for (const id of c.sessionSubs) sendLine(c, { id, event: "sessions", sessions });
+	if (!force) remote.publishSessions(json);
 }
+
+function resume(args: { id: string }): ServerOps["resume"]["result"] {
+	backoff.delete(args.id);
+	return control.resume(args);
+}
+
+/** HTTP API + phone app (off unless remote.json enables it). */
+const remote = new RemoteServer({
+	version: VERSION,
+	control,
+	resume: id => resume({ id }),
+	sessions: () => sessionInfos(readListContext(blocked), true),
+	staticDir: __dirname,
+	log,
+});
 
 type Handler<K extends OpName> = (args: ServerOps[K]["args"]) => ServerOps[K]["result"] | Promise<ServerOps[K]["result"]>;
 
@@ -308,10 +326,7 @@ const handlers: { [K in OpName]: Handler<K> } = {
 	list: args => control.list(args),
 	create: args => control.create(args),
 	stop: args => control.stop(args),
-	resume: args => {
-		backoff.delete(args.id);
-		return control.resume(args);
-	},
+	resume,
 	remove: args => control.remove(args),
 	prompt: args => control.prompt(args),
 	abort: args => control.abort(args),
@@ -322,6 +337,7 @@ const handlers: { [K in OpName]: Handler<K> } = {
 	},
 	organize: args => control.organize(args),
 	scheduler: args => control.scheduler(args),
+	remote: () => remote.reload(true),
 	shutdown: () => {
 		setTimeout(() => shutdown("shutdown request"), 50);
 		return {};
@@ -426,6 +442,7 @@ function shutdown(reason: string): void {
 		c.sock.destroy();
 	}
 	server.close();
+	remote.close();
 	if (!IS_WINDOWS) fs.rmSync(serverSocketPath(), { force: true });
 	releasePidFile();
 	process.exit(0);

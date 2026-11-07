@@ -1,0 +1,91 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { width: 1200px; height: 600px; }
+h2 { position: absolute; left: 56px; top: 40px; margin: 0; font-size: 30px; letter-spacing: -0.03em; font-weight: 700; }
+.sub { position: absolute; left: 56px; top: 84px; font-size: 16px; }
+.col-label { position: absolute; top: 132px; font-size: 12px; letter-spacing: 0.14em; font-weight: 650; color: #9389a3; text-transform: uppercase; }
+.box {
+	position: absolute;
+	border-radius: 14px;
+	background: rgba(21, 15, 30, 0.92);
+	border: 1px solid rgba(236, 225, 255, 0.14);
+	padding: 14px 16px;
+}
+.box h3 { margin: 0; font-size: 17px; font-weight: 650; display: flex; align-items: center; gap: 10px; }
+.box p { margin: 6px 0 0; font-size: 13.5px; line-height: 1.45; color: #bdb3cb; }
+.ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ic svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.client { left: 56px; width: 290px; }
+.machine {
+	position: absolute; left: 430px; top: 160px; width: 470px; height: 396px;
+	border-radius: 20px; border: 1px dashed rgba(201, 165, 255, 0.45); background: rgba(155, 77, 255, 0.05);
+}
+.machine .title { position: absolute; left: 18px; top: -11px; padding: 0 8px; background: #0c0812; font-size: 13px; color: #c9a5ff; font-weight: 600; }
+.host { left: 452px; top: 186px; width: 200px; }
+.omp { left: 678px; top: 186px; width: 200px; }
+.server { left: 452px; top: 420px; width: 426px; }
+.repo { left: 960px; top: 186px; width: 190px; }
+.badge { display: inline-block; margin-top: 8px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: rgba(137, 209, 133, 0.12); color: #89d185; border: 1px solid rgba(137, 209, 133, 0.35); }
+.edge { position: absolute; font-size: 12px; color: #9389a3; }
+svg.wires { position: absolute; inset: 0; }
+.foot { position: absolute; left: 56px; bottom: 22px; font-size: 13px; color: #9389a3; }
+</style></head>
+<body><div class="glow"></div><div class="grid"></div>
+<h2>How it works</h2>
+<div class="sub dim">Everything runs on the machine with your code: your computer, or the server you reach over Remote-SSH.</div>
+
+<div class="col-label" style="left:56px">You, from anywhere</div>
+<div class="col-label" style="left:430px">Your machine</div>
+<div class="col-label" style="left:960px">Your code</div>
+
+<svg class="wires" viewBox="0 0 1200 600" fill="none" stroke-width="2">
+	<defs>
+		<linearGradient id="w" x1="0" x2="1"><stop offset="0" stop-color="#ed4abf"/><stop offset="1" stop-color="#9b4dff"/></linearGradient>
+		<marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b383ff"/></marker>
+		<marker id="c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5ad8e6"/></marker>
+	</defs>
+	<path d="M346 228 C 400 228, 400 240, 450 240" stroke="url(#w)" marker-end="url(#a)"/>
+	<path d="M346 345 C 400 345, 400 462, 450 462" stroke="url(#w)" marker-end="url(#a)"/>
+	<path d="M346 470 C 400 470, 400 482, 450 482" stroke="url(#w)" marker-end="url(#a)"/>
+	<path d="M552 418 L 552 392" stroke="#b383ff" stroke-dasharray="4 4" marker-end="url(#a)"/>
+	<path d="M652 270 L 676 270" stroke="#b383ff" marker-end="url(#a)"/>
+	<path d="M878 260 L 958 260" stroke="#5ad8e6" marker-end="url(#c)"/>
+</svg>
+<div class="edge" style="left:564px;top:396px">launches · relays</div>
+<div class="edge" style="left:886px;top:236px">edits</div>
+
+<div class="box client" style="top:160px">
+	<h3><span class="ic" style="background:rgba(79,193,255,.15);color:#4fc1ff"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></svg></span>VS Code windows</h3>
+	<p>Chat, Sessions view, board, tasks, diffs, undo. Local or Remote-SSH; any number of windows attach.</p>
+</div>
+<div class="box client" style="top:290px">
+	<h3><span class="ic" style="background:rgba(229,192,123,.15);color:#e5c07b"><svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 18h7"/></svg></span><span class="mono">omp-vs</span> terminal</h3>
+	<p>List, start, attach, prompt and queue from any shell or script.</p>
+</div>
+<div class="box client" style="top:410px">
+	<h3><span class="ic" style="background:rgba(237,74,191,.15);color:#f27bcf"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></span>Phone · your apps</h3>
+	<p>Web app over Tailscale or Wi-Fi, and a token-protected HTTP API.</p>
+</div>
+
+<div class="machine"><span class="title">detached from VS Code · survives closing it, sleep, SSH drops</span></div>
+<div class="box host">
+	<h3>Session host</h3>
+	<p>One per session. Owns omp, keeps the transcript, answers approvals by mode, snapshots every edit.</p>
+</div>
+<div class="box omp">
+	<h3><img src="../../../site/assets/logo.svg" alt="" style="width:22px;height:22px">omp</h3>
+	<p>oh-my-pi in RPC mode: your models, tools, skills and settings.</p>
+	<span class="badge">keeps working</span>
+</div>
+<div class="box server">
+	<h3><span class="ic" style="background:rgba(155,77,255,.18);color:#c9a5ff"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/></svg></span>omp-vs server</h3>
+	<p>One per user. Starts queued tasks when a slot frees (also after a reboot), serves <span class="mono">omp-vs</span>, the phone app and its API.</p>
+</div>
+<div class="box repo">
+	<h3><span class="ic" style="background:rgba(90,216,230,.14);color:#5ad8e6"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>Repository</h3>
+	<p>Edits land on disk; each one can be diffed, reverted, or undone with its turn.</p>
+</div>
+
+<div class="foot">State: <span class="mono">~/.omp/vscode</span> · transcripts stay in omp's own <span class="mono">~/.omp/agent/sessions</span></div>
+</body></html>

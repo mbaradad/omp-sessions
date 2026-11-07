@@ -1,5 +1,6 @@
 // Extension <-> webview postMessage contract.
 import type { FileDiff } from "./diff";
+import type { PermissionMode } from "./permissions";
 import type { FileChange, OmpFrame, QueueOp, RunningTool, SessionMeta, TaskQueue, UiRequest } from "./protocol";
 
 export interface SlimState {
@@ -74,7 +75,8 @@ export type ToWebview =
 	/** Lazy chat symbol link resolution (inline code like `FooBar`, `foo.bar()`). */
 	| { type: "symbolInfo"; name: string; found: boolean; location?: string; kind?: string; hover?: string }
 	| { type: "fileSuggestions"; reqId: number; files: string[] }
-	| { type: "models"; models: Array<{ provider: string; id: string; name?: string }>; levels: string[] }
+	/** `starred`: `provider/id` keys the person pinned to the top of the picker. */
+	| { type: "models"; models: Array<{ provider: string; id: string; name?: string }>; levels: string[]; starred: string[] }
 	| { type: "insertText"; text: string }
 	| { type: "focusComposer" }
 	| { type: "bashResult"; command: string; output: string; exitCode?: number; cancelled?: boolean }
@@ -84,6 +86,10 @@ export type ToWebview =
 	| { type: "queue"; queue: TaskQueue }
 	/** `omp.chat.*` settings the webview applies (sent after init and on change). */
 	| { type: "chatConfig"; toolCardsCollapsed: boolean }
+	/** Checkpoint redo stack of this chat (non-empty after restoring a checkpoint). */
+	| { type: "checkpoints"; redo: number }
+	/** Empty the composer when it still holds exactly `text` (a redo makes the restored prompt stale). */
+	| { type: "clearComposerIf"; text: string }
 	| { type: "error"; message: string };
 
 export type PanelCommand =
@@ -111,7 +117,13 @@ export type PanelCommand =
 	| "logout"
 	| "agents"
 	| "help"
-	| "settings";
+	| "settings"
+	| "undoTurn"
+	| "redoTurn"
+	| "voiceStart"
+	| "voiceStop"
+	| "voiceMute"
+	| "openTui";
 
 export type FromWebview =
 	| { type: "ready" }
@@ -140,4 +152,8 @@ export type FromWebview =
 	/** Restore one file to its content before a given tool call. */
 	| { type: "revertFile"; toolCallId: string; path: string }
 	| { type: "queueOp"; ops: QueueOp[] }
-	| { type: "focusTasks" };
+	| { type: "focusTasks" }
+	| { type: "setMode"; mode: PermissionMode }
+	/** Restore the checkpoint before the prompt with this text: files and conversation. */
+	| { type: "restoreCheckpoint"; text: string }
+	| { type: "starModel"; provider: string; id: string };
