@@ -116,27 +116,129 @@
 			}
 		],
 		"commands": [
-			{ "command": "omp.doctor", "title": "Run Doctor", "category": "omp", "icon": "$(pulse)" },
-			{ "command": "omp.copyDiagnostics", "title": "Copy Diagnostics", "category": "omp" },
-			{ "command": "omp.reportIssue", "title": "Report Issue…", "category": "omp", "icon": "$(report)" },
-			{ "command": "omp.installOmp", "title": "Install omp…", "category": "omp", "icon": "$(cloud-download)" },
-			{ "command": "omp.setOmpPath", "title": "Set omp Executable Path…", "category": "omp" },
-			{ "command": "omp.showOmpMissing", "title": "omp Is Not Installed", "category": "omp" },
-			{ "command": "omp.upgradeSession", "title": "Upgrade Session Host", "category": "omp", "icon": "$(sync)" },
-			{ "command": "omp.upgradeAllSessions", "title": "Upgrade All Session Hosts", "category": "omp", "icon": "$(sync)" },
-			{ "command": "omp.cleanUpSnapshots", "title": "Clean Up File Snapshots…", "category": "omp", "icon": "$(trash)" },
-			{ "command": "omp.dashboard", "title": "Usage Dashboard", "category": "omp", "icon": "$(graph)" },
-			{ "command": "omp.searchHistory", "title": "Search Session History…", "category": "omp", "icon": "$(search)" },
-			{ "command": "omp.todayCost", "title": "Show Today's Spend", "category": "omp", "icon": "$(pulse)" },
-			{ "command": "omp.newWorktreeSession", "title": "New Session in Git Worktree…", "category": "omp", "icon": "$(git-branch)" },
-			{ "command": "omp.bestOfN", "title": "Best-of-N: Same Task in Parallel Worktrees…", "category": "omp", "icon": "$(git-compare)" },
-			{ "command": "omp.worktree.diff", "title": "Compare Worktree Branch with Base", "category": "omp", "icon": "$(git-compare)" },
-			{ "command": "omp.worktree.merge", "title": "Merge Worktree Branch into Main Checkout…", "category": "omp", "icon": "$(git-merge)" },
-			{ "command": "omp.worktree.openFolder", "title": "Open Worktree in New Window", "category": "omp", "icon": "$(empty-window)" },
-			{ "command": "omp.worktree.remove", "title": "Remove Worktree and Session…", "category": "omp", "icon": "$(trash)" },
-			{ "command": "omp.board", "title": "Open Sessions Board", "category": "omp", "icon": "$(layout)" },
-			{ "command": "omp.sessionSettings", "title": "Session Settings…", "category": "omp", "icon": "$(settings-gear)" },
-			{ "command": "omp.bridgeStatus", "title": "VS Code Bridge: Show Status", "category": "omp", "icon": "$(plug)" },
+			{
+				"command": "omp.doctor",
+				"title": "Run Doctor",
+				"category": "omp",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "omp.copyDiagnostics",
+				"title": "Copy Diagnostics",
+				"category": "omp"
+			},
+			{
+				"command": "omp.reportIssue",
+				"title": "Report Issue…",
+				"category": "omp",
+				"icon": "$(report)"
+			},
+			{
+				"command": "omp.installOmp",
+				"title": "Install omp…",
+				"category": "omp",
+				"icon": "$(cloud-download)"
+			},
+			{
+				"command": "omp.setOmpPath",
+				"title": "Set omp Executable Path…",
+				"category": "omp"
+			},
+			{
+				"command": "omp.showOmpMissing",
+				"title": "omp Is Not Installed",
+				"category": "omp"
+			},
+			{
+				"command": "omp.upgradeSession",
+				"title": "Upgrade Session Host",
+				"category": "omp",
+				"icon": "$(sync)"
+			},
+			{
+				"command": "omp.upgradeAllSessions",
+				"title": "Upgrade All Session Hosts",
+				"category": "omp",
+				"icon": "$(sync)"
+			},
+			{
+				"command": "omp.cleanUpSnapshots",
+				"title": "Clean Up File Snapshots…",
+				"category": "omp",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "omp.dashboard",
+				"title": "Usage Dashboard",
+				"category": "omp",
+				"icon": "$(graph)"
+			},
+			{
+				"command": "omp.searchHistory",
+				"title": "Search Session History…",
+				"category": "omp",
+				"icon": "$(search)"
+			},
+			{
+				"command": "omp.todayCost",
+				"title": "Show Today's Spend",
+				"category": "omp",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "omp.newWorktreeSession",
+				"title": "New Session in Git Worktree…",
+				"category": "omp",
+				"icon": "$(git-branch)"
+			},
+			{
+				"command": "omp.bestOfN",
+				"title": "Best-of-N: Same Task in Parallel Worktrees…",
+				"category": "omp",
+				"icon": "$(git-compare)"
+			},
+			{
+				"command": "omp.worktree.diff",
+				"title": "Compare Worktree Branch with Base",
+				"category": "omp",
+				"icon": "$(git-compare)"
+			},
+			{
+				"command": "omp.worktree.merge",
+				"title": "Merge Worktree Branch into Main Checkout…",
+				"category": "omp",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "omp.worktree.openFolder",
+				"title": "Open Worktree in New Window",
+				"category": "omp",
+				"icon": "$(empty-window)"
+			},
+			{
+				"command": "omp.worktree.remove",
+				"title": "Remove Worktree and Session…",
+				"category": "omp",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "omp.board",
+				"title": "Open Sessions Board",
+				"category": "omp",
+				"icon": "$(layout)"
+			},
+			{
+				"command": "omp.sessionSettings",
+				"title": "Session Settings…",
+				"category": "omp",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "omp.bridgeStatus",
+				"title": "VS Code Bridge: Show Status",
+				"category": "omp",
+				"icon": "$(plug)"
+			},
 			{
 				"command": "omp.newSession",
 				"title": "New Session",
@@ -266,11 +368,36 @@
 				"category": "omp",
 				"icon": "$(discard)"
 			},
-			{ "command": "omp.openInSidebar", "title": "Open in Side Bar", "category": "omp", "icon": "$(layout-sidebar-left)" },
-			{ "command": "omp.openInEditor", "title": "Open in Editor Tab", "category": "omp", "icon": "$(go-to-file)" },
-			{ "command": "omp.scm.commit", "title": "Commit with omp", "category": "omp", "icon": "$(git-commit)" },
-			{ "command": "omp.scm.review", "title": "Review Uncommitted Changes with omp", "category": "omp", "icon": "$(checklist)" },
-			{ "command": "omp.scm.pr", "title": "Write PR Description with omp", "category": "omp", "icon": "$(git-pull-request)" },
+			{
+				"command": "omp.openInSidebar",
+				"title": "Open in Side Bar",
+				"category": "omp",
+				"icon": "$(layout-sidebar-left)"
+			},
+			{
+				"command": "omp.openInEditor",
+				"title": "Open in Editor Tab",
+				"category": "omp",
+				"icon": "$(go-to-file)"
+			},
+			{
+				"command": "omp.scm.commit",
+				"title": "Commit with omp",
+				"category": "omp",
+				"icon": "$(git-commit)"
+			},
+			{
+				"command": "omp.scm.review",
+				"title": "Review Uncommitted Changes with omp",
+				"category": "omp",
+				"icon": "$(checklist)"
+			},
+			{
+				"command": "omp.scm.pr",
+				"title": "Write PR Description with omp",
+				"category": "omp",
+				"icon": "$(git-pull-request)"
+			},
 			{
 				"command": "omp.tasks.add",
 				"title": "Add Task…",
@@ -361,95 +488,506 @@
 				"category": "omp",
 				"icon": "$(comment-discussion)"
 			},
-			{ "command": "omp.tasks.editOptions", "title": "Task Options…", "category": "omp", "icon": "$(settings-gear)" },
-			{ "command": "omp.tasks.duplicate", "title": "Duplicate Task", "category": "omp", "icon": "$(copy)" },
-			{ "command": "omp.tasks.retryFailed", "title": "Retry Failed Tasks", "category": "omp", "icon": "$(refresh)" },
-			{ "command": "omp.tasks.schedule", "title": "Schedule Queue Start…", "category": "omp", "icon": "$(clock)" },
-			{ "command": "omp.editWithOmp", "title": "Edit with omp…", "category": "omp", "icon": "$(sparkle)" },
-			{ "command": "omp.fixFileProblems", "title": "Fix File Problems with omp", "category": "omp", "icon": "$(wrench)" },
-			{ "command": "omp.fixWorkspaceProblems", "title": "Fix Workspace Errors with omp", "category": "omp", "icon": "$(wrench)" },
-			{ "command": "omp.fixLastFailedCommand", "title": "Fix Failed Command with omp", "category": "omp", "icon": "$(wrench)" },
-			{ "command": "omp.explainFile", "title": "Explain File with omp", "category": "omp", "icon": "$(question)" },
-			{ "command": "omp.writeTests", "title": "Write Tests with omp", "category": "omp", "icon": "$(beaker)" },
-			{ "command": "omp.addDocs", "title": "Add Docs with omp", "category": "omp", "icon": "$(book)" },
-			{ "command": "omp.commandCenter", "title": "Command Center", "category": "omp", "icon": "$(rocket)" },
-			{ "command": "omp.login", "title": "Log In to a Model Provider", "category": "omp", "icon": "$(account)" },
-			{ "command": "omp.update", "title": "Update omp", "category": "omp", "icon": "$(cloud-download)" },
-			{ "command": "omp.setup", "title": "Run omp Setup", "category": "omp", "icon": "$(tools)" },
-			{ "command": "omp.plugins", "title": "Manage Plugins…", "category": "omp", "icon": "$(extensions)" },
-			{ "command": "omp.skills", "title": "Manage Skills…", "category": "omp", "icon": "$(lightbulb)" },
-			{ "command": "omp.usage", "title": "Show Provider Usage Limits", "category": "omp", "icon": "$(pulse)" },
-			{ "command": "omp.stats", "title": "Show Usage Statistics", "category": "omp", "icon": "$(graph)" },
-			{ "command": "omp.models", "title": "Browse Models…", "category": "omp", "icon": "$(hubot)" },
-			{ "command": "omp.cleanse", "title": "Cleanse Project Diagnostics…", "category": "omp", "icon": "$(sparkle)" },
-			{ "command": "omp.commitInTerminal", "title": "Commit with omp in Terminal…", "category": "omp", "icon": "$(git-commit)" },
-			{ "command": "omp.gitUi", "title": "Open omp Git UI", "category": "omp", "icon": "$(source-control)" },
-			{ "command": "omp.exportHtml", "title": "Export Session as HTML…", "category": "omp", "icon": "$(export)" },
-			{ "command": "omp.share", "title": "Share Session…", "category": "omp", "icon": "$(live-share)" },
-			{ "command": "omp.continueInTerminal", "title": "Continue Session in Terminal", "category": "omp", "icon": "$(terminal)" },
-			{ "command": "omp.importClaude", "title": "Import Claude Code Session…", "category": "omp", "icon": "$(sign-in)" },
-			{ "command": "omp.importCodex", "title": "Import Codex Session…", "category": "omp", "icon": "$(sign-in)" },
-			{ "command": "omp.openDocs", "title": "Open Documentation", "category": "omp", "icon": "$(book)" },
-			{ "command": "omp.openConfig", "title": "Open omp Config File", "category": "omp", "icon": "$(gear)" },
-			{ "command": "omp.keyboardShortcuts", "title": "Keyboard Shortcuts", "category": "omp", "icon": "$(record-keys)" },
-			{ "command": "omp.organize.filter", "title": "Filter Sessions…", "category": "omp", "icon": "$(filter)" },
-			{ "command": "omp.organize.clearFilter", "title": "Clear Sessions Filter", "category": "omp", "icon": "$(filter-filled)" },
-			{ "command": "omp.organize.sortBy", "title": "Sort Sessions By…", "category": "omp", "icon": "$(sort-precedence)" },
-			{ "command": "omp.organize.hideFinished", "title": "Hide Finished Sessions", "category": "omp", "icon": "$(eye-closed)" },
-			{ "command": "omp.organize.showFinished", "title": "Show Finished Sessions", "category": "omp", "icon": "$(eye)" },
-			{ "command": "omp.organize.showArchived", "title": "Show Archived Sessions", "category": "omp", "icon": "$(archive)" },
-			{ "command": "omp.organize.hideArchived", "title": "Hide Archived Sessions", "category": "omp", "icon": "$(archive)" },
-			{ "command": "omp.organize.newGroup", "title": "New Group…", "category": "omp", "icon": "$(new-folder)" },
-			{ "command": "omp.organize.moveToGroup", "title": "Move to Group…", "category": "omp", "icon": "$(folder-opened)" },
-			{ "command": "omp.organize.removeFromGroup", "title": "Remove from Group", "category": "omp", "icon": "$(close)" },
-			{ "command": "omp.organize.setColor", "title": "Set Color…", "category": "omp", "icon": "$(symbol-color)" },
-			{ "command": "omp.organize.setPriority", "title": "Set Priority…", "category": "omp", "icon": "$(flame)" },
-			{ "command": "omp.organize.editTags", "title": "Edit Tags…", "category": "omp", "icon": "$(tag)" },
-			{ "command": "omp.organize.setLane", "title": "Set Board Lane…", "category": "omp", "icon": "$(layout)" },
-			{ "command": "omp.organize.pin", "title": "Pin", "category": "omp", "icon": "$(pin)" },
-			{ "command": "omp.organize.unpin", "title": "Unpin", "category": "omp", "icon": "$(pinned)" },
-			{ "command": "omp.organize.archive", "title": "Archive", "category": "omp", "icon": "$(archive)" },
-			{ "command": "omp.organize.unarchive", "title": "Unarchive", "category": "omp", "icon": "$(archive)" },
-			{ "command": "omp.organize.moveUp", "title": "Move Up", "category": "omp", "icon": "$(arrow-up)" },
-			{ "command": "omp.organize.moveDown", "title": "Move Down", "category": "omp", "icon": "$(arrow-down)" },
-			{ "command": "omp.organize.moveToTop", "title": "Move to Top", "category": "omp", "icon": "$(fold-up)" },
-			{ "command": "omp.organize.newSubgroup", "title": "New Sub-group…", "category": "omp", "icon": "$(new-folder)" },
-			{ "command": "omp.organize.renameGroup", "title": "Rename Group…", "category": "omp", "icon": "$(edit)" },
-			{ "command": "omp.organize.setGroupIcon", "title": "Change Group Icon…", "category": "omp", "icon": "$(symbol-misc)" },
-			{ "command": "omp.organize.deleteGroup", "title": "Delete Group…", "category": "omp", "icon": "$(trash)" },
-			{ "command": "omp.organize.newSessionInGroup", "title": "New Session in Group…", "category": "omp", "icon": "$(add)" },
-			{ "command": "omp.organize.stopSelected", "title": "Stop Selected Sessions", "category": "omp", "icon": "$(debug-stop)" },
-			{ "command": "omp.organize.resumeSelected", "title": "Resume Selected Sessions", "category": "omp", "icon": "$(debug-start)" },
-			{ "command": "omp.organize.deleteSelected", "title": "Remove Selected Stopped Sessions…", "category": "omp", "icon": "$(trash)" },
-			{ "command": "omp.scheduler.setConcurrency", "title": "Set Max Concurrent Queued Tasks…", "category": "omp", "icon": "$(server-process)" },
-			{ "command": "omp.scheduler.increase", "title": "Increase Concurrent Queued Tasks", "category": "omp", "icon": "$(add)" },
-			{ "command": "omp.scheduler.decrease", "title": "Decrease Concurrent Queued Tasks", "category": "omp", "icon": "$(remove)" },
-			{ "command": "omp.scheduler.togglePause", "title": "Pause / Resume Queued Tasks", "category": "omp", "icon": "$(debug-pause)" },
-			{ "command": "omp.doctor.markStopped", "title": "Mark Session Stopped", "category": "omp" },
-			{ "command": "omp.installCli", "title": "Install omp-vs Command (Terminal CLI)", "category": "omp", "icon": "$(terminal)" },
-			{ "command": "omp.server.restart", "title": "Restart omp-vs Server", "category": "omp", "icon": "$(debug-restart)" },
-			{ "command": "omp.server.showLog", "title": "Show omp-vs Server Log", "category": "omp", "icon": "$(output)" }
+			{
+				"command": "omp.tasks.editOptions",
+				"title": "Task Options…",
+				"category": "omp",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "omp.tasks.duplicate",
+				"title": "Duplicate Task",
+				"category": "omp",
+				"icon": "$(copy)"
+			},
+			{
+				"command": "omp.tasks.retryFailed",
+				"title": "Retry Failed Tasks",
+				"category": "omp",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "omp.tasks.schedule",
+				"title": "Schedule Queue Start…",
+				"category": "omp",
+				"icon": "$(clock)"
+			},
+			{
+				"command": "omp.editWithOmp",
+				"title": "Edit with omp…",
+				"category": "omp",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "omp.fixFileProblems",
+				"title": "Fix File Problems with omp",
+				"category": "omp",
+				"icon": "$(wrench)"
+			},
+			{
+				"command": "omp.fixWorkspaceProblems",
+				"title": "Fix Workspace Errors with omp",
+				"category": "omp",
+				"icon": "$(wrench)"
+			},
+			{
+				"command": "omp.fixLastFailedCommand",
+				"title": "Fix Failed Command with omp",
+				"category": "omp",
+				"icon": "$(wrench)"
+			},
+			{
+				"command": "omp.explainFile",
+				"title": "Explain File with omp",
+				"category": "omp",
+				"icon": "$(question)"
+			},
+			{
+				"command": "omp.writeTests",
+				"title": "Write Tests with omp",
+				"category": "omp",
+				"icon": "$(beaker)"
+			},
+			{
+				"command": "omp.addDocs",
+				"title": "Add Docs with omp",
+				"category": "omp",
+				"icon": "$(book)"
+			},
+			{
+				"command": "omp.commandCenter",
+				"title": "Command Center",
+				"category": "omp",
+				"icon": "$(rocket)"
+			},
+			{
+				"command": "omp.login",
+				"title": "Log In to a Model Provider",
+				"category": "omp",
+				"icon": "$(account)"
+			},
+			{
+				"command": "omp.update",
+				"title": "Update omp",
+				"category": "omp",
+				"icon": "$(cloud-download)"
+			},
+			{
+				"command": "omp.setup",
+				"title": "Run omp Setup",
+				"category": "omp",
+				"icon": "$(tools)"
+			},
+			{
+				"command": "omp.plugins",
+				"title": "Manage Plugins…",
+				"category": "omp",
+				"icon": "$(extensions)"
+			},
+			{
+				"command": "omp.skills",
+				"title": "Manage Skills…",
+				"category": "omp",
+				"icon": "$(lightbulb)"
+			},
+			{
+				"command": "omp.usage",
+				"title": "Show Provider Usage Limits",
+				"category": "omp",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "omp.stats",
+				"title": "Show Usage Statistics",
+				"category": "omp",
+				"icon": "$(graph)"
+			},
+			{
+				"command": "omp.models",
+				"title": "Browse Models…",
+				"category": "omp",
+				"icon": "$(hubot)"
+			},
+			{
+				"command": "omp.cleanse",
+				"title": "Cleanse Project Diagnostics…",
+				"category": "omp",
+				"icon": "$(sparkle)"
+			},
+			{
+				"command": "omp.commitInTerminal",
+				"title": "Commit with omp in Terminal…",
+				"category": "omp",
+				"icon": "$(git-commit)"
+			},
+			{
+				"command": "omp.gitUi",
+				"title": "Open omp Git UI",
+				"category": "omp",
+				"icon": "$(source-control)"
+			},
+			{
+				"command": "omp.exportHtml",
+				"title": "Export Session as HTML…",
+				"category": "omp",
+				"icon": "$(export)"
+			},
+			{
+				"command": "omp.share",
+				"title": "Share Session…",
+				"category": "omp",
+				"icon": "$(live-share)"
+			},
+			{
+				"command": "omp.continueInTerminal",
+				"title": "Continue Session in Terminal",
+				"category": "omp",
+				"icon": "$(terminal)"
+			},
+			{
+				"command": "omp.importClaude",
+				"title": "Import Claude Code Session…",
+				"category": "omp",
+				"icon": "$(sign-in)"
+			},
+			{
+				"command": "omp.importCodex",
+				"title": "Import Codex Session…",
+				"category": "omp",
+				"icon": "$(sign-in)"
+			},
+			{
+				"command": "omp.openDocs",
+				"title": "Open Documentation",
+				"category": "omp",
+				"icon": "$(book)"
+			},
+			{
+				"command": "omp.openConfig",
+				"title": "Open omp Config File",
+				"category": "omp",
+				"icon": "$(gear)"
+			},
+			{
+				"command": "omp.keyboardShortcuts",
+				"title": "Keyboard Shortcuts",
+				"category": "omp",
+				"icon": "$(record-keys)"
+			},
+			{
+				"command": "omp.organize.filter",
+				"title": "Filter Sessions…",
+				"category": "omp",
+				"icon": "$(filter)"
+			},
+			{
+				"command": "omp.organize.clearFilter",
+				"title": "Clear Sessions Filter",
+				"category": "omp",
+				"icon": "$(filter-filled)"
+			},
+			{
+				"command": "omp.organize.sortBy",
+				"title": "Sort Sessions By…",
+				"category": "omp",
+				"icon": "$(sort-precedence)"
+			},
+			{
+				"command": "omp.organize.hideFinished",
+				"title": "Hide Finished Sessions",
+				"category": "omp",
+				"icon": "$(eye-closed)"
+			},
+			{
+				"command": "omp.organize.showFinished",
+				"title": "Show Finished Sessions",
+				"category": "omp",
+				"icon": "$(eye)"
+			},
+			{
+				"command": "omp.organize.showArchived",
+				"title": "Show Archived Sessions",
+				"category": "omp",
+				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.organize.hideArchived",
+				"title": "Hide Archived Sessions",
+				"category": "omp",
+				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.organize.newGroup",
+				"title": "New Group…",
+				"category": "omp",
+				"icon": "$(new-folder)"
+			},
+			{
+				"command": "omp.organize.moveToGroup",
+				"title": "Move to Group…",
+				"category": "omp",
+				"icon": "$(folder-opened)"
+			},
+			{
+				"command": "omp.organize.removeFromGroup",
+				"title": "Remove from Group",
+				"category": "omp",
+				"icon": "$(close)"
+			},
+			{
+				"command": "omp.organize.setColor",
+				"title": "Set Color…",
+				"category": "omp",
+				"icon": "$(symbol-color)"
+			},
+			{
+				"command": "omp.organize.setPriority",
+				"title": "Set Priority…",
+				"category": "omp",
+				"icon": "$(flame)"
+			},
+			{
+				"command": "omp.organize.editTags",
+				"title": "Edit Tags…",
+				"category": "omp",
+				"icon": "$(tag)"
+			},
+			{
+				"command": "omp.organize.setLane",
+				"title": "Set Board Lane…",
+				"category": "omp",
+				"icon": "$(layout)"
+			},
+			{
+				"command": "omp.organize.pin",
+				"title": "Pin",
+				"category": "omp",
+				"icon": "$(pin)"
+			},
+			{
+				"command": "omp.organize.unpin",
+				"title": "Unpin",
+				"category": "omp",
+				"icon": "$(pinned)"
+			},
+			{
+				"command": "omp.organize.archive",
+				"title": "Archive",
+				"category": "omp",
+				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.organize.unarchive",
+				"title": "Unarchive",
+				"category": "omp",
+				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.organize.moveUp",
+				"title": "Move Up",
+				"category": "omp",
+				"icon": "$(arrow-up)"
+			},
+			{
+				"command": "omp.organize.moveDown",
+				"title": "Move Down",
+				"category": "omp",
+				"icon": "$(arrow-down)"
+			},
+			{
+				"command": "omp.organize.moveToTop",
+				"title": "Move to Top",
+				"category": "omp",
+				"icon": "$(fold-up)"
+			},
+			{
+				"command": "omp.organize.newSubgroup",
+				"title": "New Sub-group…",
+				"category": "omp",
+				"icon": "$(new-folder)"
+			},
+			{
+				"command": "omp.organize.renameGroup",
+				"title": "Rename Group…",
+				"category": "omp",
+				"icon": "$(edit)"
+			},
+			{
+				"command": "omp.organize.setGroupIcon",
+				"title": "Change Group Icon…",
+				"category": "omp",
+				"icon": "$(symbol-misc)"
+			},
+			{
+				"command": "omp.organize.deleteGroup",
+				"title": "Delete Group…",
+				"category": "omp",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "omp.organize.newSessionInGroup",
+				"title": "New Session in Group…",
+				"category": "omp",
+				"icon": "$(add)"
+			},
+			{
+				"command": "omp.organize.stopSelected",
+				"title": "Stop Selected Sessions",
+				"category": "omp",
+				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "omp.organize.resumeSelected",
+				"title": "Resume Selected Sessions",
+				"category": "omp",
+				"icon": "$(debug-start)"
+			},
+			{
+				"command": "omp.organize.deleteSelected",
+				"title": "Remove Selected Stopped Sessions…",
+				"category": "omp",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "omp.scheduler.setConcurrency",
+				"title": "Set Max Concurrent Queued Tasks…",
+				"category": "omp",
+				"icon": "$(server-process)"
+			},
+			{
+				"command": "omp.scheduler.increase",
+				"title": "Increase Concurrent Queued Tasks",
+				"category": "omp",
+				"icon": "$(add)"
+			},
+			{
+				"command": "omp.scheduler.decrease",
+				"title": "Decrease Concurrent Queued Tasks",
+				"category": "omp",
+				"icon": "$(remove)"
+			},
+			{
+				"command": "omp.scheduler.togglePause",
+				"title": "Pause / Resume Queued Tasks",
+				"category": "omp",
+				"icon": "$(debug-pause)"
+			},
+			{
+				"command": "omp.doctor.markStopped",
+				"title": "Mark Session Stopped",
+				"category": "omp"
+			},
+			{
+				"command": "omp.installCli",
+				"title": "Install omp-vs Command (Terminal CLI)",
+				"category": "omp",
+				"icon": "$(terminal)"
+			},
+			{
+				"command": "omp.server.restart",
+				"title": "Restart omp-vs Server",
+				"category": "omp",
+				"icon": "$(debug-restart)"
+			},
+			{
+				"command": "omp.server.showLog",
+				"title": "Show omp-vs Server Log",
+				"category": "omp",
+				"icon": "$(output)"
+			}
 		],
 		"menus": {
 			"view/title": [
-				{ "command": "omp.board", "when": "view == omp.sessions", "group": "2_board@1" },
-				{ "command": "omp.organize.filter", "when": "view == omp.sessions && !omp.sessions.filtered", "group": "navigation@4" },
-				{ "command": "omp.organize.clearFilter", "when": "view == omp.sessions && omp.sessions.filtered", "group": "navigation@4" },
-				{ "command": "omp.organize.hideFinished", "when": "view == omp.sessions && !omp.sessions.hideFinished", "group": "navigation@5" },
-				{ "command": "omp.organize.showFinished", "when": "view == omp.sessions && omp.sessions.hideFinished", "group": "navigation@5" },
-				{ "command": "omp.organize.sortBy", "when": "view == omp.sessions", "group": "2_view@2" },
-				{ "command": "omp.organize.showArchived", "when": "view == omp.sessions && !omp.sessions.showArchived", "group": "2_view@3" },
-				{ "command": "omp.organize.hideArchived", "when": "view == omp.sessions && omp.sessions.showArchived", "group": "2_view@3" },
-				{ "command": "omp.organize.newGroup", "when": "view == omp.sessions", "group": "2_view@4" },
-				{ "command": "omp.scheduler.setConcurrency", "when": "view == omp.tasks", "group": "2_scheduler@1" },
-				{ "command": "omp.scheduler.togglePause", "when": "view == omp.tasks", "group": "2_scheduler@2" },
-				{ "command": "omp.doctor", "when": "view == omp.sessions", "group": "9_help@1" },
-				{ "command": "omp.reportIssue", "when": "view == omp.sessions", "group": "9_help@2" },
-				{ "command": "omp.installCli", "when": "view == omp.sessions", "group": "9_help@3" },
-				{ "command": "omp.searchHistory", "when": "view == omp.sessions", "group": "3_usage@1" },
-				{ "command": "omp.dashboard", "when": "view == omp.sessions", "group": "3_usage@2" },
-				{ "command": "omp.newWorktreeSession", "when": "view == omp.sessions", "group": "1_new@2" },
-				{ "command": "omp.bestOfN", "when": "view == omp.sessions", "group": "1_new@3" },
+				{
+					"command": "omp.board",
+					"when": "view == omp.sessions",
+					"group": "2_board@1"
+				},
+				{
+					"command": "omp.organize.filter",
+					"when": "view == omp.sessions && !omp.sessions.filtered",
+					"group": "navigation@4"
+				},
+				{
+					"command": "omp.organize.clearFilter",
+					"when": "view == omp.sessions && omp.sessions.filtered",
+					"group": "navigation@4"
+				},
+				{
+					"command": "omp.organize.hideFinished",
+					"when": "view == omp.sessions && !omp.sessions.hideFinished",
+					"group": "navigation@5"
+				},
+				{
+					"command": "omp.organize.showFinished",
+					"when": "view == omp.sessions && omp.sessions.hideFinished",
+					"group": "navigation@5"
+				},
+				{
+					"command": "omp.organize.sortBy",
+					"when": "view == omp.sessions",
+					"group": "2_view@2"
+				},
+				{
+					"command": "omp.organize.showArchived",
+					"when": "view == omp.sessions && !omp.sessions.showArchived",
+					"group": "2_view@3"
+				},
+				{
+					"command": "omp.organize.hideArchived",
+					"when": "view == omp.sessions && omp.sessions.showArchived",
+					"group": "2_view@3"
+				},
+				{
+					"command": "omp.organize.newGroup",
+					"when": "view == omp.sessions",
+					"group": "2_view@4"
+				},
+				{
+					"command": "omp.scheduler.setConcurrency",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@1"
+				},
+				{
+					"command": "omp.scheduler.togglePause",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@2"
+				},
+				{
+					"command": "omp.doctor",
+					"when": "view == omp.sessions",
+					"group": "9_help@1"
+				},
+				{
+					"command": "omp.reportIssue",
+					"when": "view == omp.sessions",
+					"group": "9_help@2"
+				},
+				{
+					"command": "omp.installCli",
+					"when": "view == omp.sessions",
+					"group": "9_help@3"
+				},
+				{
+					"command": "omp.searchHistory",
+					"when": "view == omp.sessions",
+					"group": "3_usage@1"
+				},
+				{
+					"command": "omp.dashboard",
+					"when": "view == omp.sessions",
+					"group": "3_usage@2"
+				},
+				{
+					"command": "omp.newWorktreeSession",
+					"when": "view == omp.sessions",
+					"group": "1_new@2"
+				},
+				{
+					"command": "omp.bestOfN",
+					"when": "view == omp.sessions",
+					"group": "1_new@3"
+				},
 				{
 					"command": "omp.newSession",
 					"when": "view == omp.sessions",
@@ -495,44 +1033,188 @@
 					"when": "view == omp.tasks",
 					"group": "1_tasks@1"
 				},
-				{ "command": "omp.fixWorkspaceProblems", "when": "view == workbench.panel.markers.view", "group": "navigation@9" },
-				{ "command": "omp.commandCenter", "when": "view == omp.sessions", "group": "0_center@1" },
-				{ "command": "omp.importClaude", "when": "view == omp.sessions", "group": "1_new@8" },
-				{ "command": "omp.importCodex", "when": "view == omp.sessions", "group": "1_new@9" }
+				{
+					"command": "omp.fixWorkspaceProblems",
+					"when": "view == workbench.panel.markers.view",
+					"group": "navigation@9"
+				},
+				{
+					"command": "omp.commandCenter",
+					"when": "view == omp.sessions",
+					"group": "0_center@1"
+				},
+				{
+					"command": "omp.importClaude",
+					"when": "view == omp.sessions",
+					"group": "1_new@8"
+				},
+				{
+					"command": "omp.importCodex",
+					"when": "view == omp.sessions",
+					"group": "1_new@9"
+				}
 			],
 			"view/item/context": [
-				{ "command": "omp.organize.setPriority", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_organize@1" },
-				{ "command": "omp.organize.setColor", "when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/", "group": "3_organize@2" },
-				{ "command": "omp.organize.editTags", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_organize@3" },
-				{ "command": "omp.organize.moveToGroup", "when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/", "group": "3_organize@4" },
-				{ "command": "omp.organize.removeFromGroup", "when": "view == omp.sessions && viewItem =~ /^session.*\\.grouped/", "group": "3_organize@5" },
-				{ "command": "omp.organize.newGroup", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_organize@6" },
-				{ "command": "omp.organize.setLane", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_organize@7" },
-				{ "command": "omp.organize.pin", "when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.pinned)/", "group": "3_organize@8" },
-				{ "command": "omp.organize.unpin", "when": "view == omp.sessions && viewItem =~ /^session.*\\.pinned/", "group": "3_organize@8" },
-				{ "command": "omp.organize.archive", "when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.archived)/", "group": "3_organize@9" },
-				{ "command": "omp.organize.unarchive", "when": "view == omp.sessions && viewItem =~ /^session.*\\.archived/", "group": "3_organize@9" },
-				{ "command": "omp.organize.moveUp", "when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/", "group": "4_order@1" },
-				{ "command": "omp.organize.moveDown", "when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/", "group": "4_order@2" },
-				{ "command": "omp.organize.moveToTop", "when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/", "group": "4_order@3" },
-				{ "command": "omp.organize.stopSelected", "when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/", "group": "5_bulk@1" },
-				{ "command": "omp.organize.resumeSelected", "when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/", "group": "5_bulk@2" },
-				{ "command": "omp.organize.deleteSelected", "when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/", "group": "5_bulk@3" },
-				{ "command": "omp.organize.newSessionInGroup", "when": "view == omp.sessions && viewItem == orgGroup", "group": "inline@1" },
-				{ "command": "omp.organize.newSessionInGroup", "when": "view == omp.sessions && viewItem == orgGroup", "group": "1_group@1" },
-				{ "command": "omp.organize.newSubgroup", "when": "view == omp.sessions && viewItem == orgGroup", "group": "1_group@2" },
-				{ "command": "omp.organize.renameGroup", "when": "view == omp.sessions && viewItem == orgGroup", "group": "1_group@3" },
-				{ "command": "omp.organize.setGroupIcon", "when": "view == omp.sessions && viewItem == orgGroup", "group": "1_group@4" },
-				{ "command": "omp.organize.deleteGroup", "when": "view == omp.sessions && viewItem == orgGroup", "group": "9_delete@1" },
-				{ "command": "omp.upgradeSession", "when": "view == omp.sessions && viewItem =~ /^session\\.running/", "group": "2_lifecycle@9" },
-				{ "command": "omp.newWorktreeSession", "when": "view == omp.sessions && viewItem == project", "group": "1_project@2" },
-				{ "command": "omp.bestOfN", "when": "view == omp.sessions && viewItem == project", "group": "1_project@3" },
-				{ "command": "omp.worktree.diff", "when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/", "group": "3_worktree@1" },
-				{ "command": "omp.worktree.merge", "when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/", "group": "3_worktree@2" },
-				{ "command": "omp.worktree.openFolder", "when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/", "group": "3_worktree@3" },
-				{ "command": "omp.worktree.remove", "when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/", "group": "3_worktree@4" },
-				{ "command": "omp.openInSidebar", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "0_open@1" },
-				{ "command": "omp.openInEditor", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "0_open@2" },
+				{
+					"command": "omp.organize.setPriority",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_organize@1"
+				},
+				{
+					"command": "omp.organize.setColor",
+					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"group": "3_organize@2"
+				},
+				{
+					"command": "omp.organize.editTags",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_organize@3"
+				},
+				{
+					"command": "omp.organize.moveToGroup",
+					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"group": "3_organize@4"
+				},
+				{
+					"command": "omp.organize.removeFromGroup",
+					"when": "view == omp.sessions && viewItem =~ /^session.*\\.grouped/",
+					"group": "3_organize@5"
+				},
+				{
+					"command": "omp.organize.newGroup",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_organize@6"
+				},
+				{
+					"command": "omp.organize.setLane",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_organize@7"
+				},
+				{
+					"command": "omp.organize.pin",
+					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.pinned)/",
+					"group": "3_organize@8"
+				},
+				{
+					"command": "omp.organize.unpin",
+					"when": "view == omp.sessions && viewItem =~ /^session.*\\.pinned/",
+					"group": "3_organize@8"
+				},
+				{
+					"command": "omp.organize.archive",
+					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.archived)/",
+					"group": "3_organize@9"
+				},
+				{
+					"command": "omp.organize.unarchive",
+					"when": "view == omp.sessions && viewItem =~ /^session.*\\.archived/",
+					"group": "3_organize@9"
+				},
+				{
+					"command": "omp.organize.moveUp",
+					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"group": "4_order@1"
+				},
+				{
+					"command": "omp.organize.moveDown",
+					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"group": "4_order@2"
+				},
+				{
+					"command": "omp.organize.moveToTop",
+					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"group": "4_order@3"
+				},
+				{
+					"command": "omp.organize.stopSelected",
+					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"group": "5_bulk@1"
+				},
+				{
+					"command": "omp.organize.resumeSelected",
+					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"group": "5_bulk@2"
+				},
+				{
+					"command": "omp.organize.deleteSelected",
+					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"group": "5_bulk@3"
+				},
+				{
+					"command": "omp.organize.newSessionInGroup",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "inline@1"
+				},
+				{
+					"command": "omp.organize.newSessionInGroup",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "1_group@1"
+				},
+				{
+					"command": "omp.organize.newSubgroup",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "1_group@2"
+				},
+				{
+					"command": "omp.organize.renameGroup",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "1_group@3"
+				},
+				{
+					"command": "omp.organize.setGroupIcon",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "1_group@4"
+				},
+				{
+					"command": "omp.organize.deleteGroup",
+					"when": "view == omp.sessions && viewItem == orgGroup",
+					"group": "9_delete@1"
+				},
+				{
+					"command": "omp.upgradeSession",
+					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
+					"group": "2_lifecycle@9"
+				},
+				{
+					"command": "omp.newWorktreeSession",
+					"when": "view == omp.sessions && viewItem == project",
+					"group": "1_project@2"
+				},
+				{
+					"command": "omp.bestOfN",
+					"when": "view == omp.sessions && viewItem == project",
+					"group": "1_project@3"
+				},
+				{
+					"command": "omp.worktree.diff",
+					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@1"
+				},
+				{
+					"command": "omp.worktree.merge",
+					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@2"
+				},
+				{
+					"command": "omp.worktree.openFolder",
+					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@3"
+				},
+				{
+					"command": "omp.worktree.remove",
+					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@4"
+				},
+				{
+					"command": "omp.openInSidebar",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "0_open@1"
+				},
+				{
+					"command": "omp.openInEditor",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "0_open@2"
+				},
 				{
 					"command": "omp.tasks.add",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
@@ -718,9 +1400,21 @@
 					"when": "view == omp.sessions && viewItem == file",
 					"group": "1_file@1"
 				},
-				{ "command": "omp.continueInTerminal", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_omp@1" },
-				{ "command": "omp.exportHtml", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_omp@2" },
-				{ "command": "omp.share", "when": "view == omp.sessions && viewItem =~ /^session/", "group": "3_omp@3" }
+				{
+					"command": "omp.continueInTerminal",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_omp@1"
+				},
+				{
+					"command": "omp.exportHtml",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_omp@2"
+				},
+				{
+					"command": "omp.share",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "3_omp@3"
+				}
 			],
 			"editor/context": [
 				{
@@ -743,17 +1437,53 @@
 					"when": "!editorHasSelection && resourceScheme == file",
 					"group": "omp@4"
 				},
-				{ "command": "omp.editWithOmp", "when": "resourceScheme == file && !editorReadonly", "group": "omp@5" },
-				{ "command": "omp.writeTests", "when": "resourceScheme == file", "group": "omp@6" },
-				{ "command": "omp.addDocs", "when": "resourceScheme == file && !editorReadonly", "group": "omp@7" },
-				{ "command": "omp.fixFileProblems", "when": "resourceScheme == file", "group": "omp@8" }
+				{
+					"command": "omp.editWithOmp",
+					"when": "resourceScheme == file && !editorReadonly",
+					"group": "omp@5"
+				},
+				{
+					"command": "omp.writeTests",
+					"when": "resourceScheme == file",
+					"group": "omp@6"
+				},
+				{
+					"command": "omp.addDocs",
+					"when": "resourceScheme == file && !editorReadonly",
+					"group": "omp@7"
+				},
+				{
+					"command": "omp.fixFileProblems",
+					"when": "resourceScheme == file",
+					"group": "omp@8"
+				}
 			],
 			"scm/title": [
-				{ "command": "omp.scm.commit", "when": "scmProvider == git", "group": "omp@1" },
-				{ "command": "omp.scm.review", "when": "scmProvider == git", "group": "omp@2" },
-				{ "command": "omp.scm.pr", "when": "scmProvider == git", "group": "omp@3" },
-				{ "command": "omp.commitInTerminal", "when": "scmProvider == git", "group": "omp@4" },
-				{ "command": "omp.gitUi", "when": "scmProvider == git", "group": "omp@5" }
+				{
+					"command": "omp.scm.commit",
+					"when": "scmProvider == git",
+					"group": "omp@1"
+				},
+				{
+					"command": "omp.scm.review",
+					"when": "scmProvider == git",
+					"group": "omp@2"
+				},
+				{
+					"command": "omp.scm.pr",
+					"when": "scmProvider == git",
+					"group": "omp@3"
+				},
+				{
+					"command": "omp.commitInTerminal",
+					"when": "scmProvider == git",
+					"group": "omp@4"
+				},
+				{
+					"command": "omp.gitUi",
+					"when": "scmProvider == git",
+					"group": "omp@5"
+				}
 			],
 			"explorer/context": [
 				{
@@ -771,20 +1501,58 @@
 					"when": "resourceScheme == file",
 					"group": "omp@3"
 				},
-				{ "command": "omp.explainFile", "when": "resourceScheme == file && !explorerResourceIsFolder", "group": "omp@4" },
-				{ "command": "omp.fixFileProblems", "when": "resourceScheme == file && !explorerResourceIsFolder", "group": "omp@5" }
+				{
+					"command": "omp.explainFile",
+					"when": "resourceScheme == file && !explorerResourceIsFolder",
+					"group": "omp@4"
+				},
+				{
+					"command": "omp.fixFileProblems",
+					"when": "resourceScheme == file && !explorerResourceIsFolder",
+					"group": "omp@5"
+				}
 			],
 			"commandPalette": [
-				{ "command": "omp.showOmpMissing", "when": "false" },
-				{ "command": "omp.organize.moveUp", "when": "false" },
-				{ "command": "omp.organize.moveDown", "when": "false" },
-				{ "command": "omp.organize.moveToTop", "when": "false" },
-				{ "command": "omp.organize.clearFilter", "when": "omp.sessions.filtered" },
-				{ "command": "omp.organize.hideFinished", "when": "!omp.sessions.hideFinished" },
-				{ "command": "omp.organize.showFinished", "when": "omp.sessions.hideFinished" },
-				{ "command": "omp.organize.showArchived", "when": "!omp.sessions.showArchived" },
-				{ "command": "omp.organize.hideArchived", "when": "omp.sessions.showArchived" },
-				{ "command": "omp.doctor.markStopped", "when": "false" },
+				{
+					"command": "omp.showOmpMissing",
+					"when": "false"
+				},
+				{
+					"command": "omp.organize.moveUp",
+					"when": "false"
+				},
+				{
+					"command": "omp.organize.moveDown",
+					"when": "false"
+				},
+				{
+					"command": "omp.organize.moveToTop",
+					"when": "false"
+				},
+				{
+					"command": "omp.organize.clearFilter",
+					"when": "omp.sessions.filtered"
+				},
+				{
+					"command": "omp.organize.hideFinished",
+					"when": "!omp.sessions.hideFinished"
+				},
+				{
+					"command": "omp.organize.showFinished",
+					"when": "omp.sessions.hideFinished"
+				},
+				{
+					"command": "omp.organize.showArchived",
+					"when": "!omp.sessions.showArchived"
+				},
+				{
+					"command": "omp.organize.hideArchived",
+					"when": "omp.sessions.showArchived"
+				},
+				{
+					"command": "omp.doctor.markStopped",
+					"when": "false"
+				},
 				{
 					"command": "omp.tasks.addSubtask",
 					"when": "false"
@@ -865,14 +1633,38 @@
 					"command": "omp.fixDiagnostics",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
-				{ "command": "omp.editWithOmp", "when": "editorIsOpen && resourceScheme == file" },
-				{ "command": "omp.writeTests", "when": "editorIsOpen && resourceScheme == file" },
-				{ "command": "omp.addDocs", "when": "editorIsOpen && resourceScheme == file" },
-				{ "command": "omp.explainFile", "when": "editorIsOpen && resourceScheme == file" },
-				{ "command": "omp.fixFileProblems", "when": "editorIsOpen && resourceScheme == file" },
-				{ "command": "omp.cleanse", "when": "workspaceFolderCount > 0" },
-				{ "command": "omp.commitInTerminal", "when": "workspaceFolderCount > 0" },
-				{ "command": "omp.gitUi", "when": "workspaceFolderCount > 0" }
+				{
+					"command": "omp.editWithOmp",
+					"when": "editorIsOpen && resourceScheme == file"
+				},
+				{
+					"command": "omp.writeTests",
+					"when": "editorIsOpen && resourceScheme == file"
+				},
+				{
+					"command": "omp.addDocs",
+					"when": "editorIsOpen && resourceScheme == file"
+				},
+				{
+					"command": "omp.explainFile",
+					"when": "editorIsOpen && resourceScheme == file"
+				},
+				{
+					"command": "omp.fixFileProblems",
+					"when": "editorIsOpen && resourceScheme == file"
+				},
+				{
+					"command": "omp.cleanse",
+					"when": "workspaceFolderCount > 0"
+				},
+				{
+					"command": "omp.commitInTerminal",
+					"when": "workspaceFolderCount > 0"
+				},
+				{
+					"command": "omp.gitUi",
+					"when": "workspaceFolderCount > 0"
+				}
 			],
 			"editor/title/context": [
 				{
@@ -880,8 +1672,16 @@
 					"when": "resourceScheme == file",
 					"group": "omp@1"
 				},
-				{ "command": "omp.explainFile", "when": "resourceScheme == file", "group": "omp@2" },
-				{ "command": "omp.fixFileProblems", "when": "resourceScheme == file", "group": "omp@3" }
+				{
+					"command": "omp.explainFile",
+					"when": "resourceScheme == file",
+					"group": "omp@2"
+				},
+				{
+					"command": "omp.fixFileProblems",
+					"when": "resourceScheme == file",
+					"group": "omp@3"
+				}
 			],
 			"terminal/context": [
 				{
@@ -889,10 +1689,18 @@
 					"when": "terminalTextSelected",
 					"group": "omp@1"
 				},
-				{ "command": "omp.fixLastFailedCommand", "when": "omp.hasFailedCommand", "group": "omp@2" }
+				{
+					"command": "omp.fixLastFailedCommand",
+					"when": "omp.hasFailedCommand",
+					"group": "omp@2"
+				}
 			],
 			"terminal/title/context": [
-				{ "command": "omp.fixLastFailedCommand", "when": "omp.hasFailedCommand", "group": "omp@1" }
+				{
+					"command": "omp.fixLastFailedCommand",
+					"when": "omp.hasFailedCommand",
+					"group": "omp@1"
+				}
 			]
 		},
 		"walkthroughs": [
@@ -901,11 +1709,65 @@
 				"title": "omp: background coding agent",
 				"description": "Run omp sessions that keep working while VS Code is closed, review their changes, and queue work.",
 				"steps": [
-					{ "id": "start", "title": "Start a background session", "description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)", "media": { "markdown": "media/walkthrough/start.md" }, "completionEvents": ["onCommand:omp.newSession", "onCommand:omp.newSessionWithOptions"] },
-					{ "id": "chat", "title": "Talk to omp", "description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:omp.focus)", "media": { "markdown": "media/walkthrough/chat.md" }, "completionEvents": ["onCommand:omp.focus", "onCommand:omp.openSession"] },
-					{ "id": "review", "title": "Review and revert changes", "description": "Inline diffs, VS Code diffs, change markers, revert.\n[Review changes](command:omp.reviewChanges)", "media": { "markdown": "media/walkthrough/review.md" }, "completionEvents": ["onCommand:omp.reviewChanges"] },
-					{ "id": "tasks", "title": "Queue tasks", "description": "Tasks with subtasks that run one after another in the background.\n[Add a task](command:omp.tasks.add)", "media": { "markdown": "media/walkthrough/tasks.md" }, "completionEvents": ["onCommand:omp.tasks.add"] },
-					{ "id": "editor", "title": "Use omp from the editor", "description": "Fix with omp, add files, terminal output, git chores.", "media": { "markdown": "media/walkthrough/editor.md" }, "completionEvents": ["onCommand:omp.fixDiagnostics", "onCommand:omp.addToChat", "onCommand:omp.scm.commit"] }
+					{
+						"id": "start",
+						"title": "Start a background session",
+						"description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)",
+						"media": {
+							"markdown": "media/walkthrough/start.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.newSession",
+							"onCommand:omp.newSessionWithOptions"
+						]
+					},
+					{
+						"id": "chat",
+						"title": "Talk to omp",
+						"description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:omp.focus)",
+						"media": {
+							"markdown": "media/walkthrough/chat.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.focus",
+							"onCommand:omp.openSession"
+						]
+					},
+					{
+						"id": "review",
+						"title": "Review and revert changes",
+						"description": "Inline diffs, VS Code diffs, change markers, revert.\n[Review changes](command:omp.reviewChanges)",
+						"media": {
+							"markdown": "media/walkthrough/review.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.reviewChanges"
+						]
+					},
+					{
+						"id": "tasks",
+						"title": "Queue tasks",
+						"description": "Tasks with subtasks that run one after another in the background.\n[Add a task](command:omp.tasks.add)",
+						"media": {
+							"markdown": "media/walkthrough/tasks.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.tasks.add"
+						]
+					},
+					{
+						"id": "editor",
+						"title": "Use omp from the editor",
+						"description": "Fix with omp, add files, terminal output, git chores.",
+						"media": {
+							"markdown": "media/walkthrough/editor.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.fixDiagnostics",
+							"onCommand:omp.addToChat",
+							"onCommand:omp.scm.commit"
+						]
+					}
 				]
 			}
 		],
@@ -921,15 +1783,37 @@
 				"mac": "cmd+alt+k",
 				"when": "editorTextFocus"
 			},
-			{ "command": "omp.editWithOmp", "key": "ctrl+alt+e", "mac": "cmd+alt+e", "when": "editorTextFocus && !editorReadonly && resourceScheme == file" },
-			{ "command": "omp.commandCenter", "key": "ctrl+alt+p", "mac": "cmd+alt+p" }
+			{
+				"command": "omp.editWithOmp",
+				"key": "ctrl+alt+e",
+				"mac": "cmd+alt+e",
+				"when": "editorTextFocus && !editorReadonly && resourceScheme == file"
+			},
+			{
+				"command": "omp.commandCenter",
+				"key": "ctrl+alt+p",
+				"mac": "cmd+alt+p"
+			}
 		],
 		"configuration": {
 			"title": "omp",
 			"properties": {
-				"omp.showTodayCost": { "type": "boolean", "default": true, "description": "Show today's omp spend (from session transcripts) in the status bar. Hidden on days without model calls." },
-				"omp.dashboard.includeTerminalSessions": { "type": "boolean", "default": false, "description": "Usage dashboard and today's spend also count omp sessions started outside VS Code (all transcripts under ~/.omp/agent/sessions)." },
-				"omp.snapshotRetentionDays": { "type": "number", "default": 14, "minimum": 0, "markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)." },
+				"omp.showTodayCost": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show today's omp spend (from session transcripts) in the status bar. Hidden on days without model calls."
+				},
+				"omp.dashboard.includeTerminalSessions": {
+					"type": "boolean",
+					"default": false,
+					"description": "Usage dashboard and today's spend also count omp sessions started outside VS Code (all transcripts under ~/.omp/agent/sessions)."
+				},
+				"omp.snapshotRetentionDays": {
+					"type": "number",
+					"default": 14,
+					"minimum": 0,
+					"markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
+				},
 				"omp.path": {
 					"type": "string",
 					"default": "",
@@ -967,14 +1851,25 @@
 				},
 				"omp.chatLocation": {
 					"type": "string",
-					"enum": ["editor", "sidebar"],
+					"enum": [
+						"editor",
+						"sidebar"
+					],
 					"default": "editor",
-					"enumDescriptions": ["Open chats as editor tabs (several side by side).", "Open chats in the omp Chat view (move it to the secondary side bar to keep it next to your code)."],
+					"enumDescriptions": [
+						"Open chats as editor tabs (several side by side).",
+						"Open chats in the omp Chat view (move it to the secondary side bar to keep it next to your code)."
+					],
 					"description": "Where clicking a session opens its chat."
 				},
 				"omp.groupBy": {
 					"type": "string",
-					"enum": ["project", "group", "status", "none"],
+					"enum": [
+						"project",
+						"group",
+						"status",
+						"none"
+					],
 					"default": "project",
 					"enumDescriptions": [
 						"Group sessions under their project (git repository, else folder).",
@@ -986,7 +1881,15 @@
 				},
 				"omp.sortBy": {
 					"type": "string",
-					"enum": ["auto", "manual", "activity", "priority", "name", "created", "cost"],
+					"enum": [
+						"auto",
+						"manual",
+						"activity",
+						"priority",
+						"name",
+						"created",
+						"cost"
+					],
 					"default": "auto",
 					"enumDescriptions": [
 						"Manual order when grouped by custom groups, else last activity.",
@@ -1024,8 +1927,36 @@
 					"default": true,
 					"description": "Mark files changed by omp sessions in the Explorer and show their changed lines (gutter + CodeLens with diff/revert) in editors."
 				},
-				"omp.chat.toolCardsCollapsed": { "type": "boolean", "default": true, "description": "Show tool cards collapsed in the chat (edits and questions always start open). Alt+T or the chat menu collapses/expands all." },
-				"omp.chat.snippets": { "type": "array", "default": [], "items": { "type": "object", "required": ["name", "prompt"], "properties": { "name": { "type": "string", "description": "Completion name: type /p:<name> in the composer." }, "prompt": { "type": "string", "description": "Text inserted into the composer. {{selection}} and {{file}} are replaced with the active editor's selection and path." }, "description": { "type": "string" } } }, "markdownDescription": "Prompt snippets offered in the chat composer as `/p:<name>`. Markdown files in the session folder's `.omp/prompts/` are added too (file name = snippet name, optional `description:` front matter). `{{selection}}` and `{{file}}` are filled in from the active editor." },
+				"omp.chat.toolCardsCollapsed": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show tool cards collapsed in the chat (edits and questions always start open). Alt+T or the chat menu collapses/expands all."
+				},
+				"omp.chat.snippets": {
+					"type": "array",
+					"default": [],
+					"items": {
+						"type": "object",
+						"required": [
+							"name",
+							"prompt"
+						],
+						"properties": {
+							"name": {
+								"type": "string",
+								"description": "Completion name: type /p:<name> in the composer."
+							},
+							"prompt": {
+								"type": "string",
+								"description": "Text inserted into the composer. {{selection}} and {{file}} are replaced with the active editor's selection and path."
+							},
+							"description": {
+								"type": "string"
+							}
+						}
+					},
+					"markdownDescription": "Prompt snippets offered in the chat composer as `/p:<name>`. Markdown files in the session folder's `.omp/prompts/` are added too (file name = snippet name, optional `description:` front matter). `{{selection}}` and `{{file}}` are filled in from the active editor."
+				},
 				"omp.terminalHints": {
 					"type": "boolean",
 					"default": true,
