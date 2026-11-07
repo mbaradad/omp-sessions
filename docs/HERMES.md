@@ -128,6 +128,8 @@ The plugin may be enabled in several profiles, and their gateways may each tick 
 
 The lane is off by default. Turn it on in one profile (`hermes -p <name> omp lane on`). `omp-vs hermes status --all-profiles` warns when it is on in more than one, and `hermes omp status` shows where the shared state lives.
 
+Hermes runs one kanban dispatcher per machine (a lock at `<kanban home>/kanban/.dispatcher.lock`), in the gateway that took it. With the default multiplexed gateway (one gateway serving every profile) that is the default profile, so turn the lane on there: `hermes -p default omp lane on`. Without `-p`, `hermes omp …` acts on the active profile (`hermes profile use`), which may not be the one you mean.
+
 ### Assign cards to omp
 
 ```sh
