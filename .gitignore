@@ -1,6 +1,6 @@
 node_modules/
-out/
-dist/
+/out/
+/dist/
 *.vsix
 .dev-state/
 .vscode-test/

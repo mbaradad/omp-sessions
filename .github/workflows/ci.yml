@@ -43,7 +43,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           node build.mjs
-          git status --porcelain -- integrations/hermes/omp-sessions | grep . && { git diff -- integrations/hermes/omp-sessions; exit 1; } || true
+          git status --porcelain --ignored -- integrations/hermes/omp-sessions | grep . && { git diff -- integrations/hermes/omp-sessions; exit 1; } || true
 
   e2e-desktop:
     name: desktop e2e (ubuntu, xvfb)
