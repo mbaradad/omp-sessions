@@ -10,12 +10,16 @@ import { HostConnection } from "../shared/host-conn";
 import { type HostLauncher, findOmp, listMetas, readHostVersion, readLauncherSettings, readMeta, sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import { ORG_COLORS, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
-import { type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, stateRoot } from "../shared/protocol";
+import { DIALOG_METHODS, type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, type UiRequest, stateRoot } from "../shared/protocol";
 import { type RemoteStatus, isRemoteBind, newRemoteToken, pairingUrl, readRemoteConfig, updateRemoteConfig } from "../shared/remote";
 import { qrHalfBlocks } from "../shared/remote-qr";
+import { recentProjects } from "../shared/projects";
 import { transcriptMessages } from "../shared/remote-snapshot";
 import { ServerClient, compareVersions, ensureServer, readServerLog, stopServer } from "../shared/server-client";
 import { COLUMNS, type OpName, type ServerOps, type SessionInfo, serverLogPath, serverSocketPath } from "../shared/server-protocol";
+import { type AgentState, SETTLED_STATES, type SessionReport, agentState, dialogAnswer, sessionReport } from "../shared/session-report";
+import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
+import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, enablePlugin, findHermes, installPlugin, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin } from "../shared/hermes-plugin";
 import { type Args, UsageError, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
 import { renderMessage } from "./render";
@@ -212,9 +216,23 @@ async function readStdin(): Promise<string> {
 async function cmdNew(args: Args): Promise<number> {
 	const priority = value(args, "priority");
 	if (priority !== undefined && !isPriority(priority)) throw new UsageError(`--priority must be one of ${PRIORITIES.join(", ")}`);
+	const modeArg = value(args, "mode");
+	const mode = modeArg === undefined ? undefined : permissionModeOf(modeArg.toLowerCase());
+	if (modeArg !== undefined && !mode) throw new UsageError(`--mode must be one of ${PERMISSION_MODES.join(", ")}`);
 	let prompt = value(args, "prompt");
 	if (prompt === "-") prompt = await readStdin();
 	const task = value(args, "task");
+	let notes = value(args, "notes");
+	if (notes !== undefined && !task) throw new UsageError("--notes belong to a queued task: add --task");
+	if (notes === "-") {
+		if (prompt === "-") throw new UsageError("only one of --prompt and --notes can read stdin");
+		notes = await readStdin();
+	}
+	const atArg = value(args, "at");
+	const startAt = atArg === undefined ? undefined : parseWhen(atArg);
+	if (atArg !== undefined && !task) throw new UsageError("--at schedules a queued task: add --task");
+	if (atArg !== undefined && startAt === undefined) throw new UsageError("--at <+30m | 14:30 | 2025-01-31T08:00>");
+	const json = flag(args, "json");
 	const cwd = path.resolve(args._[0] ?? process.cwd());
 	const b = await backend();
 	const res = await b.call("create", {
@@ -224,12 +242,22 @@ async function cmdNew(args: Args): Promise<number> {
 		prompt,
 		task,
 		subtasks: args.multi.get("sub"),
+		startAt,
 		priority: priority !== undefined && isPriority(priority) ? priority : undefined,
+		mode,
+		tags: args.multi.get("tag"),
+		group: value(args, "group"),
+		notes,
 	});
 	const meta = readMeta(res.id);
+	if (json) {
+		process.stdout.write(`${JSON.stringify({ id: res.id, started: res.started, title: meta?.title ?? "", cwd, ...(startAt ? { startAt } : {}) })}\n`);
+		return 0;
+	}
 	const label = `${shortId(res.id)} ${meta?.title ?? ""}`.trim();
 	if (task) {
-		process.stdout.write(res.started ? `${c.green("started")} ${label}\n` : `${c.blue("queued")} ${label} ${c.dim("(starts when a slot is free)")}\n`);
+		const when = startAt ? c.dim(`(starts ${new Date(startAt).toLocaleString()})`) : c.dim("(starts when a slot is free)");
+		process.stdout.write(res.started && !startAt ? `${c.green("started")} ${label}\n` : `${c.blue("queued")} ${label} ${when}\n`);
 		return 0;
 	}
 	process.stdout.write(`${c.green("started")} ${label}\n`);
@@ -275,6 +303,252 @@ async function cmdTail(args: Args): Promise<number> {
 		if (flag(args, "follow")) process.stdout.write(c.dim(`omp-vs resume ${shortId(meta.id)} to continue it\n`));
 	}
 	return 0;
+}
+
+// ---------- agent-facing: show / wait / answer ----------
+
+/** The session's report for agents: state, pending question, full last reply. */
+async function reportFor(meta: SessionMeta): Promise<SessionReport> {
+	const infos = await (await backend()).call("list", { all: true });
+	const info = infos.find(i => i.meta.id === meta.id);
+	if (!info) throw new Error(`session ${shortId(meta.id)} is gone`);
+	let messages: unknown[] = [];
+	let pendingUi: UiRequest[] = [];
+	if (info.meta.status !== "stopped") {
+		try {
+			const { conn, snapshot } = await HostConnection.open(info.meta.socket, "omp-vs-show");
+			conn.close();
+			messages = snapshot.messages;
+			pendingUi = snapshot.pendingUi;
+		} catch {
+			/* the host just exited: the transcript below still has the reply */
+			messages = transcriptMessages(info.meta.ompSessionFile);
+		}
+	} else messages = transcriptMessages(info.meta.ompSessionFile);
+	return sessionReport(info, { messages, pendingUi, tags: info.tags ?? [] });
+}
+
+const STATE_COLOR: Record<AgentState, (s: string) => string> = { queued: c.blue, starting: c.dim, working: c.yellow, needs_input: c.magenta, idle: c.green, stopped: c.dim };
+
+function printReport(r: SessionReport): void {
+	const q = r.queue.total ? c.dim(` · queue ${r.queue.done}/${r.queue.total}`) : "";
+	process.stdout.write(`${STATE_COLOR[r.state](r.state.replace("_", " "))} ${shortId(r.id)} ${c.bold(r.title)}${q}${r.cost ? c.dim(` · $${r.cost.toFixed(2)}`) : ""}\n`);
+	if (r.question) {
+		process.stdout.write(`${c.magenta(`? ${r.question.title}`)}${r.question.message ? `\n${r.question.message}` : ""}\n`);
+		r.question.options?.forEach((o, i) => process.stdout.write(`  ${c.bold(String(i + 1))}. ${o}\n`));
+		process.stdout.write(c.dim(`answer: omp-vs answer ${shortId(r.id)} <choice>\n`));
+	}
+	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
+	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
+}
+
+async function cmdShow(args: Args): Promise<number> {
+	const report = await reportFor(findSession(args._[0] ?? "."));
+	if (flag(args, "json")) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+	else printReport(report);
+	return 0;
+}
+
+/** `wait` exit codes: why it stopped waiting. */
+const WAIT_EXIT: Record<AgentState, number> = { idle: 0, needs_input: 3, stopped: 4, queued: 124, starting: 124, working: 124 };
+/** A settled state must hold this long, so a prompt that was just sent has time to start. */
+const SETTLE_MS = 3000;
+
+/** "90", "90s", "30m", "2h" → ms. */
+function parseDuration(text: string): number | undefined {
+	const m = /^(\d+(?:\.\d+)?)\s*([smh]?)$/.exec(text.trim());
+	if (!m) return undefined;
+	return Number(m[1]) * ({ "": 1000, s: 1000, m: 60_000, h: 3_600_000 }[m[2]] ?? 1000);
+}
+
+async function cmdWait(args: Args): Promise<number> {
+	const meta = findSession(args._[0] ?? ".");
+	const timeoutArg = value(args, "timeout");
+	const timeout = timeoutArg === undefined ? undefined : parseDuration(timeoutArg);
+	if (timeoutArg !== undefined && timeout === undefined) throw new UsageError("--timeout <seconds | 30m | 2h>");
+	const b = await backend();
+	const deadline = timeout === undefined ? Infinity : Date.now() + timeout;
+	let settledSince: number | undefined;
+	let state: AgentState = "working";
+	for (;;) {
+		const info = (await b.call("list", { all: true })).find(i => i.meta.id === meta.id);
+		if (!info) throw new Error(`session ${shortId(meta.id)} is gone`);
+		state = agentState(info);
+		const now = Date.now();
+		if (SETTLED_STATES[state]) {
+			settledSince ??= now;
+			if (now - settledSince >= SETTLE_MS) break;
+		} else settledSince = undefined;
+		if (now >= deadline) break;
+		await new Promise(r => setTimeout(r, 1000));
+	}
+	const report = await reportFor(meta);
+	if (flag(args, "json")) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+	else printReport(report);
+	return SETTLED_STATES[state] ? WAIT_EXIT[report.state] : 124;
+}
+
+async function cmdAnswer(args: Args): Promise<number> {
+	const meta = findSession(args._[0]);
+	const text = args._.slice(1).join(" ");
+	if (meta.status !== "waiting") throw new Error(`${shortId(meta.id)} ${meta.title} is not waiting for an answer (${meta.status})`);
+	const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-vs-answer");
+	try {
+		const req = snapshot.pendingUi.find(r => DIALOG_METHODS[r.method]);
+		if (!req) throw new Error("no question is waiting");
+		const answer = dialogAnswer(req, text);
+		if ("error" in answer) throw new UsageError(answer.error);
+		const resolved = new Promise<boolean>(resolve => {
+			const off = conn.onMessage(msg => {
+				if (msg.t === "ui_resolved" && msg.id === req.id) {
+					off();
+					resolve(true);
+				}
+			});
+			setTimeout(() => resolve(false), 5000).unref();
+		});
+		conn.write({ t: "ui_response", res: { id: req.id, ...answer.res } });
+		if (!(await resolved)) throw new Error("the session did not take the answer (answer it in VS Code or omp-vs attach)");
+		process.stdout.write(`${c.green("answered")} ${shortId(meta.id)} ${typeof req.title === "string" && req.title ? req.title : req.method}\n`);
+		return 0;
+	} finally {
+		conn.close();
+	}
+}
+
+function cmdProjects(args: Args): number {
+	const projects = recentProjects();
+	if (flag(args, "json")) {
+		process.stdout.write(`${JSON.stringify(projects, null, 2)}\n`);
+		return 0;
+	}
+	if (!projects.length) process.stdout.write(c.dim("no sessions yet\n"));
+	for (const p of projects) process.stdout.write(`${pad(c.bold(p.name), 24)} ${pad(c.dim(`${p.sessions} session${p.sessions === 1 ? "" : "s"} · ${ago(p.lastUsed)} ago`), 26)} ${p.path}\n`);
+	return 0;
+}
+
+// ---------- skill ----------
+
+function skillContent(): string {
+	const file = path.join(__dirname, SKILL_FILE);
+	if (!fs.existsSync(file)) throw new Error(`${SKILL_FILE} is missing next to the CLI (reinstall it: omp: Install omp-vs Command)`);
+	return fs.readFileSync(file, "utf8");
+}
+
+function cmdSkill(args: Args): number {
+	const sub = args._[0] ?? "status";
+	const names = args._.slice(1);
+	for (const n of names) if (!isSkillPlatform(n)) throw new UsageError(`unknown platform "${n}" (${SKILL_PLATFORMS.join(", ")})`);
+	const platforms = names.filter(isSkillPlatform);
+	const dir = value(args, "dir");
+	const targets = (): SkillTarget[] => [
+		...(platforms.length || dir ? platforms : detectedPlatforms()).flatMap(p => skillTargets(p)),
+		...(dir ? [{ platform: "dir" as const, dir: path.join(path.resolve(dir), SKILL_NAME) }] : []),
+	];
+	switch (sub) {
+		case "print":
+		case "show":
+			process.stdout.write(skillContent());
+			return 0;
+		case "path":
+			process.stdout.write(`${path.join(__dirname, SKILL_FILE)}\n`);
+			return 0;
+		case "install": {
+			const content = skillContent();
+			let skipped = 0;
+			for (const t of targets()) {
+				const outcome = installSkill(t, content, flag(args, "force"));
+				if (outcome === "skipped") skipped++;
+				const mark = outcome === "skipped" ? c.yellow(outcome) : outcome === "unchanged" ? c.dim(outcome) : c.green(outcome);
+				process.stdout.write(`${pad(mark, 10)} ${t.platform}  ${c.dim(path.join(t.dir, "SKILL.md"))}\n`);
+			}
+			if (skipped) process.stdout.write(c.dim("skipped: a SKILL.md omp-vs didn't write is in the way (--force replaces it)\n"));
+			return 0;
+		}
+		case "uninstall": {
+			for (const t of targets()) if (uninstallSkill(t)) process.stdout.write(`${c.yellow("removed")} ${path.join(t.dir, "SKILL.md")}\n`);
+			return 0;
+		}
+		case "status": {
+			const content = skillContent();
+			for (const p of SKILL_PLATFORMS) {
+				const ts = skillTargets(p);
+				if (!ts.length) {
+					process.stdout.write(`${pad(p, 8)} ${c.dim("not found")}\n`);
+					continue;
+				}
+				for (const t of ts) {
+					const file = path.join(t.dir, "SKILL.md");
+					const state = !fs.existsSync(file) ? c.dim("not installed") : fs.readFileSync(file, "utf8") === content ? c.green("installed") : c.yellow("outdated or not ours");
+					process.stdout.write(`${pad(p, 8)} ${state}  ${c.dim(file)}\n`);
+				}
+			}
+			return 0;
+		}
+		default:
+			throw new UsageError(`unknown skill command "${sub}" (status, install, uninstall, print, path)`);
+	}
+}
+
+// ---------- hermes plugin ----------
+
+function cmdHermes(args: Args): number {
+	const sub = args._[0] ?? "status";
+	const source = path.join(__dirname, PLUGIN_BUNDLE);
+	const targets = resolveTargets({ profiles: args.multi.get("profile"), all: flag(args, "all-profiles") });
+	const hermes = findHermes();
+	const several = targets.length > 1;
+	let failed = false;
+	switch (sub) {
+		case "install": {
+			for (const t of targets) {
+				const dir = pluginTarget(t.home);
+				const outcome = installPlugin(source, dir, flag(args, "force"));
+				const mark = outcome === "skipped" ? c.yellow(outcome) : outcome === "unchanged" ? c.dim(outcome) : c.green(outcome);
+				process.stdout.write(`${pad(mark, 10)} ${several || t.profile ? `${c.bold(t.label)} ` : ""}${dir}\n`);
+				if (outcome === "skipped") {
+					process.stdout.write(c.dim("a plugin folder omp-vs didn't write is in the way (--force replaces it)\n"));
+					failed = true;
+					continue;
+				}
+				if (!hermes) continue;
+				const res = enablePlugin(hermes, t);
+				if (res.output) process.stdout.write(`${res.output}\n`);
+				if (!res.ok) failed = true;
+			}
+			if (!hermes) {
+				process.stdout.write(`${c.yellow("hermes not found")}: enable it with ${c.bold("hermes [-p <profile>] plugins enable omp-sessions")}\n`);
+				return 1;
+			}
+			if (!failed) for (const line of AFTER_INSTALL) process.stdout.write(`${c.dim(line)}\n`);
+			return failed ? 1 : 0;
+		}
+		case "uninstall": {
+			for (const t of targets) {
+				const dir = pluginTarget(t.home);
+				if (hermes && fs.existsSync(dir)) {
+					const res = disablePlugin(hermes, t);
+					if (res.output) process.stdout.write(`${res.output}\n`);
+				}
+				process.stdout.write(uninstallPlugin(dir) ? `${c.yellow("removed")} ${dir}\n` : c.dim(`nothing omp-vs installed at ${dir}\n`));
+			}
+			return 0;
+		}
+		case "status": {
+			const reports = targets.map(t => pluginReport(source, t, hermes));
+			if (flag(args, "json")) {
+				process.stdout.write(`${JSON.stringify({ hermes: hermes ?? null, profiles: reports })}\n`);
+				return 0;
+			}
+			process.stdout.write(`hermes: ${hermes ?? c.yellow("not found (PATH, ~/.local/bin/hermes)")}\n`);
+			for (const r of reports) process.stdout.write(`${reportLine(r)}\n`);
+			const lanes = reports.filter(r => r.lane).map(r => r.label);
+			if (lanes.length > 1) process.stdout.write(c.yellow(`the kanban lane is on in ${lanes.join(", ")}: they take turns (one machine-wide lock), but keep it on in one profile so one set of lane settings applies\n`));
+			return 0;
+		}
+		default:
+			throw new UsageError(`unknown hermes command "${sub}" (install, uninstall, status)`);
+	}
 }
 
 async function cmdStop(args: Args): Promise<void> {
@@ -492,6 +766,10 @@ async function cmdSched(args: Args): Promise<void> {
 			throw new UsageError(`unknown sched command "${sub}" (status, set N, pause, resume, stop-when-done on|off)`);
 	}
 	const s = await b.call("scheduler", set ? { set } : {});
+	if (flag(args, "json")) {
+		process.stdout.write(`${JSON.stringify(s)}\n`);
+		return;
+	}
 	const yes = (v: boolean) => (v ? c.green("yes") : c.dim("no"));
 	process.stdout.write(
 		[
@@ -719,8 +997,15 @@ const HELP = `${c.bold("omp-vs")} — omp Sessions from the terminal ${c.dim(`($
 ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (latest session in this folder)")}
   ls [-a|--all] [--json]          running sessions (--all: also finished and archived)
   board [--all]                   sessions by column: waiting, working, needs input, idle
-  new [dir] [-p prompt|-] [--task t [--sub s]…] [--title t] [--model m] [--priority p] [--detach]
-                                  start a session (no prompt: attach to it); --task queues it
+  new [dir] [-p prompt|-] [--task t [--sub s]… [--notes n|-] [--at when]] [--title t] [--mode m]
+      [--tag t]… [--group g] [--model m] [--priority p] [--detach] [--json]
+                                  start a session (no prompt: attach to it); --task queues it,
+                                  --at schedules it (+30m, 14:30, ISO time); --json prints its id
+  show [session] [--json]         state, waiting question and last reply (for scripts and agents)
+  wait [session] [--timeout 30m] [--json]
+                                  block until it is idle (exit 0), needs input (3) or stopped (4)
+  answer <session> <choice>       answer its waiting question: option number/text, yes/no, text
+  projects [--json]               folders sessions ran in, newest first
   attach [session]                chat in the terminal (Ctrl-C aborts a turn, Ctrl-D detaches)
   send <session> <text|-> [--follow-up] [-w|--wait]
                                   prompt a session (resumes it if stopped); --wait streams the reply
@@ -745,7 +1030,7 @@ ${c.bold("Organize")}
   archive|unarchive <session>
 
 ${c.bold("Scheduler")}  ${c.dim("(global limit on queued tasks running at once)")}
-  sched                           status
+  sched [--json]                  status
   sched set <n>                   max concurrent queued tasks (0 = unlimited)
   sched pause|resume
   sched stop-when-done <on|off>   stop sessions the server launched once their queue is done
@@ -757,6 +1042,18 @@ ${c.bold("Remote")}  ${c.dim("(phone app + HTTP API on this machine; prefer Tail
   remote on [--bind tailscale|lan|localhost|<ip>] [--port n]
                                   turn on remote access (default bind tailscale, port 7413)
   remote off|status|qr|rotate     turn off · show state · pairing QR + URL · new token (unpairs phones)
+
+${c.bold("Agents")}  ${c.dim("(the omp-sessions skill teaches other agents to use omp-vs)")}
+  skill [status]                  where it is installed
+  skill install [agents|claude|codex]… [--dir d] [--force]
+                                  install or update it (default: every platform found)
+  skill uninstall [platform]… | print | path
+
+${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and a kanban lane in Hermes Agent; docs/HERMES.md)")}
+  hermes install [--force]        copy the plugin into $HERMES_HOME/plugins (~/.hermes) and enable it
+  hermes uninstall | status [--json]
+      [--profile <name>]… [--all-profiles]
+                                  plugins are per Hermes profile; default: $HERMES_HOME or ~/.hermes
 
   --no-color, NO_COLOR=1          plain output · OMP_VS_NO_SERVER=1 runs without the server
 `;
@@ -826,6 +1123,20 @@ async function main(argv: string[]): Promise<number> {
 			return cmdServer(args);
 		case "remote":
 			return cmdRemote(args);
+		case "show":
+		case "status":
+			return cmdShow(args);
+		case "wait":
+			return cmdWait(args);
+		case "answer":
+			return cmdAnswer(args);
+		case "projects":
+			return cmdProjects(args);
+		case "skill":
+		case "skills":
+			return cmdSkill(args);
+		case "hermes":
+			return cmdHermes(args);
 		case "version":
 		case "--version": {
 			const client = await ServerClient.connect();

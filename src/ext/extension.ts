@@ -5,6 +5,7 @@ import { type LaunchOptions, sendToHost } from "../shared/launch";
 import { OrganizeStore, organizeFile } from "../shared/organize";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import { registerAgentSkill } from "./agent-skill";
 import { registerBoard } from "./board";
 import { registerBridge } from "./bridge";
 import { registerChatContext } from "./chat-context";
@@ -12,6 +13,7 @@ import { registerDashboard } from "./dashboard";
 import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
 import { registerDoctor } from "./doctor";
 import { registerEditorPlus } from "./editor-plus";
+import { registerHermesPlugin } from "./hermes";
 import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
@@ -498,6 +500,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerBridge(api);
 	registerSessionConfig(api);
 	registerPermissions(api);
+	registerAgentSkill(api);
+	registerHermesPlugin(api);
 	registerRemote(api, registerServer(api));
 
 	// ---------- status bar ----------

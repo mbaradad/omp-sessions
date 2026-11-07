@@ -34,6 +34,17 @@ export function hasQueuedWork(q: TaskQueue): boolean {
 	return q.tasks.some(t => t.status === "pending") && (q.autoRun || q.startAt !== undefined);
 }
 
+/** Priority, tags and group (by name, created if missing) of a session `create` just made. */
+function organizeNew(org: OrganizeStore, id: string, args: CreateArgs): void {
+	if (args.priority) org.setPriority([id], args.priority);
+	if (args.tags?.length) org.setTags([id], args.tags);
+	const name = args.group?.trim();
+	if (name) {
+		const group = org.data.groups.find(g => g.name.toLowerCase() === name.toLowerCase()) ?? org.createGroup({ name });
+		org.setGroup([id], group.id);
+	}
+}
+
 export function sessionColumn(meta: SessionMeta, waiting: boolean): Column {
 	if (meta.status === "stopped") return waiting ? "waiting" : "stopped";
 	if (meta.status === "waiting") return "input";
@@ -198,6 +209,7 @@ export function sessionInfos(ctx: ListContext, all = false): SessionInfo[] {
 		}
 		if (e?.color) info.color = e.color;
 		if (e?.archived) info.archived = true;
+		if (e?.tags?.length) info.tags = [...e.tags];
 		if ((slotWaiting || launchWaiting) && position) info.waiting = { position, ...(slotWaiting ? { since: waiterSince.get(meta.id) } : { launch: true }) };
 		out.push(info);
 	}
@@ -253,6 +265,7 @@ export class Control {
 		const cwd = path.resolve(args.cwd);
 		if (!isDirectory(cwd)) throw new Error(`not a folder: ${cwd}`);
 		if (args.prompt && args.task) throw new Error("give either a prompt or a task, not both");
+		if (args.startAt !== undefined && !args.task) throw new Error("a start time needs a queued task");
 		const launcher = this.env.launcher();
 		const defaults = newSessionLaunch(cwd, launcher.extraArgs);
 		const ompArgs = [...(args.ompArgs ?? defaults.ompArgs), ...(args.model ? ["--model", args.model] : []), ...(args.mode ? ["--approval-mode", args.mode] : [])];
@@ -266,7 +279,9 @@ export class Control {
 			fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
 			fs.writeFileSync(path.join(sessionDir(id), "launch.json"), JSON.stringify({ ompArgs }));
 			if (toggles) writeSessionToggles(id, toggles);
-			const queue = applyQueueOps({ tasks: [], autoRun: true }, [{ op: "add", title: args.task, subtasks: args.subtasks }], now);
+			const ops: QueueOp[] = [{ op: "add", title: args.task, notes: args.notes, subtasks: args.subtasks }];
+			if (args.startAt !== undefined) ops.push({ op: "schedule", at: args.startAt });
+			const queue = applyQueueOps({ tasks: [], autoRun: true }, ops, now);
 			writeQueueFile(queueFilePath(id), queue);
 			const meta: SessionMeta = {
 				id,
@@ -282,7 +297,7 @@ export class Control {
 				exitReason: "queued",
 			};
 			writeMetaFile(id, meta);
-			if (args.priority) org.setPriority([id], args.priority);
+			organizeNew(org, id, args);
 			if (this.env.serverUp()) {
 				this.env.changed?.();
 				return { id, started: false };
@@ -290,8 +305,8 @@ export class Control {
 			launchHost(launcher, { cwd, id });
 			return { id, started: true };
 		}
-		const id = launchHost(launcher, { cwd, title: args.title, ompArgs, toggles });
-		if (args.priority) org.setPriority([id], args.priority);
+		const id = launchHost(launcher, { cwd, title: args.title || (args.prompt ? titleFrom(args.prompt) : undefined), ompArgs, toggles });
+		organizeNew(org, id, args);
 		this.env.changed?.();
 		if (args.prompt) {
 			if (!(await waitForHost(id))) throw new Error(`session ${id} did not start (see omp-vs tail ${id.slice(0, 8)})`);

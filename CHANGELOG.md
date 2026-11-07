@@ -8,6 +8,15 @@
 - **Terminal UI**: *Continue Session in omp's Terminal UI* (chat header button, `/tui`) opens the session in omp's own TUI beside the chat and hands it back to the background host when the terminal closes.
 - **Chat footer**: starred models pinned on top of the model picker, tokens per second, and the provider usage limit when omp reports it.
 - **Phone app and HTTP API**: *Connect Phone…* turns on remote access in the `omp-vs` server (Tailscale, local network or localhost) and shows a QR code. The phone web app (installable to the home screen) lists every session by status, follows one live, prompts or steers it, answers approvals and questions, switches its permission mode, stops or resumes it, and starts or queues new sessions in recent folders. The token-authenticated JSON + Server-Sent Events API behind it is documented in `docs/REMOTE-API.md` for other apps and servers. *Disable Remote Access*, *Rotate Remote Access Token*, and `omp-vs remote on|off|status|qr|rotate`.
+- **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-vs hermes install`): native `omp_session_*` tools for Hermes agents, including start, queue, schedule (`at`), status, wait, answer, steer and stop, picking a folder by path, known project or board. Hermes gets a message in the chat when a session it started finishes or needs input. A kanban lane runs cards assigned to `omp` as omp sessions, in the card's workspace or the board's folder, with one omp group per board. Results, questions (`needs_input` blocks) and failures go back to the card, and dependent cards chain as usual. Docs: `docs/HERMES.md`.
+- **omp-sessions skill for other agents** (*Install omp Sessions Skill for Agents…*, `omp-vs skill install`): teaches omp, Claude Code, Codex and anything reading `~/.agents/skills` to start, schedule and supervise omp sessions through `omp-vs`. Copies it installed are refreshed when the extension updates.
+- `omp-vs` for scripts and agents:
+  - `new` gains `--json`, `--mode`, `--tag`, `--group`, `--notes` and `--at` (schedule a queued task);
+  - `show [--json]` reports the state, waiting question and full last reply;
+  - `wait [--timeout] [--json]` exits 0 when idle, 3 on needs input, 4 when stopped;
+  - `answer` replies to a waiting question;
+  - `projects [--json]`, `sched --json`;
+  - `ls --json` includes session tags.
 - Sessions Board: columns lay out as a grid again (cards no longer collapse into one row), and card excerpts drop Markdown markup (also in the phone app).
 - README rewritten around use cases, with screenshots and graphics; website at <https://mbaradad.github.io/omp-vscode/>.
 

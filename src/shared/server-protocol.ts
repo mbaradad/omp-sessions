@@ -34,6 +34,7 @@ export interface SessionInfo {
 	group?: string;
 	color?: OrgColor;
 	archived?: boolean;
+	tags?: string[];
 	/**
 	 * Waiting for a concurrency slot: `position` 1-based among all waiters. `launch`: a stopped
 	 * session the server will start when a slot frees (no omp process meanwhile).
@@ -66,9 +67,17 @@ export interface CreateArgs {
 	task?: string;
 	/** Subtasks of `task`. */
 	subtasks?: string[];
+	/** Notes of `task` (omp gets them under the task title). */
+	notes?: string;
+	/** Queue-only: don't start `task` before this time (epoch ms); the server launches it then. */
+	startAt?: number;
 	priority?: Priority;
 	/** Starting permission mode: appended as the `--approval-mode` launch flag. */
 	mode?: PermissionMode;
+	/** Session tags (organize.json), e.g. to link a session to the card or ticket it works on. */
+	tags?: string[];
+	/** Group name (organize.json); created when no group has that name. */
+	group?: string;
 }
 
 export type OrganizeAction =

@@ -11,10 +11,11 @@ import { readHostVersion, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
 import { ServerClient, compareVersions, ensureServer, stopServer } from "../shared/server-client";
 import { serverLogPath } from "../shared/server-protocol";
+import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import type { OmpApi } from "./api";
 
-/** Bundles the CLI and server run from, plus the phone app the server serves (next to server.js). */
-const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg"];
+/** Bundles the CLI and server run from, the phone app the server serves, the agent skill the CLI installs (plus the Hermes plugin folder). */
+const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg", "omp-sessions.SKILL.md"];
 
 /** What other extension modules need from the server side. */
 export interface ServerControl {
@@ -39,10 +40,17 @@ function copyAtomic(from: string, to: string): void {
 export function installRuntime(outDir: string, version: string): string {
 	const dir = runtimeDir();
 	const current = readHostVersion(path.join(dir, "host.js"));
-	const complete = RUNTIME_FILES.every(f => fs.existsSync(path.join(dir, f)));
+	const complete = RUNTIME_FILES.every(f => fs.existsSync(path.join(dir, f))) && fs.existsSync(path.join(dir, PLUGIN_BUNDLE, "plugin.yaml"));
 	if (complete && current === version) return dir;
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	for (const f of RUNTIME_FILES) copyAtomic(path.join(outDir, f), path.join(dir, f));
+	// The Hermes plugin `omp-vs hermes install` copies from (a folder: swapped in whole).
+	const plugin = path.join(dir, PLUGIN_BUNDLE);
+	const tmp = `${plugin}.${process.pid}.tmp`;
+	fs.rmSync(tmp, { recursive: true, force: true });
+	fs.cpSync(path.join(outDir, PLUGIN_BUNDLE), tmp, { recursive: true });
+	fs.rmSync(plugin, { recursive: true, force: true });
+	fs.renameSync(tmp, plugin);
 	const pkg = path.join(dir, "package.json");
 	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "omp-vs-runtime", version, private: true }));
 	fs.renameSync(`${pkg}.tmp`, pkg);

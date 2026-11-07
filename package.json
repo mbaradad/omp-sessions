@@ -916,6 +916,16 @@
 				"command": "omp.remote.rotateToken",
 				"title": "Rotate Remote Access Token",
 				"category": "omp"
+			},
+			{
+				"command": "omp.installAgentSkill",
+				"title": "Install omp Sessions Skill for Agents…",
+				"category": "omp"
+			},
+			{
+				"command": "omp.hermes.install",
+				"title": "Install Hermes Plugin…",
+				"category": "omp"
 			}
 		],
 		"menus": {
@@ -2032,7 +2042,8 @@
 		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
-		"test:host": "node test/run.mjs host"
+		"test:host": "node test/run.mjs host",
+		"test:hermes": "node integrations/hermes/tests/run.mjs"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",

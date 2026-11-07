@@ -171,6 +171,8 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.remote.connectPhone": "Sessions",
 	"omp.remote.disable": "Sessions",
 	"omp.remote.rotateToken": "Sessions",
+	"omp.installAgentSkill": "Sessions",
+	"omp.hermes.install": "Sessions",
 	"omp.focus": "Chat",
 	"omp.fixDiagnostics": "Chat",
 	"omp.addToChat": "Chat",

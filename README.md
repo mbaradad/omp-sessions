@@ -8,7 +8,7 @@
 
 Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one session per task, and drive them from VS Code, a terminal or your phone. Sessions live in their own process on the machine with your code — your computer, or the server you reach over Remote-SSH — so closing VS Code, sleeping the laptop or dropping SSH doesn't stop them. Come back and everything that happened meanwhile is there: answers, diffs, questions waiting for you.
 
-**[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Changelog](CHANGELOG.md)**
+**[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
 
 ![A day with omp Sessions: queue the day at 9:00, walk away at 9:30, approve a command from your phone at 12:40, review and undo in VS Code at 15:00, check the cost at 18:00.](docs/images/a-day.png)
 
@@ -22,7 +22,8 @@ Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one sess
 | **Careful work on code that matters** | **Ask** or **Plan** mode, every edit in VS Code's diff editor, and undo for any turn — files and conversation together. |
 | **Supervising from anywhere** | The phone app shows what's working, waiting or done; approve a command, steer a session or start a new one from the couch. |
 | **Fixing what's in front of you** | *Fix with omp* on a squiggle, on a failed terminal command, or on all of a file's problems; commit messages and PR descriptions from Source Control. |
-| **Scripts and automation** | `omp-vs new --task …`, `omp-vs send … --wait`, or the HTTP API from your own tools. |
+| **Scripts and automation** | `omp-vs new --task …`, `omp-vs wait … --json`, or the HTTP API from your own tools. |
+| **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `omp-sessions` skill; Hermes gets a plugin with native tools, notifications and a kanban lane that runs cards as omp sessions. |
 | **Hands-free** | Talk to a session with omp's realtime voice and watch the transcript land in the chat. |
 
 ## Highlights
@@ -131,6 +132,12 @@ Works on Linux and macOS, locally and over Remote-SSH (Windows: named pipes and 
 - Per-task *Options…* (model, thinking level, fresh context, retries 1–5, timeout), *Duplicate Task*, *Retry Failed Tasks*, and *Schedule Queue Start…* (`HH:MM`, `YYYY-MM-DD HH:MM`, or `+30m/+2h/+3d`). The host applies each task's model/thinking/retries.
 - **Concurrency scheduler**: queues across *all* sessions share a limit (`scheduler.json`, enforced by the host via `slots/` leases, so it holds with VS Code closed). The status bar shows `N/M running · K waiting`; *Set Concurrency…*, *Increase/Decrease*, *Pause/Resume Queued Tasks*. A task waiting for a slot shows its queue position in the tree and the board.
 
+### Agents and Hermes
+
+- **The `omp-sessions` skill** teaches other agents to use `omp-vs`: start a session, queue or schedule it (`--task`, `--at`), wait for it (`omp-vs wait --json` exits 0 idle, 3 needs input, 4 stopped), read its report (`omp-vs show --json`: state, waiting question, full last reply), answer its questions (`omp-vs answer`), and follow up. *Install omp Sessions Skill for Agents…* or `omp-vs skill install` puts it in `~/.agents/skills` (omp and other tools), `~/.claude/skills` and `~/.codex/skills`; copies it installed are refreshed when the extension updates.
+- **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-vs hermes install`): native `omp_session_*` tools, a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board), with results, questions and failures written back to the card and dependencies chaining as usual. Recurring work goes through Hermes cron. Details: [`docs/HERMES.md`](docs/HERMES.md).
+- Agent-friendly CLI: `omp-vs new … --json` (with `--mode`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `ls --json` and `sched --json`.
+
 ### Phone and remote access
 
 - *Connect Phone…* turns remote access on (Tailscale, local network, or this computer only), makes sure the `omp-vs` server runs, and shows a QR code of the pairing link. The phone app lists every session by status, follows one live, prompts or steers it, answers approvals and questions, switches its permission mode, stops or resumes it, and starts new sessions in a recent folder (or queues them).
@@ -170,6 +177,12 @@ omp-vs mode fix plan            # permission mode: ask | edits | plan | auto (no
 omp-vs sched set 2              # at most 2 queued tasks at once, across all sessions
 omp-vs server status|log -f|install   # install: systemd user unit / launchd agent
 omp-vs remote on|off|status|qr|rotate # phone app + HTTP API (on: --bind tailscale|lan|localhost|<ip> --port n)
+omp-vs new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id
+omp-vs wait <id> --timeout 2h --json   # until idle (0), needs input (3) or stopped (4); prints state + last reply
+omp-vs show <id> --json         # state, waiting question, last reply, cost
+omp-vs answer <id> 1            # answer the waiting question (option number/text, yes/no, text)
+omp-vs skill install            # teach Claude Code / Codex / omp to drive omp-vs (omp-sessions skill)
+omp-vs hermes install           # Hermes Agent plugin: tools, notifications, kanban lane
 ```
 
 Sessions are named by id, id prefix, title words, or `.` (latest in this folder). Commands start the server on demand and restart it when it is older than the CLI. Without it (`OMP_VS_NO_SERVER=1`) they work in-process, but queued stopped sessions wait until someone resumes them. The server stops the sessions it launched once their queue is done (after a minute idle, with no chat or `attach` open, and 10 minutes after anyone last typed in them). `omp-vs sched stop-when-done off` keeps them running. Tasks interrupted by a host crash are never rerun unattended.

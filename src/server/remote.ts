@@ -8,11 +8,11 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
-import { findProject } from "../ext/worktree-git";
+import { type RecentProject, recentProjects } from "../shared/projects";
 import { isRecord } from "../shared/bridge";
 import type { Control } from "../shared/control";
 import { HostConnection, type Snapshot } from "../shared/host-conn";
-import { listMetas, readMeta, sendToHost, setSessionPermissionMode } from "../shared/launch";
+import { readMeta, sendToHost, setSessionPermissionMode } from "../shared/launch";
 import { isPermissionMode } from "../shared/permissions";
 import type { SessionMeta } from "../shared/protocol";
 import { REMOTE_COOKIE, type RemoteConfig, type RemoteStatus, baseUrl, parseRemoteConfig, remoteConfigPath, resolveBind, tokenMatches } from "../shared/remote";
@@ -46,13 +46,7 @@ export interface RemoteDeps {
 }
 
 /** A recent project folder for the phone's new-session picker. */
-export interface RemoteProject {
-	path: string;
-	name: string;
-	/** Latest activity of a session there (epoch ms). */
-	lastUsed: number;
-	sessions: number;
-}
+export type RemoteProject = RecentProject;
 
 class HttpError extends Error {
 	constructor(
@@ -463,29 +457,7 @@ export class RemoteServer {
 	}
 
 	private projects(): RemoteProject[] {
-		const byPath = new Map<string, RemoteProject>();
-		const add = (dir: string, at: number) => {
-			const p = byPath.get(dir) ?? { path: dir, name: path.basename(dir) || dir, lastUsed: 0, sessions: 0 };
-			p.lastUsed = Math.max(p.lastUsed, at);
-			p.sessions++;
-			byPath.set(dir, p);
-		};
-		for (const meta of listMetas()) {
-			add(meta.cwd, meta.updatedAt);
-			const root = findProject(meta.cwd).root;
-			if (root !== meta.cwd) add(root, meta.updatedAt);
-		}
-		const isDir = (p: string) => {
-			try {
-				return fs.statSync(p).isDirectory();
-			} catch {
-				return false;
-			}
-		};
-		return [...byPath.values()]
-			.filter(p => isDir(p.path))
-			.sort((a, b) => b.lastUsed - a.lastUsed)
-			.slice(0, 50);
+		return recentProjects();
 	}
 
 	private async snapshot(meta: SessionMeta, limit: number): Promise<RemoteSnapshot> {

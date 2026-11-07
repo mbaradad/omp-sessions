@@ -17,17 +17,22 @@ const builds = [
 	{ ...common, entryPoints: ["src/mobile/main.ts"], outfile: "out/mobile.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/mobile/style.css"], outfile: "out/mobile.css" },
 ];
-/** Phone app files served next to server.js as they are. */
+/** Files used next to the bundles as they are: the phone app the server serves, the agent skill. */
 const copies = [
 	["src/mobile/index.html", "out/mobile.html"],
 	["src/mobile/manifest.webmanifest", "out/manifest.webmanifest"],
 	["media/icon.png", "out/mobile-icon.png"],
 	["media/icon.svg", "out/mobile-icon.svg"],
+	["skills/omp-sessions/SKILL.md", "out/omp-sessions.SKILL.md"],
 ];
 
 fs.rmSync("out", { recursive: true, force: true });
 fs.mkdirSync("out", { recursive: true });
 for (const [from, to] of copies) fs.copyFileSync(from, to);
+// The Hermes plugin (`omp-vs hermes install` copies it into Hermes) with the skill it registers.
+fs.cpSync("integrations/hermes/omp-sessions", "out/hermes-plugin/omp-sessions", { recursive: true, filter: f => !f.includes("__pycache__") });
+fs.mkdirSync("out/hermes-plugin/omp-sessions/skills/omp-sessions", { recursive: true });
+fs.copyFileSync("skills/omp-sessions/SKILL.md", "out/hermes-plugin/omp-sessions/skills/omp-sessions/SKILL.md");
 if (watch) {
 	for (const b of builds) await (await esbuild.context(b)).watch();
 } else {
