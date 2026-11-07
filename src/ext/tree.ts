@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { isOutdated, needsRestore } from "../shared/health";
+import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin";
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
@@ -209,7 +210,9 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const color = effectiveColor(data, m.id);
 		const failed = m.status === "stopped" && !!m.exitCode;
 		if (color && !failed) item.iconPath = new vscode.ThemeIcon(STATUS_SHAPE[m.status], orgThemeColor(color));
-		if (e?.tags?.length) item.description = [item.description, e.tags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" · ");
+		const origin = hermesOrigin(e?.tags);
+		const plainTags = origin ? (e?.tags ?? []).filter(t => !isHermesTag(t, origin)) : (e?.tags ?? []);
+		if (origin || plainTags.length) item.description = [item.description, origin ? originLabel(origin) : "", plainTags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" · ");
 		// Priority badge and label color come from the organize FileDecorationProvider.
 		item.resourceUri = vscode.Uri.from({ scheme: "omp-org", path: `/session/${m.id}` });
 		if (item.tooltip instanceof vscode.MarkdownString) {
@@ -217,14 +220,15 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				e?.priority ? `$(flame) priority: ${e.priority}` : "",
 				e?.groupId ? `$(folder) group: ${groupPath(data, e.groupId)}` : "",
 				e?.lane ? `$(project) lane: ${this.organize.lanes().find(l => l.id === e.lane)?.name ?? e.lane}` : "",
-				e?.tags?.length ? `$(tag) ${e.tags.map(t => `#${t}`).join(" ")}` : "",
+				origin ? `$(comment-discussion) ${origin.card ? `from Hermes kanban card \`${origin.card}\`${origin.board ? ` on board \`${origin.board}\`` : ""} — right-click: Open Hermes Card` : "started from a Hermes chat"}` : "",
+				plainTags.length ? `$(tag) ${plainTags.map(t => `#${t}`).join(" ")}` : "",
 				color ? `$(symbol-color) ${color}${e?.color ? "" : " (from group)"}` : "",
 				e?.pinned ? "$(pinned) pinned" : "",
 				e?.archived ? "$(archive) archived" : "",
 			].filter(Boolean);
 			if (lines.length) item.tooltip.appendMarkdown(`\n\n${lines.join("  \n")}`);
 		}
-		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${e?.groupId ? ".grouped" : ""}`;
+		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
 	}
 
 	/** Session ids shown next to `node` in its container (display order). */

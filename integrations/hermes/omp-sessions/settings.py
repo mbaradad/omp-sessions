@@ -1,7 +1,7 @@
 """Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (read with ctx.get_config,
 written with update_setting).
 
-    omp_vs: /path/to/omp-vs        # default: PATH, then ~/.local/bin/omp-vs
+    omp_vs: /path/to/omp-vs        # default: PATH, then ~/.local/bin/omp-vs (%LOCALAPPDATA%\\omp-vs\\omp-vs.cmd on Windows)
     notify: true                   # tell the Hermes session that started an omp session when it settles
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions

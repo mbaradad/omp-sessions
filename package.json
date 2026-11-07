@@ -926,6 +926,33 @@
 				"command": "omp.hermes.install",
 				"title": "Install Hermes Plugin…",
 				"category": "omp"
+			},
+			{
+				"command": "omp.hermes.openCard",
+				"title": "Open Hermes Card",
+				"category": "omp",
+				"icon": "$(link-external)"
+			},
+			{
+				"command": "omp.hermes.showCard",
+				"title": "Show Hermes Card in Terminal",
+				"category": "omp",
+				"icon": "$(terminal)"
+			},
+			{
+				"command": "omp.hermes.update",
+				"title": "Update Hermes Plugin",
+				"category": "omp"
+			},
+			{
+				"command": "omp.hermes.enable",
+				"title": "Enable Hermes Plugin",
+				"category": "omp"
+			},
+			{
+				"command": "omp.hermes.lane",
+				"title": "Turn Hermes Kanban Lane On or Off",
+				"category": "omp"
 			}
 		],
 		"menus": {
@@ -1413,6 +1440,16 @@
 					"group": "1_session@3"
 				},
 				{
+					"command": "omp.hermes.openCard",
+					"when": "view == omp.sessions && viewItem =~ /\\.hermesCard/",
+					"group": "1_hermes@1"
+				},
+				{
+					"command": "omp.hermes.showCard",
+					"when": "view == omp.sessions && viewItem =~ /\\.hermesCard/",
+					"group": "1_hermes@2"
+				},
+				{
 					"command": "omp.stopSession",
 					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
 					"group": "2_lifecycle@1"
@@ -1552,6 +1589,26 @@
 			"commandPalette": [
 				{
 					"command": "omp.showOmpMissing",
+					"when": "false"
+				},
+				{
+					"command": "omp.hermes.openCard",
+					"when": "false"
+				},
+				{
+					"command": "omp.hermes.showCard",
+					"when": "false"
+				},
+				{
+					"command": "omp.hermes.update",
+					"when": "false"
+				},
+				{
+					"command": "omp.hermes.enable",
+					"when": "false"
+				},
+				{
+					"command": "omp.hermes.lane",
 					"when": "false"
 				},
 				{
@@ -1963,6 +2020,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Mark files changed by omp sessions in the Explorer and show their changed lines (gutter + CodeLens with diff/revert) in editors."
+				},
+				"omp.hermes.dashboardUrl": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Hermes Agent dashboard that **Open Hermes Card** opens (its Kanban page) for sessions started by the Hermes kanban lane. Empty: the dashboard Hermes records as running on the machine omp runs on (any port), else `http://localhost:9119`. In a remote window a `localhost` address is forwarded to your machine."
 				},
 				"omp.chat.toolCardsCollapsed": {
 					"type": "boolean",

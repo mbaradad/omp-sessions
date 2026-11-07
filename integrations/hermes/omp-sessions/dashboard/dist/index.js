@@ -59,7 +59,7 @@
   function ago(t, now = Date.now()) {
     if (!t) return "";
     const s = Math.round((now - ms(t)) / 1e3);
-    if (s < 0) return until(t, now);
+    if (s < -120) return until(t, now);
     if (s < 45) return "just now";
     if (s < 90 * 60) return `${Math.max(1, Math.round(s / 60))}m ago`;
     if (s < 36 * 3600) return `${Math.round(s / 3600)}h ago`;
@@ -116,19 +116,25 @@
   }
   function inline(text, key) {
     const out = [];
-    const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+    const re = /(`[^`]+`)|\*\*(.+?)\*\*|\*([^*\s](?:[^*]*[^*\s])?)\*|(\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
     let last = 0;
     let i = 0;
     for (let m = re.exec(text); m; m = re.exec(text)) {
       if (m.index > last) out.push(text.slice(last, m.index));
       const k = `${key}-${i++}`;
       if (m[1]) out.push(h("code", { key: k }, m[1].slice(1, -1)));
-      else if (m[2]) out.push(h("strong", { key: k }, m[2].slice(2, -2)));
-      else if (m[3] && m[4]) out.push(h("a", { key: k, href: m[4], target: "_blank", rel: "noreferrer noopener" }, m[3].slice(1, m[3].indexOf("]"))));
+      else if (m[2]) out.push(h("strong", { key: k }, ...inline(m[2], k)));
+      else if (m[3]) out.push(h("em", { key: k }, ...inline(m[3], k)));
+      else if (m[4] && m[5]) out.push(h("a", { key: k, href: m[5], target: "_blank", rel: "noreferrer noopener" }, m[4].slice(1, m[4].indexOf("]"))));
       last = m.index + m[0].length;
     }
     if (last < text.length) out.push(text.slice(last));
     return out;
+  }
+  var RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+  var TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  function cells(row) {
+    return row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
   }
   function markdown(text) {
     const lines = text.replace(/\r\n/g, "\n").split("\n");
@@ -147,7 +153,31 @@
         blocks.push(h("pre", { key }, h("code", null, body.join("\n"))));
         continue;
       }
-      const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (RULE.test(line)) {
+        blocks.push(h("hr", { key }));
+        i++;
+        continue;
+      }
+      if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+        const head = cells(line);
+        const rows = [];
+        i += 2;
+        while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+        blocks.push(
+          h(
+            "div",
+            { key, className: "omps-md-table" },
+            h(
+              "table",
+              null,
+              h("thead", null, h("tr", null, ...head.map((c, j) => h("th", { key: j }, ...inline(c, `${key}-h${j}`))))),
+              h("tbody", null, ...rows.map((r, ri) => h("tr", { key: ri }, ...r.map((c, j) => h("td", { key: j }, ...inline(c, `${key}-${ri}-${j}`))))))
+            )
+          )
+        );
+        continue;
+      }
+      const heading = /^(#{1,6})\s+(.*)$/.exec(line);
       if (heading) {
         blocks.push(h(`h${Math.min(6, heading[1].length + 3)}`, { key }, ...inline(heading[2], key)));
         i++;
@@ -175,7 +205,7 @@
         continue;
       }
       const para = [];
-      while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,4}\s|[-*+]\s|\d+[.)]\s|>)/.test(lines[i])) para.push(lines[i++]);
+      while (i < lines.length && lines[i].trim() && !RULE.test(lines[i]) && !/^\s*(```|#{1,6}\s|[-*+]\s|\d+[.)]\s|>)/.test(lines[i])) para.push(lines[i++]);
       if (para.length === 0) para.push(lines[i++]);
       blocks.push(h("p", { key }, ...inline(para.join(" "), key)));
     }
@@ -341,6 +371,9 @@
       p.onRetry ? h(Button, { small: true, label: "Retry", icon: "refresh", onClick: p.onRetry }) : null
     );
   }
+  function Notes(p) {
+    return h("ul", { className: cx("omps-notes", p.className) }, ...p.notes.map((n, i) => h("li", { key: i }, icon("alert", 12), h("span", null, n))));
+  }
   var layers = [];
   function onEscape(e) {
     const top = layers[layers.length - 1];
@@ -372,7 +405,7 @@
     { id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
     { id: "stopped", label: "Stopped", states: ["stopped"], icon: "stop", empty: "No stopped sessions." }
   ];
-  var STOPPED_SHOWN = 20;
+  var SHOWN = { done: 24, stopped: 20 };
   function order(col, list) {
     const updated = (s) => s.updatedAt ?? 0;
     const sorted = [...list];
@@ -416,7 +449,7 @@
         "div",
         { className: "omps-card-top" },
         h("span", { className: cx("omps-dot", `tone-${s.state}`), "aria-hidden": true }),
-        h("span", { className: "omps-card-title" }, s.title),
+        h("span", { className: "omps-card-title", title: s.title }, s.title),
         s.mode ? h("span", { className: cx("omps-mode", `mode-${s.mode}`), title: `${MODE_INFO[s.mode].label}: ${MODE_INFO[s.mode].detail}` }, MODE_INFO[s.mode].label) : null
       ),
       h(
@@ -456,7 +489,7 @@
     );
   }
   function SessionBoard(p) {
-    const [allStopped, setAllStopped] = useState(false);
+    const [expanded, setExpanded] = useState({});
     return h(
       "div",
       { className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
@@ -465,10 +498,11 @@
           col.id,
           p.sessions.filter((s) => col.states.includes(s.state))
         );
-        const shown = col.id === "stopped" && !allStopped ? list.slice(0, STOPPED_SHOWN) : list;
+        const cap = SHOWN[col.id];
+        const shown = cap !== void 0 && !expanded[col.id] && list.length > cap ? list.filter((s, i) => i < cap || s.id === p.selected) : list;
         return h(
           "section",
-          { key: col.id, className: cx("omps-col", `col-${col.id}`), role: "listitem", "aria-label": `${col.label}: ${list.length}` },
+          { key: col.id, className: cx("omps-col", `col-${col.id}`, list.length === 0 && "is-empty"), role: "listitem", "aria-label": `${col.label}: ${list.length}` },
           h(
             "header",
             { className: "omps-col-head" },
@@ -480,7 +514,7 @@
             "div",
             { className: "omps-col-body" },
             shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
-            list.length > shown.length ? h("button", { type: "button", className: "omps-more", onClick: () => setAllStopped(true) }, `Show ${list.length - shown.length} more`) : null
+            list.length > shown.length ? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`) : null
           )
         );
       })
@@ -617,13 +651,16 @@
       }
     };
     if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
+    const notes = p.lane?.notes ?? [];
+    const tick = p.lane?.dispatcher;
+    const boards = [...view.boards].sort((a, b) => Number(b.lane) - Number(a.lane));
     return h(
       "div",
       { className: "omps-boards" },
       h(
         "div",
-        { className: cx("omps-lane-banner", view.enabled && "is-on") },
-        h("span", { className: "omps-lane-banner-icon" }, icon("lane", 18)),
+        { className: cx("omps-lane-banner", view.enabled && "is-on", notes.length > 0 && "is-warn") },
+        h("span", { className: "omps-lane-banner-icon" }, icon(notes.length ? "alert" : "lane", 18)),
         h(
           "div",
           { className: "omps-lane-banner-text" },
@@ -631,17 +668,19 @@
           h(
             "div",
             { className: "omps-muted" },
-            view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under omp's concurrency limit). Settings are this profile's (${view.profile}).`
-          )
+            view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under omp's concurrency limit). Settings are this profile's (${view.profile}).`,
+            tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null
+          ),
+          notes.length ? h(Notes, { notes }) : null
         ),
         h(Switch, { checked: view.enabled, label: "Kanban lane", busy: busy === "lane", onChange: (on) => void post("lane", "/lane", { enabled: on }) })
       ),
       error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
       actionError ? h(ErrorBox, { message: actionError }) : null,
-      view.boards.length ? h(
+      boards.length ? h(
         "div",
         { className: "omps-bgrid" },
-        ...view.boards.map((b) => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession }))
+        ...boards.map((b) => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession }))
       ) : h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." })
     );
   }
@@ -1170,14 +1209,24 @@
         );
       }
       const lane = o.lane;
+      const notes = lane.notes ?? [];
+      const tick = lane.dispatcher;
       items.push(
         h(
           "button",
-          { key: "lane", type: "button", className: "omps-strip-item omps-strip-btn", onClick: p.onBoards, title: "Kanban lane settings" },
-          h("span", { className: cx("omps-led", lane.enabled ? "is-ok" : "is-off") }),
+          {
+            key: "lane",
+            type: "button",
+            className: cx("omps-strip-item omps-strip-btn", notes.length > 0 && "is-warn"),
+            onClick: p.onBoards,
+            title: notes.length ? notes.join("\n") : tick ? `Kanban dispatcher (profile ${tick.profile}) last ran the lane at ${new Date(tick.at * 1e3).toLocaleTimeString()}` : "Kanban lane settings"
+          },
+          h("span", { className: cx("omps-led", notes.length ? "is-warn" : lane.enabled ? "is-ok" : "is-off") }),
           h("strong", null, "Lane"),
           lane.enabled ? ` on · ${lane.boards === "all" ? "all boards" : `${lane.boards.length} board${lane.boards.length === 1 ? "" : "s"}`}` : " off",
-          lane.linked ? h("span", { className: "omps-muted" }, ` · ${lane.linked} linked card${lane.linked === 1 ? "" : "s"}`) : null
+          lane.enabled && tick ? h("span", { className: "omps-muted" }, ` · last pass ${ago(tick.at, p.now)}`) : null,
+          lane.linked ? h("span", { className: "omps-muted" }, ` · ${lane.linked} linked card${lane.linked === 1 ? "" : "s"}`) : null,
+          notes.length ? icon("alert", 12) : null
         )
       );
     }
@@ -1190,7 +1239,8 @@
       { className: "omps-strip", role: "status", "aria-live": "polite" },
       ...items,
       h("span", { className: "omps-grow" }),
-      p.refreshedAt ? h("span", { className: "omps-strip-time", title: new Date(p.refreshedAt).toLocaleTimeString() }, icon("refresh", 11), ago(p.refreshedAt, p.now)) : null
+      p.refreshedAt ? h("span", { className: "omps-strip-time", title: new Date(p.refreshedAt).toLocaleTimeString() }, icon("refresh", 11), ago(p.refreshedAt, p.now)) : null,
+      o?.lane.notes?.length ? h(Notes, { notes: o.lane.notes, className: "omps-strip-notes" }) : null
     );
   }
   function Select(p) {
@@ -1280,7 +1330,7 @@
       const notInstalled = overview && !overview.ompVs.found;
       let main;
       if (view === "boards") {
-        main = h(BoardsPanel, { host, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
+        main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
       } else if (notInstalled) {
         main = h(Empty, { icon: "terminal", title: "omp-vs is not installed", body: overview.ompVs.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
       } else if (!sessions) {
@@ -1340,6 +1390,13 @@
           h(Button, { kind: "brand", icon: "plus", label: "New session", title: "New session (N)", disabled: Boolean(notInstalled), onClick: () => setCreating(true) })
         ),
         h(StatusStrip, { o: overview, error: overviewError, sessions, now, refreshedAt, onBoards: () => setView("boards") }),
+        // Desktop keeps its own copy of this page; after a plugin update it can lag the backend it talks to.
+        host.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== "0.6.0" ? h(Notes, {
+          className: "omps-page-note",
+          notes: [
+            `This page is omp Sessions ${"0.6.0"}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → omp Sessions: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`
+          ]
+        }) : null,
         h("div", { className: "omps-body" }, main),
         selected && view === "sessions" ? h(DetailPanel, { key: selected, host, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
         creating ? h(NewSessionDialog, { host, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null

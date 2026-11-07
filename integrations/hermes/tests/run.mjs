@@ -36,7 +36,9 @@ if (!python) {
 	console.log("test:hermes skipped: Hermes Agent is not installed (no ~/.hermes/installs/*/facts.json; set HERMES_PYTHON to its Python)");
 	process.exit(0);
 }
-const probe = spawnSync(python, ["-I", "-B", "-c", "import hermes_cli.kanban_db, hermes_cli.plugins"], { encoding: "utf8", env: { ...process.env, HERMES_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "omp-hermes-probe-")) } });
+const probeHome = fs.mkdtempSync(path.join(os.tmpdir(), "omp-hermes-probe-"));
+const probe = spawnSync(python, ["-I", "-B", "-c", "import hermes_cli.kanban_db, hermes_cli.plugins"], { encoding: "utf8", env: { ...process.env, HERMES_HOME: probeHome } });
+fs.rmSync(probeHome, { recursive: true, force: true });
 if (probe.status !== 0) {
 	console.log(`test:hermes skipped: ${python} cannot import Hermes (${(probe.stderr || "").trim().split("\n").pop()})`);
 	process.exit(0);

@@ -549,7 +549,7 @@
           <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable</span></code>
           <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
         </div>
-        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em>. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Full guide</a>.</p>
+        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, chats and tasks work too, and <code>/omp take &lt;card&gt;</code> hands a card to omp. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes Desktop · omp Sessions</span></div>
@@ -565,7 +565,7 @@
     <header class="shead">
       <p class="eyebrow">How it fits together</p>
       <h2 id="fit-title">One server. <span class="grad">Every way in.</span></h2>
-      <p class="sub">One <code>omp-vs</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session.</p>
+      <p class="sub">One <code>omp-vs</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
     </header>
     <figure class="fit reveal">
       <figcaption class="sr-only">Five clients (VS Code, the omp-vs terminal command, the phone app and HTTP API, Hermes Agent, and other agents through the omp-sessions skill) all talk to one omp-vs server per machine. The server starts and schedules sessions; each session runs in its own detached host process with omp.</figcaption>

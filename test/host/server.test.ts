@@ -70,9 +70,11 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	t.after(async () => {
 		viewer?.close();
 		server.kill("SIGTERM");
-		for (const id of ["low", "urgent", "crashed"]) seen(id);
+		const sockets = ["low", "urgent", "crashed"].flatMap(id => seen(id)?.socket ?? []);
 		for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 		await until(() => [...pids].every(p => !alive(p)) && server.exitCode !== null, "processes to exit", 5000).catch(() => {});
+		// Killed hosts leave their sockets, possibly in the short tmp fallback outside `home`.
+		for (const s of sockets) fs.rmSync(s, { force: true });
 		fs.rmSync(home, { recursive: true, force: true });
 	});
 
@@ -115,14 +117,19 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	]);
 });
 
-test("host: meta.viewers counts people, not the omp-vs server; prompts stamp userActiveAt", async t => {
+test("host: meta.viewers counts people, not the omp-vs server or omp-vs show; prompts stamp userActiveAt", async t => {
 	const h = await launch(t);
+	await sleep(300);
+	const idleSince = h.meta().updatedAt;
 	const { client } = await h.connect("panel");
 	await until(() => h.meta().viewers === 1, "viewer counted");
 	await h.connect("omp-vs-server");
-	await sleep(200);
+	await h.connect("omp-vs-show");
+	await sleep(300);
 	assert.equal(h.meta().viewers, 1);
 	assert.equal(h.meta().userActiveAt, undefined);
+	// Someone looking is not activity: lists sorted by it must not reorder when a session is opened.
+	assert.equal(h.meta().updatedAt, idleSince);
 	await client.prompt("echo hi");
 	await until(() => h.meta().userActiveAt, "prompt marks user activity");
 	await client.close();

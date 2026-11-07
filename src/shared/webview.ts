@@ -1,5 +1,6 @@
 // Extension <-> webview postMessage contract.
 import type { FileDiff } from "./diff";
+import type { HermesOrigin } from "./hermes-origin";
 import type { PermissionMode } from "./permissions";
 import type { FileChange, OmpFrame, QueueOp, RunningTool, SessionMeta, TaskQueue, UiRequest } from "./protocol";
 
@@ -88,6 +89,8 @@ export type ToWebview =
 	| { type: "chatConfig"; toolCardsCollapsed: boolean }
 	/** Checkpoint redo stack of this chat (non-empty after restoring a checkpoint). */
 	| { type: "checkpoints"; redo: number }
+	/** Where the session came from in Hermes (its tags); null for sessions Hermes didn't start. */
+	| { type: "origin"; hermes: HermesOrigin | null }
 	/** Empty the composer when it still holds exactly `text` (a redo makes the restored prompt stale). */
 	| { type: "clearComposerIf"; text: string }
 	| { type: "error"; message: string };
@@ -123,7 +126,9 @@ export type PanelCommand =
 	| "voiceStart"
 	| "voiceStop"
 	| "voiceMute"
-	| "openTui";
+	| "openTui"
+	| "openHermesCard"
+	| "showHermesCard";
 
 export type FromWebview =
 	| { type: "ready" }

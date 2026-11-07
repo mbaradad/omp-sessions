@@ -120,6 +120,14 @@
 .omps-host-desktop .omps-strip {
   margin: 10px 18px 0;
 }
+.omps-host-desktop .omps-page-note {
+  flex: none;
+  margin: 8px 18px 0;
+  padding: 7px 12px;
+  border-radius: var(--o-radius);
+  border: 1px solid color-mix(in srgb, var(--o-yellow) 40%, var(--o-border));
+  background: color-mix(in srgb, var(--o-yellow) 7%, transparent);
+}
 .omps-host-desktop .omps-body {
   flex: 1;
   min-height: 0;
@@ -251,6 +259,17 @@
 }
 .omps-btn[aria-pressed=true]:not(.omps-btn-primary) {
   border-color: var(--o-accent);
+}
+.omps-host-desktop .omps-btn-brand {
+  background: var(--o-accent);
+  color: var(--o-accent-fg);
+  box-shadow: none;
+  text-shadow: none;
+}
+.omps-host-desktop .omps-btn-brand:hover:not(:disabled) {
+  filter: none;
+  background: color-mix(in srgb, var(--o-accent) 86%, var(--o-fg));
+  box-shadow: none;
 }
 .omps-spinner {
   width: 13px;
@@ -392,6 +411,35 @@
   color: var(--o-faint);
   font-size: 11.5px;
 }
+.omps-strip-btn.is-warn > .omps-icon {
+  color: var(--o-yellow);
+}
+.omps-notes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--o-yellow) 72%, var(--o-fg));
+}
+.omps-notes li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.omps-notes .omps-icon {
+  margin-top: 2px;
+  color: var(--o-yellow);
+}
+.omps-strip-notes {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  padding-top: 7px;
+  border-top: 1px dashed var(--o-border);
+  white-space: normal;
+}
 .omps-led {
   width: 8px;
   height: 8px;
@@ -502,20 +550,22 @@
   margin: -4px 0 10px;
 }
 .omps-board {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(232px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
-  align-items: start;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  align-items: flex-start;
 }
 .omps-col {
+  flex: 1 1 232px;
   min-width: 0;
   border-radius: calc(var(--o-radius) + 2px);
   border: 1px solid var(--o-border);
   background: var(--o-col);
   display: flex;
   flex-direction: column;
+}
+.omps-col.is-empty {
+  flex-basis: 168px;
 }
 .omps-col-head {
   display: flex;
@@ -1303,6 +1353,48 @@
 .omps-md a {
   color: var(--o-accent);
 }
+.omps-md em {
+  font-style: italic;
+}
+.omps-md hr {
+  border: 0;
+  border-top: 1px solid var(--o-border);
+  margin: 14px 0;
+}
+.omps-md-table {
+  overflow-x: auto;
+  margin: 0 0 10px;
+  border: 1px solid var(--o-border);
+  border-radius: 8px;
+}
+.omps-md table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.omps-md th,
+.omps-md td {
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--o-border);
+}
+.omps-md th {
+  font-weight: 600;
+  color: var(--o-fg);
+  background: color-mix(in srgb, var(--o-fg) 4%, transparent);
+  white-space: nowrap;
+}
+.omps-md td {
+  overflow-wrap: normal;
+}
+.omps-md td code {
+  white-space: nowrap;
+}
+.omps-md tr:last-child td {
+  border-bottom: 0;
+}
 .omps-exit {
   margin-top: 8px;
   font-size: 12px;
@@ -1510,6 +1602,18 @@ select.omps-input optgroup {
 .omps-lane-banner.is-on .omps-lane-banner-icon {
   color: var(--o-green);
   background: color-mix(in srgb, var(--o-green) 14%, transparent);
+}
+.omps-lane-banner.is-warn {
+  border-color: color-mix(in srgb, var(--o-yellow) 45%, var(--o-border));
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--o-yellow) 9%, transparent),
+      var(--o-card) 60%);
+}
+.omps-lane-banner.is-warn .omps-lane-banner-icon {
+  color: var(--o-yellow);
+  background: color-mix(in srgb, var(--o-yellow) 14%, transparent);
 }
 .omps-lane-banner-text {
   flex: 1;

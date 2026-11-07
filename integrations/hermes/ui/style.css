@@ -83,6 +83,8 @@
 .omps-host-desktop { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--o-bg); }
 .omps-host-desktop .omps-head { padding: 14px 18px 0; }
 .omps-host-desktop .omps-strip { margin: 10px 18px 0; }
+/* The stale-page note sits between the strip and the board (Desktop only). */
+.omps-host-desktop .omps-page-note { flex: none; margin: 8px 18px 0; padding: 7px 12px; border-radius: var(--o-radius); border: 1px solid color-mix(in srgb, var(--o-yellow) 40%, var(--o-border)); background: color-mix(in srgb, var(--o-yellow) 7%, transparent); }
 .omps-host-desktop .omps-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 18px 24px; }
 .omps-host-dashboard .omps-body { padding-top: 12px; }
 
@@ -119,6 +121,9 @@
 .omps-btn-brand { background: linear-gradient(100deg, #c42a92 0%, #7c3aed 100%); border: 0; color: #fff; box-shadow: 0 8px 24px -12px rgba(155, 77, 255, 0.8); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2); }
 .omps-btn-brand:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 10px 28px -10px rgba(155, 77, 255, 0.9); }
 .omps-btn[aria-pressed="true"]:not(.omps-btn-primary) { border-color: var(--o-accent); }
+/* Desktop's own pages use one solid accent for their primary action; the brand gradient stays in the dashboard. */
+.omps-host-desktop .omps-btn-brand { background: var(--o-accent); color: var(--o-accent-fg); box-shadow: none; text-shadow: none; }
+.omps-host-desktop .omps-btn-brand:hover:not(:disabled) { filter: none; background: color-mix(in srgb, var(--o-accent) 86%, var(--o-fg)); box-shadow: none; }
 .omps-spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; display: inline-block; animation: omps-spin 0.8s linear infinite; flex: none; }
 @keyframes omps-spin { to { transform: rotate(360deg); } }
 
@@ -150,6 +155,11 @@
 .omps-strip-btn:hover { background: var(--o-hover); }
 .omps-strip-need { color: var(--o-pink); font-weight: 600; }
 .omps-strip-time { display: inline-flex; align-items: center; gap: 4px; color: var(--o-faint); font-size: 11.5px; }
+.omps-strip-btn.is-warn > .omps-icon { color: var(--o-yellow); }
+.omps-notes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: color-mix(in srgb, var(--o-yellow) 72%, var(--o-fg)); }
+.omps-notes li { display: flex; align-items: flex-start; gap: 6px; }
+.omps-notes .omps-icon { margin-top: 2px; color: var(--o-yellow); }
+.omps-strip-notes { flex-basis: 100%; margin: 2px 0 0; padding-top: 7px; border-top: 1px dashed var(--o-border); white-space: normal; }
 .omps-led { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--o-faint); }
 .omps-led.is-ok { background: var(--o-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--o-green) 22%, transparent); }
 .omps-led.is-warn { background: var(--o-yellow); box-shadow: 0 0 0 3px color-mix(in srgb, var(--o-yellow) 22%, transparent); }
@@ -173,8 +183,10 @@
 .omps-stale { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--o-yellow); margin: -4px 0 10px; }
 
 /* ---------- board ---------- */
-.omps-board { display: grid; grid-template-columns: repeat(5, minmax(232px, 1fr)); gap: 12px; align-items: start; overflow-x: auto; padding-bottom: 4px; }
-.omps-col { min-width: 0; border-radius: calc(var(--o-radius) + 2px); border: 1px solid var(--o-border); background: var(--o-col); display: flex; flex-direction: column; }
+/* Columns wrap instead of scrolling sideways in a narrow pane; empty ones take less room. */
+.omps-board { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.omps-col { flex: 1 1 232px; min-width: 0; border-radius: calc(var(--o-radius) + 2px); border: 1px solid var(--o-border); background: var(--o-col); display: flex; flex-direction: column; }
+.omps-col.is-empty { flex-basis: 168px; }
 .omps-col-head { display: flex; align-items: center; gap: 7px; padding: 10px 12px 9px; border-bottom: 1px solid var(--o-border); font-weight: 600; font-size: 12.5px; position: relative; }
 .omps-col-head::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--tone, var(--o-border)); opacity: 0.85; }
 .col-needs { --tone: var(--t-needs_input); }
@@ -325,6 +337,16 @@
 .omps-md pre code { padding: 0 !important; background: transparent !important; }
 .omps-md blockquote { margin: 0 0 9px; padding-left: 10px; border-left: 3px solid var(--o-border-strong); color: var(--o-fg2); }
 .omps-md a { color: var(--o-accent); }
+.omps-md em { font-style: italic; }
+.omps-md hr { border: 0; border-top: 1px solid var(--o-border); margin: 14px 0; }
+.omps-md-table { overflow-x: auto; margin: 0 0 10px; border: 1px solid var(--o-border); border-radius: 8px; }
+.omps-md table { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.45; }
+.omps-md th, .omps-md td { padding: 5px 9px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--o-border); }
+.omps-md th { font-weight: 600; color: var(--o-fg); background: color-mix(in srgb, var(--o-fg) 4%, transparent); white-space: nowrap; }
+/* Cells break between words (the table scrolls sideways when it must), never inside a name or a date. */
+.omps-md td { overflow-wrap: normal; }
+.omps-md td code { white-space: nowrap; }
+.omps-md tr:last-child td { border-bottom: 0; }
 .omps-exit { margin-top: 8px; font-size: 12px; color: var(--o-muted); }
 .omps-followup { display: flex; flex-direction: column; gap: 8px; }
 .omps-followup .omps-input { resize: vertical; min-height: 54px; }
@@ -365,6 +387,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-lane-banner.is-on { border-color: color-mix(in srgb, var(--o-green) 40%, var(--o-border)); background: linear-gradient(100deg, color-mix(in srgb, var(--o-green) 9%, transparent), var(--o-card) 60%); }
 .omps-lane-banner-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--o-fg) 7%, transparent); color: var(--o-fg2); flex: none; }
 .omps-lane-banner.is-on .omps-lane-banner-icon { color: var(--o-green); background: color-mix(in srgb, var(--o-green) 14%, transparent); }
+.omps-lane-banner.is-warn { border-color: color-mix(in srgb, var(--o-yellow) 45%, var(--o-border)); background: linear-gradient(100deg, color-mix(in srgb, var(--o-yellow) 9%, transparent), var(--o-card) 60%); }
+.omps-lane-banner.is-warn .omps-lane-banner-icon { color: var(--o-yellow); background: color-mix(in srgb, var(--o-yellow) 14%, transparent); }
 .omps-lane-banner-text { flex: 1; min-width: 0; }
 .omps-lane-banner-title { font-weight: 650; font-size: 14px; margin-bottom: 2px; }
 .omps-bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; align-items: start; }

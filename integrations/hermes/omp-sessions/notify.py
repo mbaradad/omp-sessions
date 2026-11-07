@@ -118,7 +118,11 @@ class Notifier:
                 continue
             if report.get("state") not in SETTLED or signature(report) == w.get("last"):
                 continue
-            if not self.inject(note_text(report), session_key=w["session_key"]):
+            ok = self.inject(note_text(report), session_key=w["session_key"])
+            # What `hermes omp status` reports about notifications (no public way to read the
+            # allow_gateway_injection consent; a refused injection is the observable symptom).
+            self.store.set("last_inject", {"at": now, "ok": ok, "session": sid})
+            if not ok:
                 continue
             delivered += 1
             updates[sid] = {**w, "last": signature(report)} if report.get("state") == "needs_input" else None

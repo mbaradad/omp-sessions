@@ -67,7 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -102,7 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;

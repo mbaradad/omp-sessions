@@ -165,8 +165,9 @@ function modelLabel(model: unknown): string | undefined {
 }
 
 let metaTimer: NodeJS.Timeout | undefined;
-function saveMeta(now = false): void {
-	meta.updatedAt = Date.now();
+/** `activity: false` for presence-only changes (who is attached): they must not look like the session did something. */
+function saveMeta(now = false, activity = true): void {
+	if (activity) meta.updatedAt = Date.now();
 	const write = () => {
 		metaTimer = undefined;
 		const tmp = `${metaPath}.${process.pid}.tmp`;
@@ -186,8 +187,8 @@ function saveMeta(now = false): void {
 	metaTimer ??= setTimeout(write, 150);
 }
 
-function publishMeta(): void {
-	saveMeta();
+function publishMeta(activity = true): void {
+	saveMeta(false, activity);
 	broadcast({ t: "meta", meta });
 }
 
@@ -800,12 +801,12 @@ function titleFromPrompt(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line;
 }
 
-/** Clients that are people looking at the session (chat panels, `omp-vs attach`), not the omp-vs server. */
+/** Clients that are people looking at the session (chat panels, `omp-vs attach`), not the omp-vs server or a one-shot `omp-vs show`. */
 function updateViewers(): void {
-	const viewers = clients.filter(c => c.helloed && !c.name.startsWith("omp-vs-server")).length;
+	const viewers = clients.filter(c => c.helloed && !c.name.startsWith("omp-vs-server") && c.name !== "omp-vs-show").length;
 	if ((meta.viewers ?? 0) === viewers) return;
 	meta.viewers = viewers;
-	publishMeta();
+	publishMeta(false);
 }
 
 function markUserActive(): void {
@@ -923,9 +924,19 @@ server.on("error", err => {
 	log("socket server error", String(err));
 	if (!finished) void stop("socket unavailable");
 });
+/** Inode of the socket this host bound; a resumed successor binds a new file at the same path. */
+let socketIno: number | undefined;
+function ownsSocket(): boolean {
+	try {
+		return fs.statSync(socketPath).ino === socketIno;
+	} catch {
+		return false;
+	}
+}
 server.listen(socketPath, () => {
 	if (!IS_WINDOWS) {
 		try {
+			socketIno = fs.statSync(socketPath).ino;
 			fs.chmodSync(socketPath, 0o600);
 		} catch (err) {
 			log("chmod failed", String(err));
@@ -959,14 +970,9 @@ function finish(code: number | null, reason: string): void {
 	broadcast({ t: "meta", meta });
 	setTimeout(() => {
 		for (const c of clients) c.sock.end();
-		server.close();
-		if (!IS_WINDOWS) {
-			try {
-				fs.unlinkSync(socketPath);
-			} catch {
-				/* gone */
-			}
-		}
+		// Closing a listening Unix socket unlinks its path (libuv). A resume may already have a new
+		// host listening there once meta.json says "stopped", so only close while the file is ours.
+		if (IS_WINDOWS || ownsSocket()) server.close();
 		logStream.end(() => process.exit(0));
 		// The log may never flush (its folder is gone, disk full): don't outlive the session regardless.
 		setTimeout(() => process.exit(0), 2000);

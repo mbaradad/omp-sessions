@@ -11,15 +11,15 @@ import { type HostLauncher, findOmp, listMetas, readHostVersion, readLauncherSet
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import { ORG_COLORS, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
 import { DIALOG_METHODS, type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, type UiRequest, stateRoot } from "../shared/protocol";
-import { type RemoteStatus, isRemoteBind, newRemoteToken, pairingUrl, readRemoteConfig, updateRemoteConfig } from "../shared/remote";
+import { type RemoteStatus, isRemoteBind, newRemoteToken, normalizePublicUrl, pairingUrl, readRemoteConfig, updateRemoteConfig } from "../shared/remote";
 import { qrHalfBlocks } from "../shared/remote-qr";
 import { recentProjects } from "../shared/projects";
 import { transcriptMessages } from "../shared/remote-snapshot";
-import { ServerClient, compareVersions, ensureServer, readServerLog, stopServer } from "../shared/server-client";
+import { LAUNCHD_LABEL, ServerClient, compareVersions, ensureServer, readServerLog, serviceUnitPaths, serviceUnitText, stopServer } from "../shared/server-client";
 import { COLUMNS, type OpName, type ServerOps, type SessionInfo, serverLogPath, serverSocketPath } from "../shared/server-protocol";
 import { type AgentState, SETTLED_STATES, type SessionReport, agentState, dialogAnswer, sessionReport } from "../shared/session-report";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
-import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, enablePlugin, findHermes, installPlugin, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin } from "../shared/hermes-plugin";
+import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, findHermes, hermesLookup, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin, updatePlugin } from "../shared/hermes-plugin";
 import { type Args, UsageError, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
 import { renderMessage } from "./render";
@@ -249,6 +249,9 @@ async function cmdNew(args: Args): Promise<number> {
 		group: value(args, "group"),
 		notes,
 	});
+	// A started session's meta is written by its host as it comes up: wait for it, so the title is known and
+	// the next command (`omp-vs wait .`, `show .`) finds the session.
+	if (!task && res.started && !(await waitForHost(res.id))) throw new Error(`session ${shortId(res.id)} did not start (omp-vs tail ${shortId(res.id)})`);
 	const meta = readMeta(res.id);
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ id: res.id, started: res.started, title: meta?.title ?? "", cwd, ...(startAt ? { startAt } : {}) })}\n`);
@@ -263,9 +266,7 @@ async function cmdNew(args: Args): Promise<number> {
 	process.stdout.write(`${c.green("started")} ${label}\n`);
 	const wantAttach = flag(args, "attach") || (!prompt && !flag(args, "detach") && process.stdin.isTTY && process.stdout.isTTY);
 	if (!wantAttach) return 0;
-	if (!(await waitForHost(res.id))) throw new Error(`session ${shortId(res.id)} did not start (omp-vs tail ${shortId(res.id)})`);
-	const live = readMeta(res.id);
-	return live ? attach(live, { history: 20, readOnly: false }) : 1;
+	return meta ? attach(meta, { history: 20, readOnly: false }) : 1;
 }
 
 async function cmdSend(args: Args): Promise<number> {
@@ -503,18 +504,25 @@ function cmdHermes(args: Args): number {
 		case "install": {
 			for (const t of targets) {
 				const dir = pluginTarget(t.home);
-				const outcome = installPlugin(source, dir, flag(args, "force"));
-				const mark = outcome === "skipped" ? c.yellow(outcome) : outcome === "unchanged" ? c.dim(outcome) : c.green(outcome);
-				process.stdout.write(`${pad(mark, 10)} ${several || t.profile ? `${c.bold(t.label)} ` : ""}${dir}\n`);
-				if (outcome === "skipped") {
+				const u = updatePlugin(source, t, hermes, { force: flag(args, "force") });
+				const mark = u.outcome === "skipped" || u.outcome === "busy" ? c.yellow(u.outcome) : u.outcome === "unchanged" ? c.dim(u.outcome) : c.green(u.outcome);
+				process.stdout.write(`${pad(mark, 10)} ${several || t.label !== "default" ? `${c.bold(t.label)} ` : ""}${dir}\n`);
+				if (u.outcome === "skipped") {
 					process.stdout.write(c.dim("a plugin folder omp-vs didn't write is in the way (--force replaces it)\n"));
 					failed = true;
 					continue;
 				}
-				if (!hermes) continue;
-				const res = enablePlugin(hermes, t);
-				if (res.output) process.stdout.write(`${res.output}\n`);
-				if (!res.ok) failed = true;
+				if (u.outcome === "busy") {
+					process.stdout.write(c.dim("another omp-vs or VS Code window is installing the plugin there right now; run it again in a moment\n"));
+					failed = true;
+					continue;
+				}
+				const run = u.reload ?? u.enable;
+				if (run?.output) process.stdout.write(`${run.output}\n`);
+				if (u.reload?.ok) process.stdout.write(`${c.green("reloaded in the running gateway")} ${c.dim("(hooks and commands now, tools in new Hermes sessions)")}\n`);
+				if (u.dashboardChanged) process.stdout.write(c.dim("the dashboard's omp Sessions page backend changed: it loads when the dashboard restarts\n"));
+				if (u.leftDisabled) process.stdout.write(`${c.red(`the plugin was left DISABLED in profile ${t.label}`)} (enabling it again failed twice): run ${c.bold(`hermes -p ${t.label} plugins enable omp-sessions`)}\n`);
+				if (run && !run.ok) failed = true;
 			}
 			if (!hermes) {
 				process.stdout.write(`${c.yellow("hermes not found")}: enable it with ${c.bold("hermes [-p <profile>] plugins enable omp-sessions")}\n`);
@@ -535,12 +543,12 @@ function cmdHermes(args: Args): number {
 			return 0;
 		}
 		case "status": {
-			const reports = targets.map(t => pluginReport(source, t, hermes));
+			const reports = targets.map(t => pluginReport(source, t));
 			if (flag(args, "json")) {
 				process.stdout.write(`${JSON.stringify({ hermes: hermes ?? null, profiles: reports })}\n`);
 				return 0;
 			}
-			process.stdout.write(`hermes: ${hermes ?? c.yellow("not found (PATH, ~/.local/bin/hermes)")}\n`);
+			process.stdout.write(`hermes: ${hermes ?? c.yellow(`not found (${hermesLookup()})`)}\n`);
 			for (const r of reports) process.stdout.write(`${reportLine(r)}\n`);
 			const lanes = reports.filter(r => r.lane).map(r => r.label);
 			if (lanes.length > 1) process.stdout.write(c.yellow(`the kanban lane is on in ${lanes.join(", ")}: they take turns (one machine-wide lock), but keep it on in one profile so one set of lane settings applies\n`));
@@ -785,13 +793,6 @@ async function cmdSched(args: Args): Promise<void> {
 
 // ---------- server management ----------
 
-function unitPaths(): { systemd: string; launchd: string } {
-	return {
-		systemd: path.join(os.homedir(), ".config", "systemd", "user", "omp-vs.service"),
-		launchd: path.join(os.homedir(), "Library", "LaunchAgents", "dev.omp.vs-server.plist"),
-	};
-}
-
 function run(cmd: string, argv: string[]): boolean {
 	const r = spawnSync(cmd, argv, { stdio: "inherit" });
 	return r.status === 0;
@@ -849,7 +850,7 @@ async function cmdServer(args: Args): Promise<number> {
 			return 0;
 		}
 		case "install":
-			return installService();
+			return await installService();
 		case "uninstall":
 			return uninstallService();
 		default:
@@ -863,8 +864,9 @@ function printRemote(s: RemoteStatus): void {
 	const state = !s.enabled ? c.dim("off") : s.listening ? c.green("on") : c.red("not listening");
 	const rows = [`remote  ${state}  ${c.dim(`bind ${s.bind} · port ${s.listening?.port ?? s.port}`)}`];
 	if (s.url) rows.push(`url     ${s.url}`);
+	if (s.localUrl) rows.push(`local   ${s.localUrl} ${c.dim("(the proxy in front forwards here)")}`);
 	if (s.error) rows.push(`error   ${c.red(s.error)}`);
-	if (s.listening && s.bind === "lan") rows.push(c.yellow("plain HTTP: anyone on this network can see the traffic; prefer --bind tailscale"));
+	if (s.listening && s.bind === "lan" && !s.url?.startsWith("https:")) rows.push(c.yellow("plain HTTP: anyone on this network can see the traffic; prefer --bind tailscale"));
 	if (s.url) rows.push(c.dim("pair a phone: omp-vs remote qr (scan it, or open the pairing URL on the phone)"));
 	process.stdout.write(`${rows.join("\n")}\n`);
 }
@@ -879,7 +881,15 @@ async function cmdRemote(args: Args): Promise<number> {
 			const portText = value(args, "port");
 			const port = portText === undefined ? undefined : Number(portText);
 			if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new UsageError("--port must be 1-65535");
-			updateRemoteConfig({ enabled: true, ...(bind !== undefined && isRemoteBind(bind) ? { bind } : {}), ...(port !== undefined ? { port } : {}) });
+			const urlText = value(args, "url");
+			const publicUrl = urlText === undefined || urlText === "none" ? undefined : normalizePublicUrl(urlText);
+			if (urlText !== undefined && urlText !== "none" && !publicUrl) throw new UsageError("--url must be an http(s) address without a path or query, e.g. https://box.tailnet.ts.net (or none)");
+			updateRemoteConfig({
+				enabled: true,
+				...(bind !== undefined && isRemoteBind(bind) ? { bind } : {}),
+				...(port !== undefined ? { port } : {}),
+				...(urlText !== undefined ? { publicUrl } : {}),
+			});
 			const s = await apply();
 			printRemote(s);
 			return s.listening ? 0 : 1;
@@ -913,66 +923,34 @@ async function cmdRemote(args: Args): Promise<number> {
 	}
 }
 
-function installService(): number {
+async function installService(): Promise<number> {
 	const env = [`ELECTRON_RUN_AS_NODE=1`, ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${process.env.PATH ?? ""}`];
-	const { systemd, launchd } = unitPaths();
+	const { systemd, launchd } = serviceUnitPaths();
 	if (process.platform === "linux") {
 		fs.mkdirSync(path.dirname(systemd), { recursive: true });
-		fs.writeFileSync(
-			systemd,
-			[
-				"[Unit]",
-				"Description=omp-vs server (omp Sessions: queued session launcher)",
-				"",
-				"[Service]",
-				`ExecStart=${JSON.stringify(process.execPath)} ${JSON.stringify(SERVER_SCRIPT)}`,
-				...env.map(e => `Environment=${JSON.stringify(e)}`),
-				"Restart=on-failure",
-				"RestartSec=5",
-				"",
-				"[Install]",
-				"WantedBy=default.target",
-				"",
-			].join("\n"),
-		);
-		void stopServer();
+		fs.writeFileSync(systemd, serviceUnitText("systemd", process.execPath, SERVER_SCRIPT, env));
+		// The service's server would find this one on the socket and exit: stop it first (sessions keep running).
+		await stopServer();
 		const ok = run("systemctl", ["--user", "daemon-reload"]) && run("systemctl", ["--user", "enable", "--now", "omp-vs.service"]);
 		process.stdout.write(ok ? `${c.green("installed")} ${systemd}\n` : `${c.yellow("wrote")} ${systemd} ${c.dim("(enable it with: systemctl --user enable --now omp-vs)")}\n`);
 		return ok ? 0 : 1;
 	}
 	if (process.platform === "darwin") {
 		fs.mkdirSync(path.dirname(launchd), { recursive: true });
-		const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-		const envXml = env.map(e => {
-			const i = e.indexOf("=");
-			return `\t\t<key>${xml(e.slice(0, i))}</key><string>${xml(e.slice(i + 1))}</string>`;
-		});
-		fs.writeFileSync(
-			launchd,
-			`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>dev.omp.vs-server</string>
-	<key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(SERVER_SCRIPT)}</string></array>
-	<key>EnvironmentVariables</key><dict>
-${envXml.join("\n")}
-	</dict>
-	<key>RunAtLoad</key><true/>
-	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-</dict>
-</plist>
-`,
-		);
-		const ok = run("launchctl", ["load", "-w", launchd]);
-		process.stdout.write(ok ? `${c.green("installed")} ${launchd}\n` : `${c.yellow("wrote")} ${launchd}\n`);
+		fs.writeFileSync(launchd, serviceUnitText("launchd", process.execPath, SERVER_SCRIPT, env));
+		await stopServer();
+		// Reinstalling: a loaded agent refuses a second load and would keep the old plist, so unload it first.
+		const domain = `gui/${os.userInfo().uid}`;
+		spawnSync("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`], { stdio: "ignore" });
+		const ok = run("launchctl", ["bootstrap", domain, launchd]);
+		process.stdout.write(ok ? `${c.green("installed")} ${launchd}\n` : `${c.yellow("wrote")} ${launchd} ${c.dim(`(load it with: launchctl bootstrap ${domain} ${launchd})`)}\n`);
 		return ok ? 0 : 1;
 	}
 	throw new Error("server install supports Linux (systemd) and macOS (launchd); on Windows the server starts on demand");
 }
 
 function uninstallService(): number {
-	const { systemd, launchd } = unitPaths();
+	const { systemd, launchd } = serviceUnitPaths();
 	if (process.platform === "linux" && fs.existsSync(systemd)) {
 		run("systemctl", ["--user", "disable", "--now", "omp-vs.service"]);
 		fs.rmSync(systemd, { force: true });
@@ -981,7 +959,7 @@ function uninstallService(): number {
 		return 0;
 	}
 	if (process.platform === "darwin" && fs.existsSync(launchd)) {
-		run("launchctl", ["unload", "-w", launchd]);
+		spawnSync("launchctl", ["bootout", `gui/${os.userInfo().uid}/${LAUNCHD_LABEL}`], { stdio: "ignore" });
 		fs.rmSync(launchd, { force: true });
 		process.stdout.write(`${c.green("removed")} ${launchd}\n`);
 		return 0;
@@ -1039,8 +1017,9 @@ ${c.bold("Server")}  ${c.dim("(started on demand; launches queued sessions when 
   server status|start|stop|restart|log [-f]|install|uninstall
 
 ${c.bold("Remote")}  ${c.dim("(phone app + HTTP API on this machine; prefer Tailscale, LAN is plain HTTP)")}
-  remote on [--bind tailscale|lan|localhost|<ip>] [--port n]
-                                  turn on remote access (default bind tailscale, port 7413)
+  remote on [--bind tailscale|lan|localhost|<ip>] [--port n] [--url <public url>|none]
+                                  turn on remote access (default bind tailscale, port 7413); --url when a
+                                  proxy fronts it (tailscale serve, HTTPS): the pairing link uses that URL
   remote off|status|qr|rotate     turn off · show state · pairing QR + URL · new token (unpairs phones)
 
 ${c.bold("Agents")}  ${c.dim("(the omp-sessions skill teaches other agents to use omp-vs)")}
@@ -1053,7 +1032,8 @@ ${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and
   hermes install [--force]        copy the plugin into $HERMES_HOME/plugins (~/.hermes) and enable it
   hermes uninstall | status [--json]
       [--profile <name>]… [--all-profiles]
-                                  plugins are per Hermes profile; default: $HERMES_HOME or ~/.hermes
+                                  plugins are per Hermes profile; default: $HERMES_HOME, else ~/.hermes
+                                  (%LOCALAPPDATA%\\hermes on Windows)
 
   --no-color, NO_COLOR=1          plain output · OMP_VS_NO_SERVER=1 runs without the server
 `;

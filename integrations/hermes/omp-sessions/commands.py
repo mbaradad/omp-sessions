@@ -10,8 +10,8 @@ from typing import Any, Callable, Optional, Sequence
 
 from .lane import Lane, short
 from .ompvs import OmpVs, OmpVsError, find_omp_vs
-from .settings import MODES, Settings, update_setting
-from .store import Store
+from .settings import MODES, Settings, board_lane, update_setting
+from .store import Store, profile_of
 
 
 def _ago(ts: Any) -> str:
@@ -33,6 +33,32 @@ def _session_map(omp: OmpVs) -> dict[str, dict]:
         return {}
 
 
+# The dispatcher ticks every ~60 s; quieter than this means it isn't running (or isn't reaching us).
+DISPATCHER_STALE_S = 180
+
+
+def dispatcher_notes(disp: Optional[dict], *, profile: str, lane_on: bool, now: Optional[float] = None) -> list[str]:
+    """Problems with where Hermes's kanban dispatcher runs the plugin, for `hermes omp status` and the page.
+
+    Hermes runs one dispatcher per machine, in the gateway holding its lock; its hook reaches the plugin
+    instance of that gateway's profile, so the lane only works when it is on in that profile."""
+    now = time.time() if now is None else now
+    if not disp or not isinstance(disp.get("at"), (int, float)):
+        return ["No kanban dispatcher tick has reached the plugin yet. It runs in the gateway: is the gateway running "
+                "with the plugin enabled? (A gateway started before the plugin was installed needs `hermes gateway restart`.)"]
+    notes = []
+    age = now - float(disp["at"])
+    if age > DISPATCHER_STALE_S:
+        notes.append(f"The last kanban dispatcher tick was {_ago(disp['at'])}: the gateway or its dispatcher has stopped.")
+    where = str(disp.get("profile") or "unknown")
+    if lane_on and where != profile:
+        notes.append(f"The dispatcher runs the plugin in profile '{where}', but the lane is on in '{profile}': "
+                     f"turn it on there (`hermes -p {where} omp lane on`) and off here.")
+    elif not lane_on and where == profile and disp.get("lane_on") is False:
+        notes.append(f"The dispatcher runs in this profile ('{profile}') and the lane is off here: cards assigned to omp stay ready.")
+    return notes
+
+
 def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: OmpVs) -> dict:
     sessions = _session_map(omp)
     links = lane.links()
@@ -41,10 +67,8 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
     except OmpVsError:
         sched = None
     cmd = find_omp_vs(settings.omp_vs)
-    try:
-        inject = bool(ctx._gateway_injection_allowed())
-    except Exception:
-        inject = None
+    profile = profile_of(store)
+    disp = lane.dispatcher()
     linked = []
     for key, l in sorted(links.items()):
         s = sessions.get(str(l.get("session", "")))
@@ -61,12 +85,16 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
                 "error": l.get("error"),
             }
         )
+    last_inject = store.get("last_inject")
     return {
         "omp_vs": " ".join(cmd) if cmd else None,
         "scheduler": sched,
         "notify": settings.notify,
-        "injection_allowed": inject,
+        "last_notification": last_inject if isinstance(last_inject, dict) else None,
         "watches": len(store.get("watches", {}) or {}),
+        "profile": profile,
+        "dispatcher": disp,
+        "dispatcher_notes": dispatcher_notes(disp, profile=profile, lane_on=settings.lane.enabled),
         "lane": {
             "enabled": settings.lane.enabled,
             "assignee": settings.lane.assignee,
@@ -87,17 +115,22 @@ def status_text(d: dict) -> str:
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
         lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · omp-vs server not running'}")
-    inj = d.get("injection_allowed")
+    last = d.get("last_notification") or {}
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
-        + (" · injection NOT allowed (set plugins.entries.omp-sessions.allow_gateway_injection: true)" if inj is False else "")
+        + (f" · last note {'delivered' if last.get('ok') else 'REFUSED'} {_ago(last.get('at'))}" if last else "")
+        + (" (is plugins.entries.omp-sessions.allow_gateway_injection true?)" if last and not last.get("ok") else "")
         + f" · {d['watches']} watched session(s)"
     )
     boards = lane["boards"]
     board_text = "every board" if boards == "all" else ", ".join(
         f"{slug}" + (f" ({', '.join(f'{k}={v}' for k, v in cfg.items())})" if cfg else "") for slug, cfg in boards.items()
     )
-    lines.append(f"lane (this profile): {'on' if lane['enabled'] else 'off'} · assignee {lane['assignee']} · mode {lane['mode'] or 'omp default'} · {board_text}")
+    lines.append(f"lane (profile {d['profile']}): {'on' if lane['enabled'] else 'off'} · assignee {lane['assignee']} · mode {lane['mode'] or 'omp default'} · {board_text}")
+    disp = d.get("dispatcher")
+    if disp:
+        lines.append(f"kanban dispatcher: last tick {_ago(disp.get('at'))} in profile {disp.get('profile')} (lane {'on' if disp.get('lane_on') else 'off'} there, pid {disp.get('pid')})")
+    lines.extend(f"  ! {n}" for n in d.get("dispatcher_notes") or [])
     lines.append(f"lane links and lock (all profiles): {lane['state']}")
     for slug, t in sorted((lane.get("ticks") or {}).items()):
         extra = f" · started {', '.join(t['started'])}" if t.get("started") else ""
@@ -135,6 +168,56 @@ def sessions_summary(omp: OmpVs) -> str:
     return "\n".join(lines)
 
 
+def sessions_brief(omp: OmpVs) -> str:
+    """`/omp` in a chat: short enough for a phone (Hermes Console shows slash output as a brief notice)."""
+    try:
+        infos = omp.sessions(all=False)
+    except OmpVsError as exc:
+        return f"omp-sessions: {exc}"
+    if not infos:
+        return "No running omp sessions."
+    by: dict[str, list[dict]] = {}
+    for s in infos:
+        by.setdefault(str(s.get("column") or (s.get("meta") or {}).get("status") or ""), []).append(s)
+    labels = (("input", "need you"), ("working", "working"), ("waiting", "queued"), ("idle", "done"), ("stopped", "stopped"))
+    lines = [" · ".join(f"{len(by[k])} {label}" for k, label in labels if by.get(k))]
+    for s in (by.get("input") or [])[:5]:
+        m = s.get("meta") or {}
+        lines.append(f"needs you: {str(m.get('id', ''))[:8]} {m.get('title', '')!s:.60}")
+    return "\n".join(lines)
+
+
+def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane) -> str:
+    """Assigns a kanban card to the omp lane (`/omp take <card> [board]`): the way to route a card to omp
+    from clients whose assignee picker only offers Hermes profiles (Hermes Console on Android)."""
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+
+    boards = {b.get("slug"): b.get("name") for b in kb.list_boards(include_archived=False) if b.get("slug")}
+    if board and board not in boards:
+        return f"No open board {board}."
+    slugs = [board] if board else list(boards)
+    for slug in slugs:
+        with kbc.connect_closing(board=slug) as conn:
+            task = kb.get_task(conn, card_id)
+            if task is None:
+                continue
+            cfg = board_lane(settings, slug, boards.get(slug))
+            assignee = cfg.assignee if cfg else settings.lane.assignee
+            if (task.assignee or "").lower() != assignee:
+                try:
+                    kb.assign_task(conn, card_id, assignee)
+                except RuntimeError as exc:  # a worker runs it under a claim
+                    return f"Hermes refused to reassign {card_id} on {slug}: {exc}"
+        disp = lane.dispatcher()
+        if disp and disp.get("lane_on") is False:
+            note = f" The omp lane is off in profile {disp.get('profile')}, where the kanban dispatcher runs: `hermes -p {disp.get('profile')} omp lane on`."
+        else:
+            note = " The omp lane starts it as an omp session once it is ready."
+        return f"{card_id} on {slug} is assigned to {assignee}.{note}"
+    return f"No card {card_id} on {'board ' + board if board else 'any open board'}."
+
+
 def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="omp_cmd")
     st = sub.add_parser("status", help="omp-vs, notifications, the kanban lane and linked cards")
@@ -162,6 +245,9 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     project.add_argument("--remove", action="store_true")
     notify = sub.add_parser("notify", help="tell Hermes sessions when their omp sessions settle")
     notify.add_argument("value", choices=("on", "off"))
+    take = sub.add_parser("take", help="assign a kanban card to the omp lane")
+    take.add_argument("card")
+    take.add_argument("--board", help="the card's board (default: search every open board)")
 
 
 def _lane(raw: Any) -> dict:
@@ -308,5 +394,8 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
     if cmd == "notify":
         ctx.set_config("notify", args.value == "on")
         print(f"notify: {args.value}")
+        return 0
+    if cmd == "take":
+        print(take_card(args.card, args.board or None, settings(), lane))
         return 0
     return 2

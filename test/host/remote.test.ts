@@ -161,12 +161,12 @@ before(async () => {
 
 after(async () => {
 	server?.kill("SIGTERM");
-	const pids = sessionIds().flatMap(id => {
-		const m = meta(id);
-		return m ? [m.pid, m.ompPid ?? 0].filter(p => p > 0) : [];
-	});
+	const metas = sessionIds().flatMap(id => meta(id) ?? []);
+	const pids = metas.flatMap(m => [m.pid, m.ompPid ?? 0].filter(p => p > 0));
 	for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 	await until(() => pids.every(p => !alive(p)) && server?.exitCode !== null, "processes to exit", 5000).catch(() => {});
+	// Killed hosts leave their sockets, possibly in the short tmp fallback outside `home`.
+	for (const m of metas) if (m.socket) fs.rmSync(m.socket, { force: true });
 	fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -221,6 +221,39 @@ test("remote: health is open; the API needs the token; pairing sets a cookie tha
 	assert.equal((await api("DELETE", "/api/sessions")).status, 405);
 	const big = await fetch(`${base}/api/sessions`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ cwd, prompt: "x".repeat(1024 * 1024 + 10) }) });
 	assert.equal(big.status, 413);
+});
+
+test("remote: behind a proxy, the public URL is the pairing URL and its origin may write", async () => {
+	const pub = "https://box.tailnet.ts.net";
+	assert.equal(parseRemoteConfig(JSON.stringify({ publicUrl: pub })).publicUrl, `${pub}/`);
+	assert.equal(parseRemoteConfig(JSON.stringify({ publicUrl: "ftp://x" })).publicUrl, undefined);
+	assert.equal(parseRemoteConfig(JSON.stringify({ publicUrl: `${pub}/?a=1` })).publicUrl, undefined);
+	assert.equal(parseRemoteConfig(JSON.stringify({ publicUrl: `${pub}/omp/` })).publicUrl, undefined, "the app calls /api/… at the root");
+	const statusWhere = async (pred: (s: RemoteStatus) => boolean, what: string): Promise<RemoteStatus> => {
+		for (const deadline = Date.now() + 8000; ; await sleep(100)) {
+			const s = await remoteStatus();
+			if (pred(s)) return s;
+			if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}: ${JSON.stringify(s)}`);
+		}
+	};
+	writeRemote({ enabled: true, publicUrl: pub });
+	try {
+		const status = await statusWhere(s => s.url === `${pub}/`, "the public URL");
+		assert.equal(status.localUrl, `${base}/`, "the listener's own address, for the proxy");
+		const paired = await api("POST", "/api/pair", { token: TOKEN }, {});
+		const jar = { cookie: (paired.headers.get("set-cookie") ?? "").split(";")[0] };
+		// The page is served from the proxy's origin; its writes pass the origin check (404: no such session).
+		assert.equal((await api("POST", "/api/sessions/nope/prompt", { text: "hi" }, { ...jar, origin: pub })).status, 404);
+		assert.equal((await api("POST", "/api/sessions/nope/prompt", { text: "hi" }, { ...jar, origin: "https://evil.example" })).status, 403);
+		// Every proxied client arrives from 127.0.0.1: lockouts follow the address the proxy forwards.
+		const from = (ip: string) => ({ "x-forwarded-for": `203.0.113.9, ${ip}` });
+		for (let i = 0; i < 5; i++) assert.equal((await api("GET", "/api/sessions", undefined, { authorization: "Bearer wrong", ...from("100.64.0.9") })).status, 401);
+		assert.equal((await api("GET", "/api/sessions", undefined, { ...auth, ...from("100.64.0.9") })).status, 429);
+		assert.equal((await api("GET", "/api/sessions", undefined, { ...auth, ...from("100.64.0.10") })).status, 200, "another device is not locked out");
+	} finally {
+		writeRemote({ enabled: true });
+	}
+	await statusWhere(s => s.url === `${base}/` && s.localUrl === undefined, "the plain URL back");
 });
 
 test("remote: create, list, projects; a prompt's reply streams over SSE; mode switches show in the list", async () => {

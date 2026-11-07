@@ -18,7 +18,7 @@ Use it to hand coding work to omp instead of doing it inline: one session per ta
 
 ## Before you start
 
-- Run `omp-vs ls --json`. If the command is missing, ask the user to run *omp: Install omp-vs Command* in VS Code, which puts it in `~/.local/bin`.
+- Run `omp-vs ls --json`. If the command is missing, ask the user to run *omp: Install omp-vs Command* in VS Code, which puts it in `~/.local/bin` (`%LOCALAPPDATA%\omp-vs` on Windows).
 - Sessions run on this machine, in the folder you give. Use absolute paths. `omp-vs projects --json` lists the folders sessions ran in (`[{path, name, lastUsed, sessions}]`, newest first), which helps when the user names a project rather than a path.
 - Every command that takes `<session>` accepts the id, an id prefix, or words from the title. Ids are the safest choice.
 - `--json` output is meant for you; the rest is for people.

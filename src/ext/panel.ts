@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { diffTexts } from "../shared/diff";
+import { hermesOrigin } from "../shared/hermes-origin";
+import type { OrganizeStore } from "../shared/organize";
 import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
 import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
@@ -187,6 +189,7 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly snapshots: SnapshotProvider,
 		private readonly extensionUri: vscode.Uri,
 		private readonly globalState: vscode.Memento,
+		private readonly organize: OrganizeStore,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
 		const panel = this;
@@ -216,6 +219,7 @@ export class ChatPanel implements vscode.Disposable {
 			surface.onDidDispose(() => this.dispose()),
 			sessions.onDidChange(() => this.onSessionsChanged()),
 			decorationEmitter.event(() => this.updateTitle()),
+			organize.onDidChange(() => this.postOrigin()),
 			vscode.workspace.onDidChangeConfiguration(e => {
 				if (e.affectsConfiguration("omp.chat.snippets")) this.reloadSnippets();
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
@@ -360,6 +364,16 @@ export class ChatPanel implements vscode.Disposable {
 
 	private postChatConfig(): void {
 		this.post({ type: "chatConfig", toolCardsCollapsed: vscode.workspace.getConfiguration("omp.chat").get<boolean>("toolCardsCollapsed", true) });
+	}
+
+	private lastOrigin: string | undefined;
+	/** The session's Hermes origin (its tags) for the chat header chip; sent when it changes. */
+	private postOrigin(force = false): void {
+		const hermes = hermesOrigin(this.organize.session(this.sessionId).tags) ?? null;
+		const key = JSON.stringify(hermes);
+		if (!force && key === this.lastOrigin) return;
+		this.lastOrigin = key;
+		this.post({ type: "origin", hermes });
 	}
 
 	// ---------- diffs ----------
@@ -520,6 +534,7 @@ export class ChatPanel implements vscode.Disposable {
 			queue: snap?.queue ?? this.sessions.queue(this.sessionId),
 		});
 		this.post({ type: "checkpoints", redo: this.checkpoints.redoCount });
+		this.postOrigin(true);
 	}
 
 	/** Send a prompt as if typed in the composer (used by editor integrations). */
@@ -789,6 +804,12 @@ export class ChatPanel implements vscode.Disposable {
 			}
 			case "openTui":
 				await vscode.commands.executeCommand("omp.continueInTerminal", this.sessionId);
+				return;
+			case "openHermesCard":
+				await vscode.commands.executeCommand("omp.hermes.openCard", this.sessionId);
+				return;
+			case "showHermesCard":
+				await vscode.commands.executeCommand("omp.hermes.showCard", this.sessionId);
 				return;
 			case "compact": {
 				const res = await this.client?.rpc({ type: "compact" }, 15 * 60_000);

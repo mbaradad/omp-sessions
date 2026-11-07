@@ -12,10 +12,25 @@ Remote access is **off** by default. When it is on, it serves the same sessions 
 | --- | --- | --- |
 | `tailscale` (recommended) | the machine's Tailscale address (first IPv4 in `100.64.0.0/10`) | You want access from anywhere. [Tailscale](https://tailscale.com/download) is free for personal use and encrypts the traffic between your devices. Install it on the machine and the phone, and sign in to the same account. |
 | `lan` | all interfaces (`0.0.0.0`) | Phone and machine share a Wi-Fi you trust. **This is plain HTTP**: anyone on that network can read the traffic, including the token, and then control your sessions. Avoid it on public or shared Wi-Fi. |
-| `localhost` | `127.0.0.1` | You test in a browser on the same machine, or put your own TLS tunnel or reverse proxy in front. |
+| `localhost` | `127.0.0.1` | You test in a browser on the same machine, or put your own TLS tunnel or reverse proxy in front (see below). |
 | `<ip>` | that address | Any other interface, e.g. a VPN address. |
 
 The default port is `7413`.
+
+#### Behind Tailscale Serve or an HTTPS proxy (and WSL)
+
+Bind to `localhost` and tell omp-vs the URL the phone opens with `--url`. The pairing link and QR code then use that URL, and the server accepts writes from that origin. The phone talks HTTPS to the proxy, so the token and your sessions' traffic are encrypted even where plain `lan` would not be.
+
+With [Tailscale Serve](https://tailscale.com/kb/1312/serve) (HTTPS with a real certificate, reachable only from your tailnet):
+
+```bash
+tailscale serve --bg 7413                 # prints https://<machine>.<tailnet>.ts.net/
+omp-vs remote on --bind localhost --url https://<machine>.<tailnet>.ts.net
+```
+
+**WSL 2** (default NAT networking): Tailscale usually runs on Windows, so Linux has no Tailscale address and `--bind tailscale` fails. Run `tailscale serve --bg 7413` in a Windows terminal instead: Windows forwards `localhost:7413` into WSL, so Serve reaches the omp-vs listener on WSL's `127.0.0.1`. Then run the `omp-vs remote on --bind localhost --url …` line above inside WSL. **omp: Connect Phone…** offers this as *Behind Tailscale Serve or an HTTPS proxy* and recommends it when it detects WSL without Tailscale.
+
+`omp-vs remote on --url none` goes back to plain addresses.
 
 ### 2. Turn it on and pair the phone
 
@@ -31,13 +46,14 @@ The default port is `7413`.
 ```bash
 omp-vs remote on                    # bind tailscale, port 7413
 omp-vs remote on --bind lan --port 8080
+omp-vs remote on --bind localhost --url https://box.tailnet.ts.net   # behind tailscale serve / a proxy
 omp-vs remote qr                    # QR code (Unicode half blocks) + pairing URL
 omp-vs remote status                # on/off, listening address, last error
 omp-vs remote rotate                # new token: every paired phone has to pair again
 omp-vs remote off
 ```
 
-The pairing URL is `http://<host>:<port>/#pair=<token>`. When the app opens it, it:
+The pairing URL is `http://<host>:<port>/#pair=<token>`, or `<public URL>#pair=<token>` behind a proxy. When the app opens it, it:
 
 1. posts the token to `/api/pair`, which sets an HttpOnly cookie;
 2. removes the fragment from the address bar and history;
@@ -50,6 +66,8 @@ The setting lives in `~/.omp/vscode/remote.json` (mode `0600`):
 ```json
 { "enabled": true, "bind": "tailscale", "port": 7413, "token": "<43 base64url chars>" }
 ```
+
+Behind a proxy it also holds `"publicUrl": "https://box.tailnet.ts.net/"` (with `"bind": "localhost"`).
 
 The token is 32 random bytes, created the first time remote access is turned on. The server watches the file and starts, stops or rebinds the listener within seconds. If the bind address doesn't exist yet (for example, Tailscale is still connecting), it retries every 30 s. `omp-vs remote status` shows the reason.
 

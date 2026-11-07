@@ -8,9 +8,11 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { HOST_CRASHED, isOutdated, settleDeadHost } from "../shared/health";
+import { PLUGIN_BUNDLE, findHermes, findOmpVs, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { canConnect, pidAlive, sendToHost } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import type { HermesFacts } from "./doctor-hermes";
 import {
 	type DoctorFacts,
 	type Report,
@@ -150,6 +152,35 @@ async function gatherSessions(): Promise<SessionFacts[]> {
 		}),
 	);
 	return facts.filter((f): f is SessionFacts => !!f);
+}
+
+/** `hermes -p <profile> omp status --json`, parsed; `error` when it fails. */
+function laneStatus(hermes: string, profile: string): Promise<NonNullable<HermesFacts["lane"]>> {
+	const { promise, resolve } = Promise.withResolvers<NonNullable<HermesFacts["lane"]>>();
+	const cmd = hermesCommand(hermes, ["-p", profile, "omp", "status", "--json"]);
+	execFile(cmd.file, cmd.args, { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 60_000, shell: cmd.shell, windowsHide: true }, (err, stdout, stderr) => {
+		const status = parseLaneStatus(stdout);
+		resolve(status ? { profile, status } : { profile, error: (`${stderr}`.trim() || err?.message || "no JSON in the output").slice(0, 400) });
+	});
+	return promise;
+}
+
+/** The Hermes section's facts; undefined when Hermes Agent isn't on this machine. */
+async function gatherHermes(extensionPath: string): Promise<HermesFacts | undefined> {
+	const hermes = findHermes();
+	if (!hermes && !fs.existsSync(hermesRoot())) return undefined;
+	const source = path.join(extensionPath, "out", PLUGIN_BUNDLE);
+	const targets = resolveTargets({ all: true });
+	const profiles = targets.map(t => pluginReport(source, t));
+	const enabled = profiles.filter(r => r.status === "enabled");
+	const ask = enabled.find(r => r.label === "default") ?? enabled[0];
+	const lane = hermes && ask ? await laneStatus(hermes, ask.label) : undefined;
+	// The plugin runs in a gateway: search the PATH of the first enabled profile's gateway with a readable
+	// record (a per-profile gateway has its own), else the default home's (the multiplexed gateway).
+	const homes = [...enabled.map(r => ({ setting: r.ompVs, home: targets[profiles.indexOf(r)]?.home })), { setting: undefined, home: hermesRoot() }];
+	const gateway = homes.map(h => ({ setting: h.setting, path: h.home ? gatewayPath(h.home) : undefined })).find(g => g.path !== undefined);
+	const ompVs = findOmpVs(gateway?.setting ?? enabled.find(r => r.ompVs)?.ompVs, gateway?.path);
+	return { hermes, lookup: hermesLookup(), profiles, lane, ompVs, gatewayPath: gateway !== undefined, now: Date.now() };
 }
 
 function retentionDays(): number {
@@ -429,6 +460,7 @@ export function registerDoctor(api: OmpApi): void {
 			socket: { platform: process.platform, sessionsRoot: root, tmpdir: os.tmpdir() },
 			sessions: await gatherSessions(),
 			cleanupDays: retentionDays(),
+			hermes: await gatherHermes(context.extensionPath),
 		};
 	}
 

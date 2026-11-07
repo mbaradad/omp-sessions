@@ -319,6 +319,28 @@ class PluginTest(unittest.TestCase):
         self.tick_until("proj", card, lambda t: t.status == "done", "done")
         self.assertEqual(len(tagged(card)), 1)
 
+    def test_dispatcher_heartbeat_shows_where_the_lane_runs(self) -> None:
+        from hermes_plugins.omp_sessions import commands
+
+        self.tick("other")
+        d = commands.status_data(None, self.plugin.settings(), self.plugin.store, self.plugin.lane, self.plugin.omp())
+        self.assertEqual(d["profile"], "default")
+        self.assertEqual((d["dispatcher"]["profile"], d["dispatcher"]["lane_on"], d["dispatcher"]["board"]), ("default", True, "other"))
+        self.assertEqual(d["dispatcher_notes"], [])
+        self.assertIn("kanban dispatcher: last tick", commands.status_text(d))
+
+    def test_slash_take_routes_a_card_to_omp_and_brief_fits_a_phone(self) -> None:
+        with kbc.connect_closing(board="other") as conn:
+            card = kb.create_task(conn, title="from the phone", assignee="alice", board="other")
+        self.assertIn("No card t_nope", self.plugin.slash("take t_nope"))
+        out = self.plugin.slash(f"take {card}")
+        self.assertIn(f"{card} on other is assigned to omp", out)
+        self.assertEqual(self.card("other", card).assignee, "omp")
+        self.assertEqual(self.plugin.slash("take"), "usage: /omp take <card id> [board]")
+        self.assertEqual(self.plugin.slash(f"take {card} no-such-board"), "No open board no-such-board.")
+        brief = self.plugin.slash("")
+        self.assertLessEqual(len(brief.splitlines()), 6, brief)
+
     # ---- tools + notifications ----
 
     def test_tools_start_status_wait_answer_and_notify(self) -> None:
@@ -380,6 +402,22 @@ class PureTest(unittest.TestCase):
 
         self.lane = lane
         self.settings = settings
+
+    def test_dispatcher_notes(self) -> None:
+        from hermes_plugins.omp_sessions.commands import dispatcher_notes
+
+        now = 1_000_000.0
+        tick = lambda profile, lane_on, age=30: {"at": now - age, "profile": profile, "lane_on": lane_on}  # noqa: E731
+        self.assertIn("No kanban dispatcher tick", dispatcher_notes(None, profile="default", lane_on=True, now=now)[0])
+        self.assertEqual(dispatcher_notes(tick("default", True), profile="default", lane_on=True, now=now), [])
+        # The dispatcher ticks another profile's plugin: the lane here never runs.
+        [n] = dispatcher_notes(tick("default", False), profile="robedrone", lane_on=True, now=now)
+        self.assertIn("hermes -p default omp lane on", n)
+        # Lane off where the dispatcher runs: said in that profile, not in the others.
+        self.assertIn("lane is off here", dispatcher_notes(tick("default", False), profile="default", lane_on=False, now=now)[0])
+        self.assertEqual(dispatcher_notes(tick("default", True), profile="robedrone", lane_on=False, now=now), [])
+        [stale] = dispatcher_notes(tick("default", True, age=600), profile="default", lane_on=True, now=now)
+        self.assertIn("has stopped", stale)
 
     def test_settings_defaults_and_board_lanes(self) -> None:
         s = self.settings.parse_settings({})

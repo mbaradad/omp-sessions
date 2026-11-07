@@ -42,6 +42,25 @@ test("stop → meta stopped, socket removed, host and omp exit; restart with the
 	);
 });
 
+test("a resume while the stopped host is still exiting keeps the new host's socket", async t => {
+	const h = await launch(t);
+	const { client: c } = await h.connect();
+	const oldPid = h.meta().pid;
+	c.send({ t: "stop" });
+	await c.waitFor("meta", m => m.meta.status === "stopped");
+	// Freeze the old host between "stopped" and its exit, start the successor, then let it finish exiting.
+	process.kill(oldPid, "SIGSTOP");
+	try {
+		await h.start();
+	} finally {
+		process.kill(oldPid, "SIGCONT");
+	}
+	await until(() => !alive(oldPid), "old host exit");
+	assert.ok(fs.existsSync(h.socket), "successor's socket survives the old host's exit");
+	const { snapshot } = await h.connect("after-resume");
+	assert.notEqual(snapshot.meta.pid, oldPid);
+});
+
 test("host ignores SIGHUP and keeps serving", async t => {
 	const h = await launch(t);
 	const { client: c } = await h.connect();

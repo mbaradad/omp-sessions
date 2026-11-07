@@ -29,7 +29,7 @@ Press **F5** in VS Code to start an Extension Development Host with this checkou
 ```sh
 npm run typecheck          # tsc --noEmit
 npm test                   # unit + session-host suites (~10 s); npm run test:unit / test:host for one
-npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, xvfb-run if no DISPLAY)
+npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, xvfb-run if no DISPLAY; Linux and macOS, never touches the OS keychain)
 ```
 
 - Tests never call a model. `test/fake-omp.mjs` is a scripted stand-in for `omp --mode rpc-ui`; its prompts are commands (`echo`, `write`, `edit`, `ask`, `slow`, `fail`, `/<cmd>`), documented at the top of the file.

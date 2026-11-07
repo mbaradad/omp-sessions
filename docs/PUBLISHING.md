@@ -103,7 +103,7 @@ The plugin in `integrations/hermes/omp-sessions/` ships three ways. Its `plugin.
       ```sh
       HERMES_HOME=$(mktemp -d) hermes plugins validate integrations/hermes/omp-sessions --install-deps
       ```
-      It must pass. The two warnings about private core imports (`hermes_cli.kanban_db*`, used by the lane) and `ctx._gateway_injection_allowed` (used by `hermes omp status`) are expected; mention them in the PR.
+      It must pass. The warnings about private core imports (`hermes_cli.kanban_db*` and `hermes_constants`, used by the lane, the page's backend and the profile name in `hermes omp status`) are expected: Hermes has no public kanban API for plugins yet. Mention them in the PR.
    2. Generate the entry for the release tag: `npm run -s hermes:catalog -- v<x.y.z> > omp-sessions.yaml` (the tag must be pushed; screenshots are pinned to the same commit).
    3. Fork `NousResearch/hermes-agent`, add the file as `plugin-catalog/omp-sessions.yaml`, and open a pull request. For a new release, the same file with the new `sha` and `version` is a new pull request.
    4. In the description, say what the plugin does, which surfaces it uses (tools, the `on_kanban_dispatch_tick` hook, a slash command, a CLI command, a skill, a dashboard tab with a FastAPI router, a Desktop page), and the disclosures from the plugin README's *What it does on your machine* section. Attach `site/assets/shots/hermes-dashboard.png` and `hermes-detail.png`.

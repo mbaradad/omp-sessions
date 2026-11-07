@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -61,17 +62,12 @@ export function readQueue(id: string): TaskQueue | undefined {
 /** Live (non-zombie) session host processes for `id`: `<host.js> --id <id> …` command lines. */
 export function hostPids(id: string): number[] {
 	const out: number[] = [];
-	for (const name of fs.readdirSync("/proc")) {
-		const pid = Number(name);
-		if (!Number.isInteger(pid)) continue;
-		let argv: string[];
-		try {
-			argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
-		} catch {
-			continue;
-		}
+	for (const line of ps(["-A", "-o", "pid=,stat=,command="]).split("\n")) {
+		const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+		if (!m || m[2].startsWith("Z")) continue;
+		const argv = m[3].split(" ");
 		const i = argv.indexOf("--id");
-		if (i > 0 && argv[i + 1] === id && argv.some(a => a.endsWith(`${path.sep}host.js`)) && pidAlive(pid)) out.push(pid);
+		if (i > 0 && argv[i + 1] === id && argv.some(a => a.endsWith(`${path.sep}host.js`))) out.push(Number(m[1]));
 	}
 	return out;
 }
@@ -88,26 +84,29 @@ export interface ProcStat {
 	state: string;
 	ppid: number;
 	pgrp: number;
-	session: number;
+	/** Leads its own session (setsid). */
+	sessionLeader: boolean;
 }
 
-/** Fields of /proc/<pid>/stat after the `(comm)` field. */
+/** `ps` (procps on Linux, BSD ps on macOS, which has no /proc); "" when it fails. */
+function ps(args: string[]): string {
+	const r = spawnSync("ps", ["-ww", ...args], { encoding: "utf8" });
+	return r.status === 0 ? r.stdout : "";
+}
+
+/** State, parent, process group and session leadership of `pid`; undefined when it is gone. */
 export function procStat(pid: number): ProcStat | undefined {
-	let raw: string;
-	try {
-		raw = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-	} catch {
-		return undefined;
-	}
-	const f = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
-	return { state: f[0], ppid: Number(f[1]), pgrp: Number(f[2]), session: Number(f[3]) };
+	const f = ps(["-o", "stat=,ppid=,pgid=", "-p", String(pid)]).trim().split(/\s+/);
+	if (f.length < 3) return undefined;
+	// STAT's "s" flag marks a session leader in both procps and BSD ps (macOS prints 0 for `sess`).
+	return { state: f[0], ppid: Number(f[1]), pgrp: Number(f[2]), sessionLeader: f[0].includes("s") };
 }
 
 /** Alive and not a zombie. */
 export function pidAlive(pid: number | undefined): boolean {
 	if (typeof pid !== "number") return false;
 	const st = procStat(pid);
-	return !!st && st.state !== "Z";
+	return !!st && !st.state.startsWith("Z");
 }
 
 /** pid's ancestors up to init, nearest first. */

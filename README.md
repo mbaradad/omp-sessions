@@ -8,7 +8,7 @@
 
 Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one session per task, and drive them from VS Code, a terminal or your phone. Sessions live in their own process on the machine with your code — your computer, or the server you reach over Remote-SSH — so closing VS Code, sleeping the laptop or dropping SSH doesn't stop them. Come back and everything that happened meanwhile is there: answers, diffs, questions waiting for you.
 
-**[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
+**[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Setup guide: workstation, laptop, phone](docs/SETUP.md)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
 
 ![A day with omp Sessions: queue the day at 9:00, walk away at 9:30, approve a command from your phone at 12:40, review and undo in VS Code at 15:00, check the cost at 18:00.](docs/images/a-day.png)
 
@@ -23,7 +23,7 @@ Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one sess
 | **Supervising from anywhere** | The phone app shows what's working, waiting or done; approve a command, steer a session or start a new one from the couch. |
 | **Fixing what's in front of you** | *Fix with omp* on a squiggle, on a failed terminal command, or on all of a file's problems; commit messages and PR descriptions from Source Control. |
 | **Scripts and automation** | `omp-vs new --task …`, `omp-vs wait … --json`, or the HTTP API from your own tools. |
-| **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `omp-sessions` skill; Hermes gets a plugin with native tools, notifications and a kanban lane that runs cards as omp sessions. |
+| **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `omp-sessions` skill; Hermes gets a plugin with native tools, notifications, a kanban lane that runs cards as omp sessions, and an omp Sessions page in its dashboard and Desktop app. [Setting it all up on one workstation](docs/SETUP.md). |
 | **Hands-free** | Talk to a session with omp's realtime voice and watch the transcript land in the chat. |
 
 ## Highlights
@@ -138,6 +138,7 @@ Works on Linux and macOS, locally and over Remote-SSH (Windows: named pipes and 
 - **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-vs hermes install`, or `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable`): native `omp_session_*` tools, a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board), with results, questions and failures written back to the card and dependencies chaining as usual. Recurring work goes through Hermes cron. An **omp Sessions** page in the left sidebar of the Hermes dashboard and Hermes Desktop shows every session by state, answers questions, follows up, starts new sessions and sets up the lane per board. Details: [`docs/HERMES.md`](docs/HERMES.md).
 
   ![The omp Sessions page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped.](docs/images/hermes-dashboard.png)
+- **Hermes in VS Code**: copies of the plugin that omp-vs installed are kept current when the extension updates (in every profile, reloaded in the running gateway without a restart). Sessions Hermes started carry a **Hermes** chip in the Sessions view and chat header; kanban-lane sessions show **Hermes · board · card**, with *Open Hermes Card* (the dashboard's Kanban page, `omp.hermes.dashboardUrl`) and *Show Hermes Card in Terminal*. **omp Doctor** checks the plugin per profile, notifications, where the kanban dispatcher runs against where the lane is on, and whether the plugin finds `omp-vs`, with one-click fixes.
 - Agent-friendly CLI: `omp-vs new … --json` (with `--mode`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `ls --json` and `sched --json`.
 
 ### Phone and remote access
@@ -211,6 +212,7 @@ Sessions are named by id, id prefix, title words, or `.` (latest in this folder)
 | `omp.terminalHints` | `true` | After a command fails in a terminal in a running session's folder, offer *omp: fix failed command?* in the status bar (needs VS Code shell integration) |
 | `omp.server.autoStart` | `true` | Keep the `omp-vs` server running: it starts queued stopped sessions when slots free up and serves the `omp-vs` command |
 | `omp.voice.name` | omp's default | Voice for `/voice` sessions |
+| `omp.hermes.dashboardUrl` | empty | Hermes dashboard that *Open Hermes Card* opens; empty uses the dashboard Hermes reports running on the machine (any port), else `http://localhost:9119` (forwarded from remote windows) |
 
 ## Development
 

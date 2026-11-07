@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { detectedPlatforms, installSkill, skillTargets, staleCopies, uninstallSkill } from "../../src/shared/agent-skill";
 
 const SKILL_V1 = "---\nname: omp-sessions\nmetadata:\n  omp-sessions:\n    managed-by: omp-vs\n---\nv1\n";
 const SKILL_V2 = SKILL_V1.replace("v1", "v2");
 
+const temps: string[] = [];
+after(() => {
+	for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function tempHome(): string {
-	return fs.mkdtempSync(path.join(os.tmpdir(), "omp-skill-"));
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-skill-"));
+	temps.push(dir);
+	return dir;
 }
 test("skill targets follow the platforms installed", () => {
 	const home = tempHome();

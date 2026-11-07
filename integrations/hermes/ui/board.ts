@@ -20,7 +20,8 @@ export const COLUMNS: readonly Column[] = [
 	{ id: "stopped", label: "Stopped", states: ["stopped"], icon: "stop", empty: "No stopped sessions." },
 ];
 
-const STOPPED_SHOWN = 20;
+/** The finished columns grow without bound; past this many cards they end in "Show N more". */
+const SHOWN: Partial<Record<Column["id"], number>> = { done: 24, stopped: 20 };
 
 function order(col: Column["id"], list: Session[]): Session[] {
 	const updated = (s: Session): number => s.updatedAt ?? 0;
@@ -67,7 +68,7 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 			"div",
 			{ className: "omps-card-top" },
 			h("span", { className: cx("omps-dot", `tone-${s.state}`), "aria-hidden": true }),
-			h("span", { className: "omps-card-title" }, s.title),
+			h("span", { className: "omps-card-title", title: s.title }, s.title),
 			s.mode ? h("span", { className: cx("omps-mode", `mode-${s.mode}`), title: `${MODE_INFO[s.mode].label}: ${MODE_INFO[s.mode].detail}` }, MODE_INFO[s.mode].label) : null,
 		),
 		h(
@@ -122,7 +123,7 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 }
 
 export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; filtered: boolean }): ReactElement {
-	const [allStopped, setAllStopped] = useState(false);
+	const [expanded, setExpanded] = useState<Partial<Record<Column["id"], boolean>>>({});
 	return h(
 		"div",
 		{ className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
@@ -131,10 +132,12 @@ export function SessionBoard(p: { sessions: Session[]; selected: string | null; 
 				col.id,
 				p.sessions.filter(s => col.states.includes(s.state)),
 			);
-			const shown = col.id === "stopped" && !allStopped ? list.slice(0, STOPPED_SHOWN) : list;
+			const cap = SHOWN[col.id];
+			// The selected card stays visible even when it falls past the cap.
+			const shown = cap !== undefined && !expanded[col.id] && list.length > cap ? list.filter((s, i) => i < cap || s.id === p.selected) : list;
 			return h(
 				"section",
-				{ key: col.id, className: cx("omps-col", `col-${col.id}`), role: "listitem", "aria-label": `${col.label}: ${list.length}` },
+				{ key: col.id, className: cx("omps-col", `col-${col.id}`, list.length === 0 && "is-empty"), role: "listitem", "aria-label": `${col.label}: ${list.length}` },
 				h(
 					"header",
 					{ className: "omps-col-head" },
@@ -149,7 +152,7 @@ export function SessionBoard(p: { sessions: Session[]; selected: string | null; 
 						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen }))
 						: h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
 					list.length > shown.length
-						? h("button", { type: "button", className: "omps-more", onClick: () => setAllStopped(true) }, `Show ${list.length - shown.length} more`)
+						? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`)
 						: null,
 				),
 			);

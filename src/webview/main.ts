@@ -2,6 +2,7 @@
 // attachments, and a composer with slash-command / @file completion.
 import { Marked, type Tokens } from "marked";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
+import { type HermesOrigin, originLabel } from "../shared/hermes-origin";
 import { CONTEXT_MENTIONS, findMentions, splitContext } from "../shared/mentions";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, PLAN_PROMPT_PREFIX, type PermissionMode } from "../shared/permissions";
 import type { FileChange, OmpFrame, SessionMeta, TaskQueue, UiRequest } from "../shared/protocol";
@@ -73,6 +74,8 @@ let agentBusy = false;
 let totalCost = 0;
 /** Checkpoint restores this chat can redo. */
 let redoCount = 0;
+/** Where Hermes started this session (its tags); null when it didn't. */
+let hermes: HermesOrigin | null = null;
 /** `omp.chat.toolCardsCollapsed`: new non-edit tool cards start closed. */
 let toolCardsCollapsed = true;
 const logoUrl = document.body.dataset.logo ?? "";
@@ -1059,6 +1062,9 @@ function renderHeader(): void {
 			["New background session here", cmd("newSession")],
 			stopped ? ["Resume session", cmd("resumeSession")] : ["Stop session", cmd("stopSession"), "/exit"],
 			["Open host log", cmd("openLog")],
+			...(hermes?.card
+				? [null, ["Open Hermes card", cmd("openHermesCard")] satisfies MenuItem, ["Show Hermes card in terminal", cmd("showHermesCard")] satisfies MenuItem]
+				: []),
 		]),
 	);
 	const files = meta?.changedFiles ?? 0;
@@ -1067,6 +1073,11 @@ function renderHeader(): void {
 		h("span", { class: "title", title: meta?.cwd ?? "" }, meta?.title ?? "omp"),
 		h("span", { class: "cwd" }, meta ? meta.cwd.replace(home, "~") : ""),
 		h("span", { class: "spacer" }),
+		hermes
+			? hermes.card
+				? h("button", { class: "chip-btn hermes-chip", title: `Started by the Hermes kanban lane for card ${hermes.card}${hermes.board ? ` on board ${hermes.board}` : ""}. Click to open the Hermes Kanban.`, onclick: cmd("openHermesCard") }, originLabel(hermes))
+				: h("span", { class: "chip hermes-chip", title: "Started from a Hermes chat (omp_session_start)" }, "Hermes")
+			: "",
 		files > 0 ? h("button", { class: "chip-btn", title: "Review every change in a multi-file diff", onclick: cmd("reviewChanges") }, icon("diff"), `${files} file${files === 1 ? "" : "s"} changed`) : "",
 		redoCount ? h("button", { class: "chip-btn", title: "Bring back what the last checkpoint restore removed (files + conversation)", onclick: cmd("redoTurn") }, icon("redo"), "Redo") : "",
 		stopped ? "" : h("button", { class: "icon-btn", title: "Continue in omp's terminal UI (beside this chat); the session returns to the background when you exit omp", "aria-label": "Continue in omp's terminal UI", onclick: cmd("openTui") }, icon("terminal")),
@@ -1946,6 +1957,10 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "checkpoints":
 			redoCount = msg.redo;
+			renderHeader();
+			return;
+		case "origin":
+			hermes = msg.hermes;
 			renderHeader();
 			return;
 		case "clearComposerIf":

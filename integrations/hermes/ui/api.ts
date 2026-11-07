@@ -83,12 +83,34 @@ export interface Scheduler {
 	server?: boolean;
 }
 
+/** The kanban dispatcher's last tick as the lane saw it: when, in which profile, and whether that
+ *  profile has the lane on. */
+export interface Dispatcher {
+	at: number;
+	profile: string;
+	laneOn: boolean;
+}
+
+export interface Lane {
+	enabled: boolean;
+	assignee: string;
+	mode?: Mode | null;
+	boards: string[] | "all";
+	linked: number;
+	/** null: no dispatcher tick seen yet; absent: a backend that doesn't report it (unknown). */
+	dispatcher?: Dispatcher | null;
+	/** Ready-made warnings about the dispatcher (none when all is well). */
+	notes?: string[];
+}
+
 export interface Overview {
 	profile: string;
 	ompVs: { found: boolean; command?: string | null; hint?: string | null; cli?: string; server?: string | null; pid?: number | null; error?: string };
 	scheduler: Scheduler | null;
 	notify: boolean;
-	lane: { enabled: boolean; assignee: string; mode?: Mode | null; boards: string[] | "all"; linked: number };
+	lane: Lane;
+	/** The plugin version on the backend (the Desktop page compares it with its own). */
+	pluginVersion?: string;
 }
 
 export interface LinkedCard {

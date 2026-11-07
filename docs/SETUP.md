@@ -1,0 +1,90 @@
+# Setting up VS Code, omp and Hermes together
+
+omp Sessions works the same whether everything runs on the computer in front of you or on a machine you reach over Remote-SSH. This guide covers both, with Hermes Agent and the phone app as optional extras. Pick the arrangement that matches yours; the steps are the same, only *where* they run changes.
+
+![One machine runs omp, the omp-vs server and Hermes; other devices reach it through VS Code Remote-SSH, Hermes Desktop and Tailscale.](images/setup.png)
+
+| Arrangement | The machine with the code runs | You work from |
+| --- | --- | --- |
+| **Local**: one computer (macOS, Linux, or Windows with WSL 2) | everything below | the same computer, plus your phone |
+| **Remote**: a workstation or server | everything below | a laptop (VS Code Remote-SSH, Hermes Desktop in remote mode) and your phone |
+
+**Windows**: run omp, the server and Hermes in WSL 2 and open VS Code with a *WSL* window (local or remote, the WSL window is what puts the extension next to them); a plain Windows window looks for omp and Hermes on Windows instead. Native Windows is handled but untested: there is no background service (the `omp-vs` server starts on demand), the command lives in `%LOCALAPPDATA%\omp-vs`, and Hermes's home is `%LOCALAPPDATA%\hermes`.
+
+"The machine" below means the computer with your repositories: your own computer in the local arrangement, the workstation or server in the remote one. omp, the `omp-vs` server, every session, Hermes and the plugin all run there, so closing the laptop or losing signal never stops work.
+
+## 1. omp Sessions
+
+1. **omp** on the machine: `curl -fsSL https://omp.sh/install | sh`, then sign in to a model provider (run `omp`, then `/login`).
+2. **The extension**: install **omp Sessions** in VS Code. Remote: connect VS Code to the machine with Remote-SSH (or WSL, or a dev container) first; the Extensions view installs it on that side, which is where it runs.
+3. **The terminal command and the service**: run **omp: Install omp-vs Command**, then in a terminal on the machine:
+   ```sh
+   omp-vs server install      # systemd user unit on Linux, launchd agent on macOS: starts at login, restarts on failure
+   omp-vs server status
+   ```
+   With the service installed, restarts from VS Code or the CLI go through systemd or launchd, so the server stays supervised. On a Linux server, `loginctl enable-linger $USER` keeps user services running without a login session; WSL needs systemd enabled in `/etc/wsl.conf`. On Windows without WSL there is no service: the server starts on demand.
+
+That is all omp Sessions needs. The rest is optional.
+
+## 2. Hermes Agent (optional)
+
+1. **Hermes** on the same machine, with its gateway running as a service (`hermes gateway install`). Run the web dashboard too (`hermes dashboard`) if you want the browser page or Hermes Desktop in remote mode.
+2. **The plugin**, in every profile you chat with: **omp: Install Hermes Plugin…** in VS Code, or
+   ```sh
+   omp-vs hermes install --all-profiles
+   omp-vs hermes status --all-profiles
+   ```
+   `HERMES_HOME` is respected. The gateway loads the plugin without a restart; restart the dashboard once so it mounts the page's backend. When the extension updates, it refreshes the plugin and reloads it in the running gateway. Without VS Code, install it from Git instead: `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable` (it still needs `omp-vs` on the machine).
+3. **The kanban lane**, in one profile: the one whose gateway runs the machine's kanban dispatcher. With a single multiplexed gateway that is `default`; with one gateway per profile, it is whichever gateway took the dispatcher lock. `hermes omp status` tells you which (`kanban dispatcher: last tick … in profile …`) and warns when the lane is on elsewhere.
+   ```sh
+   hermes -p default omp lane on --board <board>
+   hermes -p default omp board <board> --folder ~/projects/<project> --mode auto
+   hermes -p default omp status
+   ```
+4. **The skill for other agents**: **omp: Install omp Sessions Skill for Agents…** or `omp-vs skill install`, so omp, Claude Code and Codex on the machine can hand work to background sessions too.
+
+### The omp Sessions page in Hermes
+
+| Where you open Hermes | How the page gets there |
+| --- | --- |
+| **Web dashboard** (any browser) | Automatic once the plugin is enabled and the dashboard restarted: **omp Sessions** appears under *Plugins* in the sidebar. |
+| **Hermes Desktop, local mode** (Hermes on this computer) | Desktop copies the page from the installed plugin. Turn **omp Sessions** on in *Capabilities → Plugins* (use **Rescan** if it isn't listed). |
+| **Hermes Desktop, remote mode** (an SSH gateway or a remote URL) | Desktop plugins live on the computer running Desktop, so add the page there once: *Capabilities → Plugins → Install from Git*, repository `mbaradad/omp-vscode/integrations/hermes/omp-sessions`. The agent part is already on the machine, so Desktop reports that it exists and installs only the page. Then turn it on. |
+
+The page always talks to the plugin on the machine Hermes runs on, so it shows that machine's sessions. After a plugin update, Desktop keeps its copy of the page until you **Rescan** (local) or **Install from Git** again with **Force reinstall** (remote); the page tells you when it is older than the plugin.
+
+## 3. Your phone (optional)
+
+- **omp phone app**: **omp: Connect Phone…** and scan the QR code. How the phone reaches the machine:
+  - **Tailscale on the machine** (recommended): pick *Tailscale*. Install Tailscale on the phone too, same account.
+  - **WSL 2, with Tailscale on Windows**: pick *Behind Tailscale Serve or an HTTPS proxy*, run `tailscale serve --bg 7413` in a Windows terminal and enter the `https://<machine>.<tailnet>.ts.net` address it prints. The same option works with any HTTPS reverse proxy you run.
+  - **No Tailscale**: *Local network* (plain HTTP; only on a Wi-Fi you trust).
+  
+  Details: [Remote access](REMOTE-API.md).
+- **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/omp` says what needs you and `/omp take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
+
+## 4. The laptop, in the remote arrangement
+
+- **VS Code**: Remote-SSH to the machine. Every window attaches to the same sessions; close it whenever you like. Links the extension opens on the machine's `localhost` (the phone app's *Open in Browser*, *Open Hermes Card*) are forwarded to your laptop by VS Code.
+- **Hermes Desktop**: connect it to the machine's Hermes, as an **SSH** gateway (*Settings → Gateways → Add → SSH*) or a **Remote gateway** URL (with Tailscale, or an SSH tunnel: `ssh -N -L 9119:localhost:9119 <machine>`). Then add the page as in the table above.
+- **Voice** uses the microphone of the machine omp runs on, so it works in local windows only.
+
+## A day with this setup
+
+1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `omp`, or starts and schedules sessions directly (`omp_session_start`, with `at` for later).
+2. **omp does the coding.** The lane turns ready cards into omp sessions in the card's worktree, one group per board, within omp's concurrency limit (`omp-vs sched set <n>`).
+3. **Answer questions anywhere.** A session that needs you shows up in VS Code, on the phone, on the omp Sessions page in Hermes, and as a message in the chat that started it. Answering in one place answers it everywhere.
+4. **Review in VS Code.** Diffs, checkpoints and undo per turn. The card gets the session's final reply, and dependent cards start.
+
+## Check that it all works
+
+| Check | Command (on the machine) | Healthy |
+| --- | --- | --- |
+| Server supervised | `omp-vs server status` (and `systemctl --user is-active omp-vs` or `launchctl print gui/$UID/dev.omp.vs-server`) | running |
+| Plugin everywhere | `omp-vs hermes status --all-profiles` | every profile `current, enabled`, the lane on in one |
+| Lane reachable | `hermes -p <profile> omp status` | a dispatcher tick in the last minute, no `!` lines |
+| Extension health | **omp: Run Doctor** in VS Code | no problems in the Hermes section |
+| Hermes page | the dashboard or Desktop sidebar | **omp Sessions** listed and showing your sessions |
+| Phone | `omp-vs remote status` | `on`, with the URL you pair with |
+
+When something is off, start with `hermes omp status` and **omp: Run Doctor**; [the Hermes guide](HERMES.md#troubleshooting) lists the usual causes.

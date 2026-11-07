@@ -34,6 +34,21 @@ EXCERPT_MAX = 320
 VERSION_TTL_S = 30
 
 
+def _plugin_version() -> Optional[str]:
+    """plugin.yaml's version (the Desktop page compares it with the version it was built from)."""
+    try:
+        text = (Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip().strip("\"'") or None
+    return None
+
+
+PLUGIN_VERSION = _plugin_version()
+
+
 def _plugin_package() -> str:
     """Imports the plugin folder (the parent of dashboard/) as a package; returns its module name."""
     name = "omp_sessions_dashboard_plugin"
@@ -365,9 +380,13 @@ def session_action(sid: str, action: str, body: dict) -> dict:
 
 def overview() -> dict:
     s = settings()
+    ln = lane()
     cmd = ompvs.find_omp_vs(s.omp_vs)
+    profile = profile_name()
+    disp = ln.dispatcher()
     out: dict[str, Any] = {
-        "profile": profile_name(),
+        "profile": profile,
+        "pluginVersion": PLUGIN_VERSION,
         "ompVs": {"found": bool(cmd), "command": " ".join(cmd) if cmd else None, "hint": None if cmd else INSTALL_HINT},
         "scheduler": None,
         "notify": s.notify,
@@ -376,7 +395,9 @@ def overview() -> dict:
             "assignee": s.lane.assignee,
             "mode": s.lane.mode,
             "boards": sorted(s.lane.boards) if s.lane.boards else "all",
-            "linked": len(lane().links()),
+            "linked": len(ln.links()),
+            "dispatcher": {"at": disp.get("at"), "profile": disp.get("profile"), "laneOn": disp.get("lane_on")} if disp else None,
+            "notes": commands.dispatcher_notes(disp, profile=profile, lane_on=s.lane.enabled),
         },
     }
     if cmd:

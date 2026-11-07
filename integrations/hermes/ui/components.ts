@@ -124,6 +124,11 @@ export function ErrorBox(p: { message: string; onRetry?: () => void }): ReactEle
 	);
 }
 
+/** Warnings shown in line (amber), one per row: the kanban dispatcher notes. */
+export function Notes(p: { notes: string[]; className?: string }): ReactElement {
+	return h("ul", { className: cx("omps-notes", p.className) }, ...p.notes.map((n, i) => h("li", { key: i }, icon("alert", 12), h("span", null, n))));
+}
+
 // Escape closes the newest open layer only (the New session dialog over the detail panel).
 const layers: Array<{ current: () => void }> = [];
 function onEscape(e: KeyboardEvent): void {

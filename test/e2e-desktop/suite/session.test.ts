@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
@@ -19,12 +20,11 @@ const existingFile = path.join(workspace, "existing.txt");
 /** The session host must not be a descendant of this (extension host) process and must lead its own session. */
 function assertDetached(pid: number): void {
 	const st = procStat(pid);
-	assert.ok(st, `no /proc entry for host ${pid}`);
+	assert.ok(st, `no process ${pid} for the host`);
 	assert.notEqual(st.ppid, process.pid, "host's parent is the extension host");
 	const chain = ancestors(pid);
 	assert.ok(!chain.includes(process.pid), `extension host ${process.pid} is an ancestor of host ${pid}: ${chain.join(" → ")}`);
-	assert.equal(st.session, pid, "host is not a session leader (not setsid'd)");
-	assert.notEqual(st.session, procStat(process.pid)?.session, "host shares the extension host's session");
+	assert.ok(st.sessionLeader, "host is not a session leader (not setsid'd)");
 }
 
 function fakeArgvs(): string[][] {
@@ -126,7 +126,9 @@ describe("omp Sessions — local desktop extension host", () => {
 		const meta = readMeta(id);
 		assert.ok(meta);
 		assert.equal(meta.cwd, workspace);
-		assert.equal(meta.socket, path.join(sessionDir(id), "s.sock"));
+		// sun_path holds ~104 bytes: a deep state dir (macOS's /var/folders/… temp) uses a short tmp path.
+		const preferred = path.join(sessionDir(id), "s.sock");
+		assert.equal(meta.socket, Buffer.byteLength(preferred) < 100 ? preferred : path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`, `${id}.sock`));
 		assert.ok(fs.existsSync(meta.socket), "socket missing");
 		hostPid = meta.pid;
 		ompPid = meta.ompPid ?? 0;

@@ -18,6 +18,11 @@ export interface RemoteConfig {
 	port: number;
 	/** 32 random bytes, base64url; empty until remote access is first enabled. */
 	token: string;
+	/**
+	 * The URL phones open when the listener sits behind a proxy (`tailscale serve`, a reverse proxy, a
+	 * WSL port forward), ending in `/`; the pairing link and the accepted Origin use it.
+	 */
+	publicUrl?: string;
 }
 
 /** What the server's HTTP listener is doing (the `remote` server op). */
@@ -27,8 +32,10 @@ export interface RemoteStatus {
 	port: number;
 	/** Where the listener is bound right now. */
 	listening?: { host: string; port: number };
-	/** Base URL a phone opens (`http://<address>:<port>/`), while listening. */
+	/** Base URL a phone opens while listening: the public URL when set, else `http://<address>:<port>/`. */
 	url?: string;
+	/** The listener's own address when a public URL fronts it (what the proxy must forward to). */
+	localUrl?: string;
 	/** Why it is not listening although enabled (no Tailscale address, port in use, …). */
 	error?: string;
 }
@@ -49,6 +56,22 @@ function isPort(value: unknown): value is number {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 65536;
 }
 
+/**
+ * An http(s) origin without credentials, path, query or fragment, normalized to end in `/`; undefined
+ * otherwise. A path prefix can't work: the phone app calls `/api/…` and its cookie is set for `/`.
+ */
+export function normalizePublicUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	let url: URL;
+	try {
+		url = new URL(value.trim());
+	} catch {
+		return undefined;
+	}
+	if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.search || url.hash || url.pathname !== "/") return undefined;
+	return `${url.origin}/`;
+}
+
 /** Parses remote.json text; anything missing or malformed falls back to the defaults (disabled). */
 export function parseRemoteConfig(text: string | undefined): RemoteConfig {
 	let raw: unknown;
@@ -61,11 +84,13 @@ export function parseRemoteConfig(text: string | undefined): RemoteConfig {
 	const bind = r.get("bind");
 	const port = r.get("port");
 	const token = r.get("token");
+	const publicUrl = normalizePublicUrl(r.get("publicUrl"));
 	return {
 		enabled: r.get("enabled") === true,
 		bind: isRemoteBind(bind) ? bind : "tailscale",
 		port: isPort(port) ? port : DEFAULT_REMOTE_PORT,
 		token: typeof token === "string" ? token : "",
+		...(publicUrl ? { publicUrl } : {}),
 	};
 }
 

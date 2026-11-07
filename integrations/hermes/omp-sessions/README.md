@@ -7,13 +7,13 @@ Hermes hands coding work to [oh-my-pi](https://omp.sh) (`omp`) sessions instead 
 - **Tools** (toolset `omp_sessions`): list sessions and projects; start a session now, queue it, or schedule it for later in a folder, a known project or a board's folder; check, wait on, answer, steer, switch the permission mode of, and stop a session.
 - **Notifications**: when a session a Hermes chat started finishes or needs input, that chat gets a message.
 - **Kanban lane**: cards assigned to `omp` run as omp sessions (one omp group per board); the reply becomes the card's result, a question blocks the card until answered, and dependent cards chain as usual.
-- **Dashboard and Desktop page**: a live board of omp sessions (needs you, working, queued and scheduled, done, stopped) with answers, follow-ups, mode switches and new sessions, plus the lane's boards and linked cards. In the web dashboard it's the **omp Sessions** tab; in Hermes Desktop, enable it under Capabilities → Plugins.
-- **Skill** `omp-sessions:omp-sessions`, `/omp` in chats and `hermes omp …` in a terminal.
+- **Dashboard and Desktop page**: a live board of omp sessions (needs you, working, queued and scheduled, done, stopped) with answers, follow-ups, mode switches and new sessions, plus the lane's boards and linked cards. In the web dashboard it's the **omp Sessions** tab; in Hermes Desktop, turn it on under Capabilities → Plugins (Desktop in remote mode: add it there with *Install from Git* first).
+- **Skill** `omp-sessions:omp-sessions`, `/omp` in chats (`/omp take <card>` hands a kanban card to omp, also from Hermes Console on Android) and `hermes omp …` in a terminal.
 
 ## Requirements
 
 - Hermes Agent 0.23.0 or later.
-- `omp-vs` on `PATH` or in `~/.local/bin`: install the omp Sessions extension in VS Code and run **omp: Install omp-vs Command**. omp itself must be installed and signed in.
+- `omp-vs` on `PATH`, in `~/.local/bin`, or in `%LOCALAPPDATA%\omp-vs` on Windows: install the omp Sessions extension in VS Code and run **omp: Install omp-vs Command**. omp itself must be installed and signed in. A gateway started by systemd or launchd may have a minimal `PATH`; the installed command works there because it records the absolute path of its runtime.
 
 ## Install
 

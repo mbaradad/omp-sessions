@@ -149,6 +149,9 @@ try {
 				"--disable-extensions",
 				"--disable-gpu",
 				"--new-window",
+				// Keep the test VS Code out of the OS keychain: on macOS it shares the "Code Safe Storage"
+				// item (same bundle id) with the user's VS Code and would make it ask for access again.
+				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 			],
 			extensionTestsEnv: {
 				HOME: dirs.home,
@@ -260,14 +263,17 @@ function killLeftovers() {
 	return killed;
 }
 
+/** `ps` row (procps or BSD ps: macOS has no /proc); undefined once the process is gone. */
+function psRow(pid) {
+	const r = spawnSync("ps", ["-ww", "-o", "stat=,command=", "-p", String(pid)], { encoding: "utf8" });
+	const m = /^(\S+)\s+(.*)$/.exec((r.stdout ?? "").trim());
+	return r.status === 0 && m ? { stat: m[1], command: m[2] } : undefined;
+}
+
 /** Guards against pid reuse: only kill processes whose command line points into this run. */
 function isOurs(pid) {
-	try {
-		const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
-		return cmd.includes(sessionsRoot) || cmd.includes(dirs.workspace) || cmd.includes(fakeOmp);
-	} catch {
-		return true;
-	}
+	const cmd = psRow(pid)?.command ?? "";
+	return cmd.includes(sessionsRoot) || cmd.includes(dirs.workspace) || cmd.includes(fakeOmp);
 }
 
 function pidAlive(pid) {
@@ -278,12 +284,8 @@ function pidAlive(pid) {
 		return err.code === "EPERM";
 	}
 	// Zombies (exited, not yet reaped by init) count as dead.
-	try {
-		const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-		return stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
-	} catch {
-		return true;
-	}
+	const row = psRow(pid);
+	return !!row && !row.stat.startsWith("Z");
 }
 
 function readJson(file) {

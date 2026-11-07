@@ -16,13 +16,15 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 try:
     import fcntl
-except ImportError:  # Windows: in-process locking only
+except ImportError:  # Windows: msvcrt byte-range locks
     fcntl = None  # type: ignore[assignment]
+    import msvcrt
 
 _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _GUARD = threading.Lock()
@@ -30,6 +32,33 @@ _GUARD = threading.Lock()
 
 class Busy(Exception):
     """A non-blocking lock is held by someone else."""
+
+
+def _lock_handle(handle: Any, path: Path, blocking: bool) -> None:
+    if fcntl is not None:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError as exc:
+            raise Busy(path.name) from exc
+        return
+    # msvcrt locks bytes from the current position; byte 0 stands for the file (it may be past EOF).
+    while True:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if not blocking:
+                raise Busy(path.name) from exc
+            time.sleep(0.05)
+
+
+def _unlock_handle(handle: Any) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    handle.seek(0)
+    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 @contextlib.contextmanager
@@ -42,16 +71,11 @@ def file_lock(path: Path, *, blocking: bool = True) -> Iterator[None]:
         raise Busy(path.name)
     try:
         with open(path, "a+") as handle:
-            if fcntl is not None:
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-                except BlockingIOError as exc:
-                    raise Busy(path.name) from exc
+            _lock_handle(handle, path, blocking)
             try:
                 yield
             finally:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                _unlock_handle(handle)
     finally:
         tl.release()
 
@@ -104,6 +128,16 @@ def lane_data_dir() -> Path:
     from hermes_cli import kanban_db as kb
 
     return kb.kanban_home() / "plugin-data" / "omp-sessions-lane"
+
+
+def profile_of(store: "Store") -> str:
+    """The profile a profile-scoped store belongs to (ctx.state lives in <home>/plugin-data/<plugin>)."""
+    from hermes_constants import profile_name_for_home
+
+    try:
+        return profile_name_for_home(Path(store.state.data_dir).parent.parent) or "custom"
+    except Exception:
+        return "unknown"
 
 
 class Store:

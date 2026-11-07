@@ -1,7 +1,7 @@
 // Boards: the kanban lane per board (folder, group, mode, assignee), the cards it runs as omp sessions
 // and the ready cards it will take next, with the lane's switches.
-import { type Board, type BoardsView, errorMessage, type Host, MODE_INFO, MODES, type Mode } from "./api";
-import { Button, Empty, ErrorBox, Field, Switch } from "./components";
+import { type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode } from "./api";
+import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
 import { h, type ReactElement, useEffect, useState } from "./react";
 import { ago, cx, icon, shortId } from "./util";
 
@@ -107,7 +107,7 @@ function BoardCard(p: { b: Board; laneOn: boolean; busy: boolean; onSave: (slug:
 	);
 }
 
-export function BoardsPanel(p: { host: Host; onOpenSession: (id: string) => void; onChanged: () => void }): ReactElement {
+export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onOpenSession: (id: string) => void; onChanged: () => void }): ReactElement {
 	const [view, setView] = useState<BoardsView | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
@@ -145,13 +145,17 @@ export function BoardsPanel(p: { host: Host; onOpenSession: (id: string) => void
 	};
 
 	if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
+	const notes = p.lane?.notes ?? [];
+	const tick = p.lane?.dispatcher;
+	// Boards in the lane first; the rest keep the backend's order.
+	const boards = [...view.boards].sort((a, b) => Number(b.lane) - Number(a.lane));
 	return h(
 		"div",
 		{ className: "omps-boards" },
 		h(
 			"div",
-			{ className: cx("omps-lane-banner", view.enabled && "is-on") },
-			h("span", { className: "omps-lane-banner-icon" }, icon("lane", 18)),
+			{ className: cx("omps-lane-banner", view.enabled && "is-on", notes.length > 0 && "is-warn") },
+			h("span", { className: "omps-lane-banner-icon" }, icon(notes.length ? "alert" : "lane", 18)),
 			h(
 				"div",
 				{ className: "omps-lane-banner-text" },
@@ -162,17 +166,19 @@ export function BoardsPanel(p: { host: Host; onOpenSession: (id: string) => void
 					view.enabled
 						? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.`
 						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under omp's concurrency limit). Settings are this profile's (${view.profile}).`,
+					tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null,
 				),
+				notes.length ? h(Notes, { notes }) : null,
 			),
 			h(Switch, { checked: view.enabled, label: "Kanban lane", busy: busy === "lane", onChange: on => void post("lane", "/lane", { enabled: on }) }),
 		),
 		error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 		actionError ? h(ErrorBox, { message: actionError }) : null,
-		view.boards.length
+		boards.length
 			? h(
 					"div",
 					{ className: "omps-bgrid" },
-					...view.boards.map(b => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession })),
+					...boards.map(b => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession })),
 				)
 			: h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." }),
 	);

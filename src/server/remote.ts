@@ -147,7 +147,9 @@ export class RemoteServer {
 		const status: RemoteStatus = { enabled, bind, port };
 		if (this.bound) {
 			status.listening = { host: this.bound.host, port: this.bound.port };
-			status.url = baseUrl(this.bound.advertise, this.bound.port);
+			const local = baseUrl(this.bound.advertise, this.bound.port);
+			status.url = this.cfg.publicUrl ?? local;
+			if (this.cfg.publicUrl) status.localUrl = local;
 		}
 		if (this.error) status.error = this.error;
 		return status;
@@ -287,9 +289,22 @@ export class RemoteServer {
 		this.deps.log("remote: rejected token from", ip, `(${f.count} failures)`);
 	}
 
+	/**
+	 * Who to lock out after failed tokens. Behind a proxy (a public URL is set and the peer is loopback, e.g.
+	 * `tailscale serve`), every client arrives from 127.0.0.1: use the address the proxy appended to
+	 * X-Forwarded-For (the last hop; earlier hops come from the client and can be forged).
+	 */
+	private clientAddress(req: http.IncomingMessage): string {
+		const peer = req.socket.remoteAddress ?? "";
+		const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+		const forwarded = req.headers["x-forwarded-for"];
+		const hops = (Array.isArray(forwarded) ? forwarded.join(",") : (forwarded ?? "")).split(",").map(h => h.trim()).filter(Boolean);
+		return this.cfg.publicUrl && loopback && hops.length ? `${hops[hops.length - 1]} (via proxy)` : peer;
+	}
+
 	/** Throws 401/429 unless the request carries the token; tells how it did. */
 	private authorize(req: http.IncomingMessage): "bearer" | "cookie" {
-		const ip = req.socket.remoteAddress ?? "";
+		const ip = this.clientAddress(req);
 		this.checkLock(ip);
 		const header = req.headers.authorization;
 		const bearer = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : undefined;
@@ -306,7 +321,10 @@ export class RemoteServer {
 	/** Cookie-authenticated writes must come from this origin as JSON (no form posts from other sites). */
 	private checkSameOrigin(req: http.IncomingMessage): void {
 		const origin = req.headers.origin;
-		if (origin !== undefined && origin !== `http://${req.headers.host ?? ""}`) throw new HttpError(403, "cross-origin request refused");
+		const host = req.headers.host ?? "";
+		// Behind a proxy (tailscale serve, HTTPS) the page's origin is the public URL's, not this listener's.
+		const allowed = [`http://${host}`, ...(this.cfg.publicUrl ? [new URL(this.cfg.publicUrl).origin] : [])];
+		if (origin !== undefined && !allowed.includes(origin)) throw new HttpError(403, "cross-origin request refused");
 		if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) throw new HttpError(415, "send Content-Type: application/json");
 	}
 
@@ -361,7 +379,7 @@ export class RemoteServer {
 	}
 
 	private async pair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-		const ip = req.socket.remoteAddress ?? "";
+		const ip = this.clientAddress(req);
 		this.checkLock(ip);
 		this.checkSameOrigin(req);
 		const body = await readJson(req);

@@ -272,7 +272,8 @@ class Tools:
                 # omp-vs names queued sessions after the task; prompt sessions after the prompt here.
                 title=_str(args, "title") or (one_line(prompt, 60) if prompt else None),
                 mode=mode,
-                tags=_list(args, "tags"),
+                # `hermes` marks where the session came from (VS Code and the page show it), like lane sessions.
+                tags=list(dict.fromkeys(["hermes", *_list(args, "tags")])),
                 group=_str(args, "group") or group,
             )
             key = current_session_key()

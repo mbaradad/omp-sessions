@@ -14,7 +14,8 @@ function ms(t: number): number {
 export function ago(t: number | null | undefined, now = Date.now()): string {
 	if (!t) return "";
 	const s = Math.round((now - ms(t)) / 1000);
-	if (s < 0) return until(t, now);
+	// A timestamp slightly ahead of this clock (another machine's, or written after the last tick) is "now".
+	if (s < -120) return until(t, now);
 	if (s < 45) return "just now";
 	if (s < 90 * 60) return `${Math.max(1, Math.round(s / 60))}m ago`;
 	if (s < 36 * 3600) return `${Math.round(s / 3600)}h ago`;
@@ -79,23 +80,36 @@ export function stateText(s: Session, now = Date.now()): string {
 	}
 }
 
-// ---------- Markdown (subset): headings, lists, quotes, fenced code, inline code, bold, links ----------
+// ---------- Markdown (subset): headings, lists, quotes, rules, tables, fenced code, inline code, bold, italics, links ----------
 
 function inline(text: string, key: string): Child[] {
 	const out: Child[] = [];
-	const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+	const re = /(`[^`]+`)|\*\*(.+?)\*\*|\*([^*\s](?:[^*]*[^*\s])?)\*|(\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
 	let last = 0;
 	let i = 0;
 	for (let m = re.exec(text); m; m = re.exec(text)) {
 		if (m.index > last) out.push(text.slice(last, m.index));
 		const k = `${key}-${i++}`;
 		if (m[1]) out.push(h("code", { key: k }, m[1].slice(1, -1)));
-		else if (m[2]) out.push(h("strong", { key: k }, m[2].slice(2, -2)));
-		else if (m[3] && m[4]) out.push(h("a", { key: k, href: m[4], target: "_blank", rel: "noreferrer noopener" }, m[3].slice(1, m[3].indexOf("]"))));
+		else if (m[2]) out.push(h("strong", { key: k }, ...inline(m[2], k)));
+		else if (m[3]) out.push(h("em", { key: k }, ...inline(m[3], k)));
+		else if (m[4] && m[5]) out.push(h("a", { key: k, href: m[5], target: "_blank", rel: "noreferrer noopener" }, m[4].slice(1, m[4].indexOf("]"))));
 		last = m.index + m[0].length;
 	}
 	if (last < text.length) out.push(text.slice(last));
 	return out;
+}
+
+const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+const TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+function cells(row: string): string[] {
+	return row
+		.trim()
+		.replace(/^\|/, "")
+		.replace(/\|$/, "")
+		.split("|")
+		.map(c => c.trim());
 }
 
 export function markdown(text: string): ReactElement[] {
@@ -115,7 +129,31 @@ export function markdown(text: string): ReactElement[] {
 			blocks.push(h("pre", { key }, h("code", null, body.join("\n"))));
 			continue;
 		}
-		const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+		if (RULE.test(line)) {
+			blocks.push(h("hr", { key }));
+			i++;
+			continue;
+		}
+		if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+			const head = cells(line);
+			const rows: string[][] = [];
+			i += 2;
+			while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+			blocks.push(
+				h(
+					"div",
+					{ key, className: "omps-md-table" },
+					h(
+						"table",
+						null,
+						h("thead", null, h("tr", null, ...head.map((c, j) => h("th", { key: j }, ...inline(c, `${key}-h${j}`))))),
+						h("tbody", null, ...rows.map((r, ri) => h("tr", { key: ri }, ...r.map((c, j) => h("td", { key: j }, ...inline(c, `${key}-${ri}-${j}`)))))),
+					),
+				),
+			);
+			continue;
+		}
+		const heading = /^(#{1,6})\s+(.*)$/.exec(line);
 		if (heading) {
 			blocks.push(h(`h${Math.min(6, heading[1].length + 3)}`, { key }, ...inline(heading[2], key)));
 			i++;
@@ -143,7 +181,7 @@ export function markdown(text: string): ReactElement[] {
 			continue;
 		}
 		const para: string[] = [];
-		while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,4}\s|[-*+]\s|\d+[.)]\s|>)/.test(lines[i])) para.push(lines[i++]);
+		while (i < lines.length && lines[i].trim() && !RULE.test(lines[i]) && !/^\s*(```|#{1,6}\s|[-*+]\s|\d+[.)]\s|>)/.test(lines[i])) para.push(lines[i++]);
 		if (para.length === 0) para.push(lines[i++]);
 		blocks.push(h("p", { key }, ...inline(para.join(" "), key)));
 	}

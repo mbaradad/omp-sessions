@@ -3,6 +3,7 @@
 
 import { HOST_CRASHED, HOST_DIED, isOutdated, needsRestore, settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
+import { type HermesFacts, hermesChecks } from "./doctor-hermes";
 
 export type Level = "ok" | "warn" | "error" | "info";
 
@@ -70,6 +71,8 @@ export interface DoctorFacts {
 	socket: { platform: string; sessionsRoot: string; tmpdir: string };
 	sessions: SessionFacts[];
 	cleanupDays: number;
+	/** Set when Hermes Agent is on this machine (a Hermes home or the hermes command). */
+	hermes?: HermesFacts;
 }
 
 export const ICON: Record<Level, string> = { ok: "✅", warn: "⚠️", error: "❌", info: "ℹ️" };
@@ -255,6 +258,7 @@ export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string
 			{ title: "Storage", checks: storage },
 			{ title: `Sessions (${f.sessions.length})`, checks: sessions },
 			{ title: "Disk", checks: disk },
+			...(f.hermes ? [{ title: "Hermes", checks: hermesChecks(f.hermes) }] : []),
 		],
 	};
 }

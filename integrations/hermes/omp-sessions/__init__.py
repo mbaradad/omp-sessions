@@ -13,12 +13,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .commands import run_cli, sessions_summary, setup_cli, status_data, status_text
+from .commands import run_cli, sessions_brief, sessions_summary, setup_cli, status_data, status_text, take_card
 from .lane import Lane
 from .notify import Notifier, inject_with
 from .ompvs import OmpVs
 from .settings import read_settings
-from .store import FileState, Store, lane_data_dir
+from .store import FileState, Store, lane_data_dir, profile_of
 from .tools import SCHEMAS, TOOLSET, Tools
 
 log = logging.getLogger(__name__)
@@ -68,16 +68,26 @@ class Plugin:
         if dry_run:
             return
         try:
+            self.lane.heartbeat(board, profile=profile_of(self.store), lane_on=self.settings().lane.enabled)
+        except Exception as exc:
+            log.debug("omp lane: heartbeat: %s", exc)
+        try:
             self.notifier.poll()
         except Exception as exc:
             log.warning("omp notify: %s", exc, exc_info=True)
         self.lane.tick(board)
 
     def slash(self, raw_args: str = "", **_: Any) -> str:
-        arg = (raw_args or "").strip()
-        if arg in ("status", "lane"):
+        args = (raw_args or "").split()
+        if args[:1] in (["status"], ["lane"]):
             return status_text(status_data(self.ctx, self.settings(), self.store, self.lane, self.omp()))
-        return sessions_summary(self.omp())
+        if args[:1] == ["take"]:
+            if len(args) not in (2, 3):
+                return "usage: /omp take <card id> [board]"
+            return take_card(args[1], args[2] if len(args) == 3 else None, self.settings(), self.lane)
+        if args[:1] == ["sessions"]:
+            return sessions_summary(self.omp())
+        return sessions_brief(self.omp())
 
     def cli(self, args: Any) -> int:
         return run_cli(args, self.ctx, self.settings, self.store, self.omp, self.lane)
@@ -89,7 +99,7 @@ def register(ctx: Any) -> None:
     for name, handler in plugin.tools.handlers().items():
         ctx.register_tool(name=name, toolset=TOOLSET, schema=SCHEMAS[name], handler=handler, check_fn=available, emoji="🛠")
     ctx.register_hook("on_kanban_dispatch_tick", plugin.on_dispatch_tick)
-    ctx.register_command("omp", plugin.slash, description="omp sessions (status: plugin and kanban lane)", args_hint="[status]")
+    ctx.register_command("omp", plugin.slash, description="omp sessions: what's working and what needs you; status; take <card> assigns a kanban card to omp", args_hint="[status|sessions|take <card> [board]]")
     ctx.register_cli_command(name="omp", help="omp sessions: status, kanban lane, board folders", setup_fn=setup_cli, handler_fn=plugin.cli)
     if SKILL_FILE.is_file():
         ctx.register_skill("omp-sessions", SKILL_FILE, description=SKILL_DESCRIPTION, frontmatter={"name": "omp-sessions", "description": SKILL_DESCRIPTION})

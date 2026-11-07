@@ -37,3 +37,6 @@ declare module "*.css" {
 	const text: string;
 	export default text;
 }
+
+/** The plugin version this page was built from (build.mjs defines it). */
+declare const PAGE_VERSION: string;

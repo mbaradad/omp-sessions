@@ -240,6 +240,18 @@ class Lane:
         st[board] = {"at": time.time(), **fields}
         self.store.set("lane_status", st)
 
+    def heartbeat(self, board: Optional[str], *, profile: str, lane_on: bool) -> None:
+        """Records that the kanban dispatcher ticked this plugin (machine-wide, so every profile's
+        `hermes omp status` and page can tell where the dispatcher runs and whether the lane is there)."""
+        self.store.set(
+            "dispatcher",
+            {"at": time.time(), "pid": os.getpid(), "profile": profile, "lane_on": lane_on, "board": board},
+        )
+
+    def dispatcher(self) -> Optional[dict]:
+        v = self.store.get("dispatcher")
+        return v if isinstance(v, dict) else None
+
     # -- entry point --
 
     def tick(self, board: Optional[str]) -> None:

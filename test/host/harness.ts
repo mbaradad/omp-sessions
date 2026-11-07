@@ -161,7 +161,10 @@ export class Host {
 	readonly sessions: string;
 	readonly fakeLog: string;
 	readonly dir: string;
-	readonly socket: string;
+	/** Where the host listens: `<dir>/s.sock`, or the short tmp path when that exceeds sun_path (deep macOS temp dirs). */
+	get socket(): string {
+		return this.metaOrUndefined()?.socket ?? path.join(this.dir, "s.sock");
+	}
 	private readonly clients: Client[] = [];
 	private readonly pids = new Set<number>();
 
@@ -178,7 +181,6 @@ export class Host {
 		this.fakeLog = path.join(this.root, "fake-omp.log");
 		fs.mkdirSync(this.cwd, { recursive: true });
 		this.dir = path.join(this.home, "sessions", id);
-		this.socket = path.join(this.dir, "s.sock");
 	}
 
 	/** Launches `host.js --daemonize` and waits until the socket accepts connections. */
@@ -250,6 +252,8 @@ export class Host {
 		}
 		for (const pid of this.pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 		await until(() => [...this.pids].every(p => !alive(p)), "sandbox processes to exit", 3000);
+		// A killed host leaves its socket behind, which may be outside the sandbox (the short tmp fallback).
+		if (m?.socket) fs.rmSync(m.socket, { force: true });
 		fs.rmSync(this.root, { recursive: true, force: true });
 	}
 }

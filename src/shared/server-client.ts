@@ -1,9 +1,10 @@
 // Client side of the omp-vs server protocol (CLI and extension) and starting the server on
 // demand. Node-only; no vscode import.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
+import * as path from "node:path";
 import * as readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { stateRoot } from "./protocol";
@@ -114,9 +115,92 @@ export class ServerClient {
 	}
 }
 
+/** Where `omp-vs server install` puts the per-user service (systemd user unit / launchd agent). */
+export function serviceUnitPaths(home = os.homedir()): { systemd: string; launchd: string } {
+	return {
+		systemd: path.join(home, ".config", "systemd", "user", "omp-vs.service"),
+		launchd: path.join(home, "Library", "LaunchAgents", "dev.omp.vs-server.plist"),
+	};
+}
+
+export const LAUNCHD_LABEL = "dev.omp.vs-server";
+
+const xmlText = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+/** The systemd user unit / launchd agent `omp-vs server install` writes; `env` entries are `NAME=value`. */
+export function serviceUnitText(kind: "systemd" | "launchd", node: string, serverScript: string, env: string[]): string {
+	if (kind === "systemd") {
+		return [
+			"[Unit]",
+			"Description=omp-vs server (omp Sessions: queued session launcher)",
+			"",
+			"[Service]",
+			// exec: `systemctl start` fails when the binary is missing, instead of reporting success.
+			"Type=exec",
+			`ExecStart=${JSON.stringify(node)} ${JSON.stringify(serverScript)}`,
+			...env.map(e => `Environment=${JSON.stringify(e)}`),
+			"Restart=on-failure",
+			"RestartSec=5",
+			"",
+			"[Install]",
+			"WantedBy=default.target",
+			"",
+		].join("\n");
+	}
+	const envXml = env.map(e => {
+		const i = e.indexOf("=");
+		return `\t\t<key>${xmlText(e.slice(0, i))}</key><string>${xmlText(e.slice(i + 1))}</string>`;
+	});
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>${LAUNCHD_LABEL}</string>
+	<key>ProgramArguments</key><array><string>${xmlText(node)}</string><string>${xmlText(serverScript)}</string></array>
+	<key>EnvironmentVariables</key><dict>
+${envXml.join("\n")}
+	</dict>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+</dict>
+</plist>
+`;
+}
+
+/**
+ * Whether an installed unit serves this state folder: `omp-vs server install` records OMP_VSCODE_HOME
+ * (`Environment="OMP_VSCODE_HOME=…"` for systemd, `<key>OMP_VSCODE_HOME</key><string>…</string>` for
+ * launchd) only when it is set; a unit without it serves the default folder.
+ */
+export function serviceServesHome(unitText: string, kind: "systemd" | "launchd", home: string | undefined): boolean {
+	const key = kind === "systemd" ? "OMP_VSCODE_HOME=" : "<key>OMP_VSCODE_HOME</key>";
+	if (!home) return !unitText.includes(key);
+	return unitText.includes(kind === "systemd" ? `${key}${home}"` : `${key}<string>${xmlText(home)}</string>`);
+}
+
+/**
+ * Starts the installed service instead of a detached process, so the server stays supervised (restarted
+ * on failure, started at login) after the CLI or the extension stopped it for an upgrade. False when no
+ * service is installed or starting it failed (the caller then spawns the server itself).
+ */
+function startService(): boolean {
+	const { systemd, launchd } = serviceUnitPaths();
+	const quiet = { stdio: "ignore" as const, timeout: 10_000 };
+	try {
+		if (process.platform === "linux" && fs.existsSync(systemd) && serviceServesHome(fs.readFileSync(systemd, "utf8"), "systemd", process.env.OMP_VSCODE_HOME)) {
+			return spawnSync("systemctl", ["--user", "start", "omp-vs.service"], quiet).status === 0;
+		}
+		if (process.platform === "darwin" && fs.existsSync(launchd) && serviceServesHome(fs.readFileSync(launchd, "utf8"), "launchd", process.env.OMP_VSCODE_HOME)) {
+			return spawnSync("launchctl", ["kickstart", `gui/${os.userInfo().uid}/${LAUNCHD_LABEL}`], quiet).status === 0;
+		}
+	} catch {
+		/* unreadable unit: spawn instead */
+	}
+	return false;
+}
+
 /** Spawns the server detached (it exits by itself if another one already runs). */
-export function spawnServer(serverScript: string, nodePath = process.execPath): void {
-	fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+function spawnDetached(serverScript: string, nodePath: string): void {
 	const child = spawn(nodePath, [serverScript], {
 		cwd: os.homedir(),
 		detached: true,
@@ -128,16 +212,29 @@ export function spawnServer(serverScript: string, nodePath = process.execPath): 
 	child.unref();
 }
 
-/** Connects to the server, starting it when none runs; undefined when it does not come up. */
+/** How long a started service may take to listen before the server is spawned directly instead. */
+const SERVICE_GRACE_MS = 2000;
+
+/**
+ * Connects to the server, starting it when none runs (through its service when one is installed, else
+ * detached); undefined when it does not come up. A service that "started" but doesn't listen (its unit
+ * points at a node that moved) falls back to a direct spawn, so a stale unit never keeps the server down.
+ */
 export async function ensureServer(serverScript: string, nodePath = process.execPath, timeoutMs = 6000): Promise<ServerClient | undefined> {
 	const existing = await ServerClient.connect();
 	if (existing) return existing;
-	spawnServer(serverScript, nodePath);
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
+	fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+	const start = Date.now();
+	let direct = !startService();
+	if (direct) spawnDetached(serverScript, nodePath);
+	while (Date.now() - start < timeoutMs) {
 		await sleep(150);
 		const client = await ServerClient.connect(500);
 		if (client) return client;
+		if (!direct && Date.now() - start > SERVICE_GRACE_MS) {
+			direct = true;
+			spawnDetached(serverScript, nodePath);
+		}
 	}
 	return undefined;
 }

@@ -3,7 +3,7 @@
 import { errorMessage, type Host, type Overview, type Session, type Started } from "./api";
 import { SessionBoard } from "./board";
 import { BoardsPanel } from "./boards";
-import { Button, Empty, ErrorBox, Segmented } from "./components";
+import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
 import { DetailPanel } from "./detail";
 import { NewSessionDialog } from "./newSession";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
@@ -74,14 +74,24 @@ function StatusStrip(p: { o: Overview | null; error: string | null; sessions: Se
 			);
 		}
 		const lane = o.lane;
+		const notes = lane.notes ?? [];
+		const tick = lane.dispatcher;
 		items.push(
 			h(
 				"button",
-				{ key: "lane", type: "button", className: "omps-strip-item omps-strip-btn", onClick: p.onBoards, title: "Kanban lane settings" },
-				h("span", { className: cx("omps-led", lane.enabled ? "is-ok" : "is-off") }),
+				{
+					key: "lane",
+					type: "button",
+					className: cx("omps-strip-item omps-strip-btn", notes.length > 0 && "is-warn"),
+					onClick: p.onBoards,
+					title: notes.length ? notes.join("\n") : tick ? `Kanban dispatcher (profile ${tick.profile}) last ran the lane at ${new Date(tick.at * 1000).toLocaleTimeString()}` : "Kanban lane settings",
+				},
+				h("span", { className: cx("omps-led", notes.length ? "is-warn" : lane.enabled ? "is-ok" : "is-off") }),
 				h("strong", null, "Lane"),
 				lane.enabled ? ` on · ${lane.boards === "all" ? "all boards" : `${lane.boards.length} board${lane.boards.length === 1 ? "" : "s"}`}` : " off",
+				lane.enabled && tick ? h("span", { className: "omps-muted" }, ` · last pass ${ago(tick.at, p.now)}`) : null,
 				lane.linked ? h("span", { className: "omps-muted" }, ` · ${lane.linked} linked card${lane.linked === 1 ? "" : "s"}`) : null,
+				notes.length ? icon("alert", 12) : null,
 			),
 		);
 	}
@@ -95,6 +105,7 @@ function StatusStrip(p: { o: Overview | null; error: string | null; sessions: Se
 		...items,
 		h("span", { className: "omps-grow" }),
 		p.refreshedAt ? h("span", { className: "omps-strip-time", title: new Date(p.refreshedAt).toLocaleTimeString() }, icon("refresh", 11), ago(p.refreshedAt, p.now)) : null,
+		o?.lane.notes?.length ? h(Notes, { notes: o.lane.notes, className: "omps-strip-notes" }) : null,
 	);
 }
 
@@ -196,7 +207,7 @@ export function createPage(host: Host): () => ReactElement {
 		const notInstalled = overview && !overview.ompVs.found;
 		let main: Child;
 		if (view === "boards") {
-			main = h(BoardsPanel, { host, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
+			main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
 		} else if (notInstalled) {
 			main = h(Empty, { icon: "terminal", title: "omp-vs is not installed", body: overview.ompVs.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
 		} else if (!sessions) {
@@ -257,6 +268,15 @@ export function createPage(host: Host): () => ReactElement {
 				h(Button, { kind: "brand", icon: "plus", label: "New session", title: "New session (N)", disabled: Boolean(notInstalled), onClick: () => setCreating(true) }),
 			),
 			h(StatusStrip, { o: overview, error: overviewError, sessions, now, refreshedAt, onBoards: () => setView("boards") }),
+			// Desktop keeps its own copy of this page; after a plugin update it can lag the backend it talks to.
+			host.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== PAGE_VERSION
+				? h(Notes, {
+						className: "omps-page-note",
+						notes: [
+							`This page is omp Sessions ${PAGE_VERSION}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → omp Sessions: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`,
+						],
+					})
+				: null,
 			h("div", { className: "omps-body" }, main),
 			selected && view === "sessions"
 				? h(DetailPanel, { key: selected, host, id: selected, summary: all.find(s => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() })
