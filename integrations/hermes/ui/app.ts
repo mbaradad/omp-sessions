@@ -8,6 +8,7 @@ import { DetailPanel } from "./detail";
 import { NewSessionDialog } from "./newSession";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
 import { ago, cx, icon, logo } from "./util";
+import { openInVscode } from "./vscode";
 
 const SESSIONS_MS = 4000;
 const OVERVIEW_MS = 10_000;
@@ -64,7 +65,7 @@ function StatusStrip(p: { o: Overview | null; error: string | null; sessions: Se
 			items.push(
 				h(
 					"span",
-					{ key: "sched", className: "omps-strip-item", title: limit ? `omp runs at most ${limit} queued tasks at once` : "No concurrency limit" },
+					{ key: "sched", className: "omps-strip-item", title: limit ? `The omp Sessions scheduler runs at most ${limit} queued tasks at once` : "No concurrency limit" },
 					icon("slots", 13),
 					slots ? h("span", { className: "omps-slots", "aria-hidden": true }, ...slots) : null,
 					h("span", null, limit ? `${running}/${limit} slots` : `${running} running · no limit`),
@@ -136,6 +137,7 @@ export function createPage(host: Host): () => ReactElement {
 		const [group, setGroup] = useState("");
 		const [project, setProject] = useState("");
 		const [archived, setArchived] = useState(false);
+		const [notice, setNotice] = useState<string | null>(null);
 		const search = useRef<HTMLInputElement | null>(null);
 
 		const loadSessions = async (): Promise<void> => {
@@ -204,6 +206,15 @@ export function createPage(host: Host): () => ReactElement {
 			refresh();
 		};
 
+		const openProject = async (id: string): Promise<void> => {
+			setNotice(null);
+			try {
+				setNotice(await openInVscode(host, `/sessions/${encodeURIComponent(id)}/project`));
+			} catch (err) {
+				setNotice(errorMessage(err));
+			}
+		};
+
 		const notInstalled = overview && !overview.ompSessions.found;
 		let main: Child;
 		if (view === "boards") {
@@ -216,7 +227,7 @@ export function createPage(host: Host): () => ReactElement {
 			main = h(Empty, {
 				icon: "sparkle",
 				title: "No omp sessions yet",
-				body: "Start one here, from VS Code, with omp-sessions new, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+				body: "Start one here, with omp-sessions new, from VS Code or the omp phone app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
 				action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) }),
 			});
 		} else {
@@ -241,7 +252,8 @@ export function createPage(host: Host): () => ReactElement {
 					h("span", { className: "omps-muted omps-total" }, filtered ? `${shown.length} of ${all.length}` : `${all.length} session${all.length === 1 ? "" : "s"}`),
 				),
 				error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
-				h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, filtered }),
+				notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
+				h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: id => void openProject(id), filtered }),
 			);
 		}
 
@@ -252,7 +264,7 @@ export function createPage(host: Host): () => ReactElement {
 			h(
 				"header",
 				{ className: "omps-head" },
-				logo(24),
+				logo(30),
 				h("div", { className: "omps-head-titles" }, h("h1", { className: "omps-title" }, "omp Sessions"), overview ? h("span", { className: "omps-profile", title: "Hermes profile" }, overview.profile) : null),
 				h(Segmented<View>, {
 					label: "View",

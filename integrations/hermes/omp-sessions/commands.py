@@ -9,8 +9,8 @@ import time
 from typing import Any, Callable, Optional, Sequence
 
 from .lane import Lane, short
-from .ompsessions import OmpSessions, OmpSessionsError, find_omp_sessions
-from .settings import MODES, Settings, board_lane, update_setting
+from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions
+from .settings import MODES, Settings, board_lane, parse_authors, update_setting
 from .store import Store, profile_of
 
 
@@ -95,10 +95,12 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
         "profile": profile,
         "dispatcher": disp,
         "dispatcher_notes": dispatcher_notes(disp, profile=profile, lane_on=settings.lane.enabled),
+        "agent_approvals": settings.agent_approvals,
         "lane": {
             "enabled": settings.lane.enabled,
             "assignee": settings.lane.assignee,
             "mode": settings.lane.mode,
+            "comment_authors": list(settings.lane.comment_authors),
             "boards": settings.lane.boards or "all",
             "ticks": lane.store.get("lane_status", {}) or {},
             "state": str(lane.store.state.data_dir),
@@ -110,7 +112,7 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
 
 def status_text(d: dict) -> str:
     lane = d["lane"]
-    lines = [f"omp-sessions: {d['omp_sessions'] or 'NOT FOUND (install it from VS Code: omp: Install omp-sessions Command)'}"]
+    lines = [f"omp-sessions: {d['omp_sessions'] or 'NOT FOUND (install it with the omp Sessions extension: omp: Install omp-sessions Command, or set the omp_sessions setting)'}"]
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
@@ -127,6 +129,7 @@ def status_text(d: dict) -> str:
         f"{slug}" + (f" ({', '.join(f'{k}={v}' for k, v in cfg.items())})" if cfg else "") for slug, cfg in boards.items()
     )
     lines.append(f"lane (profile {d['profile']}): {'on' if lane['enabled'] else 'off'} · assignee {lane['assignee']} · mode {lane['mode'] or 'omp default'} · {board_text}")
+    lines.append(f"trusted comment authors: {', '.join(lane['comment_authors']) or 'none'} · agent answers approvals: {'yes' if d['agent_approvals'] else 'no'}")
     disp = d.get("dispatcher")
     if disp:
         lines.append(f"kanban dispatcher: last tick {_ago(disp.get('at'))} in profile {disp.get('profile')} (lane {'on' if disp.get('lane_on') else 'off'} there, pid {disp.get('pid')})")
@@ -164,7 +167,7 @@ def sessions_summary(omp: OmpSessions) -> str:
         q = s.get("queue") or {}
         queue = f" · queue {q.get('done', 0)}/{q.get('total', 0)}" if q.get("total") else ""
         group = f" · {s['group']}" if s.get("group") else ""
-        lines.append(f"{str(m.get('id', ''))[:8]}  {s.get('column', m.get('status'))!s:<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
+        lines.append(f"{str(m.get('id', ''))[:8]}  {agent_state(s):<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
     return "\n".join(lines)
 
 
@@ -178,10 +181,19 @@ def sessions_brief(omp: OmpSessions) -> str:
         return "No running omp sessions."
     by: dict[str, list[dict]] = {}
     for s in infos:
-        by.setdefault(str(s.get("column") or (s.get("meta") or {}).get("status") or ""), []).append(s)
-    labels = (("input", "need you"), ("working", "working"), ("waiting", "queued"), ("idle", "done"), ("stopped", "stopped"))
+        by.setdefault(agent_state(s), []).append(s)
+    labels = (
+        ("needs_input", "need you"),
+        ("starting", "starting"),
+        ("working", "working"),
+        ("queued", "queued"),
+        ("scheduled", "scheduled"),
+        ("interrupted", "interrupted"),
+        ("idle", "done"),
+        ("stopped", "stopped"),
+    )
     lines = [" · ".join(f"{len(by[k])} {label}" for k, label in labels if by.get(k))]
-    for s in (by.get("input") or [])[:5]:
+    for s in (by.get("needs_input") or [])[:5]:
         m = s.get("meta") or {}
         lines.append(f"needs you: {str(m.get('id', ''))[:8]} {m.get('title', '')!s:.60}")
     return "\n".join(lines)
@@ -229,6 +241,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     on.add_argument("--assignee", help="card assignee the lane takes (default omp)")
     on.add_argument("--mode", choices=MODES, help="starting permission mode of card sessions")
     on.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every board)")
+    on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach omp and whose @omp assigns cards (default dashboard; * anyone)")
     lane_sub.add_parser("off", help="stop taking new cards (linked cards are still reported)")
     run = lane_sub.add_parser("run", help="one lane pass now (normally every dispatcher tick)")
     run.add_argument("--board", action="append", default=[], help="only this board (repeatable)")
@@ -238,6 +251,8 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     board.add_argument("--group", help="omp group of the board's sessions (default: board name)")
     board.add_argument("--mode", choices=MODES)
     board.add_argument("--assignee")
+    board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": omp Sessions' default)")
+    board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
     project = sub.add_parser("project", help="map a Hermes project (or any name) to a folder")
     project.add_argument("name")
@@ -262,8 +277,9 @@ def _lane(raw: Any) -> dict:
     return lane
 
 
-def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[str] = None, boards: Sequence[str] = ()) -> None:
-    """Turns the lane on or off (plus, when turning it on, its assignee, mode and extra boards)."""
+def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[str] = None, boards: Sequence[str] = (), comment_authors: Optional[str] = None) -> None:
+    """Turns the lane on or off (plus, when turning it on, its assignee, mode, extra boards and
+    trusted comment authors)."""
 
     def change(raw: Any) -> dict:
         lane = _lane(raw)
@@ -272,6 +288,8 @@ def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[st
             lane["assignee"] = assignee.lower()
         if mode:
             lane["mode"] = mode
+        if comment_authors is not None:
+            lane["comment_authors"] = list(parse_authors(comment_authors) or ())
         for b in boards:
             lane["boards"].setdefault(b, {})
         return lane
@@ -286,10 +304,13 @@ def set_board(
     group: Optional[str] = None,
     mode: Optional[str] = None,
     assignee: Optional[str] = None,
+    model: Optional[str] = None,
+    comment_authors: Optional[str] = None,
     remove: bool = False,
 ) -> None:
-    """Per-board lane settings: None leaves a field alone, "" clears it; `remove` drops the board
-    from the lane's list. Raises ValueError for a folder that doesn't exist or an unknown mode."""
+    """Per-board lane settings: None leaves a field alone, "" clears it (comment_authors: back to the
+    lane's list); `remove` drops the board from the lane's list. Raises ValueError for a folder that
+    doesn't exist or an unknown mode."""
     if mode and mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     path = os.path.abspath(os.path.expanduser(folder.strip())) if folder and folder.strip() else None
@@ -307,13 +328,18 @@ def set_board(
                 entry["folder"] = path
             else:
                 entry.pop("folder", None)
-        for key, value in (("group", group), ("mode", mode), ("assignee", assignee)):
+        for key, value in (("group", group), ("mode", mode), ("assignee", assignee), ("model", model)):
             if value is None:
                 continue
             if value.strip():
                 entry[key] = value.strip().lower() if key == "assignee" else value.strip()
             else:
                 entry.pop(key, None)
+        if comment_authors is not None:
+            if comment_authors.strip():
+                entry["comment_authors"] = list(parse_authors(comment_authors) or ())
+            else:
+                entry.pop("comment_authors", None)
         return lane
 
     update_setting("lane", change)
@@ -352,7 +378,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
     if cmd == "lane":
         sub = getattr(args, "lane_cmd", None)
         if sub == "on":
-            set_lane(enabled=True, assignee=args.assignee, mode=args.mode, boards=args.board)
+            set_lane(enabled=True, assignee=args.assignee, mode=args.mode, boards=args.board, comment_authors=args.comment_authors)
         elif sub == "off":
             set_lane(enabled=False)
         elif sub == "run":
@@ -368,7 +394,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         return 0
     if cmd == "board":
         try:
-            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, remove=args.remove)
+            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, model=args.model, comment_authors=args.comment_authors, remove=args.remove)
         except ValueError as exc:
             print(exc)
             return 1

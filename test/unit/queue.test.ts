@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, test } from "node:test";
 import type { QueueOp, QueueTask, TaskQueue } from "../../src/shared/protocol";
-import { applyQueueOps, emptyQueue, nextPending, normalizeQueue, queueSummary, readQueueFile, taskPrompt, writeQueueFile } from "../../src/shared/queue";
+import { applyQueueOps, emptyQueue, nextPending, normalizeQueue, queueSummary, readQueueFile, settleInterrupted, taskPrompt, writeQueueFile } from "../../src/shared/queue";
 
 const NOW = 1_700_000_000_000;
 
@@ -256,4 +256,23 @@ describe("summary, nextPending, taskPrompt, files", () => {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
+});
+
+test("settleInterrupted: a running task left by a dead host goes back to pending, marked, and the queue stops; running it again clears the mark", () => {
+	const q: TaskQueue = { tasks: [task("a", "running", { startedAt: NOW }), task("b")], autoRun: true, startAt: NOW + 1000 };
+	assert.equal(settleInterrupted(q, NOW + 5), true);
+	assert.equal(q.tasks[0].status, "pending");
+	assert.equal(q.tasks[0].interrupted, NOW + 5);
+	assert.equal(q.autoRun, false);
+	assert.equal(q.startAt, undefined);
+	assert.equal(queueSummary(q).interrupted, 1);
+	assert.equal(normalizeQueue(JSON.parse(JSON.stringify(q))).tasks[0].interrupted, NOW + 5, "survives a round trip");
+	assert.equal(settleInterrupted(q), false, "nothing running: unchanged");
+	const rerun = applyQueueOps(q, [{ op: "run", id: "a" }]);
+	assert.equal(rerun.tasks[0].interrupted, undefined);
+	assert.equal(rerun.autoRun, true);
+	assert.equal(queueSummary(rerun).interrupted, undefined);
+	const rescheduled = applyQueueOps(q, [{ op: "schedule", at: NOW + 60_000 }]);
+	assert.equal(rescheduled.tasks[0].interrupted, undefined, "scheduling restarts it at that time");
+	assert.deepEqual([rescheduled.startAt, rescheduled.autoRun, queueSummary(rescheduled).interrupted], [NOW + 60_000, false, undefined]);
 });

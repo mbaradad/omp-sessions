@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode } from "../shared/permissions";
 import type { OmpApi } from "./api";
+import { plain } from "./plain";
 
 const ICONS: Record<PermissionMode, string> = { ask: "$(shield)", edits: "$(edit)", plan: "$(book)", auto: "$(zap)" };
 
@@ -28,11 +29,11 @@ export function registerPermissions(api: OmpApi): void {
 			const mode = isPermissionMode(modeArg) ? modeArg : await pickPermissionMode(sessionPermissionMode(meta), `Permission mode · ${meta.title}`);
 			if (!mode) return;
 			if (!(await setSessionPermissionMode(meta, mode))) {
-				void vscode.window.showWarningMessage(`"${meta.title}" runs an older session host without permission modes. Restart it (omp: Upgrade Session Host) to switch modes live.`);
+				void vscode.window.showWarningMessage(plain(`"${meta.title}" runs an older session host without permission modes. Restart it (omp: Upgrade Session Host) to switch modes live.`));
 				return;
 			}
 			api.refreshTree();
-			if (meta.status === "stopped") void vscode.window.showInformationMessage(`"${meta.title}" resumes in ${PERMISSION_MODE_INFO[mode].label} mode.`);
+			if (meta.status === "stopped") void vscode.window.showInformationMessage(plain(`"${meta.title}" resumes in ${PERMISSION_MODE_INFO[mode].label} mode.`));
 		}),
 	);
 }

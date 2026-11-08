@@ -2,14 +2,14 @@
 // commands. They are implemented here on top of the RPC protocol and surface both as
 // `/commands` in the composer and as items in the chat menu.
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import type { OmpFrame, SessionMeta } from "../shared/protocol";
 import type { PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import type { HostClient } from "./client";
-import { listOmpHistory } from "./sessions";
+import { prepareResume } from "../shared/omp-paths";
+import { configuredOmpPaths, listOmpHistory } from "./sessions";
 import { pickPermissionMode } from "./permissions";
 import { sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
 
@@ -256,16 +256,24 @@ export async function runSessionAction(name: PanelCommand, ctx: CommandContext):
 			const c = need(ctx);
 			const cwd = ctx.meta?.cwd;
 			if (!c || !cwd) return true;
-			const history = listOmpHistory(cwd).filter(h => h.file !== ctx.meta?.ompSessionFile);
+			const history = (await listOmpHistory(cwd)).filter(h => h.file !== ctx.meta?.ompSessionFile);
 			if (!history.length) {
 				ctx.post({ type: "notice", level: "info", text: "No other omp transcripts for this folder." });
 				return true;
 			}
 			const pick = await vscode.window.showQuickPick(
-				history.slice(0, 200).map(h => ({ label: h.title, description: new Date(h.mtime).toLocaleString(), file: h.file })),
+				history.slice(0, 200).map(h => ({ label: h.title, description: `${new Date(h.mtime).toLocaleString()}${h.archived ? " · archived by omp gc" : ""}`, file: h.file })),
 				{ placeHolder: "Switch this session to which transcript?" },
 			);
-			if (pick) fail(ctx, await c.rpc({ type: "switch_session", sessionPath: pick.file }));
+			if (!pick) return true;
+			// omp can't open a gc-archived (.jsonl.gz) transcript: put it back where omp wrote it first.
+			const target = prepareResume(pick.file);
+			if (target.kind === "missing") {
+				ctx.post({ type: "notice", level: "error", text: `Can't switch to ${pick.file}: ${target.reason}.` });
+				return true;
+			}
+			if (target.kind === "restored") ctx.postAfterReset({ type: "notice", level: "info", text: `Restored this transcript from omp's archive (${target.archive}).` });
+			fail(ctx, await c.rpc({ type: "switch_session", sessionPath: target.file }));
 			return true;
 		}
 		case "rewind": {
@@ -395,8 +403,11 @@ export async function runSessionAction(name: PanelCommand, ctx: CommandContext):
 			await agents(ctx);
 			return true;
 		case "settings": {
-			const file = path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".omp", "agent"), "config.yml");
-			if (!fs.existsSync(file)) fs.writeFileSync(file, "");
+			const file = path.join(configuredOmpPaths().agentDir, "config.yml");
+			if (!fs.existsSync(file)) {
+				fs.mkdirSync(path.dirname(file), { recursive: true });
+				fs.writeFileSync(file, "");
+			}
 			await vscode.window.showTextDocument(vscode.Uri.file(file));
 			return true;
 		}

@@ -9,13 +9,18 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { Control, hasRunnableWork, planLaunches, readListContext, sessionInfos } from "../shared/control";
 import { HostConnection } from "../shared/host-conn";
-import { type HostLauncher, findOmp, launchHost, pidAlive, readHostVersion, readLauncherSettings } from "../shared/launch";
+import { type HostLauncher, canConnect, findOmp, launchHost, readHostVersion, readLauncherSettings } from "../shared/launch";
 import { schedulingOrder } from "../shared/organize";
+import { claimLock, holdsLock, lockOwner, releaseLock } from "../shared/process-lock";
 import { sessionsRoot, stateRoot } from "../shared/protocol";
 import { listLeases, readScheduler, schedulerPath, slotsDir } from "../shared/scheduler";
-import { type OpName, type ServerEvent, type ServerOps, type ServerRequest, type ServerResponse, serverLogPath, serverPidPath, serverSocketPath } from "../shared/server-protocol";
+import { type OpName, type ServerEvent, type ServerOps, type ServerRequest, type ServerResponse, forgetServerPipe, legacyServerPipe, recordServerPipe, serverListenPath, serverLogPath, serverPidPath, serverSocketPath } from "../shared/server-protocol";
+import { filterSessions } from "../shared/list-filter";
+import { readRemoteConfig } from "../shared/remote";
+import { type MachineStatus, machineStatus } from "../shared/server-status";
 import { RemoteServer } from "./remote";
 
 const HOST_SCRIPT = path.join(__dirname, "host.js");
@@ -58,30 +63,32 @@ function log(...parts: unknown[]): void {
 }
 
 // ---------- single instance ----------
+// Liveness is "the socket answers": a pid alone can be reused (after a reboot) or name a server that
+// lost its socket. The pid file (a process-lock stamp) only serializes start-ups, and a server that
+// finds another one owning it shuts down.
 
-/** Takes the pid file; false when another live server owns it. */
-function claimPidFile(): boolean {
-	const file = serverPidPath();
-	for (let attempt = 0; attempt < 3; attempt++) {
-		try {
-			fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
-			return true;
-		} catch (err) {
-			if (!(err instanceof Error) || !("code" in err) || err.code !== "EEXIST") throw err;
-		}
-		const owner = Number(fs.readFileSync(file, "utf8").trim());
-		if (owner && owner !== process.pid && pidAlive(owner)) return false;
-		fs.rmSync(file, { force: true });
+/** A pid file this old whose owner never came to answer on the socket is abandoned (a starting server listens within ms). */
+const PID_STALE_MS = 15_000;
+
+/** Where this server listens; inode of the socket it bound (Unix): a successor's socket at the same path is never removed. */
+let socketPath = "";
+let socketIno: number | undefined;
+function ownsSocket(): boolean {
+	try {
+		return fs.statSync(socketPath).ino === socketIno;
+	} catch {
+		return false;
 	}
-	return false;
 }
 
-function releasePidFile(): void {
-	try {
-		if (Number(fs.readFileSync(serverPidPath(), "utf8").trim()) === process.pid) fs.rmSync(serverPidPath(), { force: true });
-	} catch {
-		/* gone */
-	}
+/** Windows: a pre-0.6 server listening on the old guessable pipe name is asked to exit, so it isn't orphaned next to us. */
+async function retireLegacyServer(): Promise<void> {
+	const legacy = legacyServerPipe();
+	if (!legacy || !(await canConnect(legacy))) return;
+	log("stopping the server on the old pipe", legacy);
+	const sock = net.createConnection(legacy, () => sock.end(`${JSON.stringify({ id: 1, op: "shutdown", args: {} })}\n`));
+	sock.on("error", () => {});
+	for (let i = 0; i < 50 && (await canConnect(legacy)); i++) await sleep(100);
 }
 
 // ---------- launching ----------
@@ -89,7 +96,7 @@ function releasePidFile(): void {
 function launcher(): HostLauncher {
 	const settings = readLauncherSettings();
 	const omp = findOmp(settings.ompPath);
-	if (!omp) throw new Error("could not find the omp executable (install omp, or set omp.path in VS Code)");
+	if (!omp) throw new Error("could not find the omp executable (install omp, or run: omp-sessions config set omp.path <path to omp>)");
 	return {
 		hostScript: HOST_SCRIPT,
 		omp,
@@ -160,6 +167,14 @@ async function tick(): Promise<void> {
 	}
 	ticking = true;
 	try {
+		// Re-check the pid file: another server that replaced ours means one of us must go (us).
+		if (!holdsLock(serverPidPath())) {
+			if (lockOwner(serverPidPath())) {
+				shutdown("another server owns the pid file");
+				return;
+			}
+			claimLock(serverPidPath());
+		}
 		pass();
 		remote.poll();
 	} catch (err) {
@@ -315,15 +330,30 @@ const remote = new RemoteServer({
 	control,
 	resume: id => resume({ id }),
 	sessions: () => sessionInfos(readListContext(blocked), true),
+	status: () => machine(),
 	staticDir: __dirname,
 	log,
 });
+
+/** A launcher error older than this no longer shows in `status` (the next launch retries anyway). */
+const LAUNCH_ERROR_SHOWN_MS = 10 * 60_000;
+
+function machine(): MachineStatus {
+	return machineStatus({
+		server: { pid: process.pid, version: VERSION, startedAt: STARTED_AT },
+		infos: sessionInfos(readListContext(blocked), true),
+		scheduler: control.scheduler({}),
+		remote: remote.status(),
+		remoteConfig: readRemoteConfig(),
+		launchError: launcherError && Date.now() - launcherError.at < LAUNCH_ERROR_SHOWN_MS ? launcherError.message : undefined,
+	});
+}
 
 type Handler<K extends OpName> = (args: ServerOps[K]["args"]) => ServerOps[K]["result"] | Promise<ServerOps[K]["result"]>;
 
 const handlers: { [K in OpName]: Handler<K> } = {
 	ping: () => ({ pid: process.pid, version: VERSION, root: stateRoot(), startedAt: STARTED_AT }),
-	list: args => control.list(args),
+	list: args => filterSessions(control.list(args), args),
 	create: args => control.create(args),
 	stop: args => control.stop(args),
 	resume,
@@ -338,6 +368,7 @@ const handlers: { [K in OpName]: Handler<K> } = {
 	organize: args => control.organize(args),
 	scheduler: args => control.scheduler(args),
 	remote: () => remote.reload(true),
+	status: () => machine(),
 	shutdown: () => {
 		setTimeout(() => shutdown("shutdown request"), 50);
 		return {};
@@ -441,31 +472,72 @@ function shutdown(reason: string): void {
 		for (const conn of c.eventSubs.values()) conn.close();
 		c.sock.destroy();
 	}
-	server.close();
+	// Closing a listening Unix socket unlinks its path (libuv): only while the file there is ours.
+	if (IS_WINDOWS || ownsSocket()) server.close();
+	if (IS_WINDOWS && socketPath) forgetServerPipe(socketPath);
 	remote.close();
-	if (!IS_WINDOWS) fs.rmSync(serverSocketPath(), { force: true });
-	releasePidFile();
+	releaseLock(serverPidPath());
 	process.exit(0);
 }
 
-function main(): void {
+/** Exits when another server already answers (or is starting); never removes a socket that answers. */
+async function main(): Promise<void> {
 	openLog();
-	if (!claimPidFile()) {
+	process.on("uncaughtException", err => log("uncaught", err.stack ?? String(err)));
+	process.on("unhandledRejection", err => log("unhandled rejection", String(err)));
+	await retireLegacyServer();
+	try {
+		socketPath = serverListenPath();
+	} catch (err) {
+		log("cannot start:", String(err));
+		process.exit(1);
+	}
+	const socket = socketPath;
+	// Windows: the pipe a running server recorded (each start listens on a fresh name).
+	const running = IS_WINDOWS ? serverSocketPath() : socket;
+	if (running && (await canConnect(running))) {
 		log("another server is running; exiting", process.pid);
 		process.exit(0);
 	}
-	const socket = serverSocketPath();
+	const pidFile = serverPidPath();
+	const abandoned = () => {
+		try {
+			return Date.now() - fs.statSync(pidFile).mtimeMs > PID_STALE_MS;
+		} catch {
+			return false;
+		}
+	};
+	if (!claimLock(pidFile, {}, abandoned)) {
+		log("another server is starting; exiting", process.pid);
+		process.exit(0);
+	}
 	if (!IS_WINDOWS) {
 		fs.mkdirSync(path.dirname(socket), { recursive: true, mode: 0o700 });
+		// Checked again right before removing it: a server may have come up meanwhile.
+		if (await canConnect(socket)) {
+			log("another server is running; exiting", process.pid);
+			releaseLock(pidFile);
+			process.exit(0);
+		}
 		fs.rmSync(socket, { force: true });
 	}
 	server.on("error", err => {
-		log("socket error", String(err));
-		releasePidFile();
-		process.exit(1);
+		const inUse = err instanceof Error && "code" in err && err.code === "EADDRINUSE";
+		log(inUse ? "another server took the socket; exiting" : "socket error", String(err));
+		releaseLock(pidFile);
+		// A lost race is deliberate (exit 0, the service doesn't restart it); anything else is fatal.
+		process.exit(inUse ? 0 : 1);
 	});
 	server.listen(socket, () => {
-		if (!IS_WINDOWS) fs.chmodSync(socket, 0o600);
+		if (!IS_WINDOWS) {
+			socketIno = fs.statSync(socket).ino;
+			fs.chmodSync(socket, 0o600);
+		}
+		if (!holdsLock(pidFile)) {
+			shutdown("another server owns the pid file");
+			return;
+		}
+		if (IS_WINDOWS) recordServerPipe(socket);
 		log("server started", { pid: process.pid, version: VERSION, root: stateRoot(), node: process.version });
 		watch(sessionsRoot(), true);
 		watch(slotsDir(), true);
@@ -475,8 +547,6 @@ function main(): void {
 	process.on("SIGTERM", () => shutdown("SIGTERM"));
 	process.on("SIGINT", () => shutdown("SIGINT"));
 	process.on("SIGHUP", () => shutdown("SIGHUP"));
-	process.on("uncaughtException", err => log("uncaught", err.stack ?? String(err)));
-	process.on("unhandledRejection", err => log("unhandled rejection", String(err)));
 }
 
-main();
+void main();

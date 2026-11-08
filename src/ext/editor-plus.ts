@@ -34,6 +34,7 @@ import {
 	writeTestsPrompt,
 } from "./editor-plus-core";
 import type { ChatPanel } from "./panel";
+import { plain } from "./plain";
 
 const HISTORY_KEY = "omp.editWithOmp.history";
 const HISTORY_MAX = 20;
@@ -194,7 +195,7 @@ export function registerEditorPlus(api: OmpApi): void {
 			return;
 		}
 		const why = outcome === "stopped" ? "The session stopped before changing" : outcome === "timeout" ? "omp did not start working on" : "omp finished without changing";
-		const choice = await vscode.window.showInformationMessage(`${why} ${edit.label}.`, "Open Chat");
+		const choice = await vscode.window.showInformationMessage(plain(`${why} ${edit.label}.`), "Open Chat");
 		if (choice) await vscode.commands.executeCommand("omp.openSession", edit.sessionId);
 	}
 
@@ -243,7 +244,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		if (!panel) return;
 		const meta = panel.meta;
 		if (!meta || meta.status === "stopped") {
-			void vscode.window.showWarningMessage(`Session "${meta?.title ?? "omp"}" is not running. Resume it first.`);
+			void vscode.window.showWarningMessage(plain(`Session "${meta?.title ?? "omp"}" is not running. Resume it first.`));
 			return;
 		}
 		const before = doc.getText();
@@ -316,7 +317,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		const diagnostics = vscode.languages.getDiagnostics(uri).map(diagnosticInfo);
 		const name = path.basename(uri.fsPath);
 		if (!diagnostics.some(d => d.severity === "error" || d.severity === "warning")) {
-			void vscode.window.showInformationMessage(`No errors or warnings in ${name}.`);
+			void vscode.window.showInformationMessage(plain(`No errors or warnings in ${name}.`));
 			return;
 		}
 		const panel = await panelFor(folderOf(uri));

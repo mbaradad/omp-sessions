@@ -7,8 +7,8 @@ Thanks for helping. Bug reports, fixes and features are welcome. For anything la
 Requirements: Node.js 22+, npm, git, VS Code 1.100+. Linux or macOS for the full test suite; Windows works for unit tests (named pipes and `.cmd` shims are handled, but the platform is not yet fully tested). `omp` itself is only needed to try the extension by hand; the tests use a scripted stand-in.
 
 ```sh
-git clone https://github.com/mbaradad/omp-vscode.git
-cd omp-vscode
+git clone https://github.com/mbaradad/omp-sessions.git
+cd omp-sessions
 npm ci
 npm run build        # esbuild → out/ (npm run watch to rebuild on change)
 ```

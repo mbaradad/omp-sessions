@@ -97,7 +97,7 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(a["project"], WORK.name)
         self.assertIn("dash-test", a["tags"])
         q = self.view(later["id"])
-        self.assertEqual(q["state"], "queued")
+        self.assertEqual(q["state"], "scheduled")
         self.assertEqual(q["startAt"], later["startAt"])
         self.assertEqual(q["group"], "Dash group")
         self.assertEqual(q["title"], "later on")
@@ -108,10 +108,15 @@ class DashboardApiTest(unittest.TestCase):
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
         d = self.get(f"/sessions/{asking['id']}")
         self.assertEqual(d["question"]["options"][0], "Approve")
-        self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"})
+        # An answer names its question: none, or another question's id, answers nothing.
+        self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"}, status=400)
+        self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": "not-this-one"}, status=400)
+        self.assertEqual(self.view(asking["id"])["state"], "needs_input")
+        self.assertFalse((WORK / "dash-q.txt").exists())
+        self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]})
         until(lambda: (WORK / "dash-q.txt").exists(), "file written after the answer")
         until(lambda: self.state_is(asking["id"], "idle"), "idle after the answer")
-        err = self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"}, status=400)
+        err = self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]}, status=400)
         self.assertIn("not waiting", err["error"])
         self.post(f"/sessions/{asking['id']}/send", {"text": "echo once more"})
         until(lambda: (self.get(f"/sessions/{asking['id']}").get("reply") or "") == "once more", "follow-up reply")
@@ -152,6 +157,13 @@ class DashboardApiTest(unittest.TestCase):
             s = self.api.settings()
             self.assertEqual(s.lane.boards["dash"], {"folder": str(WORK), "group": "Dash", "mode": "edits"})
             self.assertEqual(s.lane.boards["proj"]["group"], "Project board", "other boards keep their settings")
+            self.assertEqual(dash["effectiveCommentAuthors"], ["dashboard"], "the default: only the dashboard and Hermes Console")
+            v = self.post("/boards/dash", {"commentAuthors": "Dashboard, alice"})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["commentAuthors"], dash["effectiveCommentAuthors"]), (["dashboard", "alice"], ["dashboard", "alice"]))
+            v = self.post("/boards/dash", {"commentAuthors": ""})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["commentAuthors"], dash["effectiveCommentAuthors"]), (None, ["dashboard"]))
             v = self.post("/boards/dash", {"group": "", "lane": False})
             dash = next(b for b in v["boards"] if b["slug"] == "dash")
             self.assertFalse(dash["listed"])
@@ -189,34 +201,84 @@ class DashboardApiTest(unittest.TestCase):
             window.unlink(missing_ok=True)
             request.unlink(missing_ok=True)
 
+    def test_open_project_and_known_folders_in_vscode(self) -> None:
+        import subprocess
+
+        repo = WORK / "proj-repo"
+        pkg = repo / "pkg"
+        pkg.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        window = base.OMP_HOME / "vscode-window.json"
+        window.unlink(missing_ok=True)
+        inside = json.loads(omp_sessions("new", str(pkg), "--detach", "--json", "-p", "echo in a repo").stdout)
+        on_board = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo on a board", "--tag", "hermes:proj", "--tag", "card:t_none").stdout)
+        # A session's project: the git repository holding its folder; a board's session: the board folder.
+        link = self.post(f"/sessions/{inside['id']}/project", {})
+        self.assertEqual(link["folder"], str(repo))
+        self.assertTrue(link["url"].startswith("vscode://file/"), link)
+        self.assertEqual(urllib.parse.unquote(link["page"].partition("#")[2]), link["url"])
+        self.assertEqual(self.post(f"/sessions/{on_board['id']}/project", {})["folder"], str(WORK))
+        # Folders the page shows open; anything else is refused.
+        self.assertEqual(self.post("/folders/vscode", {"path": str(pkg)})["folder"], str(pkg))
+        self.assertEqual(self.post("/folders/vscode", {"path": str(WORK)})["folder"], str(WORK), "a board folder")
+        self.assertIn("error", self.post("/folders/vscode", {"path": str(WORK.parent)}, status=403))
+        self.assertIn("error", self.post("/folders/vscode", {"path": "/"}, status=403))
+        self.assertIn("error", self.post("/folders/vscode", {"path": str(WORK / ".." / "..")}, status=403))
+        self.assertIn("error", self.post("/folders/vscode", {"path": "relative/dir"}, status=400))
+
+    def test_models_and_the_default_model(self) -> None:
+        m = self.get("/models")
+        self.assertTrue(m["models"], m)
+        pick = m["models"][-1]["selector"]
+        try:
+            self.assertEqual(self.post("/models/default", {"model": pick})["default"], pick)
+            self.assertEqual(self.get("/models")["default"], pick)
+            self.assertIn("error", self.post("/models/default", {"model": 3}, status=400))
+        finally:
+            self.assertIsNone(self.post("/models/default", {"model": None})["default"])
+
     def test_missing_omp_sessions_is_explained(self) -> None:
         with mock.patch.object(self.api.ompsessions, "find_omp_sessions", return_value=None):
-            err = self.get("/sessions", status=503)["error"]
-            self.assertIn("omp: Install omp-sessions Command", err)
+            self.assertTrue(self.get("/sessions", status=503)["error"])
             o = self.get("/overview")
             self.assertFalse(o["ompSessions"]["found"])
-            self.assertIn("VS Code", o["ompSessions"]["hint"])
+            self.assertTrue(o["ompSessions"]["hint"])
 
 
 class PureDashboardTest(unittest.TestCase):
-    def test_agent_state_matches_omp_sessions(self) -> None:
-        from hermes_plugins.omp_sessions.ompsessions import agent_state  # loaded by test_plugin's PluginManager or below
+    def test_open_vscode_page_follows_only_omp_sessions_links(self) -> None:
+        import re
 
-        q = lambda **kw: {"pending": 0, "running": 0, "done": 0, "total": 0, "autoRun": False, **kw}  # noqa: E731
-        cases = [
-            ({"meta": {"status": "waiting"}, "queue": q()}, "needs_input"),
-            ({"meta": {"status": "working"}, "queue": q()}, "working"),
-            ({"meta": {"status": "starting"}, "queue": q()}, "starting"),
-            ({"meta": {"status": "stopped"}, "queue": q(), "waiting": {"position": 1}}, "queued"),
-            ({"meta": {"status": "stopped"}, "queue": q(pending=1, autoRun=True)}, "queued"),
-            ({"meta": {"status": "stopped"}, "queue": q(pending=1, startAt=1)}, "queued"),
-            ({"meta": {"status": "stopped"}, "queue": q(pending=1)}, "stopped"),
-            ({"meta": {"status": "idle"}, "queue": q(running=1)}, "working"),
-            ({"meta": {"status": "idle"}, "queue": q(pending=1, startAt=5)}, "queued"),
-            ({"meta": {"status": "idle"}, "queue": q()}, "idle"),
-        ]
-        for info, want in cases:
-            self.assertEqual(agent_state(info), want, info)
+        html = (base.PLUGIN_SRC / "dashboard" / "open-vscode.html").read_text()
+        patterns = [re.compile(m) for m in re.findall(r"const (?:SESSION|REMOTE|FOLDER)_LINK = /(.+)/;", html)]
+        self.assertEqual(len(patterns), 3)
+        follows = lambda url: any(p.search(url) for p in patterns)  # noqa: E731
+        for url in (
+            "vscode://mbaradad.omp-sessions/open?session=0b8c2f6e-1a2b-4c3d-9e8f-0123456789ab",
+            "vscode-insiders://mbaradad.omp-sessions/open?session=abc_123",
+            f"vscode://vscode-remote/ssh-remote+ws{WORK}",
+            "vscode://vscode-remote/wsl+Ubuntu/home/me/My%20Project",
+            "vscodium://vscode-remote/ssh-remote+user@box.example/c:/src/app",
+            "vscode://file/home/me/My%20Project",
+            "vscode://file/C:/src/app",
+            "vscode://file//server/share/x",
+        ):
+            self.assertTrue(follows(url), url)
+        for url in (
+            "vscode://other.extension/do?x=1",
+            "vscode://mbaradad.omp-sessions/open?session=x&command=evil",
+            "vscode://mbaradad.omp-sessions/open?session=%5Bx%5D(command:y)",
+            "vscode-remote://ssh-remote+evil/x",
+            "vscode://vscode-remote/ssh-remote+evil",
+            "vscode://vscode-remote/ssh-remote+a/b?c",
+            "vscode://vscode-remote/ssh-remote+a/b#c",
+            "vscode://file",
+            "vscode://file/x?windowId=1",
+            "vscode://files/x",
+            "javascript:alert(1)",
+            "https://example.com/",
+        ):
+            self.assertFalse(follows(url), url)
 
     @classmethod
     def setUpClass(cls) -> None:

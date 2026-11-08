@@ -41,22 +41,14 @@ export function kanbanUrl(dashboardUrl: string): string {
 	return `${dashboardUrl.trim().replace(/\/+$/, "")}/kanban`;
 }
 
-function shQuote(s: string): string {
-	return /^[A-Za-z0-9_./:@%+=-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-/** A PowerShell double-quoted string: backtick escapes the characters it would expand or end on. */
-function psQuote(s: string): string {
-	return `"${s.replace(/[`"$]/g, "`$&")}"`;
-}
+/** Board slugs and card ids the lane makes; anything else (a tag someone typed) is not passed to hermes. */
+const HERMES_ID = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$/;
 
 /**
- * `hermes kanban [--board <slug>] show <id>` for a terminal (boards are machine-wide: no profile flag):
- * POSIX shell quoting, or on Windows a PowerShell command (VS Code's default terminal there),
- * `& "<hermes>" kanban --board "<slug>" show "<id>"`.
+ * Arguments of `hermes kanban [--board <slug>] show <id>` (boards are machine-wide: no profile flag), run
+ * without a shell; undefined when the board or card isn't a plain id.
  */
-export function showCardCommand(hermes: string, origin: HermesOrigin & { card: string }, platform: string): string {
-	const q = platform === "win32" ? psQuote : shQuote;
-	const command = [q(hermes), "kanban", ...(origin.board ? ["--board", q(origin.board)] : []), "show", q(origin.card)].join(" ");
-	return platform === "win32" ? `& ${command}` : command;
+export function showCardArgs(origin: HermesOrigin & { card: string }): string[] | undefined {
+	if (!HERMES_ID.test(origin.card) || (origin.board !== undefined && !HERMES_ID.test(origin.board))) return undefined;
+	return ["kanban", ...(origin.board ? ["--board", origin.board] : []), "show", origin.card];
 }

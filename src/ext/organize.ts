@@ -10,6 +10,7 @@ import { GROUP_MODES, type GroupMode, ROOT_KEY, SORT_MODES, type SortMode, isGro
 import { type SessionMeta, sessionDir } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { setChatDecorator } from "./panel";
+import { plain } from "./plain";
 import { type ContainerNode, type Node, isNode } from "./tree";
 
 type SessionNode = Extract<Node, { kind: "session" }>;
@@ -153,9 +154,18 @@ export function registerOrganize(api: OmpApi): void {
 	/** Description and empty message from the last render (no extra tree build). */
 	const updateDescription = () => {
 		const hidden = tree.hideFinished && tree.hiddenFinished ? `${tree.hiddenFinished} finished hidden` : "";
-		view.description = [tree.filter ? `Filtered: ${tree.filter}` : "", hidden].filter(Boolean).join(" · ") || undefined;
+		const scope = sessions.scope() === "all" ? "all sessions" : "this workspace";
+		view.description = [scope, tree.filter ? `Filtered: ${tree.filter}` : "", hidden].filter(Boolean).join(" · ");
 		view.message =
-			tree.rootCount > 0 ? undefined : tree.filter ? `No sessions match “${tree.filter}”.` : hidden ? `All sessions are finished (${tree.hiddenFinished} hidden). Show Finished Sessions lists them.` : undefined;
+			tree.rootCount > 0
+				? undefined
+				: tree.filter
+					? `No sessions match “${tree.filter}”.`
+					: hidden
+						? `All sessions are finished (${tree.hiddenFinished} hidden). Show Finished Sessions lists them.`
+						: sessions.scope() === "workspace" && sessions.all().length
+							? "No sessions in this workspace's folders. Show All Sessions lists the others on this machine."
+							: undefined;
 	};
 	tree.onRender = updateDescription;
 	const updateChrome = () => {
@@ -163,6 +173,7 @@ export function registerOrganize(api: OmpApi): void {
 		void vscode.commands.executeCommand("setContext", "omp.sessions.filtered", !!tree.filter);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.showArchived", tree.showArchived);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.hideFinished", tree.hideFinished);
+		void vscode.commands.executeCommand("setContext", "omp.sessions.scopeAll", config().get<string>("sessionScope") === "all");
 		void vscode.commands.executeCommand("setContext", "omp.sessions.groupBy", groupBy());
 	};
 	const setFilter = (text: string) => {
@@ -173,7 +184,8 @@ export function registerOrganize(api: OmpApi): void {
 	updateChrome();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.groupBy")) updateChrome();
+			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sessionScope")) updateChrome();
+			if (e.affectsConfiguration("omp.sessionScope")) api.refreshTree();
 		}),
 	);
 
@@ -346,7 +358,7 @@ export function registerOrganize(api: OmpApi): void {
 		for (const g of groups) {
 			const parentId = box?.kind === "orgGroup" ? box.group.id : undefined;
 			if (g.id === parentId) continue;
-			if (!store.moveGroup(g.id, parentId)) void vscode.window.showWarningMessage(`Can't move “${g.name}” into its own sub-group.`);
+			if (!store.moveGroup(g.id, parentId)) void vscode.window.showWarningMessage(plain(`Can't move “${g.name}” into its own sub-group.`));
 		}
 		if (ids.length === 0) return;
 		const sameBox = dragged.every(n => n.kind !== "session" || n.parent === (box?.key ?? ROOT_KEY));
@@ -432,6 +444,8 @@ export function registerOrganize(api: OmpApi): void {
 	};
 	reg("omp.organize.hideFinished", () => setHideFinished(true));
 	reg("omp.organize.showFinished", () => setHideFinished(false));
+	reg("omp.sessions.showAll", () => updateSetting("sessionScope", "all"));
+	reg("omp.sessions.showWorkspace", () => updateSetting("sessionScope", "workspace"));
 
 	reg("omp.organize.newGroup", async (arg?: unknown, all?: unknown) => {
 		const nodes = pickedNodes(arg, all);
@@ -668,7 +682,7 @@ export function registerOrganize(api: OmpApi): void {
 				sessions.launch({ cwd: m.cwd, id: m.id });
 				started++;
 			} catch (err) {
-				void vscode.window.showErrorMessage(`Could not resume “${m.title}”: ${err instanceof Error ? err.message : String(err)}`);
+				void vscode.window.showErrorMessage(plain(`Could not resume “${m.title}”: ${err instanceof Error ? err.message : String(err)}`));
 				break;
 			}
 		}
@@ -687,7 +701,7 @@ export function registerOrganize(api: OmpApi): void {
 			`Remove ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} stopped sessions`} from the list?`,
 			{
 				modal: true,
-				detail: `Deletes the VS Code session records and file snapshots. omp transcripts stay in ~/.omp/agent/sessions.${running ? ` ${running} running session${running === 1 ? " is" : "s are"} skipped.` : ""}`,
+				detail: `Deletes the sessions' omp Sessions records and file snapshots. omp transcripts stay in ~/.omp/agent/sessions.${running ? ` ${running} running session${running === 1 ? " is" : "s are"} skipped.` : ""}`,
 			},
 			"Remove",
 		);

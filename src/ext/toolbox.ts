@@ -7,8 +7,10 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { sendToHost } from "../shared/launch";
+import { prepareResume } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import { plain } from "./plain";
 import { OmpMissingError, projectRoot, resolveOmpPath } from "./sessions";
 import {
 	type CommandCenterEntry,
@@ -131,7 +133,7 @@ export function registerToolbox(api: OmpApi): void {
 			);
 		} catch (err) {
 			if (err instanceof OmpMissingError) await showOmpMissing();
-			else void vscode.window.showErrorMessage(`Could not run omp ${label}: ${err instanceof Error ? err.message : String(err)}`);
+			else void vscode.window.showErrorMessage(plain(`Could not run omp ${label}: ${err instanceof Error ? err.message : String(err)}`));
 			return undefined;
 		}
 		if (result.timedOut) {
@@ -142,7 +144,7 @@ export function registerToolbox(api: OmpApi): void {
 		if (result.code !== 0) {
 			const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n\n");
 			const last = output.split(/\r?\n/).filter(l => l.trim()).pop() ?? "no output";
-			const action = await vscode.window.showErrorMessage(`omp ${label} failed (exit code ${result.code}): ${last}`, "Show Output");
+			const action = await vscode.window.showErrorMessage(plain(`omp ${label} failed (exit code ${result.code}): ${last}`), "Show Output");
 			if (action) await showOutput(`omp ${label} (failed).txt`, output || "(no output)");
 			return undefined;
 		}
@@ -221,14 +223,17 @@ export function registerToolbox(api: OmpApi): void {
 		if (!meta) return undefined;
 		const file = meta.ompSessionFile;
 		if (!file) {
-			void vscode.window.showInformationMessage(`"${meta.title}" has no omp transcript yet. Send it a message first.`);
+			void vscode.window.showInformationMessage(plain(`"${meta.title}" has no omp transcript yet. Send it a message first.`));
 			return undefined;
 		}
-		if (!fs.existsSync(file)) {
-			void vscode.window.showErrorMessage(`The omp transcript of "${meta.title}" is missing: ${file}`);
+		// `omp gc` may have archived it (.jsonl.gz, which omp can't open): put it back first.
+		const target = prepareResume(file);
+		if (target.kind === "missing") {
+			void vscode.window.showErrorMessage(plain(`The omp transcript of "${meta.title}" is missing: ${file} (${target.reason})`));
 			return undefined;
 		}
-		return { ...meta, ompSessionFile: file };
+		if (target.kind === "restored") void vscode.window.showInformationMessage(plain(`Restored the omp transcript of "${meta.title}" from omp's archive.`));
+		return { ...meta, ompSessionFile: target.file };
 	}
 
 	// ---------- command center ----------
@@ -352,7 +357,7 @@ export function registerToolbox(api: OmpApi): void {
 		try {
 			models = parseModels(out);
 		} catch (err) {
-			void vscode.window.showErrorMessage(`Could not read omp's model list: ${err instanceof Error ? err.message : String(err)}`);
+			void vscode.window.showErrorMessage(plain(`Could not read omp's model list: ${err instanceof Error ? err.message : String(err)}`));
 			return;
 		}
 		if (models.length === 0) {
@@ -409,7 +414,7 @@ export function registerToolbox(api: OmpApi): void {
 		const cwd = await folderFrom(arg);
 		if (!cwd) return;
 		if (!projectRoot(cwd).isRepo) {
-			void vscode.window.showWarningMessage(`${cwd} is not inside a git repository.`);
+			void vscode.window.showWarningMessage(plain(`${cwd} is not inside a git repository.`));
 			return;
 		}
 		const mode = await vscode.window.showQuickPick(
@@ -427,7 +432,7 @@ export function registerToolbox(api: OmpApi): void {
 		const cwd = await folderFrom(arg);
 		if (!cwd) return;
 		if (!projectRoot(cwd).isRepo) {
-			void vscode.window.showWarningMessage(`${cwd} is not inside a git repository.`);
+			void vscode.window.showWarningMessage(plain(`${cwd} is not inside a git repository.`));
 			return;
 		}
 		runInTerminal("git", ["git"], cwd);
@@ -444,12 +449,12 @@ export function registerToolbox(api: OmpApi): void {
 		if (out === undefined) return;
 		const file = exportedPath(out, dir) ?? target;
 		if (!fs.existsSync(file)) {
-			void vscode.window.showErrorMessage(`omp did not write the HTML export (${out.trim() || "no output"}).`);
+			void vscode.window.showErrorMessage(plain(`omp did not write the HTML export (${out.trim() || "no output"}).`));
 			return;
 		}
 		const local = vscode.env.remoteName === undefined;
 		const action = await vscode.window.showInformationMessage(
-			`Exported "${meta.title}" to HTML.`,
+			plain(`Exported "${meta.title}" to HTML.`),
 			...(local ? ["Open in Browser", "Reveal in File Explorer"] : []),
 			"Save Copy As…",
 			"Copy Path",
@@ -490,7 +495,7 @@ export function registerToolbox(api: OmpApi): void {
 			if (ok !== "Continue in Terminal") return;
 		}
 		if (meta.status !== "stopped") {
-			const stopped = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Moving "${meta.title}" to the terminal…` }, async () => {
+			const stopped = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: plain(`Moving "${meta.title}" to the terminal…`) }, async () => {
 				if (!(await sendToHost(meta, { t: "stop" }))) {
 					try {
 						process.kill(meta.pid, "SIGTERM");
@@ -507,7 +512,7 @@ export function registerToolbox(api: OmpApi): void {
 				return false;
 			});
 			if (!stopped) {
-				void vscode.window.showErrorMessage(`"${meta.title}" did not stop; not opening it in a terminal to avoid two omp processes on one transcript.`);
+				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not stop; not opening it in a terminal to avoid two omp processes on one transcript.`));
 				return;
 			}
 		}
@@ -517,7 +522,7 @@ export function registerToolbox(api: OmpApi): void {
 			// omp exited (or the terminal was closed): the session goes back to the background.
 			if (api.sessions.get(meta.id)?.status !== "stopped") return;
 			void vscode.commands.executeCommand("omp.resumeSession", meta.id);
-			void vscode.window.showInformationMessage(`"${meta.title}" is back in the background.`);
+			void vscode.window.showInformationMessage(plain(`"${meta.title}" is back in the background.`));
 		});
 	});
 
@@ -552,7 +557,7 @@ export function registerToolbox(api: OmpApi): void {
 			await vscode.window.showTextDocument(vscode.Uri.file(file));
 			return;
 		}
-		const action = await vscode.window.showInformationMessage(`omp has no config file yet (${file}); it uses its defaults.`, "Show Settings in Terminal", "Open Documentation");
+		const action = await vscode.window.showInformationMessage(plain(`omp has no config file yet (${file}); it uses its defaults.`), "Show Settings in Terminal", "Open Documentation");
 		if (action === "Show Settings in Terminal") runInTerminal("config", ["config"], workspaceCwd());
 		else if (action === "Open Documentation") await vscode.env.openExternal(vscode.Uri.parse(DOCS_URL));
 	});

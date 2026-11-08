@@ -11,8 +11,13 @@ export interface AttachOptions {
 	history: number;
 	/** Follow output only (no prompt, dialogs left to other clients). */
 	readOnly: boolean;
-	/** For `send --wait`-style use: leave once omp is idle again after this prompt. */
+	/**
+	 * For `send --wait`: send this prompt, then leave once omp is idle again (0), asks a question (3) or
+	 * the session stops or its host goes away (4), like `wait`.
+	 */
 	prompt?: string;
+	/** With `prompt`: steer the turn when omp is busy (default: a follow-up after it). */
+	steer?: boolean;
 }
 
 function rec(v: unknown): Record<string, unknown> {
@@ -176,6 +181,11 @@ export async function attach(meta: SessionMeta, opts: AttachOptions): Promise<nu
 		if (DIALOG_METHODS[req.method]) {
 			if (!interactive) {
 				say(c.magenta(`? ${str(req.title) || req.method} — waiting for an answer (attach to answer)`));
+				// `send --wait`: nobody here can answer it; leave like `wait` does (3 = needs input).
+				if (opts.prompt !== undefined) {
+					say(c.dim(`answer: omp-sessions answer ${current.id.slice(0, 8)} <choice>`));
+					finish(3);
+				}
 				return;
 			}
 			dialogs.push(req);
@@ -223,7 +233,8 @@ export async function attach(meta: SessionMeta, opts: AttachOptions): Promise<nu
 					renderer.endLine();
 					if (current.status === "stopped") say(c.dim(`session stopped${current.exitReason ? `: ${current.exitReason}` : ""}`));
 				}
-				if (isBusy(current, state)) sawBusy = true;
+				if (opts.prompt !== undefined && current.status === "stopped") finish(4);
+				else if (isBusy(current, state)) sawBusy = true;
 				else if (opts.prompt !== undefined && sawBusy && current.status === "idle") finish(0);
 				return;
 			}
@@ -240,11 +251,12 @@ export async function attach(meta: SessionMeta, opts: AttachOptions): Promise<nu
 	conn.onClose(() => {
 		renderer.endLine();
 		if (!detached) process.stdout.write(c.dim("session host closed the connection\n"));
-		finish(0);
+		// Waiting for a reply that can no longer come: the host died or the session stopped.
+		finish(opts.prompt !== undefined ? 4 : 0);
 	});
 
 	if (opts.prompt !== undefined) {
-		const res = await conn.rpc({ type: "prompt", message: opts.prompt, ...(isBusy(current, state) ? { streamingBehavior: "followUp" } : {}) });
+		const res = await conn.rpc({ type: "prompt", message: opts.prompt, ...(isBusy(current, state) ? { streamingBehavior: opts.steer ? "steer" : "followUp" } : {}) });
 		if (!res.success) {
 			process.stderr.write(`${c.red("omp-sessions:")} ${String(res.error ?? "omp rejected the prompt")}\n`);
 			conn.close();

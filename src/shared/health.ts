@@ -2,7 +2,7 @@
 
 import type { SessionMeta } from "./protocol";
 
-/** exitReason of a session whose host died mid-turn: the next resume continues that turn (`omp --restore`). */
+/** exitReason of a session whose host died mid-turn: a person's next resume asks omp to continue that turn. */
 export const HOST_CRASHED = "host crashed";
 /** exitReason of a session whose host died while nothing was running. */
 export const HOST_DIED = "host process died";
@@ -17,11 +17,6 @@ const MID_TURN: Partial<Record<SessionMeta["status"], true>> = { working: true, 
 export function settleDeadHost(meta: SessionMeta, hostAlive: boolean): SessionMeta {
 	if (meta.status === "stopped" || hostAlive) return meta;
 	return { ...meta, status: "stopped", exitReason: MID_TURN[meta.status] ? HOST_CRASHED : (meta.exitReason ?? HOST_DIED) };
-}
-
-/** True when resuming should continue an interrupted turn and its subagents (`omp --restore`). */
-export function needsRestore(meta: SessionMeta): boolean {
-	return meta.status === "stopped" && meta.exitReason === HOST_CRASHED && !!meta.ompSessionFile;
 }
 
 /** A running session whose host was started by another extension version (or one too old to say). */

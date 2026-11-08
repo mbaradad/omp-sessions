@@ -1,28 +1,19 @@
 // Usage dashboard (`omp.dashboard`), today's spend (`omp.todayCost` + status bar item) and the
-// history search command. Usage comes from omp's own transcripts, parsed incrementally (see
-// transcripts.ts), so it covers turns made while VS Code was closed and subagents too.
+// history search command. Usage comes from omp's own transcripts, parsed incrementally by the same
+// aggregation the session host uses for `meta.cost` (src/shared/cost.ts), so it covers turns made
+// while VS Code was closed, subagents, side calls and earlier transcripts of a session.
 
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import { setImmediate as yieldToLoop } from "node:timers/promises";
 import * as vscode from "vscode";
+import { TranscriptUsage, type UsageRecord, sessionTranscripts } from "../shared/cost";
+import { locateTranscript } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
+import { listTranscripts } from "../shared/transcript-files";
 import type { OmpApi } from "./api";
 import { searchHistory } from "./history-search";
-import { projectRoot } from "./sessions";
-import {
-	type Summary,
-	type Totals,
-	TranscriptCache,
-	type UsageRecord,
-	type UsageSource,
-	formatCost,
-	formatTokens,
-	listSubagentTranscripts,
-	listTranscripts,
-	parseUsageLine,
-	summarize,
-} from "./transcripts";
+import { configuredOmpPaths, projectRoot } from "./sessions";
+import { type Summary, type Totals, type UsageSource, formatCost, formatTokens, summarize } from "./transcripts";
 
 /** One dashboard row: a VS Code session (`meta`) or, with terminal sessions included, a bare omp transcript. */
 interface UsageRow extends UsageSource {
@@ -49,13 +40,7 @@ const includeAllSetting = () => vscode.workspace.getConfiguration("omp").get<boo
 
 /** Collects usage from transcripts on demand; results are reused for `maxAgeMs`. */
 class UsageService {
-	private readonly cache = new TranscriptCache<UsageRecord[]>(
-		() => [],
-		(acc, line) => {
-			const r = parseUsageLine(line);
-			if (r) acc.push(r);
-		},
-	);
+	private readonly usage = new TranscriptUsage();
 	private last: UsageSnapshot | undefined;
 	private running: { includeAll: boolean; promise: Promise<UsageSnapshot> } | undefined;
 
@@ -78,33 +63,27 @@ class UsageService {
 		return promise;
 	}
 
-	/** Records of a transcript and all its subagents. */
-	private async records(file: string): Promise<UsageRecord[]> {
-		let out: UsageRecord[] = [];
-		for (const f of [file, ...(await listSubagentTranscripts(file))]) {
-			const e = await this.cache.get(f);
-			if (e) out = out.concat(e.data);
-			await yieldToLoop();
-		}
-		return out;
-	}
-
 	private async collect(includeAll: boolean): Promise<UsageRow[]> {
 		const rows: UsageRow[] = [];
 		const claimed = new Set<string>();
 		for (const meta of this.api.sessions.all()) {
+			const files = sessionTranscripts(meta);
+			for (const f of files) {
+				claimed.add(path.resolve(f));
+				const found = locateTranscript(f);
+				if (found) claimed.add(path.resolve(found));
+			}
 			const file = meta.ompSessionFile ?? "";
-			if (file) claimed.add(path.resolve(file));
-			rows.push({ key: `s:${meta.id}`, title: meta.title, cwd: meta.cwd, project: projectRoot(meta.cwd).root, file, meta, records: file ? await this.records(file) : [] });
+			rows.push({ key: `s:${meta.id}`, title: meta.title, cwd: meta.cwd, project: projectRoot(meta.cwd).root, file, meta, records: files.length ? await this.usage.records(files) : [] });
 		}
 		if (!includeAll) return rows;
-		for (const { file } of await listTranscripts()) {
+		for (const { file } of await listTranscripts(configuredOmpPaths())) {
 			if (claimed.has(path.resolve(file))) continue;
-			const records = await this.records(file);
+			const records = await this.usage.records([file]);
 			if (records.length === 0) continue;
-			const head = this.cache.peek(file)?.head;
+			const head = this.usage.peek(file)?.head;
 			const cwd = head?.cwd ?? "";
-			rows.push({ key: `f:${file}`, title: head?.title || path.basename(file, ".jsonl"), cwd, project: cwd ? projectRoot(cwd).root : "(unknown folder)", file, records });
+			rows.push({ key: `f:${file}`, title: head?.title || path.basename(file).replace(/\.jsonl(\.gz)?$/, ""), cwd, project: cwd ? projectRoot(cwd).root : "(unknown folder)", file, records });
 		}
 		return rows;
 	}
@@ -250,7 +229,7 @@ export function registerDashboard(api: OmpApi): void {
 	reg("omp.todayCost", async () => {
 		const { summary } = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "omp: reading transcripts" }, () => usage.get(THROTTLE_MS));
 		const { today, week } = summary.periods;
-		const scope = includeAllSetting() ? "all omp sessions" : "VS Code sessions";
+		const scope = includeAllSetting() ? "all omp sessions" : "omp Sessions only";
 		const text = today.turns ? `omp today: ${spend(today)} (${scope}). Last 7 days: ${formatCost(week.cost)}.` : `No omp model calls today (${scope}). Last 7 days: ${formatCost(week.cost)}.`;
 		if ((await vscode.window.showInformationMessage(text, "Open Dashboard")) === "Open Dashboard") await vscode.commands.executeCommand("omp.dashboard");
 	});
@@ -303,11 +282,11 @@ function dashboardHtml(webview: vscode.Webview, snap: UsageSnapshot): string {
 	const nonce = crypto.randomBytes(16).toString("base64");
 	const { summary: s, includeAll } = snap;
 	const toolbar = `<div class="toolbar"><h1>omp usage</h1>
-<label title="Also count omp sessions started outside VS Code (terminal), from ~/.omp/agent/sessions"><input type="checkbox" id="all"${includeAll ? " checked" : ""}> Include terminal sessions</label>
+<label title="Also count omp sessions run without omp Sessions (plain omp in a terminal), from ~/.omp/agent/sessions"><input type="checkbox" id="all"${includeAll ? " checked" : ""}> Include terminal sessions</label>
 <button id="search" class="secondary">Search history…</button><button id="refresh">Refresh</button>
 <span class="muted">Updated ${esc(new Date(snap.at).toLocaleTimeString())}</span></div>`;
 	if (s.periods.all.turns === 0) {
-		const none = includeAll ? "No omp transcripts with usage were found." : "No usage recorded by VS Code sessions yet. Tick “Include terminal sessions” to count omp sessions started elsewhere.";
+		const none = includeAll ? "No omp transcripts with usage were found." : "No usage recorded by omp Sessions yet. Tick “Include terminal sessions” to count omp sessions run elsewhere.";
 		return page(webview, `${toolbar}<p class="muted">${none}</p>`, nonce, SCRIPT);
 	}
 	const cards = `<div class="cards">${card("Today", s.periods.today)}${card("Last 7 days", s.periods.week)}${card("Last 30 days", s.periods.month)}${card("All time", s.periods.all)}</div>`;

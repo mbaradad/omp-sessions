@@ -97,7 +97,9 @@ var STATE_LABEL = {
   working: "Working",
   starting: "Starting",
   queued: "Queued",
+  scheduled: "Scheduled",
   idle: "Done",
+  interrupted: "Interrupted",
   stopped: "Stopped"
 };
 function stateText(s, now = Date.now()) {
@@ -109,10 +111,13 @@ function stateText(s, now = Date.now()) {
     case "starting":
       return "Starting";
     case "queued":
-      if (s.startAt) return `Starts ${until(s.startAt, now)}`;
       return s.waiting ? `Waiting for a slot${s.waiting.position ? ` · #${s.waiting.position}` : ""}` : "Queued";
+    case "scheduled":
+      return s.startAt ? `Starts ${until(s.startAt, now)}` : "Scheduled";
     case "idle":
       return "Done for now";
+    case "interrupted":
+      return "Interrupted (crash or reboot)";
     case "stopped":
       return s.queue.total > 0 && s.queue.done >= s.queue.total ? "Finished" : "Stopped";
   }
@@ -262,19 +267,30 @@ function icon(name, size = 14, title) {
 function logo(size = 22) {
   return h(
     "svg",
-    { className: "omps-logo", width: size, height: size, viewBox: "8 8 48 48", "aria-hidden": true },
+    { className: "omps-logo", width: size, height: size, viewBox: "0 0 64 64", "aria-hidden": true },
     h(
       "defs",
       null,
+      h("linearGradient", { id: "omps-logo-tile", x1: 0, y1: 0, x2: 0.4, y2: 1 }, h("stop", { offset: 0, stopColor: "#2b1a45" }), h("stop", { offset: 1, stopColor: "#0d0914" })),
+      h(
+        "radialGradient",
+        { id: "omps-logo-glow", cx: 1, cy: 1, r: 0.75 },
+        h("stop", { offset: 0, stopColor: "#ed4abf", stopOpacity: 0.75 }),
+        h("stop", { offset: 0.45, stopColor: "#7b5cff", stopOpacity: 0.35 }),
+        h("stop", { offset: 1, stopColor: "#7b5cff", stopOpacity: 0 })
+      ),
       h(
         "linearGradient",
-        { id: "omps-grad", x1: 0, y1: 0, x2: 1, y2: 1 },
-        h("stop", { offset: 0, stopColor: "#ed4abf" }),
-        h("stop", { offset: 0.5, stopColor: "#9b4dff" }),
-        h("stop", { offset: 1, stopColor: "#5ad8e6" })
+        { id: "omps-logo-glyph", x1: 0, y1: 0, x2: 1, y2: 1 },
+        h("stop", { offset: 0, stopColor: "#f06ccb" }),
+        h("stop", { offset: 0.5, stopColor: "#b07bff" }),
+        h("stop", { offset: 1, stopColor: "#6fe0ec" })
       )
     ),
-    h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-grad)" })
+    h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-tile)" }),
+    h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-glow)" }),
+    h("rect", { x: 2.5, y: 2.5, width: 59, height: 59, rx: 14.5, fill: "none", stroke: "rgba(255,255,255,0.16)" }),
+    h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-logo-glyph)", transform: "translate(3.2 0.6) scale(0.9)" })
   );
 }
 
@@ -404,9 +420,9 @@ function useDismiss(onClose, root) {
 var COLUMNS = [
   { id: "needs", label: "Needs you", states: ["needs_input"], icon: "ask", empty: "Nothing is waiting on you." },
   { id: "working", label: "Working", states: ["working", "starting"], icon: "sparkle", empty: "No session is working right now." },
-  { id: "queued", label: "Queued & scheduled", states: ["queued"], icon: "clock", empty: "Nothing queued or scheduled." },
+  { id: "queued", label: "Queued & scheduled", states: ["queued", "scheduled"], icon: "clock", empty: "Nothing queued or scheduled." },
   { id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
-  { id: "stopped", label: "Stopped", states: ["stopped"], icon: "stop", empty: "No stopped sessions." }
+  { id: "stopped", label: "Stopped", states: ["interrupted", "stopped"], icon: "stop", empty: "No stopped sessions." }
 ];
 var SHOWN = { done: 24, stopped: 20 };
 function order(col, list) {
@@ -459,6 +475,21 @@ function SessionCard(p) {
       "div",
       { className: "omps-card-meta" },
       h("span", { className: "omps-card-project", title: s.cwdLabel }, icon("folder", 12), s.project),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "omps-card-vscode",
+          title: "Open project in VS Code",
+          "aria-label": `Open project of ${s.title} in VS Code`,
+          onClick: (e) => {
+            e.stopPropagation();
+            p.onOpenProject(s.id);
+          },
+          onKeyDown: (e) => e.stopPropagation()
+        },
+        icon("external", 11)
+      ),
       s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null
     ),
     s.state === "needs_input" ? h(
@@ -471,7 +502,7 @@ function SessionCard(p) {
         ...options.slice(0, 3).map((o, i) => h("span", { key: i, className: "omps-option-chip" }, o)),
         options.length > 3 ? h("span", { className: "omps-option-more" }, `+${options.length - 3}`) : null
       ) : null
-    ) : s.authProblem ? h("div", { className: "omps-card-excerpt is-warn" }, s.authProblem) : s.excerpt && s.state !== "queued" ? h("div", { className: "omps-card-excerpt" }, plain(s.excerpt)) : s.exitReason && s.state === "stopped" ? h("div", { className: "omps-card-excerpt" }, s.exitReason) : null,
+    ) : s.authProblem ? h("div", { className: "omps-card-excerpt is-warn" }, s.authProblem) : s.excerpt && s.state !== "queued" && s.state !== "scheduled" ? h("div", { className: "omps-card-excerpt" }, plain(s.excerpt)) : s.exitReason && (s.state === "stopped" || s.state === "interrupted") ? h("div", { className: "omps-card-excerpt" }, s.exitReason) : null,
     s.card ? h(
       "div",
       { className: "omps-card-link", title: `Kanban card ${s.card.board}/${s.card.id}` },
@@ -487,7 +518,7 @@ function SessionCard(p) {
       progress !== null ? h("span", { className: "omps-progress", title: `${s.queue.done} of ${s.queue.total} tasks done` }, h("span", { style: { width: `${progress}%` } })) : null,
       h("span", { className: "omps-grow" }),
       cost ? h("span", { className: "omps-cost" }, cost) : null,
-      s.state === "queued" && s.startAt ? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now))
+      s.state === "scheduled" && s.startAt ? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now))
     )
   );
 }
@@ -516,12 +547,75 @@ function SessionBoard(p) {
         h(
           "div",
           { className: "omps-col-body" },
-          shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
+          shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
           list.length > shown.length ? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`) : null
         )
       );
     })
   );
+}
+
+// integrations/hermes/ui/models.ts
+var cache = null;
+function loadModels(host2, fresh = false) {
+  if (fresh || !cache || cache.host !== host2) {
+    const models = host2.request("/models");
+    models.catch(() => {
+      if (cache?.models === models) cache = null;
+    });
+    cache = { host: host2, models };
+  }
+  return cache.models;
+}
+function useModels(host2) {
+  const [models, setModels] = useState(null);
+  const [error, setError] = useState(null);
+  const load = (fresh) => {
+    loadModels(host2, fresh).then((m) => {
+      setModels(m);
+      setError(null);
+    }).catch((err) => setError(errorMessage(err)));
+  };
+  useEffect(() => load(false), []);
+  return { models, error, reload: () => load(true) };
+}
+function defaultLabel(m) {
+  if (m?.default) return `Default (${m.default})`;
+  return m?.ompDefault ? `omp's default (${m.ompDefault})` : "omp's default";
+}
+function ModelPicker(p) {
+  const list = `${p.id}-list`;
+  return h(
+    "span",
+    { className: "omps-model-picker" },
+    h("input", {
+      id: p.id,
+      className: "omps-input omps-mono",
+      list,
+      value: p.value,
+      placeholder: p.placeholder ?? defaultLabel(p.models),
+      disabled: p.disabled,
+      "aria-label": p.label ?? "Model",
+      autoComplete: "off",
+      spellCheck: false,
+      onChange: (e) => p.onChange(e.target.value)
+    }),
+    h(
+      "datalist",
+      { id: list },
+      ...(p.models?.models ?? []).map((m) => h("option", { key: m.selector, value: m.selector }, `${m.name ?? m.id}${m.selector === p.models?.default ? " · default" : ""}`))
+    )
+  );
+}
+
+// integrations/hermes/ui/vscode.ts
+async function openInVscode(host2, path, body = {}) {
+  const link = await host2.request(path, { method: "POST", body });
+  await host2.openVscode(link);
+  const what = link.folder ? link.folder : "the session";
+  if (link.authority) return `Opening ${what} in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.`;
+  if (link.authority === "") return `Opening ${what} in VS Code on omp's machine.`;
+  return link.folder ? `Opening ${what} in VS Code here (no VS Code window has used omp Sessions on omp's machine yet).` : "No VS Code window has used omp Sessions on omp's machine yet: the link opens VS Code here, which needs the omp Sessions extension.";
 }
 
 // integrations/hermes/ui/boards.ts
@@ -530,7 +624,9 @@ var SESSION_STATE = {
   working: "working",
   starting: "starting",
   queued: "queued",
+  scheduled: "scheduled",
   idle: "done",
+  interrupted: "interrupted",
   stopped: "stopped",
   removed: "session removed",
   "not created": "no session yet"
@@ -540,14 +636,19 @@ function BoardCard(p) {
   const [folder, setFolder] = useState(b.folder ?? "");
   const [group, setGroup] = useState(b.group ?? "");
   const [mode, setMode] = useState(b.mode ?? "");
+  const [model, setModel] = useState(b.model ?? "");
   const [assignee, setAssignee] = useState(b.assignee ?? "");
+  const savedAuthors = (b.commentAuthors ?? []).join(", ");
+  const [authors, setAuthors] = useState(savedAuthors);
   useEffect(() => {
     setFolder(b.folder ?? "");
     setGroup(b.group ?? "");
     setMode(b.mode ?? "");
+    setModel(b.model ?? "");
     setAssignee(b.assignee ?? "");
-  }, [b.folder, b.group, b.mode, b.assignee]);
-  const dirty = folder !== (b.folder ?? "") || group !== (b.group ?? "") || mode !== (b.mode ?? "") || assignee !== (b.assignee ?? "");
+    setAuthors(savedAuthors);
+  }, [b.folder, b.group, b.mode, b.model, b.assignee, savedAuthors]);
+  const dirty = folder !== (b.folder ?? "") || group !== (b.group ?? "") || mode !== (b.mode ?? "") || model !== (b.model ?? "") || assignee !== (b.assignee ?? "") || authors !== savedAuthors;
   const id = (k) => `omps-${b.slug}-${k}`;
   return h(
     "section",
@@ -559,6 +660,7 @@ function BoardCard(p) {
       h("div", { className: "omps-bcard-titles" }, h("div", { className: "omps-bcard-name" }, b.name), h("div", { className: "omps-bcard-slug" }, b.slug)),
       h("span", { className: "omps-grow" }),
       h("span", { className: cx("omps-lane-state", b.lane && "is-on") }, b.lane ? "Lane on" : p.laneOn ? "Not in the lane" : "Lane off"),
+      b.folder ? h(Button, { small: true, kind: "ghost", icon: "external", title: `Open ${b.folder} in VS Code`, onClick: () => b.folder && p.onOpenFolder(b.folder) }) : null,
       h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as omp sessions`, busy: p.busy, onChange: (on) => void p.onSave(b.slug, { lane: on }) })
     ),
     h(
@@ -567,7 +669,7 @@ function BoardCard(p) {
         className: "omps-bcard-form",
         onSubmit: (e) => {
           e.preventDefault();
-          void p.onSave(b.slug, { folder, group, mode, assignee });
+          void p.onSave(b.slug, { folder, group, mode, model, assignee, commentAuthors: authors });
         }
       },
       h(Field, { label: "Folder", htmlFor: id("folder"), hint: "Where cards without a worktree run", children: h("input", { id: id("folder"), className: "omps-input omps-mono", value: folder, placeholder: "Not set", onChange: (e) => setFolder(e.target.value) }) }),
@@ -582,7 +684,14 @@ function BoardCard(p) {
           ...MODES.map((m) => h("option", { key: m, value: m }, `${MODE_INFO[m].label} — ${MODE_INFO[m].detail}`))
         )
       }),
+      h(Field, { label: "Model", htmlFor: id("model"), hint: "A card's own model (kanban set-model) wins", children: h(ModelPicker, { id: id("model"), models: p.models, value: model, onChange: setModel }) }),
       h(Field, { label: "Assignee", htmlFor: id("assignee"), children: h("input", { id: id("assignee"), className: "omps-input", value: assignee, placeholder: b.effectiveAssignee, onChange: (e) => setAssignee(e.target.value) }) }),
+      h(Field, {
+        label: "Comment authors",
+        htmlFor: id("authors"),
+        hint: "Whose card comments reach omp and whose @omp assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
+        children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e) => setAuthors(e.target.value) })
+      }),
       h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty }))
     ),
     h(
@@ -624,6 +733,31 @@ function BoardsPanel(p) {
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const models = useModels(p.host);
+  const [defaultModel, setDefaultModel] = useState("");
+  const openFolder = async (folder) => {
+    setActionError(null);
+    setNotice(null);
+    try {
+      setNotice(await openInVscode(p.host, "/folders/vscode", { path: folder }));
+    } catch (err) {
+      setActionError(errorMessage(err));
+    }
+  };
+  const saveDefaultModel = async (model) => {
+    setBusy("model");
+    setActionError(null);
+    try {
+      await p.host.request("/models/default", { method: "POST", body: { model } });
+      setDefaultModel("");
+      models.reload();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
   const load = async () => {
     try {
       setView(await p.host.request("/boards"));
@@ -671,19 +805,50 @@ function BoardsPanel(p) {
         h(
           "div",
           { className: "omps-muted" },
-          view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under omp's concurrency limit). Settings are this profile's (${view.profile}).`,
+          view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the omp Sessions scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
           tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null
         ),
         notes.length ? h(Notes, { notes }) : null
       ),
       h(Switch, { checked: view.enabled, label: "Kanban lane", busy: busy === "lane", onChange: (on) => void post("lane", "/lane", { enabled: on }) })
     ),
+    h(
+      "form",
+      {
+        className: "omps-default-model",
+        onSubmit: (e) => {
+          e.preventDefault();
+          if (defaultModel.trim()) void saveDefaultModel(defaultModel.trim());
+        }
+      },
+      h(Field, {
+        label: "Default model",
+        htmlFor: "omps-default-model",
+        hint: `New sessions that name no model (and lane cards without a card or board model) use ${models.models?.default ?? `omp's default${models.models?.ompDefault ? ` (${models.models.ompDefault})` : ""}`}. Shared with the CLI and VS Code.`,
+        children: h(ModelPicker, { id: "omps-default-model", models: models.models, value: defaultModel, onChange: setDefaultModel, placeholder: defaultLabel(models.models), label: "omp Sessions default model" })
+      }),
+      h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
+      models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,
+      models.error ? h("span", { className: "omps-field-hint is-error" }, models.error) : null
+    ),
     error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
     actionError ? h(ErrorBox, { message: actionError }) : null,
+    notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
     boards.length ? h(
       "div",
       { className: "omps-bgrid" },
-      ...boards.map((b) => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession }))
+      ...boards.map(
+        (b) => h(BoardCard, {
+          key: b.slug,
+          b,
+          laneOn: view.enabled,
+          busy: busy === b.slug,
+          models: models.models,
+          onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body),
+          onOpenSession: p.onOpenSession,
+          onOpenFolder: (folder) => void openFolder(folder)
+        })
+      )
     ) : h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." })
   );
 }
@@ -786,9 +951,11 @@ function DetailPanel(p) {
   const [actionError, setActionError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [text, setText] = useState("");
-  const [followUp, setFollowUp] = useState(false);
+  const [steer, setSteer] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [model, setModel] = useState("");
+  const models = useModels(p.host);
   const root = useRef(null);
   const tick = useRef(0);
   useDismiss(p.onClose, root);
@@ -831,18 +998,14 @@ function DetailPanel(p) {
   };
   const send = () => {
     if (!text.trim()) return;
-    void act("send", "send", { text, followUp: s?.state === "working" && followUp }, () => setText(""));
+    void act("send", "send", { text, steer: s?.state === "working" && steer }, () => setText(""));
   };
-  const openVscode = async () => {
-    setBusy("vscode");
+  const openVscode = async (what) => {
+    setBusy(what);
     setActionError(null);
     setNotice(null);
     try {
-      const link = await p.host.request(`/sessions/${encodeURIComponent(p.id)}/vscode`, { method: "POST", body: {} });
-      await p.host.openVscode(link);
-      setNotice(
-        link.authority ? `Opening in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.` : link.authority === "" ? "Opening in VS Code on omp's machine." : "No VS Code window has used omp Sessions on omp's machine yet: the link opens VS Code here, which needs the omp Sessions extension."
-      );
+      setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`));
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -850,6 +1013,7 @@ function DetailPanel(p) {
     }
   };
   const view = s ?? p.summary;
+  const questionId = view?.question?.id;
   const working = view?.state === "working" || view?.state === "starting";
   return h(
     "aside",
@@ -864,7 +1028,8 @@ function DetailPanel(p) {
         h("h2", { id: "omps-detail-title", className: "omps-drawer-title" }, view?.title ?? shortId(p.id)),
         view ? h("div", { className: "omps-drawer-sub" }, icon("folder", 12), h("span", { title: view.cwd }, view.cwdLabel ?? view.cwd), h("span", { className: "omps-sep" }, "·"), h("code", null, shortId(view.id))) : null
       ),
-      h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session in VS Code", busy: busy === "vscode", onClick: () => void openVscode() }),
+      h(Button, { kind: "ghost", small: true, icon: "folder", label: "Open project in VS Code", title: "Open the session's project folder in VS Code (its Hermes project or board folder, else its git repository)", busy: busy === "project", onClick: () => void openVscode("project") }),
+      h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session's chat in VS Code", busy: busy === "vscode", onClick: () => void openVscode("vscode") }),
       h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })
     ),
     h(
@@ -874,14 +1039,14 @@ function DetailPanel(p) {
       error && view ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
       actionError ? h(ErrorBox, { message: actionError }) : null,
       notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-      view?.state === "needs_input" && view.question ? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: (answer) => void act("answer", "answer", { answer }) }) : null,
+      view?.state === "needs_input" && view.question ? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: (answer) => void act("answer", "answer", { answer, question: questionId }) }) : null,
       view ? h(
         "dl",
         { className: "omps-meta" },
         h(Meta, { label: "Status", children: stateText(view, p.now) }),
         view.group ? h(Meta, { label: "Group", children: view.group }) : null,
         view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-        view.startAt && view.state === "queued" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+        view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
         view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
         view.model ? h(Meta, { label: "Model", children: view.model }) : null,
         h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
@@ -904,12 +1069,25 @@ function DetailPanel(p) {
           }
         })
       ) : null,
+      view ? h(
+        "form",
+        {
+          className: "omps-mode-row",
+          onSubmit: (e) => {
+            e.preventDefault();
+            if (model.trim() && model.trim() !== view.model) void act("model", "model", { model: model.trim() }, () => setModel(""));
+          }
+        },
+        h("label", { className: "omps-section-label", htmlFor: "omps-detail-model" }, "Model"),
+        h(ModelPicker, { id: "omps-detail-model", models: models.models, value: model, onChange: setModel, disabled: busy === "model", placeholder: view.model ?? void 0, label: `Switch model (now ${view.model ?? "the default"})` }),
+        h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model })
+      ) : null,
       h(
         "section",
         { className: "omps-reply", "aria-label": "Last reply" },
         h("div", { className: "omps-section-label" }, "Last reply"),
         view?.reply ? h("div", { className: "omps-md" }, ...markdown(view.reply)) : view?.excerpt ? h("div", { className: "omps-md" }, h("p", null, plain(view.excerpt))) : h("div", { className: "omps-muted" }, view ? "No reply yet." : "Loading…"),
-        view?.exitReason ? h("div", { className: "omps-exit" }, `Stopped: ${view.exitReason}`) : null
+        view?.exitReason ? h("div", { className: "omps-exit" }, `${view.state === "interrupted" ? "Interrupted" : "Stopped"}: ${view.exitReason}`) : null
       )
     ),
     view ? h(
@@ -928,7 +1106,7 @@ function DetailPanel(p) {
           className: "omps-input",
           rows: 2,
           value: text,
-          placeholder: working ? "Steer the current turn…" : view.state === "stopped" ? "Send a prompt (resumes the session)…" : "Send a follow-up…",
+          placeholder: working ? steer ? "Steer the current turn…" : "Send a follow-up for after this turn…" : view.state === "stopped" || view.state === "interrupted" ? "Send a prompt (resumes the session)…" : "Send a follow-up…",
           "aria-label": "Message to the session",
           onChange: (e) => setText(e.target.value),
           onKeyDown: (e) => {
@@ -944,18 +1122,19 @@ function DetailPanel(p) {
           working ? h(
             "label",
             { className: "omps-check" },
-            h("input", { type: "checkbox", checked: followUp, onChange: (e) => setFollowUp(e.target.checked) }),
-            "After this turn"
+            h("input", { type: "checkbox", checked: steer, onChange: (e) => setSteer(e.target.checked) }),
+            "Steer this turn"
           ) : h("span", { className: "omps-hint" }, "Ctrl+Enter to send"),
           h("span", { className: "omps-grow" }),
-          view.state !== "stopped" ? confirmStop ? h(
+          // An interrupted session whose host still runs (an interrupted task) can be stopped.
+          view.state !== "stopped" && !(view.state === "interrupted" && view.status === "stopped") ? confirmStop ? h(
             "span",
             { className: "omps-confirm" },
             "Stop this session?",
             h(Button, { small: true, kind: "danger", label: "Stop", busy: busy === "stop", onClick: () => void act("stop", "stop", {}, () => setConfirmStop(false)) }),
             h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmStop(false) })
           ) : h(Button, { small: true, kind: "ghost", icon: "stop", label: "Stop", onClick: () => setConfirmStop(true) }) : null,
-          h(Button, { type: "submit", small: true, kind: "primary", icon: "send", label: working && !followUp ? "Steer" : "Send", busy: busy === "send", disabled: !text.trim() })
+          h(Button, { type: "submit", small: true, kind: "primary", icon: "send", label: working && steer ? "Steer" : "Send", busy: busy === "send", disabled: !text.trim() })
         )
       )
     ) : null
@@ -967,14 +1146,18 @@ var AT_PRESETS = [
   { label: "+30m", at: () => "+30m" },
   { label: "+1h", at: () => "+1h" },
   { label: "+3h", at: () => "+3h" },
-  { label: "Tonight 22:00", at: () => "22:00" },
-  { label: "Tomorrow 09:00", at: () => localIso(9) }
+  { label: "Tonight 22:00", at: () => nextLocal(22, 0) },
+  { label: "Tomorrow 09:00", at: () => nextLocal(9, 1) }
 ];
-function localIso(hour) {
+function nextLocal(hour, days) {
   const d = /* @__PURE__ */ new Date();
-  d.setDate(d.getDate() + 1);
+  d.setDate(d.getDate() + days);
+  d.setHours(hour, 0, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
   const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00`;
+  const off = -d.getTimezoneOffset();
+  const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
 }
 function NewSessionDialog(p) {
   const [places, setPlaces] = useState(null);
@@ -992,6 +1175,10 @@ function NewSessionDialog(p) {
   const [at, setAt] = useState("+1h");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [model, setModel] = useState("");
+  const models = useModels(p.host);
+  const [opening, setOpening] = useState(false);
+  const [folderNote, setFolderNote] = useState(null);
   const root = useRef(null);
   useDismiss(p.onClose, root);
   useEffect(() => {
@@ -1026,7 +1213,8 @@ function NewSessionDialog(p) {
       ...mode !== "default" ? { mode } : {},
       ...group.trim() ? { group: group.trim() } : {},
       ...tags.trim() ? { tags: tags.split(",").map((t) => t.trim()).filter(Boolean) } : {},
-      ...when === "at" ? { at: at.trim() } : {}
+      ...when === "at" ? { at: at.trim() } : {},
+      ...model.trim() ? { model: model.trim() } : {}
     };
     try {
       p.onStarted(await p.host.request("/sessions", { method: "POST", body }));
@@ -1041,6 +1229,25 @@ function NewSessionDialog(p) {
     ...places?.hermesProjects.length ? [h("optgroup", { key: "h", label: "Hermes projects" }, ...places.hermesProjects.map((x) => h("option", { key: x.id, value: `project:${x.slug}` }, x.path ? `${x.name} — ${x.path}` : x.name)))] : [],
     ...places && Object.keys(places.configured).length ? [h("optgroup", { key: "c", label: "omp-sessions projects" }, ...Object.entries(places.configured).map(([name, path]) => h("option", { key: name, value: `project:${name}` }, `${name} — ${path}`)))] : []
   ];
+  const chosenFolder = (() => {
+    if (where === "folder") return folder.trim() || null;
+    if (where === "board") return boards.find((b) => b.slug === board)?.folder ?? null;
+    const name = project.slice(project.indexOf(":") + 1);
+    if (project.startsWith("folder:")) return name;
+    return places?.configured[name] ?? places?.hermesProjects.find((x) => x.slug === name)?.path ?? null;
+  })();
+  const openFolder = async () => {
+    if (!chosenFolder) return;
+    setOpening(true);
+    setFolderNote(null);
+    try {
+      setFolderNote(await openInVscode(p.host, "/folders/vscode", { path: chosenFolder }));
+    } catch (err) {
+      setFolderNote(errorMessage(err));
+    } finally {
+      setOpening(false);
+    }
+  };
   return h(
     "div",
     { className: "omps-backdrop", onMouseDown: (e) => e.target === e.currentTarget && p.onClose() },
@@ -1106,7 +1313,13 @@ function NewSessionDialog(p) {
             { className: "omps-input", "aria-label": "Kanban board", value: board, onChange: (e) => setBoard(e.target.value) },
             ...boards.map((b) => h("option", { key: b.slug, value: b.slug, disabled: !b.folder }, `${b.name ?? b.slug}${b.folder ? ` — ${b.folder}` : " (no folder set)"}`))
           ) : h("div", { className: "omps-field-hint" }, "No kanban boards."),
-          where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and omp group (set them in Boards).") : null
+          where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and omp group (set them in Boards).") : null,
+          chosenFolder ? h(
+            "div",
+            { className: "omps-field-hint" },
+            h(Button, { small: true, kind: "ghost", icon: "external", label: "Open in VS Code", title: `Open ${chosenFolder} in VS Code`, busy: opening, onClick: () => void openFolder() }),
+            folderNote ? ` ${folderNote}` : null
+          ) : null
         ),
         h(
           "div",
@@ -1120,7 +1333,8 @@ function NewSessionDialog(p) {
               onChange: setMode,
               options: [{ value: "default", label: "Default", title: "omp's configured mode" }, ...MODES.map((m) => ({ value: m, label: MODE_INFO[m].label, title: MODE_INFO[m].detail }))]
             })
-          })
+          }),
+          h(Field, { label: "Model", htmlFor: "omps-model", children: h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }) })
         ),
         h(
           "div",
@@ -1147,7 +1361,7 @@ function NewSessionDialog(p) {
             onChange: setWhen,
             options: [
               { value: "now", label: "Start now" },
-              { value: "queue", label: "Queue", title: "Starts when omp's concurrency limit has a free slot" },
+              { value: "queue", label: "Queue", title: "Starts when the omp Sessions scheduler's concurrency limit has a free slot" },
               { value: "at", label: "Schedule" }
             ]
           }),
@@ -1156,7 +1370,7 @@ function NewSessionDialog(p) {
             { className: "omps-at" },
             h("input", { className: "omps-input omps-mono", "aria-label": "Start time", value: at, placeholder: "+30m, 14:30 or 2026-01-31T09:00", onChange: (e) => setAt(e.target.value) }),
             h("div", { className: "omps-at-presets" }, ...AT_PRESETS.map((x) => h("button", { key: x.label, type: "button", className: "omps-chip omps-chip-btn", onClick: () => setAt(x.at()) }, x.label)))
-          ) : h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under omp's concurrency limit." : "Starts right away.")
+          ) : h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under the omp Sessions scheduler's concurrency limit." : "Starts right away.")
         ),
         error ? h(ErrorBox, { message: error }) : null
       ),
@@ -1222,7 +1436,7 @@ function StatusStrip(p) {
       items.push(
         h(
           "span",
-          { key: "sched", className: "omps-strip-item", title: limit ? `omp runs at most ${limit} queued tasks at once` : "No concurrency limit" },
+          { key: "sched", className: "omps-strip-item", title: limit ? `The omp Sessions scheduler runs at most ${limit} queued tasks at once` : "No concurrency limit" },
           icon("slots", 13),
           slots ? h("span", { className: "omps-slots", "aria-hidden": true }, ...slots) : null,
           h("span", null, limit ? `${running}/${limit} slots` : `${running} running · no limit`),
@@ -1292,6 +1506,7 @@ function createPage(host2) {
     const [group, setGroup] = useState("");
     const [project, setProject] = useState("");
     const [archived, setArchived] = useState(false);
+    const [notice, setNotice] = useState(null);
     const search = useRef(null);
     const loadSessions = async () => {
       try {
@@ -1350,6 +1565,14 @@ function createPage(host2) {
       setSelected(s.id);
       refresh();
     };
+    const openProject = async (id) => {
+      setNotice(null);
+      try {
+        setNotice(await openInVscode(host2, `/sessions/${encodeURIComponent(id)}/project`));
+      } catch (err) {
+        setNotice(errorMessage(err));
+      }
+    };
     const notInstalled = overview && !overview.ompSessions.found;
     let main;
     if (view === "boards") {
@@ -1362,7 +1585,7 @@ function createPage(host2) {
       main = h(Empty, {
         icon: "sparkle",
         title: "No omp sessions yet",
-        body: "Start one here, from VS Code, with omp-sessions new, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+        body: "Start one here, with omp-sessions new, from VS Code or the omp phone app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
         action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) })
       });
     } else {
@@ -1387,7 +1610,8 @@ function createPage(host2) {
           h("span", { className: "omps-muted omps-total" }, filtered ? `${shown.length} of ${all.length}` : `${all.length} session${all.length === 1 ? "" : "s"}`)
         ),
         error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
-        h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, filtered })
+        notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
+        h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: (id) => void openProject(id), filtered })
       );
     }
     return h(
@@ -1397,7 +1621,7 @@ function createPage(host2) {
       h(
         "header",
         { className: "omps-head" },
-        logo(24),
+        logo(30),
         h("div", { className: "omps-head-titles" }, h("h1", { className: "omps-title" }, "omp Sessions"), overview ? h("span", { className: "omps-profile", title: "Hermes profile" }, overview.profile) : null),
         h(Segmented, {
           label: "View",
@@ -1466,6 +1690,8 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 	--t-working: var(--o-blue);
 	--t-starting: var(--o-blue);
 	--t-queued: var(--o-purple);
+	--t-scheduled: var(--o-purple);
+	--t-interrupted: var(--o-yellow);
 	--t-idle: var(--o-green);
 	--t-stopped: color-mix(in srgb, var(--o-fg) 38%, transparent);
 
@@ -1653,6 +1879,8 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .tone-working { --tone: var(--t-working); }
 .tone-starting { --tone: var(--t-starting); }
 .tone-queued { --tone: var(--t-queued); }
+.tone-scheduled { --tone: var(--t-scheduled); }
+.tone-interrupted { --tone: var(--t-interrupted); }
 .tone-idle { --tone: var(--t-idle); }
 .tone-stopped, .tone-removed { --tone: var(--t-stopped); }
 .omps-card.tone-needs_input { background: linear-gradient(180deg, color-mix(in srgb, var(--o-pink) 9%, var(--o-raised)), var(--o-raised) 70%); }
@@ -1670,6 +1898,9 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-mode.mode-edits { color: var(--o-blue); border-color: color-mix(in srgb, var(--o-blue) 40%, transparent); }
 .omps-card-meta { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--o-muted); font-size: 12px; }
 .omps-card-project { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omps-card-vscode { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
+.omps-card:hover .omps-card-vscode, .omps-card:focus-within .omps-card-vscode, .omps-card-vscode:focus-visible { opacity: 1; }
+.omps-card-vscode:hover { color: var(--o-fg); background: var(--o-hover); }
 .omps-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; padding: 0 7px; height: 19px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--o-accent) 14%, transparent); color: var(--o-fg2); border: 1px solid color-mix(in srgb, var(--o-accent) 24%, transparent); }
 .omps-chip.is-warn { background: color-mix(in srgb, var(--o-yellow) 16%, transparent); border-color: color-mix(in srgb, var(--o-yellow) 40%, transparent); }
 .omps-chip.is-needs { background: color-mix(in srgb, var(--o-pink) 16%, transparent); border-color: color-mix(in srgb, var(--o-pink) 40%, transparent); }
@@ -1741,6 +1972,10 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .omps-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .omps-mode-row .omps-section-label { margin: 0; }
+.omps-model-picker { display: inline-flex; flex: 1; min-width: 12rem; }
+.omps-model-picker .omps-input { width: 100%; }
+.omps-default-model { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.omps-default-model .omps-field { flex: 1; min-width: 16rem; margin: 0; }
 .omps-question { border-radius: var(--o-radius); padding: 14px; background: linear-gradient(160deg, color-mix(in srgb, var(--o-pink) 14%, transparent), color-mix(in srgb, var(--o-purple) 8%, transparent)); border: 1px solid color-mix(in srgb, var(--o-pink) 40%, transparent); display: flex; flex-direction: column; gap: 12px; }
 .omps-q-head { display: flex; gap: 10px; }
 .omps-q-icon { color: var(--o-pink); margin-top: 1px; }
@@ -1875,7 +2110,7 @@ var desktop_default = {
     ctx.registerMany([
       { id: "page", area: ROUTES_AREA, data: { path: ROUTE }, render: () => React.createElement(Page, null) },
       // Kanban's row has order 50.
-      { id: "nav", area: SIDEBAR_NAV_AREA, order: 51, data: { path: ROUTE, label: "omp Sessions", codicon: "server-process" } },
+      { id: "nav", area: SIDEBAR_NAV_AREA, order: 51, data: { path: ROUTE, label: "omp Sessions", codicon: "pulse" } },
       {
         id: "open",
         area: PALETTE_AREA,

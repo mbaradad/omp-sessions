@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <!-- omp Sessions: opens the vscode:// link in its #fragment. Hermes Desktop opens only web links, so its
-     "Open in VS Code" opens this page in the browser. Served without sign-in: it holds no data. -->
+     "Open in VS Code" opens this page in the browser. Served without sign-in: it holds no data, and it
+     only follows the links `omp-sessions vscode` makes (src/shared/vscode-open.ts vscodeLink and
+     vscodeFolderLink): the extension's open?session=<id> handler, a vscode-remote folder or workspace
+     link, or a local vscode://file folder link. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -17,13 +20,21 @@
 </style>
 </head>
 <body>
-<h1 id="title">Opening the omp session in VS Code…</h1>
+<h1 id="title">Opening VS Code…</h1>
 <p id="hint">Allow the browser to open Visual Studio Code if it asks. You can close this tab afterwards.</p>
 <p><a class="button" id="open" href="#">Open in VS Code</a></p>
 <p><code id="link"></code></p>
 <script>
-	const target = decodeURIComponent(location.hash.slice(1));
-	if (/^(vscode|vscode-insiders|vscodium)(-[a-z]+)?:\/\//.test(target)) {
+	let target = "";
+	try {
+		target = decodeURIComponent(location.hash.slice(1));
+	} catch {
+		/* malformed fragment: no link */
+	}
+	const SESSION_LINK = /^(vscode|vscode-insiders|vscodium):\/\/mbaradad\.omp-sessions\/open\?session=[A-Za-z0-9_-]{1,128}$/;
+	const REMOTE_LINK = /^(vscode|vscode-insiders|vscodium):\/\/vscode-remote\/[a-z][a-z0-9-]*\+[A-Za-z0-9._@%-]{1,512}(\/[A-Za-z0-9._~!*'()%:-]*)+$/;
+	const FOLDER_LINK = /^(vscode|vscode-insiders|vscodium):\/\/file(\/[A-Za-z0-9._~!*'()%:-]*)+$/;
+	if (SESSION_LINK.test(target) || REMOTE_LINK.test(target) || FOLDER_LINK.test(target)) {
 		document.getElementById("open").href = target;
 		document.getElementById("link").textContent = target;
 		location.replace(target);

@@ -1,11 +1,11 @@
 // omp-sessions server/CLI decisions: which queued sessions to launch (slots, priority, waiters,
-// crash leftovers), how typed session names resolve, list columns, and CLI argument parsing.
+// crash leftovers), how typed session names resolve, and list columns.
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { parseArgs, parseWhen } from "../../src/cli/args";
-import { hasRunnableWork, launchQueue, planLaunches, resolveSession, sessionInfos } from "../../src/shared/control";
+import { Control, hasRunnableWork, launchQueue, planLaunches, resolveSession, sessionInfos } from "../../src/shared/control";
 import { type OrgData, emptyOrgData, schedulingOrder } from "../../src/shared/organize";
 import type { QueueTask, SessionMeta, TaskQueue } from "../../src/shared/protocol";
 
@@ -104,24 +104,34 @@ test("resolveSession: . for this folder, id prefixes, title words; ambiguity is 
 	assert.ok("error" in resolveSession("nothing", metas, "/"));
 });
 
-test("parseArgs: value flags, repeated --sub, short aliases, --x=y, -- passthrough", () => {
-	const a = parseArgs(["new", "dir", "--task", "Do it", "--sub", "one", "--sub", "two", "-p", "hi", "--all", "--priority=high", "--", "--literal"]);
-	assert.deepEqual(a._, ["new", "dir", "--literal"]);
-	assert.equal(a.flags.get("task"), "Do it");
-	assert.deepEqual(a.multi.get("sub"), ["one", "two"]);
-	assert.equal(a.flags.get("prompt"), "hi");
-	assert.equal(a.flags.get("all"), true);
-	assert.equal(a.flags.get("priority"), "high");
-	assert.throws(() => parseArgs(["--title"]), /needs a value/);
-});
+test("a scheduled session shows as scheduled (not finished); stop cancels its start so the server won't launch it", async t => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-control-"));
+	const prev = process.env.OMP_VSCODE_HOME;
+	process.env.OMP_VSCODE_HOME = home;
+	t.after(() => {
+		if (prev === undefined) delete process.env.OMP_VSCODE_HOME;
+		else process.env.OMP_VSCODE_HOME = prev;
+		fs.rmSync(home, { recursive: true, force: true });
+	});
+	const dir = path.join(home, "sessions", "later");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta("later")));
+	fs.writeFileSync(path.join(dir, "queue.json"), JSON.stringify(queue([task("pending")], { autoRun: false, startAt: Date.now() + 3_600_000 })));
+	const control = new Control({
+		launcher: () => {
+			throw new Error("nothing may launch");
+		},
+		serverUp: () => true,
+		clientName: "test",
+	});
+	const [info] = control.list({});
+	assert.equal(info.column, "scheduled");
+	assert.equal(info.state, "scheduled");
+	assert.equal(control.scheduler({}).scheduled, 1);
 
-test("parseWhen: relative, next clock time, ISO; garbage is undefined", () => {
-	const now = new Date(2025, 0, 15, 15, 0, 0).getTime();
-	assert.equal(parseWhen("+30m", now), now + 30 * 60_000);
-	assert.equal(parseWhen("+2h", now), now + 2 * 3_600_000);
-	assert.equal(parseWhen("16:30", now), new Date(2025, 0, 15, 16, 30).getTime());
-	// Already past today → tomorrow.
-	assert.equal(parseWhen("09:00", now), new Date(2025, 0, 16, 9, 0).getTime());
-	assert.equal(parseWhen("2025-02-01T08:00:00Z", now), Date.UTC(2025, 1, 1, 8));
-	assert.equal(parseWhen("soonish", now), undefined);
+	assert.deepEqual(await control.stop({ id: "later" }), { stopped: false, unqueued: true });
+	const after: TaskQueue = JSON.parse(fs.readFileSync(path.join(dir, "queue.json"), "utf8"));
+	assert.equal(after.startAt, undefined);
+	assert.equal(after.autoRun, false);
+	assert.equal(control.list({})[0].state, "stopped");
 });

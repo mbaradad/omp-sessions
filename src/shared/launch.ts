@@ -7,10 +7,11 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { needsRestore, settleDeadHost } from "./health";
+import { settleDeadHost } from "./health";
 import { type PermissionMode, permissionModeInArgs } from "./permissions";
+import { beforeBoot, lockOwner, stampAlive } from "./process-lock";
 import { type ClientToHost, type SessionMeta, sessionDir, sessionsRoot, stateRoot } from "./protocol";
-import { type SessionToggles, applyFlags, newSessionLaunch, readFlags, readLaunchArgs, writeLaunchArgs, writeSessionToggles } from "./session-config";
+import { type SessionToggles, applyFlags, newSessionLaunch, readFlags, readLaunchArgs, readLaunchTitle, writeLaunchArgs, writeSessionToggles } from "./session-config";
 
 /** Options for starting (or resuming, with `id`) a background session. */
 export interface LaunchOptions {
@@ -19,8 +20,7 @@ export interface LaunchOptions {
 	id?: string;
 	/** omp transcript (.jsonl) to resume. */
 	resumeFile?: string;
-	/** Resume with `omp --restore` (continue the interrupted turn and its subagents). Default: only after a host crash mid-turn. */
-	restore?: boolean;
+	/** Explicit title, given to omp as the session name (omp keeps it instead of generating one). */
 	title?: string;
 	goal?: string;
 	ompArgs?: string[];
@@ -59,6 +59,21 @@ export function pidAlive(pid: number): boolean {
 	}
 }
 
+/** `<session>/host.lock`: held by the session's running host (process-lock.ts) so a session never gets two hosts. */
+export function hostLockPath(id: string): string {
+	return path.join(sessionDir(id), "host.lock");
+}
+
+/**
+ * Whether the host a meta names still runs: by its lock's process stamp when it holds the lock
+ * (safe against pid reuse), else (hosts of older versions) by pid, unless the meta predates this boot.
+ */
+export function hostAlive(meta: SessionMeta): boolean {
+	const lock = lockOwner(hostLockPath(meta.id));
+	if (lock?.pid === meta.pid) return stampAlive(lock);
+	return pidAlive(meta.pid) && !beforeBoot(meta.updatedAt);
+}
+
 /** A session's meta.json as it really is (a dead host means stopped); undefined when unreadable. */
 export function readMeta(id: string): SessionMeta | undefined {
 	let meta: SessionMeta;
@@ -67,7 +82,7 @@ export function readMeta(id: string): SessionMeta | undefined {
 	} catch {
 		return undefined;
 	}
-	return meta.status === "stopped" ? meta : settleDeadHost(meta, pidAlive(meta.pid));
+	return meta.status === "stopped" ? meta : settleDeadHost(meta, hostAlive(meta));
 }
 
 /** Every session on disk (dead hosts settled to stopped). */
@@ -102,10 +117,18 @@ export function readHostVersion(hostScript: string): string {
 
 // ---------- launcher settings (mirrored by the extension for the CLI/server) ----------
 
-/** `omp.path` / `omp.extraArgs` as last seen by the extension, so terminal launches match VS Code's. */
+/**
+ * Machine-wide launcher settings shared by the extension, the CLI and the server: `omp.path` /
+ * `omp.extraArgs` (so terminal launches match VS Code's), the default model of new sessions, and
+ * whether the server may install itself as a per-user service.
+ */
 export interface LauncherSettings {
 	ompPath?: string;
 	extraArgs?: string[];
+	/** `provider/id` new sessions start on when nothing more specific picks a model; absent: omp's default. */
+	model?: string;
+	/** "off": never install the per-user server service automatically. */
+	service?: "on" | "off";
 }
 
 export function launcherSettingsPath(): string {
@@ -119,15 +142,18 @@ export function readLauncherSettings(): LauncherSettings {
 		const out: LauncherSettings = {};
 		if ("ompPath" in raw && typeof raw.ompPath === "string" && raw.ompPath.trim()) out.ompPath = raw.ompPath.trim();
 		if ("extraArgs" in raw && Array.isArray(raw.extraArgs)) out.extraArgs = raw.extraArgs.filter((a): a is string => typeof a === "string");
+		if ("model" in raw && typeof raw.model === "string" && raw.model.trim()) out.model = raw.model.trim();
+		if ("service" in raw && (raw.service === "on" || raw.service === "off")) out.service = raw.service;
 		return out;
 	} catch {
 		return {};
 	}
 }
 
-export function writeLauncherSettings(settings: LauncherSettings): void {
+/** Merges `patch` into launcher.json (a key given as undefined is removed). */
+export function writeLauncherSettings(patch: LauncherSettings): void {
 	const file = launcherSettingsPath();
-	const text = JSON.stringify(settings, null, 1);
+	const text = JSON.stringify({ ...readLauncherSettings(), ...patch }, null, 1);
 	try {
 		if (fs.readFileSync(file, "utf8") === text) return;
 	} catch {
@@ -139,10 +165,27 @@ export function writeLauncherSettings(settings: LauncherSettings): void {
 	fs.renameSync(tmp, file);
 }
 
-/** Finds the omp executable: explicit path, PATH, then common install locations. */
+/** `ompArgs` of a new session with the default model (launcher.json `model`) added when they pick none. */
+export function withDefaultModel(ompArgs: readonly string[]): string[] {
+	const flags = readFlags(ompArgs);
+	const model = flags.model ? undefined : readLauncherSettings().model;
+	return model ? applyFlags(ompArgs, { ...flags, model }) : [...ompArgs];
+}
+
+/**
+ * Why a configured omp path can't be used, or undefined when it can: absolute, `~/…`, or a bare
+ * command name (looked up on PATH). A relative path would resolve against each session's folder.
+ */
+export function ompPathProblem(p: string): string | undefined {
+	const value = p.trim();
+	if (!value || value.startsWith("~/") || path.isAbsolute(value) || !/[\\/]/.test(value)) return undefined;
+	return `omp.path must be an absolute path (got "${value}")`;
+}
+
+/** Finds the omp executable: explicit path (ignored when unusable, see ompPathProblem), PATH, then common install locations. */
 export function findOmp(configured?: string): string | undefined {
 	const explicit = configured?.trim();
-	if (explicit) return explicit.startsWith("~/") ? path.join(os.homedir(), explicit.slice(2)) : explicit;
+	if (explicit && !ompPathProblem(explicit)) return explicit.startsWith("~/") ? path.join(os.homedir(), explicit.slice(2)) : explicit;
 	const dirs = (process.env.PATH ?? "").split(path.delimiter);
 	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
 	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
@@ -167,6 +210,7 @@ export function findOmp(configured?: string): string | undefined {
 /**
  * Launches a detached host and returns the session id. Reusing an existing id resumes that
  * session's omp transcript with the omp arguments it was created with (persisted in `launch.json`).
+ * A turn a host crash interrupted is continued by the host itself (it sends omp a follow-up).
  */
 export function launchHost(launcher: HostLauncher, opts: LaunchOptions): string {
 	const id = opts.id ?? newSessionId();
@@ -181,17 +225,17 @@ export function launchHost(launcher: HostLauncher, opts: LaunchOptions): string 
 			toggles ??= defaults.toggles;
 		} else ompArgs = launcher.extraArgs;
 	}
+	if (!opts.id) ompArgs = withDefaultModel(ompArgs);
+	// A queued session created with an explicit title (`create --task … --title`) names omp's session on its first launch.
+	const title = opts.title ?? (opts.id ? readLaunchTitle(opts.id) : undefined);
 	const argv = [launcher.hostScript, "--daemonize", "--id", id, "--cwd", opts.cwd, "--omp", launcher.omp, "--host-version", launcher.hostVersion];
-	const previous = opts.id ? readMeta(opts.id) : undefined;
-	// After a host crash mid-turn, resuming also continues that turn and its subagents.
-	const restore = opts.restore ?? (previous ? needsRestore(previous) : false);
-	if (opts.resumeFile) argv.push(opts.restore ? "--restore" : "--resume", opts.resumeFile);
-	else if (restore && previous?.ompSessionFile) argv.push("--restore", previous.ompSessionFile);
-	if (opts.title) argv.push("--title", opts.title);
+	if (opts.resumeFile) argv.push("--resume", opts.resumeFile);
+	if (title) argv.push("--title", title);
 	if (opts.goal) argv.push("--goal", opts.goal);
 	if (opts.launchedBy) argv.push("--launched-by", opts.launchedBy);
 	for (const a of ompArgs) argv.push("--omp-arg", a);
 	fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
+	// Rewritten without the pending title: it is handed over once.
 	fs.writeFileSync(launchFile, JSON.stringify({ ompArgs }));
 	if (toggles) writeSessionToggles(id, toggles);
 	// The launcher's cwd is irrelevant (the host chdirs omp itself) and must exist.

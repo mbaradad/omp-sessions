@@ -1,9 +1,64 @@
-// Session host lifecycle: stop, resume by id, SIGHUP, --goal.
+// Session host lifecycle: stop, resume by id, crash recovery, SIGHUP, --goal, one host per session.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { alive, isRecord, launch, textOf, until } from "./harness";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Host, alive, isRecord, launch, textOf, until } from "./harness";
+
+/** Kills a session's host and omp like a crash or a power cut would (no chance to write "stopped"). */
+async function crash(h: Host): Promise<void> {
+	const { pid, ompPid } = h.meta();
+	process.kill(pid, "SIGKILL");
+	if (ompPid) process.kill(ompPid, "SIGKILL");
+	await until(() => !alive(pid) && !alive(ompPid), "host and omp gone");
+}
+
+test("host crash mid-turn: a plain resume passes --resume, asks omp once to continue, and the session reaches idle", async t => {
+	const h = await launch(t);
+	const { client: c } = await h.connect();
+	c.send({ t: "rpc", cmd: { id: "long", type: "prompt", message: "slow 5000" } });
+	await until(() => h.meta().status === "working", "turn running");
+	const transcript = h.meta().ompSessionFile;
+	await crash(h);
+
+	await h.start();
+	await until(() => h.meta().status === "idle" && h.meta().lastText?.includes("Continue where you left off"), "continued turn finished", 15000);
+	const argvs = h.fakeEntries().flatMap(e => (e.kind === "argv" && e.argv ? [e.argv] : []));
+	const resumed = argvs[argvs.length - 1];
+	assert.equal(resumed[resumed.indexOf("--resume") + 1], transcript);
+	assert.ok(!resumed.includes("--restore"), "omp rejects --restore with --mode");
+	// One continuation prompt after the original one, which is not sent again.
+	const prompts = h.fakeCommands("prompt").map(p => String(p.message));
+	assert.equal(prompts.length, 2, JSON.stringify(prompts));
+	assert.notEqual(prompts[1], "slow 5000");
+	assert.equal(h.meta().exitReason, undefined);
+});
+
+test("two launches of one session at once start one host and one omp", async t => {
+	const h = new Host(`t${process.pid}-twice`);
+	t.after(() => h.dispose());
+	await Promise.all([h.spawnLauncher(), h.spawnLauncher()]);
+	const { pid } = await until(() => (h.metaOrUndefined()?.ompPid ? h.meta() : undefined), "a host started");
+	await h.connect();
+	await sleep(1000);
+	assert.equal(h.fakeEntries().filter(e => e.kind === "argv").length, 1);
+	// The second launch left the first host serving the session.
+	assert.equal(h.meta().pid, pid);
+	assert.ok(alive(pid));
+});
+
+test("omp exiting with an error: its last stderr line is the exit reason", async t => {
+	const h = new Host(`t${process.pid}-stderr`);
+	t.after(() => h.dispose());
+	await h.spawnLauncher(["--omp-arg", "--restore"]);
+	const stopped = await until(() => {
+		const m = h.metaOrUndefined();
+		return m?.status === "stopped" ? m : undefined;
+	}, "host stopped");
+	assert.equal(stopped.exitCode, 2);
+	assert.match(stopped.exitReason ?? "", /^exit code 2: Error: --restore requires an interactive terminal/);
+});
 
 test("stop → meta stopped, socket removed, host and omp exit; restart with the same id resumes", async t => {
 	const h = await launch(t);

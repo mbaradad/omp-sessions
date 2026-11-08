@@ -15,9 +15,9 @@ export interface Column {
 export const COLUMNS: readonly Column[] = [
 	{ id: "needs", label: "Needs you", states: ["needs_input"], icon: "ask", empty: "Nothing is waiting on you." },
 	{ id: "working", label: "Working", states: ["working", "starting"], icon: "sparkle", empty: "No session is working right now." },
-	{ id: "queued", label: "Queued & scheduled", states: ["queued"], icon: "clock", empty: "Nothing queued or scheduled." },
+	{ id: "queued", label: "Queued & scheduled", states: ["queued", "scheduled"], icon: "clock", empty: "Nothing queued or scheduled." },
 	{ id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
-	{ id: "stopped", label: "Stopped", states: ["stopped"], icon: "stop", empty: "No stopped sessions." },
+	{ id: "stopped", label: "Stopped", states: ["interrupted", "stopped"], icon: "stop", empty: "No stopped sessions." },
 ];
 
 /** The finished columns grow without bound; past this many cards they end in "Show N more". */
@@ -40,7 +40,7 @@ function questionLine(s: Session): string {
 	return q.title.split("\n")[0];
 }
 
-function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (id: string) => void }): ReactElement {
+function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void }): ReactElement {
 	const { s } = p;
 	const open = (): void => p.onOpen(s.id);
 	const cost = money(s.cost);
@@ -75,6 +75,21 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 			"div",
 			{ className: "omps-card-meta" },
 			h("span", { className: "omps-card-project", title: s.cwdLabel }, icon("folder", 12), s.project),
+			h(
+				"button",
+				{
+					type: "button",
+					className: "omps-card-vscode",
+					title: "Open project in VS Code",
+					"aria-label": `Open project of ${s.title} in VS Code`,
+					onClick: (e: Event) => {
+						e.stopPropagation();
+						p.onOpenProject(s.id);
+					},
+					onKeyDown: (e: KeyboardEvent) => e.stopPropagation(),
+				},
+				icon("external", 11),
+			),
 			s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
 		),
 		s.state === "needs_input"
@@ -93,9 +108,9 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 				)
 			: s.authProblem
 				? h("div", { className: "omps-card-excerpt is-warn" }, s.authProblem)
-				: s.excerpt && s.state !== "queued"
+				: s.excerpt && s.state !== "queued" && s.state !== "scheduled"
 					? h("div", { className: "omps-card-excerpt" }, plain(s.excerpt))
-					: s.exitReason && s.state === "stopped"
+					: s.exitReason && (s.state === "stopped" || s.state === "interrupted")
 						? h("div", { className: "omps-card-excerpt" }, s.exitReason)
 						: null,
 		s.card
@@ -115,14 +130,14 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 			progress !== null ? h("span", { className: "omps-progress", title: `${s.queue.done} of ${s.queue.total} tasks done` }, h("span", { style: { width: `${progress}%` } })) : null,
 			h("span", { className: "omps-grow" }),
 			cost ? h("span", { className: "omps-cost" }, cost) : null,
-			s.state === "queued" && s.startAt
+			s.state === "scheduled" && s.startAt
 				? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt))
 				: h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : undefined }, ago(s.updatedAt, p.now)),
 		),
 	);
 }
 
-export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; filtered: boolean }): ReactElement {
+export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; filtered: boolean }): ReactElement {
 	const [expanded, setExpanded] = useState<Partial<Record<Column["id"], boolean>>>({});
 	return h(
 		"div",
@@ -149,7 +164,7 @@ export function SessionBoard(p: { sessions: Session[]; selected: string | null; 
 					"div",
 					{ className: "omps-col-body" },
 					shown.length
-						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen }))
+						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject }))
 						: h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
 					list.length > shown.length
 						? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`)

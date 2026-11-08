@@ -1,5 +1,6 @@
 // Client side of the omp-sessions server protocol (CLI and extension) and starting the server on
-// demand. Node-only; no vscode import.
+// demand (installing the per-user service the first time, so the server survives reboots).
+// Node-only; no vscode import.
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -7,7 +8,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
+import { readLauncherSettings } from "./launch";
+import { claimLock, releaseLock } from "./process-lock";
 import { stateRoot } from "./protocol";
+import { migrateLegacyService } from "./rename-migration";
 import { type OpName, type ServerEvent, type ServerOps, type ServerResponse, type SubscribeArgs, serverLogPath, serverSocketPath } from "./server-protocol";
 
 export class ServerClient {
@@ -49,10 +53,22 @@ export class ServerClient {
 		sock.on("error", onClose);
 	}
 
-	/** Connects to the running server; undefined when none answers. */
+	/** Connects to the running server; undefined when none answers (rejects when the socket path is unusable). */
 	static connect(timeoutMs = 1500): Promise<ServerClient | undefined> {
-		const { promise, resolve } = Promise.withResolvers<ServerClient | undefined>();
-		const sock = net.createConnection(serverSocketPath());
+		const { promise, resolve, reject } = Promise.withResolvers<ServerClient | undefined>();
+		let socket: string | undefined;
+		try {
+			socket = serverSocketPath();
+		} catch (err) {
+			reject(err);
+			return promise;
+		}
+		// Windows with no recorded pipe: no server runs.
+		if (socket === undefined) {
+			resolve(undefined);
+			return promise;
+		}
+		const sock = net.createConnection(socket);
 		const timer = setTimeout(() => {
 			sock.destroy();
 			resolve(undefined);
@@ -143,12 +159,16 @@ export function serviceUnitText(kind: "systemd" | "launchd", node: string, serve
 		return [
 			"[Unit]",
 			`Description=${SERVICE_DESCRIPTION}`,
+			// A unit that keeps failing (its node moved) gives up instead of looping; the next client starts the server directly.
+			"StartLimitIntervalSec=300",
+			"StartLimitBurst=5",
 			"",
 			"[Service]",
 			// exec: `systemctl start` fails when the binary is missing, instead of reporting success.
 			"Type=exec",
 			`ExecStart=${JSON.stringify(node)} ${JSON.stringify(serverScript)}`,
 			...env.map(e => `Environment=${JSON.stringify(e)}`),
+			// Crashes and fatal errors restart it; a clean exit is deliberate (`server stop`, or another server owns the socket).
 			"Restart=on-failure",
 			"RestartSec=5",
 			"",
@@ -188,6 +208,60 @@ export function serviceServesHome(unitText: string, kind: "systemd" | "launchd",
 	return unitText.includes(kind === "systemd" ? `${key}${home}"` : `${key}<string>${xmlText(home)}</string>`);
 }
 
+/** An installed service unit and what it runs (as serviceUnitText wrote it). */
+export interface ServiceUnit {
+	kind: ServiceKind;
+	file: string;
+	text: string;
+	node?: string;
+	script?: string;
+	/** OMP_VSCODE_HOME it sets (none: the default data home). */
+	home?: string;
+}
+
+function unescapeXml(s: string): string {
+	return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+function jsonString(s: string | undefined): string | undefined {
+	if (s === undefined) return undefined;
+	try {
+		const v: unknown = JSON.parse(s);
+		return typeof v === "string" ? v : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The service unit installed on this platform, undefined when there is none. */
+export function readServiceUnit(home = os.homedir()): ServiceUnit | undefined {
+	const kind = serviceKind();
+	if (!kind) return undefined;
+	const file = serviceUnitPaths(home)[kind];
+	let text: string;
+	try {
+		text = fs.readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
+	const unit: ServiceUnit = { kind, file, text };
+	if (kind === "systemd") {
+		// serviceUnitText JSON-quotes every value.
+		for (const line of text.split("\n")) {
+			const exec = /^ExecStart=("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/.exec(line);
+			if (exec) Object.assign(unit, { node: jsonString(exec[1]), script: jsonString(exec[2]) });
+			const env = line.startsWith("Environment=") ? jsonString(line.slice("Environment=".length)) : undefined;
+			if (env?.startsWith("OMP_VSCODE_HOME=")) unit.home = env.slice("OMP_VSCODE_HOME=".length);
+		}
+	} else {
+		const served = /<key>OMP_VSCODE_HOME<\/key><string>([^<]*)<\/string>/.exec(text)?.[1];
+		const program = /<key>ProgramArguments<\/key><array><string>([^<]*)<\/string><string>([^<]*)<\/string>/.exec(text);
+		if (served !== undefined) unit.home = unescapeXml(served);
+		if (program) Object.assign(unit, { node: unescapeXml(program[1]), script: unescapeXml(program[2]) });
+	}
+	return unit;
+}
+
 /** Runs systemctl/launchctl; true when it exited 0. */
 export type ServiceExec = (cmd: string, argv: string[]) => boolean;
 
@@ -216,6 +290,77 @@ export function removeServiceUnit(kind: "systemd" | "launchd", file: string, nam
 	else quietExec("launchctl", ["bootout", `gui/${os.userInfo().uid}/${name}`]);
 	fs.rmSync(file, { force: true });
 	if (kind === "systemd") exec("systemctl", ["--user", "daemon-reload"]);
+}
+
+/** What installing the per-user service did: `ok` false when systemctl/launchctl failed (the unit is written). */
+export interface ServiceInstall {
+	kind: ServiceKind;
+	file: string;
+	ok: boolean;
+}
+
+/**
+ * Installs (or rewrites) the per-user service that runs `serverScript` with `nodePath` for this
+ * state folder, and starts it. Undefined where there is no per-user service (Windows).
+ */
+export async function installUserService(serverScript: string, nodePath = process.execPath, exec: ServiceExec = quietExec): Promise<ServiceInstall | undefined> {
+	const kind = serviceKind();
+	if (!kind) return undefined;
+	const env = ["ELECTRON_RUN_AS_NODE=1", ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${process.env.PATH ?? ""}`];
+	const ok = await installServiceUnit(kind, serviceUnitText(kind, nodePath, serverScript, env), undefined, exec);
+	return { kind, file: serviceUnitPaths()[kind], ok };
+}
+
+/** Why an on-demand start won't install the service by itself (undefined: it does when none is installed). */
+export function autoInstallBlocker(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	if (!serviceKind()) return "no per-user service on this platform";
+	if (env.OMP_SESSIONS_NO_SERVICE) return "OMP_SESSIONS_NO_SERVICE is set";
+	// The unit name is per user: tests and other data homes never take it.
+	if (path.resolve(stateRoot()) !== path.join(os.homedir(), ".omp", "vscode")) return "not the default data home";
+	if (readLauncherSettings().service === "off") return "service off";
+	return undefined;
+}
+
+/** Runs `fn` holding the service-install lock; undefined when another process holds it. */
+async function withInstallLock<T>(fn: () => Promise<T | undefined>): Promise<T | undefined> {
+	const lock = path.join(stateRoot(), "service-install.lock");
+	if (!claimLock(lock)) return undefined;
+	try {
+		return await fn();
+	} finally {
+		releaseLock(lock);
+	}
+}
+
+/**
+ * The first on-demand start installs the per-user service, so the server comes back after reboots
+ * and crashes. Never when: a unit exists already (never replaced; an old `omp-vs` one is migrated
+ * instead), autoInstallBlocker says no, or another process is installing it right now. Undefined
+ * when nothing was installed.
+ */
+async function autoInstallService(serverScript: string, nodePath: string, newUnit: boolean): Promise<ServiceInstall | undefined> {
+	const kind = serviceKind();
+	if (!kind || autoInstallBlocker()) return undefined;
+	return withInstallLock(async () => {
+		// What 0.5.0 and earlier installed goes first: the old unit is moved over to the new name.
+		const migrated = await migrateLegacyService();
+		if (migrated) return { kind, file: migrated.to, ok: migrated.started };
+		if (!newUnit || fs.existsSync(serviceUnitPaths()[kind])) return undefined;
+		return installUserService(serverScript, nodePath);
+	});
+}
+
+/**
+ * A unit serving this data home whose node or server.js is gone (VS Code's versioned runtime after an
+ * update, a moved install) is rewritten to run `serverScript` with `nodePath`, so the server comes
+ * back at the next login and after crashes. Undefined when nothing needed it.
+ */
+async function repairServiceUnit(serverScript: string, nodePath: string): Promise<ServiceInstall | undefined> {
+	if (process.env.OMP_SESSIONS_NO_SERVICE) return undefined;
+	const unit = readServiceUnit();
+	if (!unit?.node || !unit.script || !serviceServesHome(unit.text, unit.kind, process.env.OMP_VSCODE_HOME)) return undefined;
+	if (fs.existsSync(unit.node) && fs.existsSync(unit.script)) return undefined;
+	return withInstallLock(() => installUserService(serverScript, nodePath));
 }
 
 /**
@@ -255,15 +400,41 @@ function spawnDetached(serverScript: string, nodePath: string): void {
 /** How long a started service may take to listen before the server is spawned directly instead. */
 const SERVICE_GRACE_MS = 2000;
 
+export interface EnsureServerOptions {
+	/** This start installed the per-user service (once per machine, see autoInstallService): tell the user. */
+	onServiceInstalled?: (install: ServiceInstall) => void;
+	/** This start rewrote a unit whose node or server.js was gone (repairServiceUnit). */
+	onServiceRepaired?: (install: ServiceInstall) => void;
+	/**
+	 * False: `nodePath` may vanish (VS Code's own versioned runtime), so no new unit is written for it.
+	 * A broken unit is still re-pointed at it (it works at least until the next update).
+	 */
+	installService?: boolean;
+}
+
 /**
  * Connects to the server, starting it when none runs (through its service when one is installed, else
  * detached); undefined when it does not come up. A service that "started" but doesn't listen (its unit
- * points at a node that moved) falls back to a direct spawn, so a stale unit never keeps the server down.
+ * points at a node that moved) falls back to a direct spawn, so a stale unit never keeps the server down;
+ * such a unit is rewritten first, even while a server runs (it wouldn't come back after a reboot).
  */
-export async function ensureServer(serverScript: string, nodePath = process.execPath, timeoutMs = 6000): Promise<ServerClient | undefined> {
+export async function ensureServer(serverScript: string, nodePath = process.execPath, timeoutMs = 6000, opts: EnsureServerOptions = {}): Promise<ServerClient | undefined> {
+	fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+	let repaired: ServiceInstall | undefined;
+	try {
+		repaired = await repairServiceUnit(serverScript, nodePath);
+	} catch {
+		/* unit not rewritable: the server below still runs */
+	}
+	if (repaired) opts.onServiceRepaired?.(repaired);
 	const existing = await ServerClient.connect();
 	if (existing) return existing;
-	fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+	try {
+		const installed = repaired ? undefined : await autoInstallService(serverScript, nodePath, opts.installService !== false);
+		if (installed) opts.onServiceInstalled?.(installed);
+	} catch {
+		/* no service: the detached server below still runs */
+	}
 	const start = Date.now();
 	let direct = !startService();
 	if (direct) spawnDetached(serverScript, nodePath);

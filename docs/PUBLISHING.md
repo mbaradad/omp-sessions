@@ -1,17 +1,17 @@
 # Publishing checklist
 
-Releases are automated by `.github/workflows/release.yml`: pushing a tag `v<version>` runs the tests, packages the VSIX, publishes it to the VS Code Marketplace and Open VSX, and creates a GitHub release with the VSIX attached. The steps below are the one-time setup plus the per-release routine.
+Releases are automated by `.github/workflows/release.yml`: pushing a tag `v<version>` runs the tests, packages the VSIX, publishes it to the VS Code Marketplace and Open VSX, and creates a GitHub release with the VSIX and the standalone CLI package `omp-sessions-<version>.tgz` attached (`node packaging/cli/pack.mjs` builds it; `npm install -g <its release URL>` installs it). The steps below are the one-time setup plus the per-release routine.
 
 ## One-time setup
 
 ### 1. GitHub repository
 
-`package.json` already points `repository`, `bugs`, `homepage` and `qna` at `https://github.com/mbaradad/omp-vscode`. The Marketplace page links there, and `vsce` rewrites relative README links against it, so the repository must exist and be public before the first publish.
+`package.json` already points `repository`, `bugs`, `homepage` and `qna` at `https://github.com/mbaradad/omp-sessions`. The Marketplace page links there, and `vsce` rewrites relative README links against it, so the repository must exist and be public before the first publish.
 
-1. Create the **public** repository `mbaradad/omp-vscode` on GitHub (no README, license or .gitignore: they already exist here).
+1. Create the **public** repository `mbaradad/omp-sessions` on GitHub (no README, license or .gitignore: they already exist here).
 2. Push:
    ```sh
-   git remote add origin git@github.com:mbaradad/omp-vscode.git
+   git remote add origin git@github.com:mbaradad/omp-sessions.git
    git push -u origin main
    ```
 3. Settings → **Code security** → enable *Private vulnerability reporting* (`SECURITY.md` links to it).
@@ -27,7 +27,7 @@ Azure DevOps retires global Personal Access Tokens on December 1, 2026, so relea
 2. <https://marketplace.visualstudio.com/manage> → publisher **mbaradad** → **Trusted Publishing** → *Create*:
    - Policy name: `Release workflow`
    - Repository owner: `mbaradad`
-   - Repository: `omp-vscode`
+   - Repository: `omp-sessions`
    - Workflow: `release.yml`
    - Environment: empty
 3. Renaming the workflow file or moving the repository needs a new policy.
@@ -52,7 +52,7 @@ The Marketplace needs no secret (Trusted Publishing, step 2). The workflow uses 
 
 ### 5. Marketplace listing assets
 
-The README and the website (`site/assets/shots/`) use the same seven PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-vscode/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
+The README and the website (`site/assets/shots/`) use the same seven PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-sessions/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
 
 Capture guidelines: 1600×1000 (16:10; the website crops with `object-fit: cover` anchored top-left), Dark Modern, zoom level 1, a real VS Code with the released VSIX installed in an isolated profile (`--user-data-dir`/`--extensions-dir`) so the title bar shows no *Extension Development Host*, and no OS window chrome. Drive omp with `test/fake-omp.mjs` (`FAKE_OMP_DEMO=1` gives real-looking model names, prices and tok/s; `FAKE_OMP_REPLIES` scripts the answers) in a throwaway `OMP_VSCODE_HOME`, so no personal paths, keys or costs appear. The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
 
@@ -97,7 +97,7 @@ Manual fallback without CI: upload the VSIX from `npx vsce package` at <https://
 The plugin in `integrations/hermes/omp-sessions/` ships three ways. Its `plugin.yaml` `version` must equal `package.json`'s (`node build.mjs` fails otherwise), so bump both together.
 
 1. **Inside the extension.** `build.mjs` copies the folder into `out/hermes-plugin/`; `omp-sessions hermes install` and *omp: Install Hermes Plugin…* install it from there. Nothing to do beyond the extension release.
-2. **From Git.** `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/omp-sessions/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update omp-sessions`.
+2. **From Git.** `hermes plugins install mbaradad/omp-sessions/integrations/hermes/omp-sessions` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/omp-sessions/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update omp-sessions`.
 3. **The Hermes plugin catalog** (`hermes plugins install omp-sessions`, listed on <https://hermes-agent.nousresearch.com/docs/plugins>). Entries are YAML files in [`NousResearch/hermes-agent/plugin-catalog/`](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog), added by a reviewed pull request that pins an exact commit. To submit, or to move it to a new release:
    1. Validate the plugin at the commit you'll pin (the same check catalog CI runs):
       ```sh

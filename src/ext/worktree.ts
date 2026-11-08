@@ -9,7 +9,8 @@ import * as vscode from "vscode";
 import { sendToHost } from "../shared/launch";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
-import { listModels } from "./launch-options";
+import { loadModels } from "./launch-options";
+import { plain } from "./plain";
 import { projectRoot, resolveOmpPath } from "./sessions";
 import {
 	type ChangedFile,
@@ -202,8 +203,8 @@ async function askModels(cwd: string, title: string): Promise<string[] | undefin
 	qp.onDidChangeSelection(sel => {
 		for (const s of sel) if (s.description === "custom model selector" && !custom.some(c => c.selector === s.selector)) custom.push({ ...s, description: "custom" });
 	});
-	void listModels(cwd).then(list => {
-		models = list.map(m => ({ label: m.name, description: m.selector, selector: m.selector }));
+	void loadModels(cwd).then(list => {
+		models = list.models.map(m => ({ label: `${m.default ? "$(star-full) " : ""}${m.name}`, description: `${m.selector}${m.default ? " · default" : ""}`, selector: m.selector }));
 		qp.busy = false;
 		render();
 	});
@@ -225,7 +226,7 @@ async function repoFolder(api: OmpApi, arg: unknown): Promise<string | undefined
 		return undefined;
 	}
 	if (!(await mainRepoRoot(folder))) {
-		void vscode.window.showErrorMessage(`${folder} is not inside a git repository (or git is not installed). Worktree sessions need git.`);
+		void vscode.window.showErrorMessage(plain(`${folder} is not inside a git repository (or git is not installed). Worktree sessions need git.`));
 		return undefined;
 	}
 	return folder;
@@ -253,7 +254,7 @@ async function newWorktreeSession(api: OmpApi, arg: unknown): Promise<void> {
 	try {
 		created = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Creating git worktree…" }, () => createWorktree({ from: folder, slug: slugify(task), base }));
 	} catch (err) {
-		void vscode.window.showErrorMessage(`Could not create the worktree: ${errorText(err)}`);
+		void vscode.window.showErrorMessage(plain(`Could not create the worktree: ${errorText(err)}`));
 		return;
 	}
 	const panel = await api.launchAndOpen({ cwd: created.cwd, title: taskTitle(task) });
@@ -287,7 +288,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	try {
 		base = await resolveBase(folder, baseRef);
 	} catch (err) {
-		void vscode.window.showErrorMessage(errorText(err));
+		void vscode.window.showErrorMessage(plain(errorText(err)));
 		return;
 	}
 	const runs = runsFor(count.n);
@@ -300,7 +301,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 			try {
 				created.push({ wt: await createWorktree({ from: folder, slug: `${slug}-${i + 1}`, ...base }), model, index: i + 1 });
 			} catch (err) {
-				void vscode.window.showErrorMessage(`Could not create worktree ${i + 1}: ${errorText(err)}`);
+				void vscode.window.showErrorMessage(plain(`Could not create worktree ${i + 1}: ${errorText(err)}`));
 			}
 		}
 	});
@@ -322,7 +323,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	api.refreshTree();
 	const ok = started.filter(Boolean).length;
 	const pick = await vscode.window.showInformationMessage(
-		`Started ${ok} of ${runs.length} runs on ${created.map(c => c.wt.branch).join(", ")}. When they finish, compare each with "Compare with Base", merge the best one, then remove the others.`,
+		plain(`Started ${ok} of ${runs.length} runs on ${created.map(c => c.wt.branch).join(", ")}. When they finish, compare each with "Compare with Base", merge the best one, then remove the others.`),
 		"Show Sessions",
 	);
 	if (pick) await vscode.commands.executeCommand("omp.sessions.focus");
@@ -334,7 +335,7 @@ async function pickWorktreeSession(api: OmpApi, arg: unknown, placeHolder: strin
 	if (!meta) return undefined;
 	const wt = worktreeOf(meta);
 	if (!wt) {
-		void vscode.window.showInformationMessage(`"${meta.title}" does not run in a git worktree.`);
+		void vscode.window.showInformationMessage(plain(`"${meta.title}" does not run in a git worktree.`));
 		return undefined;
 	}
 	return { meta, wt };
@@ -350,7 +351,7 @@ async function compareWithBase(api: OmpApi, arg: unknown): Promise<void> {
 	const picked = await pickWorktreeSession(api, arg, "Compare which worktree session with its base?");
 	if (!picked) return;
 	if (!picked.wt.present) {
-		void vscode.window.showErrorMessage(`The worktree ${picked.wt.worktree} no longer exists.`);
+		void vscode.window.showErrorMessage(plain(`The worktree ${picked.wt.worktree} no longer exists.`));
 		return;
 	}
 	let wt: SessionWorktree;
@@ -361,12 +362,12 @@ async function compareWithBase(api: OmpApi, arg: unknown): Promise<void> {
 		rev = await diffBase(wt.worktree, wt);
 		files = await changedSince(wt.worktree, rev);
 	} catch (err) {
-		void vscode.window.showErrorMessage(`Could not compare: ${errorText(err)}`);
+		void vscode.window.showErrorMessage(plain(`Could not compare: ${errorText(err)}`));
 		return;
 	}
 	const label = `${wt.branch} vs ${wt.base}`;
 	if (!files.length) {
-		void vscode.window.showInformationMessage(`No changes on ${label}.`);
+		void vscode.window.showInformationMessage(plain(`No changes on ${label}.`));
 		return;
 	}
 	const items: Array<vscode.QuickPickItem & { file?: ChangedFile }> = [
@@ -392,7 +393,7 @@ async function mergeIntoMain(api: OmpApi, arg: unknown): Promise<void> {
 	const { meta } = picked;
 	const wt = picked.wt;
 	if (!wt.branch || !(await branchExists(wt.mainRoot, wt.branch))) {
-		void vscode.window.showErrorMessage(`Branch ${wt.branch || "(unknown)"} does not exist in ${wt.mainRoot}.`);
+		void vscode.window.showErrorMessage(plain(`Branch ${wt.branch || "(unknown)"} does not exist in ${wt.mainRoot}.`));
 		return;
 	}
 	if (meta.status === "working" && (await confirm(`"${meta.title}" is still working.`, "Merge what it has done so far?", "Merge Anyway")) !== "Merge Anyway") return;
@@ -403,26 +404,26 @@ async function mergeIntoMain(api: OmpApi, arg: unknown): Promise<void> {
 			await gitOk(wt.worktree, ["add", "-A"]);
 			await gitOk(wt.worktree, ["commit", "-m", meta.title]);
 		} catch (err) {
-			void vscode.window.showErrorMessage(`Could not commit in the worktree: ${errorText(err)}`);
+			void vscode.window.showErrorMessage(plain(`Could not commit in the worktree: ${errorText(err)}`));
 			return;
 		}
 	}
 	const into = await currentBranch(wt.mainRoot);
 	if (!into) {
-		void vscode.window.showErrorMessage(`${wt.mainRoot} is not on a branch (detached HEAD). Check out the branch to merge into first.`);
+		void vscode.window.showErrorMessage(plain(`${wt.mainRoot} is not on a branch (detached HEAD). Check out the branch to merge into first.`));
 		return;
 	}
 	if (into === wt.branch) {
-		void vscode.window.showErrorMessage(`The main checkout already has ${wt.branch} checked out.`);
+		void vscode.window.showErrorMessage(plain(`The main checkout already has ${wt.branch} checked out.`));
 		return;
 	}
 	const ahead = await aheadCount(wt.mainRoot, into, wt.branch);
 	if (ahead === 0) {
-		void vscode.window.showInformationMessage(`${into} already contains everything on ${wt.branch}.`);
+		void vscode.window.showInformationMessage(plain(`${into} already contains everything on ${wt.branch}.`));
 		return;
 	}
 	if (await isDirty(wt.mainRoot, true)) {
-		const open = await vscode.window.showErrorMessage(`${path.basename(wt.mainRoot)} has uncommitted changes. Commit or stash them before merging ${wt.branch}.`, "Open Source Control");
+		const open = await vscode.window.showErrorMessage(plain(`${path.basename(wt.mainRoot)} has uncommitted changes. Commit or stash them before merging ${wt.branch}.`), "Open Source Control");
 		if (open) await vscode.commands.executeCommand("workbench.view.scm");
 		return;
 	}
@@ -433,24 +434,24 @@ async function mergeIntoMain(api: OmpApi, arg: unknown): Promise<void> {
 	if (res.code !== 0) {
 		const conflicts = await conflictedFiles(wt.mainRoot);
 		if (!conflicts.length) {
-			void vscode.window.showErrorMessage(`Merge failed: ${res.stderr.trim() || res.stdout.trim()}`);
+			void vscode.window.showErrorMessage(plain(`Merge failed: ${res.stderr.trim() || res.stdout.trim()}`));
 			return;
 		}
 		const action = await vscode.window.showErrorMessage(
-			`Merging ${wt.branch} into ${into} stopped with conflicts in ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}: ${conflicts.slice(0, 5).join(", ")}${conflicts.length > 5 ? ", …" : ""}. Resolve them in Source Control and commit, or abort the merge.`,
+			plain(`Merging ${wt.branch} into ${into} stopped with conflicts in ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}: ${conflicts.slice(0, 5).join(", ")}${conflicts.length > 5 ? ", …" : ""}. Resolve them in Source Control and commit, or abort the merge.`),
 			"Open Source Control",
 			"Abort Merge",
 		);
 		if (action === "Abort Merge") {
 			const abort = await git(wt.mainRoot, ["merge", "--abort"]);
-			if (abort.code !== 0) void vscode.window.showErrorMessage(`git merge --abort failed: ${abort.stderr}`);
+			if (abort.code !== 0) void vscode.window.showErrorMessage(plain(`git merge --abort failed: ${abort.stderr}`));
 		} else await vscode.commands.executeCommand("workbench.view.scm");
 		return;
 	}
 	// Other sessions of the same best-of-N run.
 	const siblings = wt.batch ? api.sessions.all().filter(m => m.id !== meta.id && readWorktreeInfo(m.id)?.batch === wt.batch) : [];
 	const removeAll = siblings.length ? `Remove It and ${siblings.length} Other Run${siblings.length === 1 ? "" : "s"}` : undefined;
-	const after = await vscode.window.showInformationMessage(`Merged ${wt.branch} into ${into}.`, "Remove Worktree", ...(removeAll ? [removeAll] : []));
+	const after = await vscode.window.showInformationMessage(plain(`Merged ${wt.branch} into ${into}.`), "Remove Worktree", ...(removeAll ? [removeAll] : []));
 	if (after === "Remove Worktree") await removeSession(api, meta, wt, { deleteBranch: true, forceBranch: false });
 	else if (after && removeAll) {
 		const ok = await confirm(
@@ -476,7 +477,7 @@ async function removeSession(api: OmpApi, meta: SessionMeta, wt: SessionWorktree
 			if (force !== "Force Remove") return false;
 			res = await git(wt.mainRoot, ["worktree", "remove", "--force", wt.worktree]);
 			if (res.code !== 0) {
-				void vscode.window.showErrorMessage(`git worktree remove failed: ${res.stderr.trim()}`);
+				void vscode.window.showErrorMessage(plain(`git worktree remove failed: ${res.stderr.trim()}`));
 				return false;
 			}
 		}
@@ -491,7 +492,7 @@ async function removeSession(api: OmpApi, meta: SessionMeta, wt: SessionWorktree
 		if (res.code !== 0) {
 			const force = opts.forceBranch || (await confirm(`Branch ${wt.branch} is not fully merged.`, "Delete it anyway? Its commits are lost.", "Delete Branch")) === "Delete Branch";
 			if (force) res = await git(wt.mainRoot, ["branch", "-D", wt.branch]);
-			if (force && res.code !== 0) void vscode.window.showWarningMessage(`Could not delete ${wt.branch}: ${res.stderr.trim()}`);
+			if (force && res.code !== 0) void vscode.window.showWarningMessage(plain(`Could not delete ${wt.branch}: ${res.stderr.trim()}`));
 		}
 	}
 	api.closePanel(meta.id);
@@ -518,7 +519,7 @@ async function openWorktreeFolder(api: OmpApi, arg: unknown): Promise<void> {
 	const picked = await pickWorktreeSession(api, arg, "Open which session's worktree?");
 	if (!picked) return;
 	if (!picked.wt.present) {
-		void vscode.window.showErrorMessage(`The worktree ${picked.wt.worktree} no longer exists.`);
+		void vscode.window.showErrorMessage(plain(`The worktree ${picked.wt.worktree} no longer exists.`));
 		return;
 	}
 	await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(picked.wt.worktree), { forceNewWindow: true });

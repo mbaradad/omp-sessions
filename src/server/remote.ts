@@ -1,9 +1,13 @@
 // HTTP side of the omp-sessions server: the remote API (docs/REMOTE-API.md) and the phone app it serves.
 // Off unless remote.json says `enabled`; the server re-reads the file on every scheduling pass and
 // on the `remote` op, and starts, stops or rebinds the listener to match.
-// Security: every /api/* route except health and pair needs the token (Bearer header or the
-// HttpOnly SameSite=Strict cookie /api/pair sets); compares are constant-time; repeated failures
-// lock the client address out for a while; no CORS headers; bodies are capped at 1 MiB.
+// Security: every /api/* route except health and pair needs the token (Bearer header) or the pairing
+// cookie /api/pair sets (HttpOnly, SameSite=Strict, an HMAC of the token rather than the token; `Secure`
+// and `__Host-` when the public URL is https); compares are constant-time. Repeated failures lock the
+// client address out for a while (addresses tracked: capped, least recent dropped), and a burst of
+// failures from everywhere locks out every address that hasn't authenticated lately. X-Forwarded-For
+// names the client only behind the configured proxy (public URL set, listener bound to loopback). No
+// CORS headers; bodies are capped at 1 MiB.
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
@@ -13,11 +17,28 @@ import { isRecord } from "../shared/bridge";
 import type { Control } from "../shared/control";
 import { HostConnection, type Snapshot } from "../shared/host-conn";
 import { readMeta, sendToHost, setSessionPermissionMode } from "../shared/launch";
+import { listModels, setSessionModel } from "../shared/models";
 import { isPermissionMode } from "../shared/permissions";
 import type { SessionMeta } from "../shared/protocol";
-import { REMOTE_COOKIE, type RemoteConfig, type RemoteStatus, baseUrl, parseRemoteConfig, remoteConfigPath, resolveBind, tokenMatches } from "../shared/remote";
+import {
+	LEGACY_REMOTE_COOKIE,
+	REMOTE_COOKIE,
+	REMOTE_COOKIE_SECURE,
+	type RemoteConfig,
+	type RemoteStatus,
+	baseUrl,
+	cookieSecret,
+	isLoopbackHost,
+	parseRemoteConfig,
+	remoteConfigPath,
+	resolveBind,
+	tokenMatches,
+	trustsProxy,
+} from "../shared/remote";
 import { REMOTE_MESSAGES, type RemoteSnapshot, slimHostMessage, slimSnapshot, stoppedSnapshot } from "../shared/remote-snapshot";
 import type { SessionInfo } from "../shared/server-protocol";
+import type { MachineStatus } from "../shared/server-status";
+import { isAuthority, requestOpen, vscodeLink, windowFor } from "../shared/vscode-open";
 
 const MAX_BODY = 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
@@ -29,9 +50,22 @@ const FAIL_LIMIT = 5;
 const FAIL_WINDOW_MS = 10 * 60_000;
 /** First lockout; it doubles with every further failure (up to 64×). */
 const LOCK_MS = 60_000;
+/** Addresses whose failures are remembered; the least recently failing one goes first. */
+const MAX_TRACKED = 1024;
+/** Failures from all addresses together within GLOBAL_WINDOW_MS that trigger the global lockout. */
+const GLOBAL_FAIL_LIMIT = 50;
+const GLOBAL_WINDOW_MS = 60_000;
+const GLOBAL_LOCK_MS = 5 * 60_000;
+/** Addresses that authenticated this recently still get in during a global lockout. */
+const TRUSTED_MS = 7 * 24 * 3600_000;
+const MAX_TRUSTED = 256;
+/** Earlier tokens remembered (this run only), so their cookies read as "pair again", not as attacks. */
+const MAX_OLD_TOKENS = 4;
 /** While enabled but not listening (no Tailscale yet, port taken), retry this often. */
 const RETRY_MS = 30_000;
 const COOKIE_MAX_AGE = 365 * 24 * 3600;
+/** The 401 a browser with an outdated pairing cookie gets (the phone app shows its pairing screen). */
+export const PAIRING_EXPIRED = "pairing expired: the token changed, pair this browser again";
 
 export interface RemoteDeps {
 	version: string;
@@ -40,6 +74,8 @@ export interface RemoteDeps {
 	resume(id: string): { started: boolean };
 	/** The sessions list as `subscribe sessions` sends it (archived ones included, flagged). */
 	sessions(): SessionInfo[];
+	/** The machine overview (`GET /api/status`, the same as `omp-sessions status`). */
+	status(): MachineStatus;
 	/** Folder holding the phone app (out/ or the runtime copy). */
 	staticDir: string;
 	log(...parts: unknown[]): void;
@@ -138,7 +174,14 @@ export class RemoteServer {
 	private chain: Promise<void> = Promise.resolve();
 	private readonly streams = new Set<http.ServerResponse>();
 	private readonly listStreams = new Set<http.ServerResponse>();
+	/** Failures per client address, least recently failing first (capped at MAX_TRACKED). */
 	private readonly failures = new Map<string, { count: number; last: number; until: number }>();
+	/** Addresses that authenticated lately → when, least recent first (capped at MAX_TRUSTED). */
+	private readonly trusted = new Map<string, number>();
+	private globalFailures = { start: 0, count: 0 };
+	private globalUntil = 0;
+	/** Tokens replaced while this server ran, newest last. */
+	private oldTokens: string[] = [];
 
 	constructor(private readonly deps: RemoteDeps) {}
 
@@ -198,8 +241,11 @@ export class RemoteServer {
 		this.cfgText = text;
 		const prev = this.cfg;
 		this.cfg = parseRemoteConfig(text);
-		// A new token ends every stream opened with the old one.
-		if (prev.token !== this.cfg.token) this.dropStreams();
+		// A new token ends every stream opened with the old one; cookies of the old one ask to pair again.
+		if (prev.token !== this.cfg.token) {
+			this.dropStreams();
+			if (prev.token) this.oldTokens = [...this.oldTokens.filter(t => t !== prev.token), prev.token].slice(-MAX_OLD_TOKENS);
+		}
 		if (!this.cfg.enabled) {
 			if (this.bound) this.deps.log("remote: off");
 			await this.stopListening();
@@ -272,50 +318,113 @@ export class RemoteServer {
 	// ---------- auth ----------
 
 	private checkLock(ip: string): void {
+		const now = Date.now();
 		const f = this.failures.get(ip);
-		const wait = f ? f.until - Date.now() : 0;
+		const wait = f ? f.until - now : 0;
 		if (wait > 0) throw new HttpError(429, "too many failed attempts; try again later", { "retry-after": String(Math.ceil(wait / 1000)) });
+		// Many addresses failing at once (a forged or rotating source): only known clients get checked.
+		const globalWait = this.globalUntil - now;
+		if (globalWait > 0 && !(now - (this.trusted.get(ip) ?? 0) < TRUSTED_MS)) {
+			throw new HttpError(429, "too many failed attempts from several addresses; try again later", { "retry-after": String(Math.ceil(globalWait / 1000)) });
+		}
 	}
 
 	private recordFailure(ip: string): void {
 		const now = Date.now();
-		if (this.failures.size > 10_000) for (const [k, v] of this.failures) if (v.until < now && now - v.last > FAIL_WINDOW_MS) this.failures.delete(k);
 		const prev = this.failures.get(ip);
 		const f = prev && now - prev.last < FAIL_WINDOW_MS ? prev : { count: 0, last: now, until: 0 };
 		f.count++;
 		f.last = now;
 		if (f.count >= FAIL_LIMIT) f.until = now + LOCK_MS * 2 ** Math.min(6, f.count - FAIL_LIMIT);
+		// Re-inserting keeps the map ordered by last failure, so the first key is the one to drop.
+		this.failures.delete(ip);
 		this.failures.set(ip, f);
+		while (this.failures.size > MAX_TRACKED) {
+			const oldest = this.failures.keys().next().value;
+			if (oldest === undefined) break;
+			this.failures.delete(oldest);
+		}
+		if (now - this.globalFailures.start > GLOBAL_WINDOW_MS) this.globalFailures = { start: now, count: 0 };
+		this.globalFailures.count++;
+		if (this.globalFailures.count >= GLOBAL_FAIL_LIMIT && this.globalUntil <= now) {
+			this.globalUntil = now + GLOBAL_LOCK_MS;
+			this.deps.log("remote:", `${this.globalFailures.count} failed token checks within a minute; only recently signed-in addresses get in for ${GLOBAL_LOCK_MS / 60_000} min`);
+		}
 		this.deps.log("remote: rejected token from", ip, `(${f.count} failures)`);
 	}
 
+	private recordSuccess(ip: string): void {
+		this.failures.delete(ip);
+		this.trusted.delete(ip);
+		this.trusted.set(ip, Date.now());
+		while (this.trusted.size > MAX_TRUSTED) {
+			const oldest = this.trusted.keys().next().value;
+			if (oldest === undefined) break;
+			this.trusted.delete(oldest);
+		}
+	}
+
 	/**
-	 * Who to lock out after failed tokens. Behind a proxy (a public URL is set and the peer is loopback, e.g.
-	 * `tailscale serve`), every client arrives from 127.0.0.1: use the address the proxy appended to
-	 * X-Forwarded-For (the last hop; earlier hops come from the client and can be forged).
+	 * Who to lock out after failed tokens. Behind the configured proxy (a public URL is set and the
+	 * listener is bound to loopback, e.g. `tailscale serve`), every client arrives from 127.0.0.1: use the
+	 * address the proxy appended to X-Forwarded-For (the last hop; earlier hops come from the client and
+	 * can be forged). Otherwise the header is ignored: a loopback peer is just a local process.
 	 */
 	private clientAddress(req: http.IncomingMessage): string {
 		const peer = req.socket.remoteAddress ?? "";
-		const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+		if (!isLoopbackHost(peer) || !this.bound || !trustsProxy(this.cfg, this.bound.host)) return peer;
 		const forwarded = req.headers["x-forwarded-for"];
 		const hops = (Array.isArray(forwarded) ? forwarded.join(",") : (forwarded ?? "")).split(",").map(h => h.trim()).filter(Boolean);
-		return this.cfg.publicUrl && loopback && hops.length ? `${hops[hops.length - 1]} (via proxy)` : peer;
+		return hops.length ? `${hops[hops.length - 1]} (via proxy)` : peer;
 	}
 
-	/** Throws 401/429 unless the request carries the token; tells how it did. */
-	private authorize(req: http.IncomingMessage): "bearer" | "cookie" {
+	/** `Set-Cookie` for the pairing cookie: `__Host-` and `Secure` when the phone uses an https public URL. */
+	private pairingCookie(): string {
+		const secure = !!this.cfg.publicUrl?.startsWith("https:");
+		return `${secure ? REMOTE_COOKIE_SECURE : REMOTE_COOKIE}=${cookieSecret(this.cfg.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}${secure ? "; Secure" : ""}`;
+	}
+
+	/** Expires every pairing cookie name (the browser stops sending a stale one). */
+	private static clearCookies(names: readonly string[]): string[] {
+		return names.map(n => `${n}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${n === REMOTE_COOKIE_SECURE ? "; Secure" : ""}`);
+	}
+
+	/** Throws 401/429 unless the request carries the token or a current pairing cookie; tells how it did. */
+	private authorize(req: http.IncomingMessage, res: http.ServerResponse): "bearer" | "cookie" {
 		const ip = this.clientAddress(req);
 		this.checkLock(ip);
+		const token = this.cfg.token;
 		const header = req.headers.authorization;
 		const bearer = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : undefined;
-		const given = bearer ?? cookieValue(req.headers.cookie, REMOTE_COOKIE);
-		if (!given) throw new HttpError(401, "unauthorized: send Authorization: Bearer <token>, or pair this browser");
-		if (!tokenMatches(given, this.cfg.token)) {
-			this.recordFailure(ip);
-			throw new HttpError(401, "invalid token");
+		if (bearer !== undefined) {
+			if (!tokenMatches(bearer, token)) {
+				this.recordFailure(ip);
+				throw new HttpError(401, "invalid token");
+			}
+			this.recordSuccess(ip);
+			return "bearer";
 		}
-		this.failures.delete(ip);
-		return bearer !== undefined ? "bearer" : "cookie";
+		const cookies: Array<{ name: string; value: string }> = [];
+		for (const name of [REMOTE_COOKIE_SECURE, REMOTE_COOKIE, LEGACY_REMOTE_COOKIE]) {
+			const value = cookieValue(req.headers.cookie, name);
+			if (value) cookies.push({ name, value });
+		}
+		if (!cookies.length) throw new HttpError(401, "unauthorized: send Authorization: Bearer <token>, or pair this browser");
+		// The legacy cookie holds the raw token; the others its HMAC.
+		const secretOf = (name: string, t: string) => (name === LEGACY_REMOTE_COOKIE ? t : cookieSecret(t));
+		const current = token ? cookies.find(c => tokenMatches(c.value, secretOf(c.name, token))) : undefined;
+		if (current) {
+			this.recordSuccess(ip);
+			// Upgrade a legacy cookie to the HMAC one.
+			if (current.name === LEGACY_REMOTE_COOKIE) res.setHeader("set-cookie", [this.pairingCookie(), ...RemoteServer.clearCookies([LEGACY_REMOTE_COOKIE])]);
+			return "cookie";
+		}
+		// Not counted when it is a cookie of a token this server replaced (`remote rotate`), so a phone with an
+		// old pairing is never locked out of pairing again; either way the browser is told to drop it.
+		res.setHeader("set-cookie", RemoteServer.clearCookies(cookies.map(c => c.name)));
+		const stale = cookies.every(c => this.oldTokens.some(t => tokenMatches(c.value, secretOf(c.name, t))));
+		if (!stale) this.recordFailure(ip);
+		throw new HttpError(401, PAIRING_EXPIRED);
 	}
 
 	/** Cookie-authenticated writes must come from this origin as JSON (no form posts from other sites). */
@@ -344,7 +453,7 @@ export class RemoteServer {
 				if (method !== "POST") throw new HttpError(405, "use POST", { allow: "POST" });
 				return await this.pair(req, res);
 			}
-			const auth = this.authorize(req);
+			const auth = this.authorize(req, res);
 			if (auth === "cookie" && method !== "GET" && method !== "HEAD") this.checkSameOrigin(req);
 			await this.route(req, res, url, method);
 		} catch (err) {
@@ -388,9 +497,10 @@ export class RemoteServer {
 			this.recordFailure(ip);
 			throw new HttpError(401, "invalid token");
 		}
-		this.failures.delete(ip);
+		this.recordSuccess(ip);
 		this.deps.log("remote: paired a browser from", ip);
-		sendJson(res, 200, { ok: true }, { "set-cookie": `${REMOTE_COOKIE}=${this.cfg.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}` });
+		res.setHeader("set-cookie", [this.pairingCookie(), ...RemoteServer.clearCookies([LEGACY_REMOTE_COOKIE])]);
+		sendJson(res, 200, { ok: true });
 	}
 
 	private meta(id: string): SessionMeta {
@@ -419,6 +529,14 @@ export class RemoteServer {
 			allow("GET");
 			return this.listEvents(req, res);
 		}
+		if (top === "status" && id === undefined) {
+			allow("GET");
+			return sendJson(res, 200, this.deps.status());
+		}
+		if (top === "models" && id === undefined) {
+			allow("GET");
+			return sendJson(res, 200, await listModels(os.homedir(), url.searchParams.get("q") || undefined));
+		}
 		if (top !== "sessions" || id === undefined) throw new HttpError(404, "not found");
 		if (action === undefined) {
 			allow("GET");
@@ -446,6 +564,27 @@ export class RemoteServer {
 				return sendJson(res, 200, await control.stop({ id: meta.id }));
 			case "resume":
 				return sendJson(res, 200, this.deps.resume(meta.id));
+			case "continue": {
+				// An interrupted session goes on: its interrupted queued task runs again (the server or host
+				// starts it), else the turn a host crash cut short resumes (the host asks omp to finish it).
+				const info = this.deps.sessions().find(i => i.meta.id === meta.id);
+				if (info?.queue.interrupted) return sendJson(res, 200, { queue: await control.queue({ id: meta.id, ops: [{ op: "run" }] }) });
+				return sendJson(res, 200, this.deps.resume(meta.id));
+			}
+			case "model": {
+				const model = optionalString(body, "model");
+				if (!model) throw new HttpError(400, "model (provider/id) is required");
+				return sendJson(res, 200, { id: meta.id, model, applied: await setSessionModel(meta, model) });
+			}
+			case "vscode": {
+				// The VS Code window on this machine that takes the request when it gains focus; the link
+				// opens it from the computer running VS Code (the server's own terminal env doesn't pick it).
+				const authority = optionalString(body, "authority");
+				if (authority !== undefined && authority !== "" && !isAuthority(authority)) throw new HttpError(400, "authority must be a VS Code remote authority like ssh-remote+box (\"\" for a local window)");
+				const win = windowFor({ cwd: meta.cwd, ...(authority !== undefined ? { authority } : {}) }, {});
+				requestOpen(meta.id);
+				return sendJson(res, 200, { url: vscodeLink(meta, win), authority: win?.authority ?? null, windowAt: win?.at || null });
+			}
 			case "mode": {
 				if (!isPermissionMode(body.mode)) throw new HttpError(400, "mode must be ask, edits, plan or auto");
 				if (!(await setSessionPermissionMode(meta, body.mode))) throw new HttpError(409, meta.permissionMode ? "the session host is unreachable" : "this session's host predates permission modes; stop and resume it first");

@@ -1,7 +1,7 @@
 // Session snapshots and host messages sized for remote clients (phones on mobile data): the last
 // messages only, long tool output and file contents clipped, frames nobody renders dropped.
 // Stopped sessions get a snapshot rebuilt from omp's transcript file. Node-only.
-import * as fs from "node:fs";
+import { readTranscriptText } from "./transcript-files";
 import { slimFrame, slimMessage, slimRunningTool } from "../ext/slim";
 import { isRecord } from "./bridge";
 import type { HostToClient, SessionMeta } from "./protocol";
@@ -30,12 +30,7 @@ export interface RemoteSnapshot {
 /** Transcript entries of an omp session file (a stopped session's history). */
 export function transcriptMessages(file: string | undefined): unknown[] {
 	if (!file) return [];
-	let text = "";
-	try {
-		text = fs.readFileSync(file, "utf8");
-	} catch {
-		return [];
-	}
+	const text = readTranscriptText(file);
 	const out: unknown[] = [];
 	for (const line of text.split("\n")) {
 		if (!line.includes('"message"')) continue;

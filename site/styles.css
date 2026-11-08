@@ -1702,6 +1702,10 @@ h2 .grad {
 	color: #e5c07b;
 }
 
+.c-gr {
+	color: #98c379;
+}
+
 /* Features: rows with screenshots */
 
 .row {
@@ -2819,6 +2823,15 @@ h2 .grad {
 
 	.hero .cmd code {
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	p > code {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.fine {
 		overflow-wrap: anywhere;
 	}
 }

@@ -245,6 +245,9 @@ main {
 .group.input h2 {
 	color: var(--input);
 }
+.group.interrupted h2 {
+	color: var(--err);
+}
 .count {
 	padding: 0 7px;
 	border-radius: 999px;
@@ -308,9 +311,18 @@ main {
 	color: var(--accent);
 	border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
 }
-.chip.waiting {
+.chip.needs_input {
 	color: var(--input);
 	border-color: color-mix(in srgb, var(--input) 50%, var(--line));
+}
+.chip.queued,
+.chip.scheduled {
+	color: var(--accent2);
+	border-color: color-mix(in srgb, var(--accent2) 50%, var(--line));
+}
+.chip.interrupted {
+	color: var(--err);
+	border-color: color-mix(in srgb, var(--err) 50%, var(--line));
 }
 .chip.idle {
 	color: var(--ok);
@@ -339,6 +351,27 @@ main {
 	min-height: 34px;
 	padding: 0 12px;
 	font-size: 0.85rem;
+}
+.controls .button {
+	display: inline-flex;
+	align-items: center;
+	min-height: 34px;
+	padding: 0 12px;
+	font-size: 0.85rem;
+}
+select.model {
+	max-width: 11rem;
+	min-height: 34px;
+	padding: 0 6px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 0.85rem;
+}
+.machine {
+	padding: 4px 4px 8px;
 }
 .seg {
 	display: inline-flex;

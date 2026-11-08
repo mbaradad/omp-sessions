@@ -35,7 +35,8 @@ test("hello → snapshot with meta, state and empty mirror once omp is ready", a
 	assert.equal(s.state.contextUsage.contextWindow, 200000);
 
 	const argv = h.fakeEntries().find(e => e.kind === "argv")?.argv ?? [];
-	assert.deepEqual(argv.slice(0, 4), ["--mode", "rpc-ui", "--cwd", h.cwd]);
+	assert.equal(argv[argv.indexOf("--mode") + 1], "rpc-ui");
+	assert.equal(argv[argv.indexOf("--cwd") + 1], h.cwd);
 	assert.equal(argv[argv.indexOf("--config") + 1], path.join(h.dir, "omp-overlay.yml"));
 	assert.ok(!argv.includes("--resume"));
 	assert.deepEqual(h.fakeCommands("negotiate_protocol").map(c => c.protocolVersion), [2]);
@@ -62,8 +63,28 @@ test("prompt `echo` streams events; status goes working → idle; title, lastTex
 	assert.ok(statuses.includes("working"), `statuses: ${statuses}`);
 	const idle = await c.waitFor("meta", m => m.meta.status === "idle" && m.meta.lastText === "hello world", from);
 	assert.equal(idle.meta.title, "echo hello world");
-	assert.ok((idle.meta.cost ?? 0) > 0, "cost accumulated");
-	assert.deepEqual(h.fakeCommands("set_session_name").map(c => c.name), ["echo hello world"]);
+	// meta.cost is read from the transcript shortly after the turn (src/shared/cost.ts).
+	await c.waitFor("meta", m => (m.meta.cost ?? 0) > 0, from);
+	// The prompt prefix is only a local placeholder: sent to omp, it would block omp's own titles.
+	assert.deepEqual(h.fakeCommands("set_session_name"), []);
+});
+
+test("omp's generated title replaces the placeholder; an explicit --title is given to omp instead", async t => {
+	const auto = await launch(t, { env: { FAKE_OMP_AUTO_TITLE: "1" } });
+	const { client: c } = await auto.connect();
+	await c.prompt("echo name me");
+	await c.waitFor("meta", m => m.meta.title === "Auto: echo name me");
+	assert.deepEqual(auto.fakeCommands("set_session_name"), []);
+
+	const titled = await launch(t, { env: { FAKE_OMP_AUTO_TITLE: "1" }, args: ["--title", "Chosen"] });
+	const { client: c2 } = await titled.connect();
+	await c2.prompt("echo hi");
+	await c2.rpc({ id: "sync", type: "get_state" });
+	assert.deepEqual(
+		titled.fakeCommands("set_session_name").map(x => x.name),
+		["Chosen"],
+	);
+	assert.equal(titled.meta().title, "Chosen");
 });
 
 test("`write` then `edit` produce change frames with stored before/after blobs", async t => {

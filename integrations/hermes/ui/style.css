@@ -36,6 +36,8 @@
 	--t-working: var(--o-blue);
 	--t-starting: var(--o-blue);
 	--t-queued: var(--o-purple);
+	--t-scheduled: var(--o-purple);
+	--t-interrupted: var(--o-yellow);
 	--t-idle: var(--o-green);
 	--t-stopped: color-mix(in srgb, var(--o-fg) 38%, transparent);
 
@@ -223,6 +225,8 @@
 .tone-working { --tone: var(--t-working); }
 .tone-starting { --tone: var(--t-starting); }
 .tone-queued { --tone: var(--t-queued); }
+.tone-scheduled { --tone: var(--t-scheduled); }
+.tone-interrupted { --tone: var(--t-interrupted); }
 .tone-idle { --tone: var(--t-idle); }
 .tone-stopped, .tone-removed { --tone: var(--t-stopped); }
 .omps-card.tone-needs_input { background: linear-gradient(180deg, color-mix(in srgb, var(--o-pink) 9%, var(--o-raised)), var(--o-raised) 70%); }
@@ -240,6 +244,9 @@
 .omps-mode.mode-edits { color: var(--o-blue); border-color: color-mix(in srgb, var(--o-blue) 40%, transparent); }
 .omps-card-meta { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--o-muted); font-size: 12px; }
 .omps-card-project { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omps-card-vscode { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
+.omps-card:hover .omps-card-vscode, .omps-card:focus-within .omps-card-vscode, .omps-card-vscode:focus-visible { opacity: 1; }
+.omps-card-vscode:hover { color: var(--o-fg); background: var(--o-hover); }
 .omps-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; padding: 0 7px; height: 19px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--o-accent) 14%, transparent); color: var(--o-fg2); border: 1px solid color-mix(in srgb, var(--o-accent) 24%, transparent); }
 .omps-chip.is-warn { background: color-mix(in srgb, var(--o-yellow) 16%, transparent); border-color: color-mix(in srgb, var(--o-yellow) 40%, transparent); }
 .omps-chip.is-needs { background: color-mix(in srgb, var(--o-pink) 16%, transparent); border-color: color-mix(in srgb, var(--o-pink) 40%, transparent); }
@@ -311,6 +318,10 @@
 .omps-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .omps-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .omps-mode-row .omps-section-label { margin: 0; }
+.omps-model-picker { display: inline-flex; flex: 1; min-width: 12rem; }
+.omps-model-picker .omps-input { width: 100%; }
+.omps-default-model { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.omps-default-model .omps-field { flex: 1; min-width: 16rem; margin: 0; }
 .omps-question { border-radius: var(--o-radius); padding: 14px; background: linear-gradient(160deg, color-mix(in srgb, var(--o-pink) 14%, transparent), color-mix(in srgb, var(--o-purple) 8%, transparent)); border: 1px solid color-mix(in srgb, var(--o-pink) 40%, transparent); display: flex; flex-direction: column; gap: 12px; }
 .omps-q-head { display: flex; gap: 10px; }
 .omps-q-icon { color: var(--o-pink); margin-top: 1px; }

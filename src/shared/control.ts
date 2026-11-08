@@ -4,13 +4,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HostConnection, isBusy } from "./host-conn";
-import { type HostLauncher, canConnect, launchHost, listMetas, newSessionId, readMeta, sendToHost } from "./launch";
+import { type HostLauncher, canConnect, hostLockPath, launchHost, listMetas, newSessionId, readMeta, sendToHost, withDefaultModel } from "./launch";
 import { type OrgData, OrganizeStore, readOrgFile, schedulingOrder } from "./organize";
+import { lockOwner, stampAlive } from "./process-lock";
 import { type QueueOp, type SessionMeta, type TaskQueue, sessionDir } from "./protocol";
-import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "./queue";
+import { applyQueueOps, queueSummary, readQueueFile, settleInterrupted, writeQueueFile } from "./queue";
 import { type SlotWaiter, listLeases, listWaiting, readScheduler, writeScheduler } from "./scheduler";
 import type { Column, CreateArgs, OrganizeAction, SchedulerStatus, ServerOps, SessionInfo } from "./server-protocol";
 import { newSessionLaunch, writeSessionToggles } from "./session-config";
+import { agentState } from "./session-report";
 
 // ---------- pure planning ----------
 
@@ -20,8 +22,8 @@ export function queueFilePath(id: string): string {
 
 /**
  * The queue would start a task if the session were running: a pending task, nothing marked
- * running (a host crash leaves that behind; the user decides whether to rerun it), and auto-run
- * on or a scheduled start that is due.
+ * running (only a live host runs a task; dead hosts' queues are settled by readSessionQueue), and
+ * auto-run on or a scheduled start that is due.
  */
 export function hasRunnableWork(q: TaskQueue, now = Date.now()): boolean {
 	if (q.tasks.some(t => t.status === "running")) return false;
@@ -32,6 +34,25 @@ export function hasRunnableWork(q: TaskQueue, now = Date.now()): boolean {
 /** Pending work that will become runnable (auto-run, or a scheduled start at any time). */
 export function hasQueuedWork(q: TaskQueue): boolean {
 	return q.tasks.some(t => t.status === "pending") && (q.autoRun || q.startAt !== undefined);
+}
+
+/**
+ * queue.json as it really is. A stopped session (dead or exited host) can't be running a task: one
+ * left "running" (crash, reboot, omp died) is settled the way the next host would settle it
+ * (settleInterrupted: back to pending, marked interrupted, queue paused) and written back, so
+ * listings show "interrupted" and the server never reruns it unattended. A host starting right now
+ * (holding the session lock) settles it itself.
+ */
+export function readSessionQueue(meta: SessionMeta): TaskQueue {
+	const file = queueFilePath(meta.id);
+	const q = readQueueFile(file);
+	if (meta.status !== "stopped" || !settleInterrupted(q) || stampAlive(lockOwner(hostLockPath(meta.id)))) return q;
+	try {
+		writeQueueFile(file, q);
+	} catch {
+		/* read-only state dir: still reported settled */
+	}
+	return q;
 }
 
 /** Priority, tags and group (by name, created if missing) of a session `create` just made. */
@@ -45,11 +66,13 @@ function organizeNew(org: OrganizeStore, id: string, args: CreateArgs): void {
 	}
 }
 
-export function sessionColumn(meta: SessionMeta, waiting: boolean): Column {
-	if (meta.status === "stopped") return waiting ? "waiting" : "stopped";
+/** `scheduled`: pending tasks wait for a start time (summary of queue.json). */
+export function sessionColumn(meta: SessionMeta, waiting: boolean, scheduled = false): Column {
+	if (meta.status === "stopped") return waiting ? "waiting" : scheduled ? "scheduled" : "stopped";
 	if (meta.status === "waiting") return "input";
 	if (waiting) return "waiting";
-	return meta.status === "idle" ? "idle" : "working";
+	if (meta.status === "idle") return scheduled ? "scheduled" : "idle";
+	return "working";
 }
 
 /** Keeps every id of `ids` exactly once, in `order`'s ranking (ordering functions may drop/invent ids). */
@@ -171,12 +194,12 @@ export interface ListContext {
 
 export function readListContext(blocked?: (id: string) => boolean, now = Date.now()): ListContext {
 	const metas = listMetas();
-	const queues = new Map(metas.map(m => [m.id, readQueueFile(queueFilePath(m.id))]));
+	const queues = new Map(metas.map(m => [m.id, readSessionQueue(m)]));
 	const org = readOrgFile();
 	return { metas, queues, org, waiters: listWaiting(), launches: launchQueue(metas, queues, org, now, blocked) };
 }
 
-export function sessionInfos(ctx: ListContext, all = false): SessionInfo[] {
+export function sessionInfos(ctx: ListContext, all = false, now = Date.now()): SessionInfo[] {
 	const { metas, queues, org, waiters, launches } = ctx;
 	const order = schedulingOrder(
 		org,
@@ -196,9 +219,12 @@ export function sessionInfos(ctx: ListContext, all = false): SessionInfo[] {
 		const slotWaiting = meta.status !== "stopped" && waiterSince.has(meta.id);
 		const launchWaiting = meta.status === "stopped" && launchSet.has(meta.id);
 		const position = waitPos.get(meta.id);
+		const waiting = (slotWaiting || launchWaiting) && position ? { position, ...(slotWaiting ? { since: waiterSince.get(meta.id) } : { launch: true }) } : undefined;
+		const scheduled = summary.pending > 0 && !summary.autoRun && summary.startAt !== undefined;
 		const info: SessionInfo = {
 			meta,
-			column: sessionColumn(meta, slotWaiting || launchWaiting),
+			column: sessionColumn(meta, slotWaiting || launchWaiting, scheduled),
+			state: agentState({ meta, queue: summary, waiting }, now),
 			queue: summary,
 			priority: e?.priority ?? "normal",
 			order: orderIndex.get(meta.id) ?? order.length,
@@ -210,7 +236,7 @@ export function sessionInfos(ctx: ListContext, all = false): SessionInfo[] {
 		if (e?.color) info.color = e.color;
 		if (e?.archived) info.archived = true;
 		if (e?.tags?.length) info.tags = [...e.tags];
-		if ((slotWaiting || launchWaiting) && position) info.waiting = { position, ...(slotWaiting ? { since: waiterSince.get(meta.id) } : { launch: true }) };
+		if (waiting) info.waiting = waiting;
 		out.push(info);
 	}
 	return out.sort((a, b) => (a.meta.status === "stopped" ? 1 : 0) - (b.meta.status === "stopped" ? 1 : 0) || b.meta.updatedAt - a.meta.updatedAt);
@@ -256,6 +282,7 @@ export class Control {
 			...readScheduler(),
 			running: listLeases().length,
 			waiting: ctx.waiters.length + ctx.launches.length,
+			scheduled: sessionInfos(ctx).filter(i => i.state === "scheduled").length,
 			server: this.env.serverUp(),
 		};
 		return status;
@@ -268,7 +295,8 @@ export class Control {
 		if (args.startAt !== undefined && !args.task) throw new Error("a start time needs a queued task");
 		const launcher = this.env.launcher();
 		const defaults = newSessionLaunch(cwd, launcher.extraArgs);
-		const ompArgs = [...(args.ompArgs ?? defaults.ompArgs), ...(args.model ? ["--model", args.model] : []), ...(args.mode ? ["--approval-mode", args.mode] : [])];
+		// Model: explicit > the project's defaults / extra args > the omp Sessions default > omp's own.
+		const ompArgs = withDefaultModel([...(args.ompArgs ?? defaults.ompArgs), ...(args.model ? ["--model", args.model] : []), ...(args.mode ? ["--approval-mode", args.mode] : [])]);
 		const toggles = args.ompArgs ? undefined : defaults.toggles;
 		const org = new OrganizeStore();
 		if (args.task) {
@@ -277,7 +305,8 @@ export class Control {
 			const id = newSessionId();
 			const now = Date.now();
 			fs.mkdirSync(sessionDir(id), { recursive: true, mode: 0o700 });
-			fs.writeFileSync(path.join(sessionDir(id), "launch.json"), JSON.stringify({ ompArgs }));
+			// An explicit title waits in launch.json for the first host, which gives it to omp.
+			fs.writeFileSync(path.join(sessionDir(id), "launch.json"), JSON.stringify({ ompArgs, ...(args.title ? { title: args.title } : {}) }));
 			if (toggles) writeSessionToggles(id, toggles);
 			const ops: QueueOp[] = [{ op: "add", title: args.task, notes: args.notes, subtasks: args.subtasks }];
 			if (args.startAt !== undefined) ops.push({ op: "schedule", at: args.startAt });
@@ -305,7 +334,8 @@ export class Control {
 			launchHost(launcher, { cwd, id });
 			return { id, started: true };
 		}
-		const id = launchHost(launcher, { cwd, title: args.title || (args.prompt ? titleFrom(args.prompt) : undefined), ompArgs, toggles });
+		// Only an explicit title is passed: the host names an untitled session after its first prompt locally, and omp titles it.
+		const id = launchHost(launcher, { cwd, title: args.title, ompArgs, toggles });
 		organizeNew(org, id, args);
 		this.env.changed?.();
 		if (args.prompt) {
@@ -324,21 +354,37 @@ export class Control {
 		return { started: true };
 	}
 
+	/**
+	 * Stops a running session and pauses its queued work (auto-run, a scheduled start), or the server
+	 * would launch it again; on a stopped session only the queued work is paused (`unqueued`).
+	 */
 	async stop(args: { id: string }): Promise<Result<"stop">> {
 		const meta = this.meta(args.id);
-		if (meta.status === "stopped") return { stopped: false };
-		await sendToHost(meta, { t: "stop" });
-		// The host aborts omp, then SIGTERMs (6 s) / SIGKILLs (10 s) it before exiting.
-		if (!(await waitForStatus(meta.id, m => m.status === "stopped", 12_000))) {
-			try {
-				process.kill(meta.pid, "SIGTERM");
-			} catch {
-				/* already gone */
+		const queued = hasQueuedWork(readSessionQueue(meta));
+		if (meta.status !== "stopped") {
+			if (queued) await sendToHost(meta, { t: "queue", ops: [{ op: "autoRun", value: false }] });
+			await sendToHost(meta, { t: "stop" });
+			// The host aborts omp, then SIGTERMs (6 s) / SIGKILLs (10 s) it before exiting.
+			if (!(await waitForStatus(meta.id, m => m.status === "stopped", 12_000))) {
+				try {
+					process.kill(meta.pid, "SIGTERM");
+				} catch {
+					/* already gone */
+				}
+				await waitForStatus(meta.id, m => m.status === "stopped", 3000);
 			}
-			await waitForStatus(meta.id, m => m.status === "stopped", 3000);
 		}
+		// On disk too: the host may have been unreachable, or the session was stopped already.
+		const now = readMeta(meta.id);
+		if (queued && now?.status === "stopped") this.writeStoppedQueue(now, applyQueueOps(readSessionQueue(now), [{ op: "autoRun", value: false }]));
 		this.env.changed?.();
-		return { stopped: true };
+		return { stopped: meta.status !== "stopped", ...(queued ? { unqueued: true } : {}) };
+	}
+
+	/** queue.json of a stopped session (no host owns it) plus its meta summary. */
+	private writeStoppedQueue(meta: SessionMeta, next: TaskQueue): void {
+		writeQueueFile(queueFilePath(meta.id), next);
+		writeMetaFile(meta.id, { ...meta, queue: queueSummary(next), updatedAt: Date.now() });
 	}
 
 	async remove(args: { id: string }): Promise<Result<"remove">> {
@@ -351,7 +397,7 @@ export class Control {
 		return {};
 	}
 
-	/** Sends a prompt; a stopped session is resumed first. Busy omp gets it as steer/follow-up. */
+	/** Sends a prompt; a stopped session is resumed first. Busy omp gets it as a follow-up (or a steer). */
 	async prompt(args: ServerOps["prompt"]["args"]): Promise<Result<"prompt">> {
 		let meta = this.meta(args.id);
 		if (meta.status === "stopped") {
@@ -362,7 +408,7 @@ export class Control {
 		const { conn, snapshot } = await HostConnection.open(meta.socket, this.env.clientName);
 		try {
 			const busy = isBusy(snapshot.meta, snapshot.state);
-			const res = await conn.rpc({ type: "prompt", message: args.text, ...(busy ? { streamingBehavior: args.mode ?? "steer" } : {}) });
+			const res = await conn.rpc({ type: "prompt", message: args.text, ...(busy ? { streamingBehavior: args.mode ?? "followUp" } : {}) });
 			if (!res.success) throw new Error(String(res.error ?? "omp rejected the prompt"));
 			return { sent: true };
 		} finally {
@@ -383,8 +429,7 @@ export class Control {
 	}
 
 	getQueue(args: { id: string }): Result<"getQueue"> {
-		this.meta(args.id);
-		return readQueueFile(queueFilePath(args.id));
+		return readSessionQueue(this.meta(args.id));
 	}
 
 	/** Edits the queue through the host when it runs (so it dispatches), else on disk. */
@@ -398,10 +443,10 @@ export class Control {
 			this.env.changed?.();
 			return readQueueFile(file);
 		}
-		const next = applyQueueOps(readQueueFile(file), args.ops);
-		writeQueueFile(file, next);
+		const next = applyQueueOps(readSessionQueue(meta), args.ops);
 		const onDisk = readMeta(meta.id);
-		if (onDisk) writeMetaFile(meta.id, { ...onDisk, queue: queueSummary(next), updatedAt: Date.now() });
+		if (onDisk) this.writeStoppedQueue(onDisk, next);
+		else writeQueueFile(file, next);
 		this.env.changed?.();
 		return next;
 	}

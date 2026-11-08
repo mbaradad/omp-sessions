@@ -1,11 +1,12 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { isOutdated, needsRestore } from "../shared/health";
+import { HOST_CRASHED, isOutdated } from "../shared/health";
 import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin";
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
 import { sessionSettingsChip } from "../shared/session-config";
+import { agentState } from "../shared/session-report";
 import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
 import { headOf } from "./worktree-git";
@@ -17,6 +18,7 @@ export type Node = ViewNode | { kind: "file"; sessionId: string; cwd: string; fi
 export type ContainerNode = Exclude<Node, { kind: "session" } | { kind: "file" }>;
 
 const DND_MIME = "application/vnd.code.tree.omp.sessions.organize";
+const NO_QUEUE: NonNullable<SessionMeta["queue"]> = { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
 
 export function isNode(v: unknown): v is Node {
 	return !!v && typeof v === "object" && "kind" in v && typeof v.kind === "string";
@@ -178,7 +180,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (outdated) tip.appendMarkdown(`$(sync) host ${m.hostVersion ?? "(old)"} ≠ extension ${this.sessions.version}: run **omp: Upgrade Session Host** when idle  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
-		if (needsRestore(m)) tip.appendMarkdown("$(debug-restart) Resume continues the interrupted turn  \n");
+		if (m.status === "stopped" && m.exitReason === HOST_CRASHED && m.ompSessionFile) tip.appendMarkdown("$(debug-restart) Interrupted by a host crash: Resume asks omp to continue  \n");
 		const settingsChip = sessionSettingsChip(m.id);
 		if (settingsChip) tip.appendMarkdown(`$(settings-gear) ${settingsChip.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
@@ -284,7 +286,6 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 	getChildren(node?: Node): Node[] {
 		if (!node) {
 			const cfg = vscode.workspace.getConfiguration("omp");
-			const showAll = cfg.get<boolean>("showAllSessions") ?? false;
 			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
 			const groupBy = cfg.get<string>("groupBy");
 			const sortBy = cfg.get<string>("sortBy");
@@ -297,8 +298,9 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				filter: this.filter,
 				showArchived: this.showArchived,
 				visible: m => {
-					if (!(showAll || noWorkspace || m.status !== "stopped" || this.sessions.inWorkspace(m))) return false;
-					if (this.hideFinished && m.status === "stopped" && !this.isUnread(m.id)) {
+					if (!this.sessions.inScope(m)) return false;
+					// Finished = nothing ahead: scheduled, queued and interrupted sessions stay (their meta.queue is kept current).
+					if (this.hideFinished && agentState({ meta: m, queue: m.queue ?? NO_QUEUE }) === "stopped" && !this.isUnread(m.id)) {
 						hidden++;
 						return false;
 					}
@@ -307,7 +309,6 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				inWorkspace: m => this.sessions.inWorkspace(m),
 				project: m => projectRoot(m.cwd),
 				noWorkspace,
-				showAll,
 			});
 			this.hiddenFinished = hidden;
 			this.rootCount = this.layout.length;

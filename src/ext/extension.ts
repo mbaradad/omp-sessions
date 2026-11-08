@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { type LaunchOptions, sendToHost } from "../shared/launch";
@@ -15,8 +16,9 @@ import { registerDoctor } from "./doctor";
 import { registerEditorPlus } from "./editor-plus";
 import { registerHermesPlugin } from "./hermes";
 import { registerEditorIntegration } from "./integration";
-import { askLaunchOptions } from "./launch-options";
+import { askLaunchOptions, chooseDefaultModel } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
+import { plain } from "./plain";
 import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
@@ -206,14 +208,14 @@ export function activate(context: vscode.ExtensionContext): void {
 			id = sessions.launch(opts);
 		} catch (err) {
 			// A missing omp gets the doctor's install/set-path notification instead.
-			if (!(err instanceof OmpMissingError)) void vscode.window.showErrorMessage(String((err as Error).message ?? err));
+			if (!(err instanceof OmpMissingError)) void vscode.window.showErrorMessage(plain(String((err as Error).message ?? err)));
 			return undefined;
 		}
 		const ok = await sessions.waitForSocket(id);
 		sessions.refresh();
 		if (!ok) {
 			const reason = sessions.get(id)?.exitReason;
-			void vscode.window.showErrorMessage(`omp session did not start${reason ? `: ${reason}` : ""}.`, "Open log").then(a => {
+			void vscode.window.showErrorMessage(plain(`omp session did not start${reason ? `: ${reason}` : ""}.`), "Open log").then(a => {
 				if (a) void vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(id), "host.log")));
 			});
 		}
@@ -264,6 +266,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		const opts = await askLaunchOptions(cwd);
 		if (opts) await launchAndOpen({ cwd, ...opts });
 	});
+	reg("omp.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()));
 
 	reg("omp.openSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open omp session"));
@@ -329,7 +332,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		const ok = await vscode.window.showWarningMessage(
 			`Remove "${meta.title}" from the list?`,
-			{ modal: true, detail: "Deletes the VS Code session record and file snapshots. The omp transcript stays in ~/.omp/agent/sessions." },
+			{ modal: true, detail: "Deletes the session's omp Sessions record and file snapshots. The omp transcript stays in ~/.omp/agent/sessions." },
 			"Remove",
 		);
 		if (ok !== "Remove") return;
@@ -345,7 +348,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!title || title === meta.title) return;
 		if (meta.status !== "stopped") await sendToHost(meta, { t: "rename", title });
 		else {
-			const file = path.join(path.dirname(meta.socket), "meta.json");
+			const file = path.join(sessionDir(meta.id), "meta.json");
 			fs.writeFileSync(file, JSON.stringify({ ...meta, title, updatedAt: Date.now() }, null, 1));
 			sessions.refresh();
 		}
@@ -394,13 +397,13 @@ export function activate(context: vscode.ExtensionContext): void {
 	reg("omp.resumeFromHistory", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (!cwd) return;
-		const history = listOmpHistory(cwd);
+		const history = await listOmpHistory(cwd);
 		if (history.length === 0) {
-			void vscode.window.showInformationMessage(`No omp transcripts recorded for ${cwd}.`);
+			void vscode.window.showInformationMessage(plain(`No omp transcripts recorded for ${cwd}.`));
 			return;
 		}
 		const pick = await vscode.window.showQuickPick(
-			history.slice(0, 200).map(h => ({ label: h.title, description: new Date(h.mtime).toLocaleString(), detail: path.basename(h.file), entry: h })),
+			history.slice(0, 200).map(h => ({ label: h.title, description: `${new Date(h.mtime).toLocaleString()}${h.archived ? " · archived by omp gc (restored on resume)" : ""}`, detail: path.basename(h.file), entry: h })),
 			{ placeHolder: "Resume an omp transcript in the background", matchOnDetail: true },
 		);
 		if (pick) await launchAndOpen({ cwd, resumeFile: pick.entry.file, title: pick.entry.title.slice(0, 80) });
@@ -432,7 +435,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sortBy") || e.affectsConfiguration("omp.showAllSessions")) tree.refresh();
+			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sortBy") || e.affectsConfiguration("omp.sessionScope")) tree.refresh();
 		}),
 	);
 
@@ -512,13 +515,13 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(status);
 	const COMMAND_CENTER_HINT = `\n\nAll omp commands: omp: Command Center (${process.platform === "darwin" ? "⌘⌥P" : "Ctrl+Alt+P"})`;
 	const updateStatus = () => {
-		const local = sessions.all().filter(m => m.status !== "stopped" && sessions.inWorkspace(m));
+		const local = sessions.all().filter(m => m.status !== "stopped" && sessions.inScope(m));
 		const working = local.filter(m => m.status === "working" || m.status === "starting").length;
 		const waiting = local.filter(m => m.status === "waiting").length;
 		const idle = local.length - working - waiting;
 		if (local.length === 0) {
 			status.text = "$(hubot) omp";
-			status.tooltip = `No omp sessions running for this workspace. Click to open one.${COMMAND_CENTER_HINT}`;
+			status.tooltip = `No omp sessions running${sessions.scope() === "all" ? "" : " for this workspace"}. Click to open one.${COMMAND_CENTER_HINT}`;
 			status.command = "omp.focus";
 		} else {
 			const parts = [working ? `$(loading~spin) ${working}` : "", waiting ? `$(bell-dot) ${waiting}` : "", idle ? `$(pass) ${idle}` : ""].filter(Boolean);
@@ -528,12 +531,22 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
 		status.show();
-		const unseen = sessions.all().filter(m => unread.has(m.id) && sessions.inWorkspace(m)).length;
+		const unseen = sessions.all().filter(m => unread.has(m.id) && sessions.inScope(m)).length;
 		const attention = waiting + unseen;
 		treeView.badge = attention ? { value: attention, tooltip: [waiting ? `${waiting} need input` : "", unseen ? `${unseen} with new results` : ""].filter(Boolean).join(", ") } : undefined;
 	};
 	sessions.onDidChange(updateStatus);
 	updateStatus();
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration("omp.sessionScope")) updateStatus();
+		}),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => {
+			updateStatus();
+			tree.refresh();
+		}),
+	);
+	void migrateShowAllSessions(context);
 
 	// ---------- notifications ----------
 	context.subscriptions.push(
@@ -542,18 +555,42 @@ export function activate(context: vscode.ExtensionContext): void {
 			const attended = !!panel?.isVisible && vscode.window.state.focused;
 			if (!attended && (meta.status === "waiting" || (meta.status === "idle" && from === "working"))) setUnread(meta.id, true);
 			if (!vscode.workspace.getConfiguration("omp").get<boolean>("notifications", true)) return;
-			if (!sessions.inWorkspace(meta)) return;
+			if (!sessions.notifies(meta)) return;
 			if (attended) return;
 			let message: string | undefined;
 			if (meta.status === "waiting") message = `omp needs your input: ${meta.title}`;
 			else if (meta.status === "idle" && from === "working") message = `omp finished: ${meta.title}`;
 			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `omp session exited (${meta.exitReason}): ${meta.title}`;
 			if (!message) return;
-			void vscode.window.showInformationMessage(message, "Open").then(a => {
+			void vscode.window.showInformationMessage(plain(message), "Open").then(a => {
 				if (a) openPanel(meta.id);
 			});
 		}),
 	);
+}
+
+/**
+ * 0.5's `omp.showAllSessions: true` (user or workspace settings) becomes `omp.sessionScope: "all"` there, once
+ * per target; the old key is then removed where VS Code still lets the extension write it.
+ */
+async function migrateShowAllSessions(context: vscode.ExtensionContext): Promise<void> {
+	const cfg = vscode.workspace.getConfiguration("omp");
+	const old = cfg.inspect<boolean>("showAllSessions");
+	const scope = cfg.inspect<string>("sessionScope");
+	const targets = [
+		{ target: vscode.ConfigurationTarget.Global, state: context.globalState, oldValue: old?.globalValue, newValue: scope?.globalValue },
+		{ target: vscode.ConfigurationTarget.Workspace, state: context.workspaceState, oldValue: old?.workspaceValue, newValue: scope?.workspaceValue },
+	];
+	for (const t of targets) {
+		if (t.oldValue === undefined || t.state.get<boolean>("omp.migrated.showAllSessions")) continue;
+		try {
+			if (t.oldValue === true && t.newValue === undefined) await cfg.update("sessionScope", "all", t.target);
+			await t.state.update("omp.migrated.showAllSessions", true);
+			await cfg.update("showAllSessions", undefined, t.target);
+		} catch {
+			/* an unregistered key may not be writable: it is ignored from now on */
+		}
+	}
 }
 
 export function deactivate(): void {

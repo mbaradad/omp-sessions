@@ -25,12 +25,33 @@ export interface VscodeLink {
 	url: string;
 	/** Web page of this dashboard that opens `url`. */
 	page: string;
+	/** The folder a project/folder link opens (absent for a session's chat). */
+	folder?: string | null;
 	/** Remote authority of the VS Code window last used on omp's machine ("" local, null none recorded). */
 	authority?: string | null;
 	windowAt?: number | null;
 }
 
-export type State = "queued" | "starting" | "working" | "needs_input" | "idle" | "stopped";
+/** GET /models: `omp-sessions models --json`. */
+export interface Model {
+	/** provider/id: what a session's model is set to. */
+	selector: string;
+	provider: string;
+	id: string;
+	name?: string;
+	contextWindow?: number;
+	/** The omp Sessions default. */
+	default?: boolean;
+}
+
+export interface Models {
+	models: Model[];
+	/** The omp Sessions default model for new sessions (null: omp's own default). */
+	default: string | null;
+	ompDefault?: string | null;
+}
+
+export type State = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "idle" | "interrupted" | "stopped";
 export type Mode = "ask" | "edits" | "plan" | "auto";
 export const MODES: readonly Mode[] = ["ask", "edits", "plan", "auto"];
 export const MODE_INFO: Record<Mode, { label: string; detail: string }> = {
@@ -149,6 +170,12 @@ export interface Board {
 	assignee?: string | null;
 	effectiveAssignee: string;
 	effectiveMode?: Mode | null;
+	/** Model of the board's card sessions (a card's own model override wins). */
+	model?: string | null;
+	/** This board's trusted comment authors (null: the lane's list). */
+	commentAuthors?: string[] | null;
+	/** Whose comments reach omp and whose @omp assigns cards on this board ("*": anyone). */
+	effectiveCommentAuthors: string[];
 	linked: LinkedCard[];
 	ready: Array<{ id: string; title: string }>;
 	lastPass?: number | null;
@@ -176,6 +203,7 @@ export interface StartBody {
 	title?: string;
 	where: { kind: "project" | "folder" | "board"; value: string };
 	mode?: Mode;
+	model?: string;
 	group?: string;
 	tags?: string[];
 	when: "now" | "queue" | "at";

@@ -3,7 +3,7 @@
 // See docs/PUBLISHING.md, "Hermes plugin catalog".
 import { execFileSync } from "node:child_process";
 
-const REPO = "https://github.com/mbaradad/omp-vscode";
+const REPO = "https://github.com/mbaradad/omp-sessions";
 const SUBDIR = "integrations/hermes/omp-sessions";
 const SCREENSHOTS = ["site/assets/shots/hermes-dashboard.png", "site/assets/shots/hermes-detail.png", "site/assets/shots/hermes-desktop.png"];
 
@@ -34,7 +34,7 @@ if (!pushed) process.stderr.write(`warning: ${sha.slice(0, 8)} is not on origin/
 
 const quote = s => `'${s.replace(/'/g, "''")}'`;
 const yamlList = (items, indent) => (items.length ? `\n${items.map(i => `${indent}- ${i}`).join("\n")}` : " []");
-const shots = SCREENSHOTS.filter(f => exists(sha, f)).map(f => `https://raw.githubusercontent.com/mbaradad/omp-vscode/${sha}/${f}`);
+const shots = SCREENSHOTS.filter(f => exists(sha, f)).map(f => `https://raw.githubusercontent.com/mbaradad/omp-sessions/${sha}/${f}`);
 
 process.stdout.write(`name: ${scalar("name")}
 repo: ${REPO}

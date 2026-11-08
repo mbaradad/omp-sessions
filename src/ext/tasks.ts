@@ -61,11 +61,9 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		this.emitter.fire(undefined);
 	}
 
+	/** Sessions in `omp.sessionScope` that are running or have tasks, plus the workspace's own. */
 	private roots(): SessionMeta[] {
-		return this.sessions
-			.all()
-			.filter(m => this.sessions.inWorkspace(m) || (m.queue?.pending ?? 0) > 0 || m.status !== "stopped")
-			.filter(m => m.status !== "stopped" || (m.queue?.total ?? 0) > 0 || this.sessions.inWorkspace(m));
+		return this.sessions.all().filter(m => this.sessions.inScope(m) && (m.status !== "stopped" || (m.queue?.total ?? 0) > 0 || this.sessions.inWorkspace(m)));
 	}
 
 	getChildren(node?: TaskNode): TaskNode[] {
@@ -248,12 +246,23 @@ export function registerTasks(api: OmpApi): TasksProvider {
 	const updateBadge = () => {
 		const pending = sessions
 			.all()
-			.filter(m => sessions.inWorkspace(m))
+			.filter(m => sessions.inScope(m))
 			.reduce((n, m) => n + (m.queue?.pending ?? 0) + (m.queue?.running ?? 0), 0);
 		view.badge = pending ? { value: pending, tooltip: `${pending} queued task(s)` } : undefined;
 	};
 	sessions.onDidChange(updateBadge);
 	updateBadge();
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (!e.affectsConfiguration("omp.sessionScope")) return;
+			provider.refresh();
+			updateBadge();
+		}),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => {
+			provider.refresh();
+			updateBadge();
+		}),
+	);
 
 	const ensureRunning = async (id: string) => {
 		if (sessions.get(id)?.status === "stopped") await vscode.commands.executeCommand("omp.resumeSession", id);
@@ -262,9 +271,9 @@ export function registerTasks(api: OmpApi): TasksProvider {
 	const sessionFor = async (arg: unknown): Promise<string | undefined> => {
 		if (typeof arg === "string") return arg;
 		if (isNode(arg)) return arg.kind === "session" ? arg.meta.id : arg.sessionId;
-		const running = sessions.all().filter(m => m.status !== "stopped" && sessions.inWorkspace(m));
+		const running = sessions.all().filter(m => m.status !== "stopped" && sessions.inScope(m));
 		if (running.length === 1) return running[0].id;
-		return pickSession("Add the task to which session?", m => sessions.inWorkspace(m));
+		return pickSession("Add the task to which session?", m => sessions.inScope(m));
 	};
 
 	const selected = (arg: unknown, args: unknown): TaskNode[] => {

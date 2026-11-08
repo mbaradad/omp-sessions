@@ -6,13 +6,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { readOrgFile, schedulingOrder } from "../shared/organize";
 import { type OmpFrame, type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, stateRoot } from "../shared/protocol";
-import { applyQueueOps, nextPending, queueSummary, readQueueFile, retryDelay, taskPrompt, writeQueueFile } from "../shared/queue";
+import { applyQueueOps, nextPending, queueSummary, readQueueFile, retryDelay, settleInterrupted, taskPrompt, writeQueueFile } from "../shared/queue";
 import { type AcquireResult, leaveWaiting, releaseSlot, slotsDir, tryAcquireSlot } from "../shared/scheduler";
 
 export interface QueueRunnerHost {
 	log(...parts: unknown[]): void;
 	sendOmp(cmd: Record<string, unknown>): void;
 	request(cmd: Record<string, unknown>): Promise<OmpFrame>;
+	/** Cost (USD) of all of the session's transcripts so far, subagents and side calls included (src/shared/cost.ts). */
+	sessionCost(): Promise<number>;
 	/** omp is ready and idle, no dialog is open, and the host isn't shutting down. */
 	idle(): boolean;
 	/** Marks the agent busy/idle on the runner's behalf (session status, dispatch gating). */
@@ -36,7 +38,8 @@ interface ActiveTask {
 	timedOut?: boolean;
 	timeout?: NodeJS.Timeout;
 	finishing?: boolean;
-	cost: number;
+	/** Session cost when the prompt went out; the task's cost is what was added by the end. */
+	costBase?: number;
 	lastText?: string;
 	restore: { model?: { provider: string; modelId: string }; thinking?: string };
 }
@@ -78,11 +81,14 @@ export class QueueRunner {
 		private readonly retryBaseMs = Number(process.env.OMP_VSCODE_RETRY_BASE_MS) || 10_000,
 	) {
 		this.queue = readQueueFile(file);
-		// A task left "running" by a crashed/restarted host goes back to pending; don't auto-run it
-		// again unattended, the user decides.
-		if (this.queue.tasks.some(t => t.status === "running")) {
-			for (const t of this.queue.tasks) if (t.status === "running") Object.assign(t, { status: "pending", summary: "Interrupted: the session host restarted." });
-			this.queue.autoRun = false;
+		// A task left "running" by a crashed host (or a reboot) goes back to pending and the queue
+		// stops: interrupted tasks never rerun unattended (settleInterrupted), the user restarts them.
+		if (settleInterrupted(this.queue)) {
+			try {
+				writeQueueFile(file, this.queue);
+			} catch (err) {
+				host.log("queue save failed", String(err));
+			}
 		}
 		// Next tick: the host's broadcast plumbing isn't initialized while it constructs the runner.
 		setImmediate(() => this.armStart());
@@ -97,6 +103,11 @@ export class QueueRunner {
 		const s = queueSummary(this.queue);
 		if (this.waiting) s.waiting = this.waiting;
 		return s;
+	}
+
+	/** A queued task waits as interrupted (a host died while it ran): no crashed turn may be continued behind its back. */
+	get hasInterrupted(): boolean {
+		return this.queue.tasks.some(t => t.status === "pending" && t.interrupted !== undefined);
 	}
 
 	/** Prompt id of the task currently driving omp. */
@@ -128,12 +139,10 @@ export class QueueRunner {
 		return true;
 	}
 
-	/** Assistant message_end while a task runs: cost and the final summary text. */
+	/** Assistant message_end while a task runs: the final summary text. */
 	onAssistantMessage(message: Record<string, unknown>): void {
 		const a = this.active;
 		if (!a?.prompted) return;
-		const cost = rec(rec(message.usage)?.cost)?.total;
-		if (typeof cost === "number" && Number.isFinite(cost)) a.cost += cost;
 		const text = textOf(message).trim();
 		if (text) a.lastText = text.slice(0, 4000);
 	}
@@ -264,7 +273,8 @@ export class QueueRunner {
 		task.startedAt = Date.now();
 		task.finishedAt = undefined;
 		task.summary = undefined;
-		const a: ActiveTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}`, started: Date.now(), prompted: false, cost: 0, restore: {} };
+		delete task.interrupted;
+		const a: ActiveTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}`, started: Date.now(), prompted: false, restore: {} };
 		this.active = a;
 		this.host.setBusy(true);
 		this.host.log("queue dispatch", task.id, task.title, task.options ?? {});
@@ -302,6 +312,7 @@ export class QueueRunner {
 			await this.finish();
 			return;
 		}
+		a.costBase = await this.host.sessionCost();
 		a.prompted = true;
 		if (opts.timeoutMinutes) {
 			a.timeout = setTimeout(
@@ -331,6 +342,7 @@ export class QueueRunner {
 			const res = await this.host.request({ type: "set_thinking_level", level: a.restore.thinking });
 			if (!res.success) this.host.log("thinking restore failed", res.error);
 		}
+		const spent = a.costBase === undefined ? 0 : (await this.host.sessionCost()) - a.costBase;
 		this.active = null;
 		releaseSlot(this.sessionId);
 		const task = this.queue.tasks.find(t => t.id === a.id);
@@ -339,7 +351,7 @@ export class QueueRunner {
 			const now = Date.now();
 			task.finishedAt = now;
 			task.durationMs = (task.durationMs ?? 0) + (now - a.started);
-			if (a.cost > 0) task.cost = (task.cost ?? 0) + a.cost;
+			if (spent > 0) task.cost = (task.cost ?? 0) + spent;
 			if (a.result === "completed") {
 				task.status = "done";
 				for (const s of task.subtasks) s.done = true;

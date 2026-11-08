@@ -28,15 +28,17 @@ await esbuild.build({ ...common, entryPoints, outdir: outDir, outbase: path.join
 // Same options as build.mjs's host bundle, but into .test-out/ so a running `npm run watch` keeps out/.
 const hostJs = path.join(outDir, "host.js");
 const serverJs = path.join(outDir, "server.js");
+const cliJs = path.join(outDir, "cli.js");
 if (selected.includes("host")) {
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/host/main.ts")], outfile: hostJs, format: "cjs" });
-	// Next to host.js: the server launches the host.js beside it.
+	// Next to host.js: the server launches the host.js beside it, the CLI starts that server.
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/server/main.ts")], outfile: serverJs, format: "cjs" });
+	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/cli/main.ts")], outfile: cliJs, format: "cjs" });
 }
 
 const files = entryPoints.map(f => path.join(outDir, path.relative(path.join(root, "test"), f)).replace(/\.ts$/, ".mjs"));
 const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--test-reporter=spec", "--test-timeout=30000", ...files], {
 	stdio: "inherit",
-	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_FAKE_OMP: path.join(root, "test", "fake-omp.mjs") },
+	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_CLI_JS: cliJs, OMP_TEST_FAKE_OMP: path.join(root, "test", "fake-omp.mjs") },
 });
 process.exit(res.status ?? 1);

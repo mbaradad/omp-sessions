@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, before, test } from "node:test";
 import type { SessionMeta } from "../../src/shared/protocol";
-import { type RemoteStatus, parseRemoteConfig, resolveBind, tailscaleAddress, tokenMatches } from "../../src/shared/remote";
+import { type RemoteStatus, parseRemoteConfig, resolveBind, tailscaleAddress, tokenMatches, trustsProxy } from "../../src/shared/remote";
 import { qrHalfBlocks, qrMatrix } from "../../src/shared/remote-qr";
 import { ServerClient } from "../../src/shared/server-client";
 import { alive, isRecord, textOf, until } from "./harness";
@@ -207,10 +207,12 @@ test("remote: health is open; the API needs the token; pairing sets a cookie tha
 	const paired = await api("POST", "/api/pair", { token: TOKEN }, {});
 	assert.equal(paired.status, 200);
 	const cookie = paired.headers.get("set-cookie") ?? "";
-	assert.match(cookie, /^omp_vs=/);
+	assert.match(cookie, /^omp_sessions=/);
 	assert.match(cookie, /HttpOnly/);
 	assert.match(cookie, /SameSite=Strict/);
+	assert.doesNotMatch(cookie, /Secure/, "plain HTTP: no Secure cookie");
 	const jar = { cookie: cookie.split(";")[0] };
+	assert.ok(!jar.cookie.includes(TOKEN), "the cookie carries an HMAC of the token, not the token");
 	assert.equal((await api("GET", "/api/sessions", undefined, jar)).status, 200);
 	// Cookie-authenticated writes: JSON from this origin only.
 	const form = await fetch(`${base}/api/sessions`, { method: "POST", headers: { ...jar, "content-type": "application/x-www-form-urlencoded" }, body: "cwd=/tmp" });
@@ -241,6 +243,7 @@ test("remote: behind a proxy, the public URL is the pairing URL and its origin m
 		const status = await statusWhere(s => s.url === `${pub}/`, "the public URL");
 		assert.equal(status.localUrl, `${base}/`, "the listener's own address, for the proxy");
 		const paired = await api("POST", "/api/pair", { token: TOKEN }, {});
+		assert.match(paired.headers.get("set-cookie") ?? "", /^__Host-omp_sessions=[^;]+;.*; Secure/, "https public URL: a Secure __Host- cookie");
 		const jar = { cookie: (paired.headers.get("set-cookie") ?? "").split(";")[0] };
 		// The page is served from the proxy's origin; its writes pass the origin check (404: no such session).
 		assert.equal((await api("POST", "/api/sessions/nope/prompt", { text: "hi" }, { ...jar, origin: pub })).status, 404);
@@ -254,6 +257,73 @@ test("remote: behind a proxy, the public URL is the pairing URL and its origin m
 		writeRemote({ enabled: true });
 	}
 	await statusWhere(s => s.url === `${base}/` && s.localUrl === undefined, "the plain URL back");
+});
+
+test("remote: every route needs the token or a current cookie, SSE streams and POSTs included; status and models", async () => {
+	const routes: Array<[string, string, unknown?]> = [
+		["GET", "/api/sessions"],
+		["GET", "/api/projects"],
+		["GET", "/api/status"],
+		["GET", "/api/models"],
+		["GET", "/api/events"],
+		["GET", "/api/sessions/nope"],
+		["GET", "/api/sessions/nope/events"],
+		["POST", "/api/sessions", { cwd }],
+		["POST", "/api/sessions/nope/prompt", { text: "hi" }],
+		["POST", "/api/sessions/nope/stop", {}],
+		["POST", "/api/sessions/nope/model", { model: "fake/fake-mini" }],
+		["POST", "/api/sessions/nope/vscode", {}],
+	];
+	for (const [method, p, body] of routes) assert.equal((await api(method, p, body, {})).status, 401, `${method} ${p} without credentials`);
+	const forged = await api("POST", "/api/sessions/nope/prompt", { text: "hi" }, { cookie: "omp_sessions=forged" });
+	assert.equal(forged.status, 401, "a forged cookie");
+	assert.match(forged.headers.get("set-cookie") ?? "", /omp_sessions=; .*Max-Age=0/);
+	// That failure counted; pairing (a success) clears it before it adds up to a lockout.
+	const jar = { cookie: ((await api("POST", "/api/pair", { token: TOKEN }, {})).headers.get("set-cookie") ?? "").split(";")[0] };
+
+	const status = await api("GET", "/api/status", undefined, jar);
+	assert.equal(status.status, 200);
+	assert.ok(isRecord(status.body) && isRecord(status.body.server) && isRecord(status.body.remote) && isRecord(status.body.sessions));
+	assert.equal(status.body.server.running, true);
+	assert.equal(status.body.remote.enabled, true);
+	assert.ok(!JSON.stringify(status.body).includes(TOKEN), "status never shows the token");
+	const models = await api("GET", "/api/models", undefined, jar);
+	assert.ok(isRecord(models.body) && Array.isArray(models.body.models) && models.body.models.some(m => isRecord(m) && m.selector === "fake/fake-model"));
+
+	const abort = new AbortController();
+	const stream = await fetch(`${base}/api/events`, { headers: jar, signal: abort.signal });
+	assert.equal(stream.status, 200);
+	assert.match(stream.headers.get("content-type") ?? "", /text\/event-stream/);
+	abort.abort();
+	assert.equal(trustsProxy({ publicUrl: "https://box.ts.net/", bind: "localhost" }), true);
+	assert.equal(trustsProxy({ publicUrl: "https://box.ts.net/", bind: "lan" }), false, "bound to the network, X-Forwarded-For is ignored");
+	assert.equal(trustsProxy({ bind: "localhost" }), false);
+});
+
+test("remote: after a rotation an old cookie asks to pair again and never locks the phone out; legacy cookies are upgraded", async () => {
+	const jar = { cookie: ((await api("POST", "/api/pair", { token: TOKEN }, {})).headers.get("set-cookie") ?? "").split(";")[0] };
+	const legacy = await api("GET", "/api/sessions", undefined, { cookie: `omp_vs=${TOKEN}` });
+	assert.equal(legacy.status, 200, "the first cookie (the raw token) still works");
+	const upgrade = legacy.headers.get("set-cookie") ?? "";
+	assert.match(upgrade, /omp_sessions=/);
+	assert.match(upgrade, /omp_vs=; .*Max-Age=0/);
+
+	const rotated = "rotated-token-0123456789abcdefghijklmnopqrstu";
+	writeRemote({ enabled: true, token: rotated });
+	await remoteStatus();
+	try {
+		for (let i = 0; i < 8; i++) {
+			const stale = await api("GET", "/api/sessions", undefined, jar);
+			assert.equal(stale.status, 401);
+			assert.ok(isRecord(stale.body) && typeof stale.body.error === "string" && /pairing expired/.test(stale.body.error));
+			assert.match(stale.headers.get("set-cookie") ?? "", /Max-Age=0/, "the browser is told to drop it");
+		}
+		assert.equal((await api("POST", "/api/pair", { token: rotated }, {})).status, 200, "pairing again works after many stale requests");
+		assert.equal((await api("GET", "/api/sessions", undefined, { authorization: `Bearer ${rotated}` })).status, 200);
+	} finally {
+		writeRemote({ enabled: true });
+		await remoteStatus();
+	}
 });
 
 test("remote: create, list, projects; a prompt's reply streams over SSE; mode switches show in the list", async () => {

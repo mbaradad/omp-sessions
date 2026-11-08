@@ -16,6 +16,7 @@ import asyncio
 import importlib
 import importlib.util
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -28,8 +29,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 INSTALL_HINT = (
-    "omp-sessions is not installed. Install the omp Sessions extension in VS Code and run "
-    "“omp: Install omp-sessions Command”, or set plugins.entries.omp-sessions.settings.omp_sessions to its path."
+    "omp-sessions is not installed. Install it with the omp Sessions extension (command “omp: Install omp-sessions Command”), "
+    "or set plugins.entries.omp-sessions.settings.omp_sessions to omp-sessions or its cli.js."
 )
 EXCERPT_MAX = 320
 VERSION_TTL_S = 30
@@ -195,7 +196,7 @@ def board_slugs() -> list[dict]:
 
 
 def card_lookup(refs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
-    """{(board, card id): {title, status, assignee}} for the cards that still exist."""
+    """{(board, card id): {title, status, assignee, project}} for the cards that still exist."""
     from hermes_cli import kanban_db as kb
     from hermes_cli import kanban_db_connect as kbc
 
@@ -211,7 +212,7 @@ def card_lookup(refs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
                 for card in cards:
                     t = kb.get_task(conn, card)
                     if t is not None:
-                        out[(board, card)] = {"title": t.title, "status": t.status, "assignee": t.assignee}
+                        out[(board, card)] = {"title": t.title, "status": t.status, "assignee": t.assignee, "project": getattr(t, "project_id", None)}
         except Exception:
             continue
     return out
@@ -340,9 +341,10 @@ def start_session(body: dict) -> dict:
     tags = [t.strip() for t in body.get("tags") or [] if isinstance(t, str) and t.strip()]
     title = _text(body, "title")
     group = _text(body, "group") or default_group
+    model = _text(body, "model")
     when = _text(body, "when") or "now"
     if when == "now":
-        return o.new(cwd, prompt=prompt, title=title or lane_mod.one_line(prompt, 60), mode=mode, tags=tags, group=group)
+        return o.new(cwd, prompt=prompt, title=title or lane_mod.one_line(prompt, 60), mode=mode, tags=tags, group=group, model=model)
     if when not in ("queue", "at"):
         raise ApiError(400, "when must be now, queue or at")
     at = _text(body, "at") if when == "at" else None
@@ -350,7 +352,7 @@ def start_session(body: dict) -> dict:
         raise ApiError(400, "say when it starts: +30m, 14:30 or a date and time")
     task = title or lane_mod.one_line(prompt, 80)
     notes = "\n\n".join(x for x in (prompt if prompt != task else None, _text(body, "notes")) if x) or None
-    return o.new(cwd, task=task, notes=notes, at=at, title=title, mode=mode, tags=tags, group=group)
+    return o.new(cwd, task=task, notes=notes, at=at, title=title, mode=mode, tags=tags, group=group, model=model)
 
 
 def session_action(sid: str, action: str, body: dict) -> dict:
@@ -359,39 +361,146 @@ def session_action(sid: str, action: str, body: dict) -> dict:
         text = _text(body, "text")
         if not text:
             raise ApiError(400, "nothing to send")
-        o.ok(["send", sid, "-", *(["--follow-up"] if body.get("followUp") is True else [])], stdin=text, timeout=90)
+        o.send(sid, text, steer=body.get("steer") is True)
         return {"ok": True}
     if action == "answer":
         answer = _text(body, "answer")
+        question = _text(body, "question")
         if not answer:
             raise ApiError(400, "give an answer")
-        return {"ok": True, "output": o.ok(["answer", sid, answer]).strip()}
+        if not question:
+            raise ApiError(400, "name the question being answered")
+        r = o.answer(sid, answer, question)
+        if r.code != 0:
+            raise ApiError(400, ompsessions.error_text(r) or f"omp-sessions answer exited with {r.code}")
+        return {"ok": True, "output": r.stdout.strip()}
     if action == "mode":
         mode = _text(body, "mode")
         if mode not in settings_mod.MODES:
             raise ApiError(400, f"mode must be one of {', '.join(settings_mod.MODES)}")
-        return {"ok": True, "output": o.ok(["mode", sid, mode]).strip()}
+        return {"ok": True, "output": o.ok(["mode", ompsessions.free_text_ok(sid), mode]).strip()}
     if action == "stop":
-        return {"ok": True, "output": o.ok(["stop", sid], timeout=60).strip()}
+        return {"ok": True, "output": o.ok(["stop", ompsessions.free_text_ok(sid)], timeout=60).strip()}
+    if action == "model":
+        model = _text(body, "model")
+        if not model:
+            raise ApiError(400, "pick a model")
+        return {"ok": True, **o.model(sid, model)}
     raise ApiError(404, f"unknown action {action}")
 
 
-def open_in_vscode(sid: str, base_url: str) -> dict:
-    """Asks the VS Code window last used on omp's machine to open the session (`omp-sessions vscode`).
-
-    `url` is the vscode:// link (a browser opens it); `page` is a page of this dashboard that opens
-    it, for hosts that only open web links (Hermes Desktop): it is served without sign-in and holds
+def with_page(out: dict, base_url: str) -> dict:
+    """`out` ({url, …} from `omp-sessions vscode`) plus `page`: a page of this dashboard that opens the
+    link, for hosts that only open web links (Hermes Desktop). It is served without sign-in and holds
     nothing but a redirect, so `base_url` is the address the caller reached this dashboard at."""
-    o = require_omp(settings())
-    out = o.json(["vscode", sid, "--json"])
-    url = out.get("url") if isinstance(out, dict) else None
+    url = out.get("url")
     if not isinstance(url, str) or not url:
         raise ApiError(502, "omp-sessions vscode printed no link")
     # The profile segment serves the requesting profile's copy (the page's own `?profile=`).
     profile = profile_name()
     scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
     page = f"{base_url.rstrip('/')}/dashboard-plugins/{scope}omp-sessions/open-vscode.html#{quote(url, safe='')}"
-    return {"url": url, "page": page, "authority": out.get("authority"), "windowAt": out.get("windowAt")}
+    return {"url": url, "page": page, "folder": out.get("folder"), "authority": out.get("authority"), "windowAt": out.get("windowAt")}
+
+
+def open_in_vscode(sid: str, base_url: str) -> dict:
+    """Asks the VS Code window last used on omp's machine to open the session's chat (`omp-sessions vscode`)."""
+    o = require_omp(settings())
+    out = o.json(["vscode", ompsessions.free_text_ok(sid), "--json"])
+    return with_page(out if isinstance(out, dict) else {}, base_url)
+
+
+def _inside(path: str, folder: str) -> bool:
+    path, folder = os.path.realpath(path), os.path.realpath(folder)
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def project_folders(s: Any) -> list[str]:
+    """Folders of projects: the plugin's `projects` setting and Hermes projects (primary path and folders)."""
+    out = [os.path.expanduser(p) for p in s.projects.values()]
+    for p in tools_mod.hermes_projects():
+        out += [x for x in (p.get("path"), *(p.get("folders") or [])) if x]
+    return out
+
+
+def git_root(folder: str) -> Optional[str]:
+    try:
+        r = subprocess.run(["git", "-C", folder, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    root = r.stdout.strip()
+    return os.path.normpath(root) if r.returncode == 0 and root else None
+
+
+def session_project(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]], s: Any) -> str:
+    """The project folder of a session: its card's Hermes project folder, else its board's folder, else
+    the deepest project folder holding its cwd (each only when the cwd is inside it), else the git
+    repository holding the cwd, else the cwd."""
+    cwd = str((info.get("meta") or {}).get("cwd") or "")
+    candidates: list[str] = []
+    if card and card.get("project"):
+        folder = lane_mod.project_folder(str(card["project"]), s)
+        if folder:
+            candidates.append(os.path.expanduser(folder))
+    if ref and s.lane.boards.get(ref[0], {}).get("folder"):
+        candidates.append(os.path.expanduser(s.lane.boards[ref[0]]["folder"]))
+    candidates += sorted((p for p in project_folders(s) if _inside(cwd, p)), key=len, reverse=True)
+    for folder in candidates:
+        if os.path.isdir(folder) and _inside(cwd, folder):
+            return folder
+    return git_root(cwd) or cwd
+
+
+def open_project(sid: str, base_url: str) -> dict:
+    """Opens the session's project folder (session_project) in VS Code."""
+    s = settings()
+    o = require_omp(s)
+    report = o.show(sid)
+    if report is None:
+        raise ApiError(404, f"no session matches {sid}")
+    info = next((i for i in o.sessions(all=True) if (i.get("meta") or {}).get("id") == report.get("id")), None)
+    if info is None:
+        raise ApiError(404, f"session {sid[:8]} is gone")
+    by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")}
+    ref = card_ref(info, by_session)
+    card = card_lookup({ref}).get(ref) if ref else None
+    return with_page(o.open_folder(session_project(info, card, ref, s)), base_url)
+
+
+def known_folders(s: Any, o: Any) -> set[str]:
+    """Folders the page shows, which are the only ones /folders/vscode opens: session folders, the
+    lane's board folders and project folders."""
+    paths = [str((i.get("meta") or {}).get("cwd") or "") for i in o.sessions(all=True)]
+    paths += [str(p.get("path") or "") for p in o.projects()]
+    paths += [os.path.expanduser(str(e["folder"])) for e in s.lane.boards.values() if e.get("folder")]
+    paths += project_folders(s)
+    return {os.path.realpath(p) for p in paths if p}
+
+
+def open_folder(body: dict, base_url: str) -> dict:
+    """Opens a folder the page shows (a session's, a board's or a project's) in VS Code."""
+    s = settings()
+    o = require_omp(s)
+    path = _text(body, "path")
+    if not path or not os.path.isabs(os.path.expanduser(path)):
+        raise ApiError(400, "give the folder's absolute path")
+    path = os.path.expanduser(path)
+    if os.path.realpath(path) not in known_folders(s, o):
+        raise ApiError(403, "only folders of sessions, boards and projects open from here")
+    return with_page(o.open_folder(path), base_url)
+
+
+def models_view(search: Optional[str]) -> dict:
+    return require_omp(settings()).models(search or None)
+
+
+def set_default_model(body: dict) -> dict:
+    model = body.get("model")
+    if model is not None and not (isinstance(model, str) and model.strip()):
+        raise ApiError(400, "model must be a provider/id or null")
+    o = require_omp(settings())
+    o.set_default_model(model.strip() if isinstance(model, str) else None)
+    return o.models()
 
 
 # ---------- overview, places, boards ----------
@@ -463,6 +572,7 @@ def boards_view() -> dict:
         entry = s.lane.boards.get(slug, {})
         assignee = (entry.get("assignee") or s.lane.assignee).lower()
         listed = not s.lane.boards or slug in s.lane.boards
+        trusted = settings_mod.board_lane(s, slug, b.get("name")) or lane_mod.board_lane_fallback(s, slug)
         linked, ready = [], []
         try:
             with kbc.connect_closing(board=slug) as conn:
@@ -501,6 +611,9 @@ def boards_view() -> dict:
                 "assignee": entry.get("assignee"),
                 "effectiveAssignee": assignee,
                 "effectiveMode": entry.get("mode") or s.lane.mode,
+                "model": entry.get("model"),
+                "commentAuthors": entry.get("comment_authors"),
+                "effectiveCommentAuthors": list(trusted.comment_authors),
                 "linked": linked,
                 "ready": ready,
                 "lastPass": tick.get("at"),
@@ -528,12 +641,12 @@ def update_board(slug: str, body: dict) -> dict:
     if slug not in {b["slug"] for b in board_slugs()}:
         raise ApiError(404, f"no kanban board {slug}")
     fields: dict[str, Optional[str]] = {}
-    for key in ("folder", "group", "mode", "assignee"):
+    for key, name in (("folder", "folder"), ("group", "group"), ("mode", "mode"), ("assignee", "assignee"), ("model", "model"), ("commentAuthors", "comment_authors")):
         if key in body:
             v = body[key]
             if v is not None and not isinstance(v, str):
                 raise ApiError(400, f"{key} must be text")
-            fields[key] = v or ""
+            fields[name] = v or ""
     try:
         if fields:
             commands.set_board(slug, **fields)
@@ -591,6 +704,26 @@ async def post_session(request: Request) -> Any:
 @router.post("/sessions/{sid}/vscode")
 async def post_session_vscode(sid: str, request: Request) -> Any:
     return await _run(open_in_vscode, sid, str(request.base_url), write=True)
+
+
+@router.post("/sessions/{sid}/project")
+async def post_session_project(sid: str, request: Request) -> Any:
+    return await _run(open_project, sid, str(request.base_url), write=True)
+
+
+@router.post("/folders/vscode")
+async def post_folder_vscode(request: Request) -> Any:
+    return await _run(open_folder, await _body(request), str(request.base_url), write=True)
+
+
+@router.get("/models")
+async def get_models(search: Optional[str] = None) -> Any:
+    return await _run(models_view, search)
+
+
+@router.post("/models/default")
+async def post_default_model(request: Request) -> Any:
+    return await _run(set_default_model, await _body(request), write=True)
 
 
 @router.post("/sessions/{sid}/{action}")

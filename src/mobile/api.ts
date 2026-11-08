@@ -63,6 +63,48 @@ export async function createSession(args: { cwd: string; prompt?: string; task?:
 	return data.id;
 }
 
-export function action(id: string, name: "prompt" | "abort" | "stop" | "resume" | "mode" | "ui", body: Record<string, unknown> = {}): Promise<unknown> {
+export function action(id: string, name: "prompt" | "abort" | "stop" | "resume" | "continue" | "mode" | "ui" | "vscode" | "model", body: Record<string, unknown> = {}): Promise<unknown> {
 	return call("POST", `/api/sessions/${encodeURIComponent(id)}/${name}`, body);
+}
+
+/** What the phone shows of `GET /api/status` (the `omp-sessions status` overview). */
+export interface MachineSummary {
+	ok: boolean;
+	problems: string[];
+	version: string;
+	startedAt?: number;
+	byState: Record<string, number>;
+	maxConcurrent: number;
+	paused: boolean;
+	pending: number;
+}
+
+export async function machineStatus(): Promise<MachineSummary | undefined> {
+	const s = await call("GET", "/api/status");
+	if (!isRecord(s) || !isRecord(s.server) || !isRecord(s.sessions) || !isRecord(s.scheduler) || !isRecord(s.tasks)) return undefined;
+	const byState: Record<string, number> = {};
+	if (isRecord(s.sessions.byState)) for (const [k, v] of Object.entries(s.sessions.byState)) if (typeof v === "number") byState[k] = v;
+	return {
+		ok: s.ok === true,
+		problems: Array.isArray(s.problems) ? s.problems.filter((p): p is string => typeof p === "string") : [],
+		version: str(s.server.version),
+		startedAt: typeof s.server.startedAt === "number" ? s.server.startedAt : undefined,
+		byState,
+		maxConcurrent: typeof s.scheduler.maxConcurrent === "number" ? s.scheduler.maxConcurrent : 0,
+		paused: s.scheduler.paused === true,
+		pending: typeof s.tasks.pending === "number" ? s.tasks.pending : 0,
+	};
+}
+
+export interface PhoneModel {
+	selector: string;
+	name: string;
+	isDefault: boolean;
+}
+
+/** omp's models (GET /api/models), the omp Sessions default marked. */
+export async function listModels(): Promise<PhoneModel[]> {
+	const data = await call("GET", "/api/models");
+	if (!isRecord(data) || !Array.isArray(data.models)) return [];
+	return data.models.flatMap(m => (isRecord(m) && typeof m.selector === "string" ? [{ selector: m.selector, name: str(m.name) || m.selector, isDefault: m.default === true }] : []));
 }

@@ -41,7 +41,31 @@ export interface RemoteStatus {
 }
 
 export const DEFAULT_REMOTE_PORT = 7413;
-export const REMOTE_COOKIE = "omp_vs";
+/** The first pairing cookie, holding the raw token: still accepted, and replaced on the next request. */
+export const LEGACY_REMOTE_COOKIE = "omp_vs";
+/** The pairing cookie over plain HTTP; its value is `cookieSecret(token)`, never the token. */
+export const REMOTE_COOKIE = "omp_sessions";
+/** The pairing cookie when the public URL is https: `Secure`, host-only, `Path=/`. */
+export const REMOTE_COOKIE_SECURE = "__Host-omp_sessions";
+
+/** The cookie value for `token`: an HMAC, so the cookie (sent to every port of the host) never carries the token. */
+export function cookieSecret(token: string): string {
+	return crypto.createHmac("sha256", token).update("omp-sessions pairing cookie v1").digest("base64url");
+}
+
+/** Whether `host` (a resolved listen address) is only reachable from this machine. */
+export function isLoopbackHost(host: string): boolean {
+	return host === "127.0.0.1" || host === "::1" || host === "localhost" || host === "::ffff:127.0.0.1";
+}
+
+/**
+ * X-Forwarded-For counts only when a public URL is set and the listener is bound to loopback, so every
+ * request comes through the proxy on this machine (`tailscale serve`, a reverse proxy). Bound to the
+ * network, a loopback peer is just another local process and its forwarded header is ignored.
+ */
+export function trustsProxy(cfg: Pick<RemoteConfig, "publicUrl" | "bind">, boundHost?: string): boolean {
+	return !!cfg.publicUrl && isLoopbackHost(boundHost ?? cfg.bind);
+}
 
 export function remoteConfigPath(): string {
 	return path.join(stateRoot(), "remote.json");

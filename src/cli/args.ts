@@ -3,7 +3,7 @@
 export class UsageError extends Error {}
 
 /** Flags that take a value; everything else is boolean. */
-const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url"]);
+const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder"]);
 const MULTI_FLAGS = new Set(["sub", "tag", "profile"]);
 const SHORT: Record<string, string> = { p: "prompt", a: "all", f: "follow", y: "yes", n: "lines", t: "title", m: "model", h: "help", w: "wait", d: "detach" };
 
@@ -36,12 +36,23 @@ export function parseArgs(argv: readonly string[]): Args {
 			if (value === undefined) {
 				value = argv[++i];
 				if (value === undefined) throw new UsageError(`--${name} needs a value`);
+				// `--title --json` is a forgotten value, not a title; `--title=--x` passes one on purpose.
+				if (value.startsWith("--")) throw new UsageError(`--${name} needs a value (got ${value}; use --${name}=${value} if you mean it)`);
 			}
 			if (MULTI_FLAGS.has(name)) out.multi.set(name, [...(out.multi.get(name) ?? []), value]);
 			else out.flags.set(name, value);
 		} else out.flags.set(name, value ?? true);
 	}
 	return out;
+}
+
+/** Throws a UsageError for any flag `command` doesn't take (`help` is always allowed). */
+export function checkFlags(args: Args, command: string, allowed: readonly string[]): void {
+	for (const name of [...args.flags.keys(), ...args.multi.keys()]) {
+		if (name === "help" || allowed.includes(name)) continue;
+		const hint = allowed.length ? ` (${allowed.map(f => `--${f}`).join(", ")})` : "";
+		throw new UsageError(`${command} doesn't take --${name}${hint}`);
+	}
 }
 
 export function flag(args: Args, name: string): boolean {
@@ -54,18 +65,24 @@ export function value(args: Args, name: string): string | undefined {
 	return typeof v === "string" ? v : undefined;
 }
 
-/** "+30m", "+2h", "14:30" (next occurrence), or an ISO date/time → epoch ms. */
-export function parseWhen(text: string, now = Date.now()): number | undefined {
-	const rel = /^\+(\d+)\s*([smhd])$/.exec(text.trim());
+/** "+30m", "+2h", "14:30" (next occurrence), or an ISO date/time → epoch ms; throws a UsageError on anything else or a past time. */
+export function parseWhen(text: string, now = Date.now()): number {
+	const t = text.trim();
+	const rel = /^\+(\d+)\s*([smhd])$/.exec(t);
 	const unit: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 	if (rel) return now + Number(rel[1]) * (unit[rel[2]] ?? 0);
-	const hm = /^(\d{1,2}):(\d{2})$/.exec(text.trim());
+	const hm = /^(\d{1,2}):(\d{2})$/.exec(t);
 	if (hm) {
+		const hours = Number(hm[1]);
+		const minutes = Number(hm[2]);
+		if (hours > 23 || minutes > 59) throw new UsageError(`${t} is not a time of day (00:00-23:59)`);
 		const d = new Date(now);
-		d.setHours(Number(hm[1]), Number(hm[2]), 0, 0);
+		d.setHours(hours, minutes, 0, 0);
 		if (d.getTime() <= now) d.setDate(d.getDate() + 1);
 		return d.getTime();
 	}
-	const t = Date.parse(text);
-	return Number.isFinite(t) ? t : undefined;
+	const at = /^\d{4}-\d{2}-\d{2}/.test(t) ? Date.parse(t) : Number.NaN;
+	if (!Number.isFinite(at)) throw new UsageError(`can't read "${t}" as a time: use +30m, +2h, 14:30 or an ISO time like 2025-01-31T08:00`);
+	if (at <= now) throw new UsageError(`${t} is in the past`);
+	return at;
 }

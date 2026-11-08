@@ -5,9 +5,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import * as vscode from "vscode";
+import { isArchivedTranscript, locateTranscript } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
+import { type TranscriptHead, TranscriptCache, listTranscripts, readTranscriptHead } from "../shared/transcript-files";
 import type { OmpApi } from "./api";
-import { type MessageText, type TranscriptHead, type TranscriptHit, TranscriptCache, listTranscripts, parseQuery, parseTextLine, readTranscriptHead, searchMessages } from "./transcripts";
+import { plain } from "./plain";
+import { configuredOmpPaths } from "./sessions";
+import { type MessageText, type TranscriptHit, parseQuery, parseTextLine, searchMessages } from "./transcripts";
 
 /** Extracted chat text per transcript, kept for the window's lifetime (only user/assistant text, not tool output). */
 const textCache = new TranscriptCache<MessageText[]>(
@@ -44,13 +48,16 @@ function workspaceFolders(): string[] {
 /** Top-level transcripts in scope, newest first; VS Code sessions are matched to theirs. */
 async function candidates(api: OmpApi, all: boolean): Promise<Candidate[]> {
 	const byFile = new Map<string, SessionMeta>();
-	for (const m of api.sessions.all()) if (m.ompSessionFile) byFile.set(path.resolve(m.ompSessionFile), m);
-	const files = await listTranscripts();
+	for (const m of api.sessions.all()) {
+		const file = m.ompSessionFile && locateTranscript(m.ompSessionFile);
+		if (file) byFile.set(path.resolve(file), m);
+	}
+	const files = await listTranscripts(configuredOmpPaths());
 	const listed = new Set(files.map(f => path.resolve(f.file)));
 	for (const [file] of byFile) {
 		if (listed.has(file)) continue;
 		try {
-			files.push({ file, mtimeMs: (await fs.promises.stat(file)).mtimeMs });
+			files.push({ file, mtimeMs: (await fs.promises.stat(file)).mtimeMs, archived: isArchivedTranscript(file) });
 		} catch {
 			/* transcript gone */
 		}
@@ -185,14 +192,14 @@ async function openCandidate(api: OmpApi, c: Candidate): Promise<void> {
 	}
 	const cwd = c.head.cwd;
 	const choice = await vscode.window.showInformationMessage(
-		`"${titleOf(c)}" was not started from VS Code.`,
+		`"${titleOf(c)}" was not started by omp Sessions.`,
 		{ modal: true, detail: cwd ? `Folder: ${cwd}` : "The transcript does not record its folder." },
 		...(cwd ? ["Resume in Background"] : []),
-		"Open Transcript File",
+		...(isArchivedTranscript(c.file) ? [] : ["Open Transcript File"]),
 	);
 	if (choice === "Resume in Background" && cwd) {
 		if (!fs.existsSync(cwd)) {
-			void vscode.window.showErrorMessage(`The folder of this session no longer exists: ${cwd}`);
+			void vscode.window.showErrorMessage(plain(`The folder of this session no longer exists: ${cwd}`));
 			return;
 		}
 		await api.launchAndOpen({ cwd, resumeFile: c.file, title: titleOf(c).slice(0, 80) });

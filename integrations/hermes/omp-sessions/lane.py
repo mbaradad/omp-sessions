@@ -5,12 +5,16 @@ Hermes's dispatcher leaves cards whose assignee is not a Hermes profile in `read
 resolves the workspace the way a Hermes worker would (worktree on the card's branch, dir, scratch,
 or the board/project folder for scratch cards), queues an omp session there with `omp-sessions new --task`
 (so omp's global concurrency limit applies), and then mirrors the session onto the card: heartbeat
-while it works, `needs_input` block while it waits on a question, `complete` with its final reply,
-`transient` block when it fails, stops or is removed.
+while it is queued or works, `needs_input` block while it waits on a question or approval, `complete`
+with its final reply, `transient` block when it fails, stops, is interrupted (host crash or reboot) or
+is removed.
 
 Cards are also a way to talk to the session from clients that only show kanban (Hermes Console on
-Android): a comment on a linked card answers omp's open question or reaches the session as a
-message, and `@omp` in a comment on any card of a lane board assigns that card to the lane.
+Android): a comment on a linked card from a trusted author (the board's `comment_authors`, default
+`dashboard`) answers omp's open question or reaches the session as a message marked as a kanban
+comment from that author, and `@omp` from a trusted author on any card of a lane board assigns that
+card to the lane. Approval dialogs are never answered from comments. A comment that can't be
+delivered is retried on later passes (a few times) instead of being dropped.
 
 Card <-> session links and the lane's lock are machine-wide (store.lane_data_dir, beside the shared
 kanban boards), so several profiles' gateways never run two lane passes at once; before creating a
@@ -29,8 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompsessions import OmpSessions, OmpSessionsError
-from .settings import BoardLane, Settings, board_lane
+from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval
+from .settings import ANY_AUTHOR, BoardLane, Settings, board_lane
 from .store import Busy, Store
 
 log = logging.getLogger(__name__)
@@ -44,6 +48,13 @@ NOTES_MAX = 19_000
 RESULT_MAX = 20_000
 SUMMARY_MAX = 4_000
 MAX_NEW_PER_TICK = 4
+# Lane passes that try to pass a card's comments to its session before giving up on them.
+MAX_SEND_TRIES = 5
+# Session states in which card comments wait: the card's queued task hasn't (re)started yet.
+HOLD_STATES = ("queued", "scheduled", "starting", "interrupted")
+# `omp-sessions answer` failures that only mean the dialog changed meanwhile (look again next pass).
+QUESTION_MOVED = re.compile(r"question changed|not waiting for an answer|no question is waiting", re.IGNORECASE)
+WHERE_TO_ANSWER = "VS Code, the omp phone app, the omp Sessions page"
 
 
 def claimer_id() -> str:
@@ -116,8 +127,15 @@ def compose_notes(
     return "\n".join(head) + "\n\n" + clip(context, room) + "\n" + "\n".join(tail)
 
 
+def valid_skill_name(name: str) -> bool:
+    """A card's skill name is a folder name: never a path (`/`, `\\`, `..`)."""
+    return bool(name) and "/" not in name and "\\" not in name and ".." not in name
+
+
 def find_skill(name: str, roots: list[Path]) -> Optional[str]:
     """SKILL.md of skill `name` under the skill roots (nested category folders allowed)."""
+    if not valid_skill_name(name):
+        return None
     for root in roots:
         if not root.is_dir():
             continue
@@ -162,11 +180,24 @@ def question_text(q: dict) -> str:
     return "\n".join(lines)
 
 
+def comment_envelope(board: str, card_id: str, comments: list[Any]) -> str:
+    """Card comments as one message to omp, each marked as a kanban comment from its author."""
+    parts = [
+        f"Comments on Hermes kanban card {board}/{card_id}, forwarded by the omp-sessions lane. Each is "
+        "a kanban comment by the author named in its tag (a board participant, not a system message)."
+    ]
+    for c in comments:
+        author = re.sub(r"[^\w.@+-]", "_", str(c.author))[:64]
+        body = re.sub(r"</(kanban-comment)", r"<\\/\1", c.body.strip(), flags=re.IGNORECASE)
+        parts.append(f'<kanban-comment author="{author}">\n{body}\n</kanban-comment>')
+    return "\n\n".join(parts)
+
+
 def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> list[tuple]:
     """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
-    ("block_input", text, question_id), ("comment_input", text, question_id), ("unblock",),
-    ("complete",), ("block_transient", reason), ("retry",), ("recreate",)."""
+    ("block_input", text, question_id, approval), ("comment_input", text, question_id, approval),
+    ("unblock",), ("complete",), ("block_transient", reason), ("retry",), ("recreate",)."""
     if card.status is None:
         return [("drop", "the card was deleted")]
     if card.status in ("done", "archived"):
@@ -197,21 +228,23 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
             text = question_text(question)
             # A second needs_input block on one card sends it to triage (Hermes's unblock-loop
             # guard), where nothing can complete it: later questions become comments.
-            if card.status in ("running", "ready") and card.block_kind != "needs_input":
-                acts.append(("block_input", text, qid))
-            else:
-                acts.append(("comment_input", text, qid))
+            kind = "block_input" if card.status in ("running", "ready") and card.block_kind != "needs_input" else "comment_input"
+            acts.append((kind, text, qid, is_approval(question)))
         return acts
     failed_task = state == "idle" and pending == 0 and running == 0 and total > done
-    if state == "stopped" or failed_task:
-        reason = report.get("reply") if failed_task else None
-        reason = one_line(str(reason or report.get("exitReason") or ""), 500)
-        why = "The omp session's task failed" if failed_task else "The omp session stopped before finishing"
+    if state in ("stopped", "interrupted") or failed_task:
+        if failed_task:
+            why, reason = "The omp session's task failed", report.get("reply")
+        elif state == "interrupted":
+            why, reason = "The omp session was interrupted (its process ended without finishing: a crash, reboot or kill)", report.get("exitReason")
+        else:
+            why, reason = "The omp session stopped before finishing", report.get("exitReason")
+        reason = one_line(str(reason or ""), 500)
         acts = [("unblock",)] if our_block else []
         if card.status in ("running", "ready") or our_block:
-            acts.append(("block_transient", f"{why}{': ' + reason if reason else '.'}"))
+            acts.append(("block_transient", f"{why}{': ' + reason if reason else '.'} Unblock the card to continue it in the same session."))
         return acts
-    # starting, queued, working, or idle with an interrupted task the user will pick up.
+    # queued, scheduled, starting, working, or idle with an interrupted task the user will pick up.
     if our_block:
         return [("unblock",), ("claim",)]
     if card.status == "ready":
@@ -410,6 +443,7 @@ class Lane:
                 mode=cfg.mode if cfg else None,
                 tags=["hermes", f"hermes:{slug}", f"card:{task.id}"],
                 group=cfg.group if cfg else None,
+                model=card_model(task) or (cfg.model if cfg else None),
             )
         except OmpSessionsError as exc:
             link["state"] = "failed"
@@ -420,14 +454,16 @@ class Lane:
         link.update(session=sid, state="active", asked=[], heartbeat_at=time.time())
         link.pop("error", None)
         log.info("omp lane: %s/%s -> omp session %s in %s", slug, task.id, short(sid), link["cwd"])
+        trusted = (cfg or board_lane_fallback(self.settings(), slug)).comment_authors
+        authors = "anyone" if ANY_AUTHOR in trusted else ", ".join(trusted) or "nobody (comments are off)"
         link["comment_seen"] = kb.add_comment(
             conn,
             task.id,
             AUTHOR,
             f"Queued as omp session {short(sid)} in {link['cwd']}"
             + (f" (branch {link['branch']})" if link.get("branch") else "")
-            + f". It starts when omp has a free slot. Watch or steer it in VS Code (omp Sessions), with `omp-sessions attach {short(sid)}`, "
-            "or in the omp phone app, or comment here: comments reach the session. This card is updated when it finishes or needs input.",
+            + f". It starts when omp has a free slot. Follow or steer it in {WHERE_TO_ANSWER}, or with `omp-sessions attach {short(sid)}`; "
+            f"comments here by {authors} reach the session too. This card is updated when it finishes or needs input.",
         )
 
     def _mentions(self, conn: Any, slug: str, links: dict, cfg: BoardLane) -> None:
@@ -451,6 +487,9 @@ class Lane:
             marks[slug] = int(row["id"])
             card_id, author = str(row["task_id"]), str(row["author"])
             if author == AUTHOR or not pattern.search(str(row["body"])) or link_key(slug, card_id) in links:
+                continue
+            if not cfg.trusts(author):
+                log.info("omp lane: %s/%s: ignored @%s from %s (not a trusted comment author)", slug, card_id, cfg.assignee, author)
                 continue
             task = kb.get_task(conn, card_id)
             if task is None or task.status in ("done", "archived") or (task.assignee or "").lower() == cfg.assignee:
@@ -492,18 +531,21 @@ class Lane:
                     self._create(conn, slug, link, task, cfg, omp)
             return
         report = omp.show(link["session"])
-        if self._forward_comments(conn, link, report, omp):
+        if self._forward_comments(conn, link, report, omp, cfg or board_lane_fallback(settings, slug)):
             return  # the session got something new: look at it again next tick
         for act in decide(card, link, report, assignee):
             self._apply(conn, slug, links, key, link, act, report, cfg, omp)
             if key not in links:
                 return
 
-    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpSessions) -> bool:
-        """New comments on the card from anyone but the lane (Hermes Console, the dashboard, other
-        agents) go to the omp session: the first answers omp's open question, the rest arrive as a
-        message (a follow-up while omp works). Held until the card's queued task has started, so they
-        never run ahead of it or of omp's concurrency limit. True when something was sent."""
+    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpSessions, cfg: BoardLane) -> bool:
+        """New comments on the card by trusted authors (cfg.comment_authors) go to the omp session: while
+        omp waits on a question they are tried as its answer in order (one that doesn't fit is
+        reported and the next one tried), the rest arrive as one message (a follow-up while omp works).
+        Approval dialogs are never answered from here: comments wait until the approval is given
+        elsewhere. Held until the card's queued task runs, so they never run ahead of it or of omp's
+        concurrency limit. `comment_seen` only moves past comments that were delivered (or given up on
+        after MAX_SEND_TRIES passes). True when something was sent."""
         from hermes_cli import kanban_db as kb
 
         card_id, sid = link["card"], str(link["session"])
@@ -513,37 +555,118 @@ class Lane:
             return False
         state = report.get("state") if report else None
         q = report.get("queue") if report and isinstance(report.get("queue"), dict) else {}
-        if state in ("queued", "starting") or (int(q.get("running") or 0) == 0 and int(q.get("done") or 0) == 0 and int(q.get("pending") or 0) > 0):
+        if state in HOLD_STATES or (int(q.get("running") or 0) == 0 and int(q.get("done") or 0) == 0 and int(q.get("pending") or 0) > 0):
             return False
         new = kb.list_comments_after(conn, card_id, after_id=seen)
         if not new:
             return False
-        link["comment_seen"] = new[-1].id
-        theirs = [c for c in new if c.author != AUTHOR and c.body.strip()]
+        last = new[-1].id
+        theirs = []
+        for c in new:
+            if c.author == AUTHOR or not c.body.strip():
+                continue
+            if cfg.trusts(c.author):
+                theirs.append(c)
+            else:
+                self._untrusted(conn, link, c.author, cfg)
         if not theirs:
+            link["comment_seen"] = last
             return False
         if report is None:
+            link["comment_seen"] = last
             kb.add_comment(conn, card_id, AUTHOR, f"omp session {short(sid)} is gone, so that comment went nowhere. Unblock the card to start a new session, then comment again.")
             return False
+        question = report.get("question") if state == "needs_input" and isinstance(report.get("question"), dict) else None
+        if question and is_approval(question):
+            qid = str(question.get("id") or "")
+            if link.get("approval_noted") != qid:
+                link["approval_noted"] = qid
+                kb.add_comment(
+                    conn,
+                    card_id,
+                    AUTHOR,
+                    f"omp session {short(sid)} waits for an approval ({one_line(str(question.get('title') or 'a dialog'), 120)}), which card comments can't give. "
+                    f"Approve or deny it in {WHERE_TO_ANSWER}, or with `omp-sessions answer {short(sid)} <choice>`; your comment reaches the session after that.",
+                )
+            return False
         done: list[str] = []
-        question = report.get("question") if isinstance(report.get("question"), dict) else None
-        if state == "needs_input" and question:
-            first, theirs = theirs[0], theirs[1:]
-            r = omp.run(["answer", sid, first.body.strip()])
-            if r.code != 0:
-                err = one_line(r.stderr or r.stdout or f"omp-sessions answer exited with {r.code}", 300)
-                kb.add_comment(conn, card_id, AUTHOR, f"omp didn't take that as an answer ({err}). Reply with one of the options, or answer in VS Code or the omp phone app.")
-                return False
-            done.append(f"answered omp's question with \"{one_line(first.body, 80)}\"")
-        if theirs:
-            busy = state not in ("idle", "stopped")
-            text = "\n\n".join(f"{c.author}: {c.body.strip()}" for c in theirs)
-            omp.ok(["send", sid, "-", *(["--follow-up"] if busy else [])], stdin=f"New comment on Hermes kanban card {link['board']}/{card_id}:\n{text}", timeout=90)
-            n = "comments" if len(theirs) > 1 else "comment"
-            done.append(f"passed the {n} on" + (" as a follow-up" if busy else ""))
-        kb.add_comment(conn, card_id, AUTHOR, f"omp session {short(sid)}: {' and '.join(done)}.")
-        log.info("omp lane: %s/%s: %s", link["board"], card_id, "; ".join(done))
-        return True
+        refused: list[str] = []
+        rest = list(theirs)
+        if question:
+            while rest:
+                c = rest[0]
+                try:
+                    r = omp.answer(sid, c.body.strip(), str(question.get("id") or "") or None)
+                except OmpSessionsError as exc:
+                    return self._undelivered(conn, link, last, str(exc), refused)
+                if r.code == 0:
+                    rest.pop(0)
+                    link["comment_seen"] = c.id
+                    done.append(f"answered omp's question with \"{one_line(c.body, 80)}\"")
+                    break
+                err = one_line(error_text(r) or f"omp-sessions answer exited with {r.code}", 300)
+                if r.code != USAGE_EXIT:
+                    if QUESTION_MOVED.search(err):  # answered elsewhere or a new dialog: look again next pass
+                        if refused:
+                            kb.add_comment(conn, card_id, AUTHOR, "\n".join(refused))
+                        return False
+                    return self._undelivered(conn, link, last, err, refused)
+                rest.pop(0)
+                link["comment_seen"] = c.id
+                refused.append(f"omp didn't take \"{one_line(c.body, 80)}\" as an answer ({err}).")
+        if rest:
+            try:
+                omp.send(sid, comment_envelope(link["board"], card_id, rest))
+            except OmpSessionsError as exc:
+                return self._undelivered(conn, link, last, str(exc), refused, done)
+            n = "comments" if len(rest) > 1 else "comment"
+            done.append(f"passed the {n} on" + (" as a follow-up" if state not in ("idle", "stopped") else ""))
+        link["comment_seen"] = last
+        link.pop("send_failures", None)
+        lines = [f"omp session {short(sid)}: {' and '.join(done)}."] if done else []
+        if refused:
+            lines += [*refused, f"Reply with one of the options, or answer in {WHERE_TO_ANSWER}, or with `omp-sessions answer {short(sid)} -- <answer>`."]
+        kb.add_comment(conn, card_id, AUTHOR, "\n".join(lines))
+        log.info("omp lane: %s/%s: %s", link["board"], card_id, "; ".join(done) or "answer refused")
+        return bool(done)
+
+    def _undelivered(self, conn: Any, link: dict, last: int, err: str, refused: list[str], done: Optional[list[str]] = None) -> bool:
+        """Comments that couldn't reach the session stay unseen and are retried next pass; after
+        MAX_SEND_TRIES passes in a row they are given up on. Says so on the card (once per streak)."""
+        from hermes_cli import kanban_db as kb
+
+        sid = short(str(link["session"]))
+        tries = int(link.get("send_failures") or 0) + 1
+        lines = [f"omp session {sid}: {' and '.join(done)}."] if done else []
+        lines += refused
+        if tries >= MAX_SEND_TRIES:
+            link["comment_seen"] = last
+            link.pop("send_failures", None)
+            lines.append(f"Gave up passing comments to omp session {sid} after {tries} tries ({one_line(err, 300)}). Comment again once it runs, or use {WHERE_TO_ANSWER}.")
+        else:
+            link["send_failures"] = tries
+            if tries == 1:
+                lines.append(f"Couldn't reach omp session {sid} ({one_line(err, 300)}); trying again on the next lane pass.")
+        if lines:
+            kb.add_comment(conn, link["card"], AUTHOR, "\n".join(lines))
+        log.warning("omp lane: %s/%s: comment not delivered (try %d): %s", link["board"], link["card"], tries, err)
+        return False
+
+    def _untrusted(self, conn: Any, link: dict, author: str, cfg: BoardLane) -> None:
+        """Says once per author and card that their comments don't reach omp."""
+        from hermes_cli import kanban_db as kb
+
+        noted = link.get("untrusted_noted") if isinstance(link.get("untrusted_noted"), list) else []
+        if author.lower() in noted:
+            return
+        link["untrusted_noted"] = [*noted, author.lower()]
+        kb.add_comment(
+            conn,
+            link["card"],
+            AUTHOR,
+            f"Comments by {author} don't reach the omp session: comment authors trusted on this board are {', '.join(cfg.comment_authors) or 'none'} "
+            f"(`hermes omp board {cfg.slug} --comment-authors …`).",
+        )
 
     def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: OmpSessions) -> None:
         from hermes_cli import kanban_db as kb
@@ -563,12 +686,18 @@ class Lane:
                 note = f"omp session {short(link['session'])}: {report.get('state') if report else 'working'}"
                 if kbd.heartbeat_worker(conn, card_id, note=note):
                     link["heartbeat_at"] = time.time()
-        elif kind == "block_input":
-            if kb.block_task(conn, card_id, reason=f"omp needs input (answer with a comment on this card, in VS Code, the omp phone app, or `omp-sessions answer {short(link['session'])} <choice>`):\n{act[1]}", kind="needs_input"):
+        elif kind in ("block_input", "comment_input"):
+            sid = short(link["session"])
+            how = (
+                f"approve or deny in {WHERE_TO_ANSWER}, or with `omp-sessions answer {sid} <choice>`; card comments can't approve"
+                if act[3]
+                else f"answer with a comment on this card, in {WHERE_TO_ANSWER}, or with `omp-sessions answer {sid} -- <answer>`"
+            )
+            what = "omp asks for approval" if act[3] else "omp needs input"
+            if kind == "comment_input":
+                kb.add_comment(conn, card_id, AUTHOR, f"{what} again ({how}):\n{act[1]}")
+            elif kb.block_task(conn, card_id, reason=f"{what} ({how}):\n{act[1]}", kind="needs_input"):
                 link["input_blocked"] = True
-            link["asked"] = [*(link.get("asked") or []), act[2]]
-        elif kind == "comment_input":
-            kb.add_comment(conn, card_id, AUTHOR, f"omp needs input again (answer with a comment on this card, in VS Code, the omp phone app, or `omp-sessions answer {short(link['session'])} <choice>`):\n{act[1]}")
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "unblock":
             kb.unblock_task(conn, card_id)
@@ -598,7 +727,9 @@ class Lane:
             omp.ok(["queue", sid, "retry"])
             omp.ok(["queue", sid, "start"])
             if report and report.get("status") == "stopped":
-                omp.ok(["resume", sid])
+                # The server also starts a stopped session with runnable queued work: a resume that
+                # loses that race ("already running") is fine.
+                omp.run(["resume", sid])
             link.update(state="active", asked=[], input_blocked=False)
             kb.add_comment(conn, card_id, AUTHOR, f"Retrying in omp session {short(sid)}.")
         elif kind == "recreate":
@@ -610,9 +741,21 @@ class Lane:
             self._create(conn, slug, link, task, cfg, omp)
 
 
+def card_model(task: Any) -> Optional[str]:
+    """The card's model override (`hermes kanban set-model`) as an omp model selector (provider/model
+    when the card names its provider), or None."""
+    model = (getattr(task, "model_override", None) or "").strip()
+    provider = (getattr(task, "provider_override", None) or "").strip()
+    if not model:
+        return None
+    return f"{provider}/{model}" if provider and "/" not in model else model
+
+
 def board_lane_fallback(settings: Settings, slug: str) -> BoardLane:
     """Settings for a linked card whose board the lane no longer takes new cards from."""
-    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode)
+    e = settings.lane.boards.get(slug, {})
+    authors = tuple(e["comment_authors"]) if "comment_authors" in e else settings.lane.comment_authors
+    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors)
 
 
 def project_folder(project_id: Optional[str], settings: Settings) -> Optional[str]:

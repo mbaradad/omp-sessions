@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { stateRoot } from "./protocol";
+import { privateSocketDir } from "./server-protocol";
 
 export const BRIDGE_VERSION = 1;
 /** MCP server name; omp exposes its tools as `mcp__vscode_<tool>`. */
@@ -35,9 +36,7 @@ export function bridgeSocketPath(pid: number): string {
 	if (process.platform === "win32") return `\\\\.\\pipe\\omp-vscode-bridge-${pid}-${crypto.randomBytes(6).toString("hex")}`;
 	const preferred = path.join(bridgeRoot(), `${pid}.sock`);
 	if (Buffer.byteLength(preferred) < 100) return preferred;
-	const short = path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`);
-	fs.mkdirSync(short, { recursive: true, mode: 0o700 });
-	return path.join(short, `b${pid}.sock`);
+	return path.join(privateSocketDir(), `b${pid}.sock`);
 }
 
 /** One VS Code window serving the bridge. */

@@ -26,7 +26,7 @@ export default {
 		ctx.registerMany([
 			{ id: "page", area: ROUTES_AREA, data: { path: ROUTE }, render: () => React.createElement(Page, null) },
 			// Kanban's row has order 50.
-			{ id: "nav", area: SIDEBAR_NAV_AREA, order: 51, data: { path: ROUTE, label: "omp Sessions", codicon: "server-process" } },
+			{ id: "nav", area: SIDEBAR_NAV_AREA, order: 51, data: { path: ROUTE, label: "omp Sessions", codicon: "pulse" } },
 			{
 				id: "open",
 				area: PALETTE_AREA,

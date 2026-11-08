@@ -1,34 +1,52 @@
-// Boards: the kanban lane per board (folder, group, mode, assignee), the cards it runs as omp sessions
-// and the ready cards it will take next, with the lane's switches.
-import { type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode } from "./api";
+// Boards: the kanban lane per board (folder, group, mode, model, assignee, comment authors), the cards
+// it runs as omp sessions and the ready cards it will take next, with the lane's switches; and the
+// omp Sessions default model.
+import { type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
 import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
+import { defaultLabel, ModelPicker, useModels } from "./models";
 import { h, type ReactElement, useEffect, useState } from "./react";
 import { ago, cx, icon, shortId } from "./util";
+import { openInVscode } from "./vscode";
 
 const SESSION_STATE: Record<string, string> = {
 	needs_input: "needs you",
 	working: "working",
 	starting: "starting",
 	queued: "queued",
+	scheduled: "scheduled",
 	idle: "done",
+	interrupted: "interrupted",
 	stopped: "stopped",
 	removed: "session removed",
 	"not created": "no session yet",
 };
 
-function BoardCard(p: { b: Board; laneOn: boolean; busy: boolean; onSave: (slug: string, body: Record<string, unknown>) => Promise<boolean>; onOpenSession: (id: string) => void }): ReactElement {
+function BoardCard(p: {
+	b: Board;
+	laneOn: boolean;
+	busy: boolean;
+	models: Models | null;
+	onSave: (slug: string, body: Record<string, unknown>) => Promise<boolean>;
+	onOpenSession: (id: string) => void;
+	onOpenFolder: (folder: string) => void;
+}): ReactElement {
 	const { b } = p;
 	const [folder, setFolder] = useState(b.folder ?? "");
 	const [group, setGroup] = useState(b.group ?? "");
 	const [mode, setMode] = useState<string>(b.mode ?? "");
+	const [model, setModel] = useState(b.model ?? "");
 	const [assignee, setAssignee] = useState(b.assignee ?? "");
+	const savedAuthors = (b.commentAuthors ?? []).join(", ");
+	const [authors, setAuthors] = useState(savedAuthors);
 	useEffect(() => {
 		setFolder(b.folder ?? "");
 		setGroup(b.group ?? "");
 		setMode(b.mode ?? "");
+		setModel(b.model ?? "");
 		setAssignee(b.assignee ?? "");
-	}, [b.folder, b.group, b.mode, b.assignee]);
-	const dirty = folder !== (b.folder ?? "") || group !== (b.group ?? "") || mode !== (b.mode ?? "") || assignee !== (b.assignee ?? "");
+		setAuthors(savedAuthors);
+	}, [b.folder, b.group, b.mode, b.model, b.assignee, savedAuthors]);
+	const dirty = folder !== (b.folder ?? "") || group !== (b.group ?? "") || mode !== (b.mode ?? "") || model !== (b.model ?? "") || assignee !== (b.assignee ?? "") || authors !== savedAuthors;
 	const id = (k: string): string => `omps-${b.slug}-${k}`;
 	return h(
 		"section",
@@ -40,6 +58,7 @@ function BoardCard(p: { b: Board; laneOn: boolean; busy: boolean; onSave: (slug:
 			h("div", { className: "omps-bcard-titles" }, h("div", { className: "omps-bcard-name" }, b.name), h("div", { className: "omps-bcard-slug" }, b.slug)),
 			h("span", { className: "omps-grow" }),
 			h("span", { className: cx("omps-lane-state", b.lane && "is-on") }, b.lane ? "Lane on" : p.laneOn ? "Not in the lane" : "Lane off"),
+			b.folder ? h(Button, { small: true, kind: "ghost", icon: "external", title: `Open ${b.folder} in VS Code`, onClick: () => b.folder && p.onOpenFolder(b.folder) }) : null,
 			h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as omp sessions`, busy: p.busy, onChange: on => void p.onSave(b.slug, { lane: on }) }),
 		),
 		h(
@@ -48,7 +67,7 @@ function BoardCard(p: { b: Board; laneOn: boolean; busy: boolean; onSave: (slug:
 				className: "omps-bcard-form",
 				onSubmit: (e: Event) => {
 					e.preventDefault();
-					void p.onSave(b.slug, { folder, group, mode, assignee });
+					void p.onSave(b.slug, { folder, group, mode, model, assignee, commentAuthors: authors });
 				},
 			},
 			h(Field, { label: "Folder", htmlFor: id("folder"), hint: "Where cards without a worktree run", children: h("input", { id: id("folder"), className: "omps-input omps-mono", value: folder, placeholder: "Not set", onChange: (e: Event) => setFolder((e.target as HTMLInputElement).value) }) }),
@@ -63,7 +82,14 @@ function BoardCard(p: { b: Board; laneOn: boolean; busy: boolean; onSave: (slug:
 					...MODES.map((m: Mode) => h("option", { key: m, value: m }, `${MODE_INFO[m].label} — ${MODE_INFO[m].detail}`)),
 				),
 			}),
+			h(Field, { label: "Model", htmlFor: id("model"), hint: "A card's own model (kanban set-model) wins", children: h(ModelPicker, { id: id("model"), models: p.models, value: model, onChange: setModel }) }),
 			h(Field, { label: "Assignee", htmlFor: id("assignee"), children: h("input", { id: id("assignee"), className: "omps-input", value: assignee, placeholder: b.effectiveAssignee, onChange: (e: Event) => setAssignee((e.target as HTMLInputElement).value) }) }),
+			h(Field, {
+				label: "Comment authors",
+				htmlFor: id("authors"),
+				hint: "Whose card comments reach omp and whose @omp assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
+				children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e: Event) => setAuthors((e.target as HTMLInputElement).value) }),
+			}),
 			h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty })),
 		),
 		h(
@@ -112,6 +138,33 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 	const [error, setError] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+	const models = useModels(p.host);
+	const [defaultModel, setDefaultModel] = useState("");
+
+	const openFolder = async (folder: string): Promise<void> => {
+		setActionError(null);
+		setNotice(null);
+		try {
+			setNotice(await openInVscode(p.host, "/folders/vscode", { path: folder }));
+		} catch (err) {
+			setActionError(errorMessage(err));
+		}
+	};
+
+	const saveDefaultModel = async (model: string | null): Promise<void> => {
+		setBusy("model");
+		setActionError(null);
+		try {
+			await p.host.request<Models>("/models/default", { method: "POST", body: { model } });
+			setDefaultModel("");
+			models.reload();
+		} catch (err) {
+			setActionError(errorMessage(err));
+		} finally {
+			setBusy(null);
+		}
+	};
 
 	const load = async (): Promise<void> => {
 		try {
@@ -165,20 +218,51 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 					{ className: "omps-muted" },
 					view.enabled
 						? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.`
-						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under omp's concurrency limit). Settings are this profile's (${view.profile}).`,
+						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the omp Sessions scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
 					tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null,
 				),
 				notes.length ? h(Notes, { notes }) : null,
 			),
 			h(Switch, { checked: view.enabled, label: "Kanban lane", busy: busy === "lane", onChange: on => void post("lane", "/lane", { enabled: on }) }),
 		),
+		h(
+			"form",
+			{
+				className: "omps-default-model",
+				onSubmit: (e: Event) => {
+					e.preventDefault();
+					if (defaultModel.trim()) void saveDefaultModel(defaultModel.trim());
+				},
+			},
+			h(Field, {
+				label: "Default model",
+				htmlFor: "omps-default-model",
+				hint: `New sessions that name no model (and lane cards without a card or board model) use ${models.models?.default ?? `omp's default${models.models?.ompDefault ? ` (${models.models.ompDefault})` : ""}`}. Shared with the CLI and VS Code.`,
+				children: h(ModelPicker, { id: "omps-default-model", models: models.models, value: defaultModel, onChange: setDefaultModel, placeholder: defaultLabel(models.models), label: "omp Sessions default model" }),
+			}),
+			h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
+			models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,
+			models.error ? h("span", { className: "omps-field-hint is-error" }, models.error) : null,
+		),
 		error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 		actionError ? h(ErrorBox, { message: actionError }) : null,
+		notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
 		boards.length
 			? h(
 					"div",
 					{ className: "omps-bgrid" },
-					...boards.map(b => h(BoardCard, { key: b.slug, b, laneOn: view.enabled, busy: busy === b.slug, onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body), onOpenSession: p.onOpenSession })),
+					...boards.map(b =>
+						h(BoardCard, {
+							key: b.slug,
+							b,
+							laneOn: view.enabled,
+							busy: busy === b.slug,
+							models: models.models,
+							onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body),
+							onOpenSession: p.onOpenSession,
+							onOpenFolder: folder => void openFolder(folder),
+						}),
+					),
 				)
 			: h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." }),
 	);

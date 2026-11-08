@@ -18,7 +18,7 @@ import {
 	socketCheck,
 	summary,
 } from "../../src/ext/doctor-report";
-import { HOST_CRASHED, HOST_DIED, isAuthError, isOutdated, needsRestore, settleDeadHost } from "../../src/shared/health";
+import { HOST_CRASHED, HOST_DIED, isAuthError, isOutdated, settleDeadHost } from "../../src/shared/health";
 import type { SessionMeta } from "../../src/shared/protocol";
 
 const DAY = 86_400_000;
@@ -83,14 +83,6 @@ test("settleDeadHost: dead host mid-turn → stopped with HOST_CRASHED; idle →
 	assert.equal(settleDeadHost(stopped, false), stopped);
 });
 
-test("needsRestore: only stopped sessions whose host crashed mid-turn and have a transcript", () => {
-	assert.equal(needsRestore(settleDeadHost(meta({ status: "working" }), false)), true);
-	assert.equal(needsRestore(settleDeadHost(meta({ status: "idle" }), false)), false);
-	assert.equal(needsRestore(meta({ status: "stopped", exitReason: "stopped" })), false);
-	assert.equal(needsRestore(meta({ status: "stopped", exitReason: HOST_CRASHED, ompSessionFile: undefined })), false);
-	assert.equal(needsRestore(meta({ status: "working", exitReason: HOST_CRASHED })), false, "a running session is never restored");
-});
-
 test("isOutdated: running sessions on another (or unknown) host version", () => {
 	assert.equal(isOutdated(meta({ hostVersion: "0.3.0" }), "0.4.0"), true);
 	assert.equal(isOutdated(meta({ hostVersion: undefined }), "0.4.0"), true);
@@ -152,11 +144,10 @@ test("redact: leaves ordinary diagnostics alone", () => {
 
 // ---------- session assessment ----------
 
-test("assessSession: stale working session → error with mark-stopped/resume fixes and restore hint", () => {
+test("assessSession: stale working session → error with mark-stopped/resume fixes", () => {
 	const check = assessSession(facts({ meta: meta({ status: "working" }), hostAlive: false, socketOk: undefined, logTail: "boom" }), "0.4.0");
 	assert.equal(check.level, "error");
 	assert.match(check.title, /host died while working/);
-	assert.match(check.detail ?? "", /--restore/);
 	assert.equal(check.code, "boom");
 	assert.deepEqual(
 		check.fixes?.map(f => f.command),
@@ -187,7 +178,6 @@ test("assessSession: stopped sessions — normal is ok, failures warn with the l
 	assert.equal(failed.code, "Error: x");
 	const crashed = assessSession(facts({ meta: meta({ status: "stopped", exitReason: HOST_CRASHED }), hostAlive: false }), "0.4.0");
 	assert.equal(crashed.level, "warn");
-	assert.match(crashed.detail ?? "", /--restore/);
 });
 
 // ---------- cleanup / sockets / misc ----------

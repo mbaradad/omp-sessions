@@ -1,7 +1,7 @@
 // omp Doctor: checks → report (markdown for clipboard/issues, HTML with fix links for the panel).
 // Pure: facts are gathered by doctor.ts; everything here is unit-tested without VS Code.
 
-import { HOST_CRASHED, HOST_DIED, isOutdated, needsRestore, settleDeadHost } from "../shared/health";
+import { HOST_CRASHED, HOST_DIED, isOutdated, settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
 
@@ -161,7 +161,7 @@ export function assessSession(s: SessionFacts, extensionVersion: string): Check 
 	if (settled !== m) {
 		const crashed = settled.exitReason === HOST_CRASHED;
 		lines.unshift(`meta.json says "${m.status}" but host process ${m.pid} is gone${crashed ? " — it died mid-turn" : ""}.`);
-		if (crashed && needsRestore(settled)) lines.push("Resume continues the interrupted turn and its subagents (omp --restore).");
+		if (crashed && settled.ompSessionFile) lines.push("Resume asks omp to continue the interrupted turn (an interrupted queued task goes back to the queue instead).");
 		return {
 			level: "error",
 			title: `${name}: host died while ${m.status}`,
@@ -172,7 +172,7 @@ export function assessSession(s: SessionFacts, extensionVersion: string): Check 
 	}
 	if (m.status === "stopped") {
 		lines.unshift(`Stopped${m.exitReason ? `: ${m.exitReason}` : ""}${typeof m.exitCode === "number" ? ` (exit code ${m.exitCode})` : ""}.`);
-		if (needsRestore(m)) lines.push("Resume continues the interrupted turn and its subagents (omp --restore).");
+		if (m.exitReason === HOST_CRASHED && m.ompSessionFile) lines.push("Resume asks omp to continue the interrupted turn (an interrupted queued task goes back to the queue instead).");
 		if (abnormalStop(m) || m.exitReason === HOST_DIED) {
 			return { level: "warn", title: `${name}: stopped unexpectedly`, detail: lines.join("\n"), code: s.logTail, fixes: [{ label: "Resume", command: "omp.resumeSession", args: [m.id] }, showLog] };
 		}

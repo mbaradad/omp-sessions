@@ -9,6 +9,7 @@ import { type RemoteBind, type RemoteStatus, lanAddress, newRemoteToken, normali
 import { qrSvg } from "../shared/remote-qr";
 import { ServerClient } from "../shared/server-client";
 import type { OmpApi } from "./api";
+import { plain } from "./plain";
 import type { ServerControl } from "./server";
 
 type BindItem = vscode.QuickPickItem & { bind: RemoteBind; proxy?: boolean };
@@ -28,7 +29,7 @@ function isWsl(): boolean {
 
 /** Applies remote.json in the running server; undefined when no server runs. */
 async function applyInServer(): Promise<RemoteStatus | undefined> {
-	const client = await ServerClient.connect();
+	const client = await ServerClient.connect().catch(() => undefined);
 	if (!client) return undefined;
 	try {
 		return await client.request("remote", {}, 10_000);
@@ -213,7 +214,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 				if (!status.url) throw new Error(status.error ?? "remote access is not listening");
 				showPanel(status);
 			} catch (err) {
-				const pick = await vscode.window.showErrorMessage(`Could not turn on remote access: ${err instanceof Error ? err.message : String(err)}`, "Show Server Log");
+				const pick = await vscode.window.showErrorMessage(plain(`Could not turn on remote access: ${err instanceof Error ? err.message : String(err)}`), "Show Server Log");
 				if (pick) void vscode.commands.executeCommand("omp.server.showLog");
 			}
 		}),

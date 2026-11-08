@@ -24,7 +24,7 @@ function refresh(api: OmpApi): void {
 
 function buildData(api: OmpApi): BoardData {
 	const store = api.organize;
-	const cards: BoardCard[] = api.sessions.all().map(m => {
+	const cards: BoardCard[] = api.sessions.all().filter(m => api.sessions.inScope(m)).map(m => {
 		const e = store.session(m.id);
 		return {
 			id: m.id,
@@ -200,5 +200,9 @@ export function registerBoard(api: OmpApi): void {
 		api.sessions.onDidChange(() => refresh(api)),
 		api.organize.onDidChange(() => refresh(api)),
 		watchScheduler(() => refresh(api)),
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration("omp.sessionScope")) refresh(api);
+		}),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => refresh(api)),
 	);
 }

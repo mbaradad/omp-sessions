@@ -8,13 +8,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
-import { readHostVersion, writeLauncherSettings } from "../shared/launch";
+import { ompPathProblem, readHostVersion, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher, migrateLegacyService } from "../shared/rename-migration";
-import { ServerClient, compareVersions, ensureServer, stopServer } from "../shared/server-client";
+import { type EnsureServerOptions, LAUNCHD_LABEL, SYSTEMD_UNIT, ServerClient, type ServiceInstall, compareVersions, ensureServer, removeServiceUnit, stopServer } from "../shared/server-client";
 import { serverLogPath } from "../shared/server-protocol";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import type { OmpApi } from "./api";
+import { plain } from "./plain";
 
 /** Bundles the CLI and server run from, the phone app the server serves, the agent skill the CLI installs (plus the Hermes plugin folder). */
 const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg", "omp-sessions.SKILL.md"];
@@ -90,10 +91,28 @@ export function registerServer(api: OmpApi): ServerControl {
 	const log = vscode.window.createOutputChannel("omp Server", { log: true });
 	context.subscriptions.push(log);
 
-	const syncLauncher = () => {
+	/**
+	 * Mirrors the user's own `omp.path`/`omp.extraArgs`/`omp.server.installService` (never a workspace's: they
+	 * apply to every session on this machine) into launcher.json. A key the user hasn't set keeps launcher.json's
+	 * value (`omp-sessions config set` may have set it), unless `cleared` lists it (the user just removed the
+	 * setting). A relative omp.path would run a file from each session's folder: refused.
+	 */
+	const syncLauncher = (cleared: { path?: boolean; extraArgs?: boolean; service?: boolean } = {}) => {
 		const cfg = vscode.workspace.getConfiguration("omp");
+		const ompPath = cfg.inspect<string>("path")?.globalValue;
+		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
+		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
+		const problem = ompPath ? ompPathProblem(ompPath) : undefined;
+		if (problem) void vscode.window.showWarningMessage(plain(`${problem}; omp Sessions keeps using the previous omp.`), "Open Settings").then(a => a && vscode.commands.executeCommand("workbench.action.openSettings", "omp.path"));
+		const next = readLauncherSettings();
+		if (ompPath !== undefined && !problem) next.ompPath = ompPath.trim() || undefined;
+		else if (ompPath === undefined && cleared.path) next.ompPath = undefined;
+		if (extraArgs !== undefined) next.extraArgs = extraArgs;
+		else if (cleared.extraArgs) next.extraArgs = [];
+		if (service !== undefined) next.service = service ? "on" : "off";
+		else if (cleared.service) next.service = undefined;
 		try {
-			writeLauncherSettings({ ompPath: cfg.get<string>("path") || undefined, extraArgs: cfg.get<string[]>("extraArgs") ?? [] });
+			writeLauncherSettings(next);
 		} catch (err) {
 			log.warn(`could not write launcher settings: ${String(err)}`);
 		}
@@ -101,7 +120,8 @@ export function registerServer(api: OmpApi): ServerControl {
 	syncLauncher();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.path") || e.affectsConfiguration("omp.extraArgs")) syncLauncher();
+			const changed = { path: e.affectsConfiguration("omp.path"), extraArgs: e.affectsConfiguration("omp.extraArgs"), service: e.affectsConfiguration("omp.server.installService") };
+			if (changed.path || changed.extraArgs || changed.service) syncLauncher(changed);
 		}),
 	);
 
@@ -139,7 +159,7 @@ export function registerServer(api: OmpApi): ServerControl {
 			if (moved) {
 				log.info(`replaced the launcher ${moved.from} with ${moved.to}`);
 				const dir = path.dirname(moved.to);
-				if (!onPath(dir)) void vscode.window.showInformationMessage(`The terminal command is now \`${COMMAND}\`, installed at ${moved.to}. Add ${dir} to your PATH to run it.`);
+				if (!onPath(dir)) void vscode.window.showInformationMessage(plain(`The terminal command is now \`${COMMAND}\`, installed at ${moved.to}. Add ${dir} to your PATH to run it.`));
 			}
 		} catch (err) {
 			log.warn(`could not replace the old launcher: ${String(err)}`);
@@ -152,18 +172,50 @@ export function registerServer(api: OmpApi): ServerControl {
 		}
 	};
 
+	let migration: Promise<void> | undefined;
+	/**
+	 * Tells the user once that the server now starts at login (ensureServer installed the user service).
+	 * Turn Off does what `omp-sessions server uninstall && omp-sessions config set service off` does, and
+	 * starts the server again without the service (removing the unit stopped the server it ran).
+	 */
+	const onServiceInstalled = (r: ServiceInstall) => {
+		log.info(`installed the omp-sessions ${r.kind} user service ${r.file}${r.ok ? "" : " (it did not start)"}`);
+		void vscode.window.showInformationMessage(plain(`The omp-sessions server is now a ${r.kind} user service (${r.file}): it restarts after a crash or reboot.`), "Turn Off").then(async a => {
+			if (!a) return;
+			try {
+				removeServiceUnit(r.kind, r.file, r.kind === "systemd" ? SYSTEMD_UNIT : LAUNCHD_LABEL);
+				writeLauncherSettings({ service: "off" });
+				await vscode.workspace.getConfiguration("omp").update("server.installService", false, vscode.ConfigurationTarget.Global);
+				log.info(`removed the omp-sessions user service ${r.file}; service off`);
+				log.info(await startServer(false));
+			} catch (err) {
+				void vscode.window.showErrorMessage(plain(`Could not remove the omp-sessions service: ${err instanceof Error ? err.message : String(err)}`));
+			}
+		});
+	};
+	/**
+	 * VS Code's own runtime moves with VS Code updates (Remote-SSH: `~/.vscode-server/…/Stable-<commit>/…`):
+	 * no new login service runs it. A unit whose node is gone is re-pointed at it, though, at every start.
+	 */
+	const serverStart = (): EnsureServerOptions => ({
+		onServiceInstalled,
+		onServiceRepaired: r => log.info(`the ${r.kind} user service ran a node or server.js that is gone; it now runs ${getNode().path} (${r.file})`),
+		installService: !getNode().electron,
+	});
 	const startServer = async (restart: boolean): Promise<string> => {
 		if (!runtime) throw new Error("the omp-sessions runtime is not installed");
+		// The old command's service would hold the server socket, and must be gone before a new one is installed.
+		await (migration ??= migrate());
 		const script = path.join(runtime, "server.js");
 		if (restart) await stopServer();
-		let client = await ensureServer(script, getNode().path);
+		let client = await ensureServer(script, getNode().path, undefined, serverStart());
 		if (!client) throw new Error(`the omp-sessions server did not start (see ${serverLogPath()})`);
 		let info = await client.request("ping", {}, 3000);
 		if (compareVersions(info.version, version) < 0) {
 			log.info(`restarting omp-sessions server ${info.version} → ${version}`);
 			client.close();
 			await stopServer();
-			client = await ensureServer(script, getNode().path);
+			client = await ensureServer(script, getNode().path, undefined, serverStart());
 			if (!client) throw new Error(`the omp-sessions server did not restart (see ${serverLogPath()})`);
 			info = await client.request("ping", {}, 3000);
 		}
@@ -174,7 +226,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	// Off the activation path: finding node and starting the server take a moment. The migration
 	// comes first: an old service would hold the server socket.
 	setTimeout(async () => {
-		await migrate();
+		await (migration ??= migrate());
 		try {
 			refreshShim();
 		} catch (err) {
@@ -198,12 +250,12 @@ export function registerServer(api: OmpApi): ServerControl {
 				migrateLegacyLauncher();
 				writeLauncher(file, launcherText(getNode(), path.join(runtime, "cli.js")));
 			} catch (err) {
-				void vscode.window.showErrorMessage(`Could not install ${COMMAND}: ${String(err)}`);
+				void vscode.window.showErrorMessage(plain(`Could not install ${COMMAND}: ${String(err)}`));
 				return;
 			}
 			const dir = path.dirname(file);
 			const hint = onPath(dir) ? `Run \`${COMMAND} help\` in a terminal.` : `Add ${dir} to your PATH to run it as \`${COMMAND}\`.`;
-			const pick = await vscode.window.showInformationMessage(`Installed the ${COMMAND} command at ${file}. ${hint}`, "Open Terminal");
+			const pick = await vscode.window.showInformationMessage(plain(`Installed the ${COMMAND} command at ${file}. ${hint}`), "Open Terminal");
 			if (pick === "Open Terminal") {
 				const term = vscode.window.createTerminal({ name: COMMAND });
 				term.show();
@@ -212,15 +264,15 @@ export function registerServer(api: OmpApi): ServerControl {
 		}),
 		vscode.commands.registerCommand("omp.server.restart", async () => {
 			try {
-				void vscode.window.showInformationMessage(await startServer(true));
+				void vscode.window.showInformationMessage(plain(await startServer(true)));
 			} catch (err) {
-				void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+				void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)));
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.showLog", async () => {
 			const file = serverLogPath();
 			if (!fs.existsSync(file)) {
-				const running = await ServerClient.connect();
+				const running = await ServerClient.connect().catch(() => undefined);
 				running?.close();
 				void vscode.window.showInformationMessage(running ? "The omp-sessions server has not logged anything yet." : "The omp-sessions server has not run yet.");
 				return;

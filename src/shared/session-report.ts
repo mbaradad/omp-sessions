@@ -1,19 +1,23 @@
 // What other agents and scripts see of a session (`omp-sessions show|wait --json`, the omp-sessions
 // skill): one settled-or-not state, the pending question with its choices, and the full last reply.
 import { isRecord } from "./bridge";
+import { HOST_CRASHED } from "./health";
 import type { PermissionMode } from "./permissions";
 import { DIALOG_METHODS, type SessionMeta, type UiRequest } from "./protocol";
 import type { SessionInfo } from "./server-protocol";
 
 /**
- * `queued`: stopped (or waiting for a concurrency slot) with work the server will start.
- * `working`: a turn runs, or queued tasks continue on their own. `needs_input`: a question or
- * approval waits for an answer. `idle`: done for now. `stopped`: no omp process and no queued work.
+ * `queued`: stopped (or waiting for a concurrency slot) with work the server starts now.
+ * `scheduled`: pending tasks wait for a start time (`queue.startAt`). `working`: a turn runs, or
+ * queued tasks continue on their own. `needs_input`: a question or approval waits for an answer.
+ * `interrupted`: a host crash or reboot cut a turn or a queued task short and nothing continues
+ * until someone resumes the session / restarts the task (`queue.interrupted`, `exitReason`).
+ * `idle`: done for now. `stopped`: no omp process and no queued work.
  */
-export type AgentState = "queued" | "starting" | "working" | "needs_input" | "idle" | "stopped";
+export type AgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
-/** States in which nothing happens until someone acts: what `omp-sessions wait` waits for. */
-export const SETTLED_STATES: Readonly<Record<AgentState, boolean>> = { queued: false, starting: false, working: false, needs_input: true, idle: true, stopped: true };
+/** States in which nothing happens until someone acts (or a start time comes): what `omp-sessions wait` waits for. */
+export const SETTLED_STATES: Readonly<Record<AgentState, boolean>> = { queued: false, scheduled: true, starting: false, working: false, needs_input: true, interrupted: true, idle: true, stopped: true };
 
 export interface SessionQuestion {
 	id: string;
@@ -58,15 +62,20 @@ function queueBusy(q: SessionInfo["queue"]): boolean {
 	return q.running > 0 || (q.autoRun && q.pending > 0);
 }
 
-export function agentState(info: Pick<SessionInfo, "meta" | "queue" | "waiting">): AgentState {
+export function agentState(info: Pick<SessionInfo, "meta" | "queue" | "waiting">, now = Date.now()): AgentState {
 	const { meta, queue, waiting } = info;
 	if (meta.status === "waiting") return "needs_input";
 	if (meta.status === "starting") return "starting";
 	if (meta.status === "working") return "working";
 	if (waiting) return "queued";
-	if (meta.status === "stopped") return queue.pending > 0 && (queue.autoRun || queue.startAt !== undefined) ? "queued" : "stopped";
+	// A start time is a person's decision to run the queue then; it wins over an earlier interruption.
+	if (queue.pending > 0 && !queue.autoRun && queue.startAt !== undefined) return queue.startAt > now ? "scheduled" : "queued";
+	// Interrupted queued tasks stop the queue (auto-run off) until a person restarts them.
+	if (queue.running === 0 && !queue.autoRun && queue.interrupted) return "interrupted";
+	if (meta.status === "stopped" && meta.exitReason === HOST_CRASHED) return "interrupted";
+	if (meta.status === "stopped") return queue.pending > 0 && queue.autoRun ? "queued" : "stopped";
 	if (queueBusy(queue)) return "working";
-	return queue.pending > 0 && queue.startAt !== undefined ? "queued" : "idle";
+	return "idle";
 }
 
 export function questionOf(req: UiRequest): SessionQuestion {

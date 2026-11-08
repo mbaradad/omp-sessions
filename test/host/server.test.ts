@@ -2,7 +2,7 @@
 // priority within the concurrency limit, stopping them when their queue is done unless someone
 // watches, never rerunning a task a crash interrupted; and the host's viewer/activity fields it
 // relies on.
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -102,19 +102,79 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	viewer = undefined;
 	await until(() => meta("low")?.status === "stopped", "low stopped once nobody watches", 15000);
 
-	// A task a crash left "running" is never rerun unattended.
+	// A task a crash left "running" is never rerun unattended: it is settled as interrupted instead.
 	assert.equal(meta("crashed")?.pid, 0);
+	const settled = queue("crashed");
+	assert.equal(settled?.tasks[0].status, "pending");
+	assert.equal(typeof settled?.tasks[0].interrupted, "number");
+	assert.equal(settled?.autoRun, false);
 
 	process.env.OMP_VSCODE_HOME = home;
 	const client = await ServerClient.connect();
 	assert.ok(client, "server answers on its socket");
 	const list = await client.request("list", {});
 	client.close();
-	assert.deepEqual(list.map(i => [i.meta.id, i.column]).sort(), [
-		["crashed", "stopped"],
-		["low", "stopped"],
-		["urgent", "stopped"],
+	assert.deepEqual(list.map(i => [i.meta.id, i.column, i.state]).sort(), [
+		["crashed", "stopped", "interrupted"],
+		["low", "stopped", "stopped"],
+		["urgent", "stopped", "stopped"],
 	]);
+});
+
+test("server after a reboot: queued work resumes, a task the reboot cut short is interrupted (not rerun), a stale pid file doesn't block", async t => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-reboot-"));
+	const cwd = path.join(home, "work");
+	const fake = path.join(home, "fake-sessions");
+	for (const d of [cwd, fake, path.join(home, "sessions")]) fs.mkdirSync(d, { recursive: true });
+	fs.writeFileSync(path.join(home, "launcher.json"), JSON.stringify({ ompPath: FAKE_OMP }));
+	// Hosts that ran before the "reboot": their pid is gone; one was idle with work queued, one mid-task.
+	const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+	queuedSession(home, "queued", cwd, "echo after reboot");
+	queuedSession(home, "midtask", cwd, "slow 600", "running");
+	const metaFile = (id: string) => path.join(home, "sessions", id, "meta.json");
+	const meta = (id: string) => readJson<SessionMeta>(metaFile(id));
+	const queue = (id: string) => readJson<TaskQueue>(path.join(home, "sessions", id, "queue.json"));
+	for (const [id, status] of [["queued", "idle"], ["midtask", "working"]] as const) fs.writeFileSync(metaFile(id), JSON.stringify({ ...meta(id), status, pid: deadPid, socket: path.join(home, `${id}.sock`) }));
+	// A pid file naming a live process that is not a server (pid reuse after a reboot), written long ago.
+	fs.writeFileSync(path.join(home, "server.pid"), String(process.pid));
+	const old = new Date(Date.now() - 60_000);
+	fs.utimesSync(path.join(home, "server.pid"), old, old);
+
+	const env = { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" };
+	// Started together, only one server keeps running.
+	const servers: ChildProcess[] = [0, 1, 2].map(() => spawn(process.execPath, [SERVER_JS], { env, stdio: "ignore" }));
+	const pids = new Set<number>();
+	t.after(async () => {
+		for (const s of servers) s.kill("SIGTERM");
+		for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
+		await until(() => [...pids].every(p => !alive(p)) && servers.every(s => s.exitCode !== null || s.signalCode !== null), "processes to exit", 5000).catch(() => {});
+		fs.rmSync(home, { recursive: true, force: true });
+	});
+
+	await until(() => queue("queued")?.tasks[0].status === "done", "queued work ran after the reboot", 20000);
+	const ran = meta("queued");
+	if (ran?.pid) pids.add(ran.pid);
+	if (ran?.ompPid) pids.add(ran.ompPid);
+	assert.equal(ran?.launchedBy, "scheduler");
+
+	await until(() => servers.filter(s => s.exitCode === null).length === 1, "the extra servers exit", 10000);
+	assert.ok(servers.filter(s => s.exitCode !== null).every(s => s.exitCode === 0), "losing servers exit cleanly");
+
+	const mid = queue("midtask");
+	assert.equal(mid?.tasks[0].status, "pending");
+	assert.equal(typeof mid?.tasks[0].interrupted, "number");
+	assert.equal(mid?.autoRun, false);
+	assert.equal(meta("midtask")?.pid, deadPid, "never relaunched");
+
+	process.env.OMP_VSCODE_HOME = home;
+	const client = await ServerClient.connect();
+	assert.ok(client, "server answers on its socket");
+	const list = await client.request("list", {});
+	client.close();
+	assert.equal(list.find(i => i.meta.id === "midtask")?.state, "interrupted");
+	// No clients, nothing to do: the server stays up (it only exits when asked to).
+	await sleep(3000);
+	assert.equal(servers.filter(s => s.exitCode === null).length, 1);
 });
 
 test("host: meta.viewers counts people, not the omp-sessions server or omp-sessions show; prompts stamp userActiveAt", async t => {

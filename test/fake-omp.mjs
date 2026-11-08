@@ -27,11 +27,13 @@
 //   FAKE_OMP_NO_LIVE=1    `live_start` fails like an omp without realtime voice (default: scripted live_* frames)
 //   FAKE_OMP_REPLIES      JSON file of scripted replies per prompt (see runReply), for demos
 //   FAKE_OMP_DEMO=1       real-looking model names and token prices, for screenshots
+//   FAKE_OMP_AUTO_TITLE=1 name the session after the first prompt ("Auto: <prompt>") unless a client
+//                      set a name, like omp's title generator (which a user-set name disables)
 //
 // `--approval-mode always-ask` (what the host passes) makes write/edit/bash tool calls wait for an
 // approval `select` ("Allow tool: <name>", Approve / … / Deny) like omp does.
 //
-// `--restore <file>` loads the transcript like `--resume <file>`.
+// `--restore` with `--mode` exits 2 with omp's error, like real omp (restore is interactive-only).
 
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
@@ -47,7 +49,7 @@ function flag(name) {
 	return i >= 0 ? argv[i + 1] : undefined;
 }
 const cwd = path.resolve(flag("--cwd") ?? process.cwd());
-const resumeFile = flag("--resume") ?? flag("--restore");
+const resumeFile = flag("--resume");
 const approvalMode = flag("--approval-mode");
 const sessionsDir = process.env.FAKE_OMP_SESSIONS || path.join(os.tmpdir(), "fake-omp-sessions");
 const logFile = process.env.FAKE_OMP_LOG;
@@ -68,6 +70,10 @@ if (argv[0] === "config") {
 	process.exit(0);
 }
 debug({ kind: "argv", argv, cwd: process.cwd() });
+if (argv.includes("--restore") && argv.includes("--mode")) {
+	process.stderr.write("Error: --restore requires an interactive terminal (not --print or --mode).\n");
+	process.exit(2);
+}
 
 // ---------- models ----------
 const DEMO = process.env.FAKE_OMP_DEMO === "1";
@@ -83,8 +89,16 @@ const MODELS = DEMO
 			{ provider: "fake", id: "fake-mini", name: "Fake Mini", api: "fake", contextWindow: 100000, maxTokens: 8000, reasoning: false, input: ["text"] },
 		];
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"];
-let model = MODELS[0];
+// `--model provider/id` (or a bare id) picks the starting model, like omp's flag.
+let model = MODELS.find(m => [`${m.provider}/${m.id}`, m.id].includes(flag("--model") ?? "")) ?? MODELS[0];
 let thinkingLevel = "medium";
+// `omp models [find <pattern>] --json` (the omp-sessions models list).
+if (argv[0] === "models") {
+	const pattern = argv[1] === "find" ? (argv[2] ?? "").toLowerCase() : "";
+	const models = MODELS.filter(m => !pattern || `${m.provider}/${m.id} ${m.name}`.toLowerCase().includes(pattern)).map(m => ({ ...m, kind: "chat", selector: `${m.provider}/${m.id}` }));
+	process.stdout.write(`${JSON.stringify({ models })}\n`);
+	process.exit(0);
+}
 
 // ---------- session file ----------
 let sessionFile = "";
@@ -506,6 +520,11 @@ function onPrompt(cmd) {
 		return;
 	}
 	respond(cmd, { agentInvoked: true });
+	// omp's title generator names an unnamed session from its first prompt; a client-set name stops it.
+	if (process.env.FAKE_OMP_AUTO_TITLE === "1" && sessionName === undefined) {
+		sessionName = `Auto: ${text.split("\n")[0].slice(0, 40)}`;
+		appendEntry({ type: "session_info", name: sessionName, timestamp: new Date().toISOString() });
+	}
 	if (streaming) {
 		queue.push({ cmd, text });
 		out({ type: "queue_update", steering: [], followUp: queue.map(q => q.text) });

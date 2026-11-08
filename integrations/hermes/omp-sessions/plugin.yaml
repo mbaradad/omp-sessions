@@ -4,7 +4,7 @@ version: 0.6.0
 description: Start, schedule and supervise omp coding sessions (omp-sessions) from Hermes, hear back when they settle, and run kanban cards assigned to omp as omp sessions.
 author: Manel Baradad
 license: MIT
-homepage: https://mbaradad.github.io/omp-vscode/
+homepage: https://mbaradad.github.io/omp-sessions/
 tags: [coding, omp, sessions, kanban, scheduling]
 requires_hermes: ">=0.23.0"
 provides_tools:
@@ -17,5 +17,10 @@ provides_tools:
   - omp_session_answer
   - omp_session_mode
   - omp_session_stop
+  - omp_queue_add
+  - omp_queue_schedule
+  - omp_server_status
+  - omp_models_list
+  - omp_session_model
 provides_hooks:
   - on_kanban_dispatch_tick

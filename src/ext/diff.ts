@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { EMPTY_BLOB, type FileChange, blobPath } from "../shared/protocol";
+import { plain } from "./plain";
 
 export const SNAPSHOT_SCHEME = "omp-snapshot";
 
@@ -72,7 +73,7 @@ export async function openFile(file: string, line?: number, column?: number, cha
 	try {
 		stat = await vscode.workspace.fs.stat(uri);
 	} catch {
-		void vscode.window.showWarningMessage(`File not found: ${file}`);
+		void vscode.window.showWarningMessage(plain(`File not found: ${file}`));
 		return;
 	}
 	if (stat.type & vscode.FileType.Directory) {

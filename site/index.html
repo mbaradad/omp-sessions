@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0c0812" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#faf8fd" media="(prefers-color-scheme: light)">
-<link rel="canonical" href="https://mbaradad.github.io/omp-vscode/">
+<link rel="canonical" href="https://mbaradad.github.io/omp-sessions/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/icon.png" type="image/png" sizes="256x256">
 <link rel="apple-touch-icon" href="assets/icon.png">
@@ -17,15 +17,15 @@
 <meta property="og:site_name" content="omp Sessions">
 <meta property="og:title" content="omp Sessions: a task server for your coding agents">
 <meta property="og:description" content="Background oh-my-pi (omp) sessions with task queues, scheduled starts and a concurrency limit. Drive them from VS Code, the terminal, your phone or Hermes Agent. Free, MIT, no telemetry.">
-<meta property="og:url" content="https://mbaradad.github.io/omp-vscode/">
-<meta property="og:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
+<meta property="og:url" content="https://mbaradad.github.io/omp-sessions/">
+<meta property="og:image" content="https://mbaradad.github.io/omp-sessions/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="omp Sessions: a task server for your coding agents.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="omp Sessions: a task server for your coding agents">
 <meta name="twitter:description" content="Background oh-my-pi (omp) sessions with task queues, scheduled starts and a concurrency limit. Free, MIT, no telemetry.">
-<meta name="twitter:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
+<meta name="twitter:image" content="https://mbaradad.github.io/omp-sessions/assets/og.png">
 <meta name="twitter:image:alt" content="omp Sessions: a task server for your coding agents.">
 
 <link rel="stylesheet" href="styles.css">
@@ -86,7 +86,7 @@
       <a href="#faq">FAQ</a>
     </nav>
     <div class="nav__cta">
-      <a class="btn btn--ghost btn--sm btn--icon-sm" href="https://github.com/mbaradad/omp-vscode" aria-label="omp Sessions on GitHub"><svg class="i"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
+      <a class="btn btn--ghost btn--sm btn--icon-sm" href="https://github.com/mbaradad/omp-sessions" aria-label="omp Sessions on GitHub"><svg class="i"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
       <a class="btn btn--primary btn--sm" href="#install">Install</a>
     </div>
   </div>
@@ -98,13 +98,13 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="hero__glow" aria-hidden="true"></div>
   <div class="wrap hero__in">
-    <a class="pill" href="#new">
+    <a class="pill" href="#cli">
       <span class="pill__tag">New in 0.6</span>
-      <span class="pill__text">Permission modes, checkpoints, voice, a phone app and a Hermes plugin</span>
+      <span class="pill__text">The omp-sessions command, a phone app, a Hermes plugin and permission modes</span>
       <svg class="i i--sm" aria-hidden="true"><use href="#i-arrow"/></svg>
     </a>
     <h1 id="hero-title" class="hero__title">A task server for <span class="grad">your coding agents.</span></h1>
-    <p class="lede">omp Sessions runs <a href="https://omp.sh">oh-my-pi</a> sessions as background jobs on your machine. Give each one a queue of tasks, schedule when it starts and cap how many run at once. Sessions keep working when you close VS&nbsp;Code or drop SSH, and the server starts queued work again after a reboot. Drive it all from VS&nbsp;Code, the terminal, your phone or Hermes Agent.</p>
+    <p class="lede">omp Sessions runs <a href="https://omp.sh">oh-my-pi</a> sessions as background jobs on your machine. Give each one a queue of tasks, schedule when it starts and cap how many run at once; queued work picks up again after a reboot. Drive it from the terminal, VS&nbsp;Code, your phone or Hermes Agent.</p>
     <div class="ctas">
       <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
       <a class="btn btn--ghost btn--lg" href="https://open-vsx.org/extension/mbaradad/omp-sessions">Get it on Open VSX</a>
@@ -116,7 +116,7 @@
     <ul class="facts" aria-label="At a glance">
       <li>Free &amp; MIT</li>
       <li>No telemetry</li>
-      <li>Linux, macOS &amp; WSL</li>
+      <li>Linux &amp; macOS</li>
       <li>Local or remote</li>
     </ul>
   </div>
@@ -244,7 +244,7 @@
       <div class="mini reveal">
         <svg class="i mini__ic" aria-hidden="true"><use href="#i-resume"/></svg>
         <h3>Resumable after anything</h3>
-        <p>Stopped sessions keep their transcript and resume on it. A crashed host shows as stopped and resumes cleanly. You can even adopt an omp session started in a terminal.</p>
+        <p>Stopped sessions keep their transcript and resume on it. A host that crashed mid-turn continues that turn when you resume it. You can even adopt an omp session started in a terminal, or one <code>omp gc</code> archived.</p>
       </div>
     </div>
   </div>
@@ -283,7 +283,7 @@
         </div>
       </div>
     </div>
-    <p class="fine reveal">A failure or an interruption pauses the queue. Tasks interrupted by a crash are never rerun unattended.</p>
+    <p class="fine reveal">A failure pauses the queue. A task cut short by a crash or reboot is marked <em>interrupted</em> and waits for you: it never reruns unattended.</p>
   </div>
 </section>
 
@@ -293,7 +293,7 @@
     <header class="shead">
       <p class="eyebrow">How it fits together</p>
       <h2 id="fit-title">One server. <span class="grad">Every way in.</span></h2>
-      <p class="sub">One <code>omp-sessions</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
+      <p class="sub">One <code>omp-sessions</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
     </header>
     <figure class="fit reveal">
       <figcaption class="sr-only">Five clients (VS Code, the omp-sessions terminal command, the phone app and HTTP API, Hermes Agent, and other agents through the omp-sessions skill) all talk to one omp-sessions server per machine. The server starts and schedules sessions; each session runs in its own detached host process with omp.</figcaption>
@@ -331,7 +331,7 @@
       <div class="mini reveal">
         <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
         <h3>Built for scripts</h3>
-        <p><code>omp-sessions new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
+        <p><code>omp-sessions new --json</code>, <code>wait</code>, <code>show</code>, <code>answer</code> and <code>status --json</code>: start a session, block until it's done or needs you, read the reply, check the machine.</p>
       </div>
     </div>
   </div>
@@ -480,40 +480,38 @@
     <div class="cli__text reveal">
       <p class="eyebrow">omp-sessions</p>
       <h2 id="cli-title">Same sessions. <span class="grad">No VS&nbsp;Code required.</span></h2>
-      <p class="sub sub--left"><em>omp: Install omp-sessions Command</em> puts <code>omp-sessions</code> in <code>~/.local/bin</code>. Reach the same sessions over plain SSH, from scripts, or after a reboot. It runs on Node 22+, or on VS Code's own runtime.</p>
+      <p class="sub sub--left">The <code>omp-sessions</code> command drives everything the server does: sessions, queues, schedules, models and the server itself, over plain SSH or from scripts. Install it from VS&nbsp;Code (<em>omp: Install omp-sessions Command</em>) or, without VS&nbsp;Code, with <code>npm install -g</code> from the GitHub release.</p>
       <dl class="cmds">
+        <div><dt><code>status</code></dt><dd>server, service, omp, model, sessions by state</dd></div>
         <div><dt><code>new . -p "…"</code></dt><dd>start a session with a prompt</dd></div>
-        <div><dt><code>attach .</code></dt><dd>chat in the terminal; <kbd>Ctrl</kbd>+<kbd>D</kbd> detaches</dd></div>
-        <div><dt><code>tail &lt;id&gt; -f</code></dt><dd>follow output</dd></div>
-        <div><dt><code>queue &lt;id&gt; add "…" --run</code></dt><dd>queue work and start it</dd></div>
-        <div><dt><code>board</code></dt><dd>waiting / working / needs input / idle</dd></div>
-        <div><dt><code>server install</code></dt><dd>systemd user unit or launchd agent</dd></div>
+        <div><dt><code>new . --task "…" --at 02:00</code></dt><dd>queue it, or schedule it</dd></div>
+        <div><dt><code>ls --state needs_input</code></dt><dd>filter by project, group, tag or state</dd></div>
+        <div><dt><code>model . &lt;provider/id&gt;</code></dt><dd>switch a session's model; <code>models</code> lists them</dd></div>
+        <div><dt><code>vscode .</code></dt><dd>open the session in VS&nbsp;Code</dd></div>
       </dl>
     </div>
     <figure class="term reveal">
-      <figcaption class="sr-only">Terminal example: omp-sessions ls lists three running sessions with status, title, queue progress, project, last activity and cost. omp-sessions send prompts a session by title words and streams its tool calls and reply. omp-sessions board groups sessions into waiting, working, needs input and idle. omp-sessions sched set 2 limits queued tasks to two at once across all sessions.</figcaption>
+      <figcaption class="sr-only">Terminal example: omp-sessions status shows the server running as a systemd service, the omp path, the default model, sessions by state, pending tasks, the scheduler and remote access. omp-sessions ls lists four sessions with status, title, queue progress, project, last activity and cost, one of them scheduled. omp-sessions send prompts a session by title words and streams its tool calls and reply.</figcaption>
       <div class="term__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="term__title">mbaradad@build-box: ~/api-server</span></div>
-      <pre class="term__body" aria-hidden="true" data-term><span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions ls</span></span>
-<span class="tline tout dim">ID       STATUS        TITLE                 QUEUE    PROJECT         ACTIVE  COST</span>
-<span class="tline tout"><span class="dim">3f9c1a2e</span> <span class="c-yl">working</span>       Fix flaky auth test            <span class="dim">api-server      12s     $0.84</span></span>
-<span class="tline tout"><span class="dim">a07d55b1</span> <span class="c-mg">input</span>      <span class="c-yl">!</span>  Migrate config loader          <span class="dim">api-server      4m      $1.12</span></span>
-<span class="tline tout"><span class="dim">c2e8f019</span> <span class="c-yl">working</span>       Upgrade dependencies  <span class="c-yl">▶ 1/3</span>    <span class="dim">web-app         38s     $0.37</span></span>
-<span class="tline tout dim">2 finished sessions hidden · omp-sessions ls --all</span>
+      <pre class="term__body" aria-hidden="true" data-term><span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions status</span></span>
+<span class="tline tout"><b>omp-sessions</b> 0.6.0 <span class="dim">· home ~/.omp/vscode</span></span>
+<span class="tline tout"><span class="dim">server    </span><span class="c-gr">running</span> pid 2214 · 0.6.0 · up 3d</span>
+<span class="tline tout"><span class="dim">service   </span>systemd <span class="c-gr">installed</span></span>
+<span class="tline tout"><span class="dim">omp       </span>~/.local/bin/omp</span>
+<span class="tline tout"><span class="dim">model     </span>anthropic/claude-sonnet-4-5</span>
+<span class="tline tout"><span class="dim">sessions  </span>4 · 1 needs input · 2 working · 1 scheduled</span>
+<span class="tline tout"><span class="dim">scheduler </span>limit 2 · 2 running · 0 waiting · 1 scheduled</span>
+<span class="tline tout"><span class="dim">remote    </span><span class="c-gr">on</span> https://build-box.tail5e1.ts.net</span>
+<span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions ls</span></span>
+<span class="tline tout dim">ID       STATUS        TITLE                 QUEUE    PROJECT     COST</span>
+<span class="tline tout"><span class="dim">3f9c1a2e</span> <span class="c-yl">working</span>       Fix flaky auth test            <span class="dim">api-server  $0.84</span></span>
+<span class="tline tout"><span class="dim">a07d55b1</span> <span class="c-mg">needs input</span>   Migrate config loader          <span class="dim">api-server  $1.12</span></span>
+<span class="tline tout"><span class="dim">c2e8f019</span> <span class="c-yl">working</span>       Upgrade dependencies  <span class="c-yl">▶ 1/3</span>    <span class="dim">web-app     $0.37</span></span>
+<span class="tline tout"><span class="dim">e51b7d04</span> <span class="c-cy">scheduled</span>     Nightly test sweep      <span class="c-cy">0/1</span>    <span class="dim">api-server</span></span>
 <span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions send flaky "also update the docs" --wait</span></span>
 <span class="tline tout dim">▸ read docs/testing.md</span>
 <span class="tline tout dim">▸ edit docs/testing.md</span>
 <span class="tline tout">Documented the injected clock in docs/testing.md.</span>
-<span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions board</span></span>
-<span class="tline tout"><b>Waiting</b> <span class="dim">(0)</span></span>
-<span class="tline tout dim">  —</span>
-<span class="tline tout"><b>Working</b> <span class="dim">(2)</span></span>
-<span class="tline tout">  <span class="dim">3f9c1a2e</span>  Fix flaky auth test</span>
-<span class="tline tout">  <span class="dim">c2e8f019</span>  Upgrade dependencies  <span class="c-yl">▶ 1/3</span></span>
-<span class="tline tout"><b>Needs input</b> <span class="dim">(1)</span></span>
-<span class="tline tout">  <span class="dim">a07d55b1</span>  Migrate config loader  <span class="c-yl">high</span></span>
-<span class="tline tout"><b>Idle</b> <span class="dim">(0)</span></span>
-<span class="tline tout dim">  —</span>
-<span class="tline"><span class="tp">$</span> <span class="tc">omp-sessions sched set 2</span>   <span class="dim"># at most 2 queued tasks at once</span></span>
 <span class="tline"><span class="tp">$</span> <span class="caret caret--term"></span></span></pre>
     </figure>
   </div>
@@ -525,14 +523,15 @@
     <div class="phonesec__text reveal">
       <p class="eyebrow">Phone app &amp; HTTP API</p>
       <h2 id="phone-title">Your sessions, <span class="grad">in your pocket.</span></h2>
-      <p class="sub sub--left">Run <em>omp: Connect Phone…</em> and scan the QR code. The <code>omp-sessions</code> server serves a small web app you can add to your home screen, on the same machine as your sessions.</p>
+      <p class="sub sub--left">Run <em>omp: Connect Phone…</em> (or <code>omp-sessions remote on</code>) and scan the QR code. The <code>omp-sessions</code> server serves a small web app you can add to your home screen, on the same machine as your sessions.</p>
       <ul class="ticks">
-        <li>See what's working, waiting for you, or done</li>
+        <li>See the server's status and what's working, waiting for you, scheduled or done</li>
         <li>Follow a session live; prompt, steer or queue</li>
-        <li>Approve or deny tool calls and switch the permission mode</li>
+        <li>Approve or deny tool calls; switch the permission mode or the model</li>
         <li>Start a session in a recent folder, or queue it for later</li>
+        <li>Open a session in VS&nbsp;Code on your computer</li>
       </ul>
-      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted), behind Tailscale Serve or your own HTTPS proxy (handy in WSL), or your Wi-Fi, protected by a token. The same JSON + Server-Sent Events API is <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/REMOTE-API.md">documented</a> for your own apps and servers.</p>
+      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted), behind Tailscale Serve or your own HTTPS proxy, or your Wi-Fi, protected by a token. The same JSON + Server-Sent Events API is <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/REMOTE-API.md">documented</a> for your own apps and servers.</p>
     </div>
     <div class="phones reveal">
       <figure class="phone"><img src="assets/shots/phone-list.png" width="1170" height="2532" loading="lazy" decoding="async" alt="The phone app's session list, grouped into needs input, working, idle and stopped, with project, cost and last reply."><figcaption>All sessions</figcaption></figure>
@@ -555,11 +554,11 @@
         <p class="kicker">In Hermes</p>
         <h3>Schedule sessions from any chat or board.</h3>
         <ul class="ticks">
-          <li>Tools to start, queue or schedule a session for later, check it, answer it, steer it and stop it</li>
+          <li>14 tools to start, queue or schedule a session, check it, answer it, steer it, switch its model and stop it, and to check the server</li>
           <li>The chat that started a session gets a message when it finishes or needs you</li>
-          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board; the reply becomes the card's result, and comments on the card answer omp or steer it</li>
-          <li>Each session runs in a folder, a known project or the board's folder, in the permission mode you pick</li>
-          <li>In VS&nbsp;Code, those sessions carry a <em>Hermes · board · card</em> chip, with <em>Open Hermes Card</em></li>
+          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board, with an optional model per board; the reply becomes the card's result, and trusted comments answer omp or steer it</li>
+          <li>Approvals stay with you: comments and the agent can't answer them unless you allow it</li>
+          <li>Open any session, or its project, in VS&nbsp;Code from the page</li>
         </ul>
       </div>
       <div class="shot">
@@ -571,7 +570,7 @@
       <div class="row__text">
         <p class="kicker">Dashboard &amp; Desktop</p>
         <h3>An omp Sessions page in Hermes's sidebar.</h3>
-        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode, stop it or open its chat in VS&nbsp;Code; start new work now, queued or at a time; set up the kanban lane per board.</p>
+        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode or model, stop it, or open its chat or its project in VS&nbsp;Code; start new work now, queued or at a time; set up the kanban lane per board.</p>
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
@@ -584,10 +583,10 @@
         <h3>One command, every profile.</h3>
         <p>From VS Code, run <em>omp: Install Hermes Plugin…</em> and pick the profiles (or <code>omp-sessions hermes install --all-profiles</code>). Or install it with Hermes, straight from GitHub:</p>
         <div class="cmd cmd--block" data-copy-root>
-          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable</span></code>
+          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-sessions/integrations/hermes/omp-sessions --enable</span></code>
           <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
         </div>
-        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, comment <code>@omp</code> on a card to hand it to omp and answer it in the comments; chats and <code>/omp</code> work too. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
+        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, comment <code>@omp</code> on a card to hand it to omp and answer its questions in the comments; chats and <code>/omp</code> work too. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes Desktop · omp Sessions</span></div>
@@ -603,26 +602,26 @@
     <header class="shead">
       <p class="eyebrow">Your setup</p>
       <h2 id="setup-title">Your computer or a server. <span class="grad">Same steps.</span></h2>
-      <p class="sub">omp, the <code>omp-sessions</code> server, every session and Hermes run on the machine with your code. Only where you open the windows from changes.</p>
+      <p class="sub">omp, the <code>omp-sessions</code> server, every session and Hermes run on the machine with your code. Only where you reach them from changes.</p>
     </header>
     <div class="tools">
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-laptop"/></svg>
         <h3>All on one computer</h3>
-        <p>A local VS&nbsp;Code window, with omp, the server and Hermes on the same Mac or Linux machine. Hermes Desktop in local mode picks up the omp Sessions page from the plugin; your phone joins over Tailscale.</p>
+        <p>omp, the server and Hermes on the same Mac or Linux machine, with a local VS&nbsp;Code window or just the terminal. Hermes Desktop in local mode picks up the omp Sessions page from the plugin.</p>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-server"/></svg>
         <h3>A workstation or server</h3>
-        <p>VS&nbsp;Code connects with Remote-SSH and the extension runs there, next to your code and Hermes. Close the laptop: sessions, queues and the kanban lane keep going. Hermes Desktop connects in remote mode; add the page once with <em>Install from Git</em>.</p>
+        <p>Everything runs there; reach it with <code>ssh</code> and <code>omp-sessions</code>, or VS&nbsp;Code Remote-SSH. Close the laptop: sessions, queues and the kanban lane keep going. No VS&nbsp;Code on the box? Install the command from the release.</p>
       </article>
       <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-windows"/></svg>
-        <h3>Windows with WSL&nbsp;2</h3>
-        <p>Run omp and Hermes in WSL and open VS&nbsp;Code in a WSL window. Tailscale usually runs on Windows, so the phone connects through <code>tailscale serve</code>; <em>Connect Phone</em> walks you through it.</p>
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-phone"/></svg>
+        <h3>Phone &amp; Hermes from anywhere</h3>
+        <p>Pair the phone app over Tailscale, and connect Hermes Desktop or Hermes Console to the machine's Hermes. Answer, approve and queue work while you're away.</p>
       </article>
     </div>
-    <p class="fine setup__more reveal"><code>omp-sessions server install</code> keeps the server running as a systemd or launchd service; Hermes and the plugin work without VS&nbsp;Code open. Check it all with <em>omp: Run Doctor</em> and <code>hermes omp status</code>. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide, step by step</a>.</p>
+    <p class="fine setup__more reveal">The server installs itself as a systemd or launchd login service the first time it starts, so it survives crashes and reboots. Check everything with <code>omp-sessions status</code>, <em>omp: Run Doctor</em> and <code>hermes omp status</code>. On Windows, run it in WSL&nbsp;2. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide, step by step</a>.</p>
   </div>
 </section>
 
@@ -633,7 +632,7 @@
       <div class="row__text">
         <p class="kicker">Usage</p>
         <h3 id="usage-title">Know what your agents cost.</h3>
-        <p>The usage dashboard charts cost, tokens and sessions over any range. Today's spend sits in the status bar, and <em>Search Session History</em> finds anything in any transcript.</p>
+        <p>The usage dashboard charts cost, tokens and sessions over any range. Today's spend sits in the status bar, and <em>Search Session History</em> finds anything in any transcript. A session's cost includes its subagents and is the same in VS&nbsp;Code, the terminal, the phone and Hermes.</p>
         <ul class="ticks">
           <li>Cost per answer: hover a reply for model, tokens and cost</li>
           <li>Sort sessions by cost; cost on every board card</li>
@@ -709,7 +708,7 @@
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-sliders"/></svg>
         <h3>Sessions your way</h3>
-        <p><em>New Session with Options</em>: model, thinking level, permission mode, plan-first, advisor, a goal and extra omp flags, remembered for resumes.</p>
+        <p><em>New Session with Options</em>: model, thinking level, permission mode, plan-first, advisor, a goal and extra omp flags, remembered for resumes. A default model for every client, and a toggle between this workspace's sessions and all of them.</p>
       </article>
     </div>
   </div>
@@ -749,7 +748,7 @@
         <span class="step__n" aria-hidden="true">3</span>
         <h3>Start a session</h3>
         <p>Open a folder and press <strong>+</strong> in the omp Sessions view. <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> focuses the chat, and <em>Help → Get Started</em> walks you through the rest.</p>
-        <p class="step__more">Want the terminal too? Run <em>omp: Install omp-sessions Command</em>, then <code>omp-sessions server install</code> so queued work resumes after a reboot. On a server, in WSL or with Hermes? See <a href="#setup">your setup</a>.</p>
+        <p class="step__more">Want the terminal too? Run <em>omp: Install omp-sessions Command</em>, then <code>omp-sessions status</code>. No VS&nbsp;Code on that machine? <code>npm install -g</code> the <code>omp-sessions</code> package from the <a href="https://github.com/mbaradad/omp-sessions/releases">latest release</a>. On a server or with Hermes? See <a href="#setup">your setup</a>.</p>
       </li>
     </ol>
   </div>
@@ -761,12 +760,12 @@
     <header class="shead shead--left">
       <p class="eyebrow">FAQ</p>
       <h2 id="faq-title">Questions, answered.</h2>
-      <p class="sub sub--left">Anything else? <a href="https://github.com/mbaradad/omp-vscode/issues">Open an issue on GitHub</a>.</p>
+      <p class="sub sub--left">Anything else? <a href="https://github.com/mbaradad/omp-sessions/issues">Open an issue on GitHub</a>.</p>
     </header>
     <div class="faq__list">
       <details>
         <summary>What do I need?</summary>
-        <p>VS Code 1.100 or newer, and <a href="https://omp.sh">omp</a> installed on the machine where the extension host runs: your computer for local folders, the server for Remote-SSH. The optional <code>omp-sessions</code> command runs on Node 22+ from your PATH, or on VS Code's own runtime.</p>
+        <p><a href="https://omp.sh">omp</a> on the machine where sessions run, plus either VS Code 1.100 or newer with the extension (on that machine, or connected to it over Remote-SSH), or Node 22+ for the standalone <code>omp-sessions</code> command.</p>
       </details>
       <details>
         <summary>What does it cost?</summary>
@@ -774,19 +773,19 @@
       </details>
       <details>
         <summary>Does it collect any data?</summary>
-        <p>No telemetry. Session state lives in <code>~/.omp/vscode/</code> on the machine that runs the sessions, and transcripts stay in omp's own <code>~/.omp/agent/sessions/</code>. VS Code talks to each session over a local Unix socket; omp talks to the model provider you configured.</p>
+        <p>No telemetry. Session state lives in <code>~/.omp/vscode/</code> on the machine that runs the sessions, and transcripts stay in omp's own sessions folder. Clients talk to the server and each session over local Unix sockets; omp talks to the model provider you configured.</p>
       </details>
       <details>
         <summary>Do I need Remote-SSH?</summary>
-        <p>No. A local window works the same way: sessions run in detached processes on your computer and survive closing VS&nbsp;Code. Remote-SSH, WSL or a dev container only put them on another machine. The <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">setup guide</a> covers both.</p>
+        <p>No. A local window works the same way: sessions run in detached processes on your computer and survive closing VS&nbsp;Code. Remote-SSH only puts them on another machine, and the terminal command needs no VS&nbsp;Code at all. The <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">setup guide</a> covers both.</p>
       </details>
       <details>
         <summary>Which platforms are supported?</summary>
-        <p>Linux and macOS, as your local machine or as the Remote-SSH server, and Windows through WSL&nbsp;2 (open VS&nbsp;Code in a WSL window). On native Windows, named pipes and <code>.cmd</code> shims are handled, but it's untested.</p>
+        <p>Linux and macOS, as your own computer or as a server you reach over SSH. On Windows, run omp and omp Sessions in WSL&nbsp;2 (VS&nbsp;Code in a WSL window, Tailscale on the Windows side).</p>
       </details>
       <details>
         <summary>What happens when my machine reboots?</summary>
-        <p>A reboot stops sessions, but their transcripts stay resumable. Queued work restarts once the <code>omp-sessions</code> server runs again; <code>omp-sessions server install</code> starts it at login. Closing VS Code, sleeping or disconnecting doesn't stop anything.</p>
+        <p>Sessions stop, but their transcripts stay resumable. The server comes back as a login service and relaunches queued work that hadn't started. A task that was running is marked <em>interrupted</em> and waits for you, so nothing runs twice. Closing VS Code, sleeping or disconnecting doesn't stop anything.</p>
       </details>
       <details>
         <summary>Can I still use omp in the terminal?</summary>
@@ -794,11 +793,11 @@
       </details>
       <details>
         <summary>Can I use the Hermes plugin without VS Code?</summary>
-        <p>Hermes installs the plugin from GitHub (<code>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions</code>), but the plugin drives <code>omp-sessions</code>, which ships with the extension. Install the extension once on the machine that runs Hermes and run <em>omp: Install omp-sessions Command</em>; after that, VS Code doesn't need to stay open.</p>
+        <p>Yes. The plugin drives the <code>omp-sessions</code> command, which installs without VS&nbsp;Code: <code>npm install -g</code> the package from the <a href="https://github.com/mbaradad/omp-sessions/releases">latest release</a> on the machine that runs Hermes, then install the plugin with <code>omp-sessions hermes install</code> or <code>hermes plugins install mbaradad/omp-sessions/integrations/hermes/omp-sessions --enable</code>.</p>
       </details>
       <details>
         <summary>Does it work with Hermes Console on Android?</summary>
-        <p>Yes, through kanban and chats. Comment <code>@omp</code> on a card to hand it to omp; the card shows the session's status and result, blocks with omp's question (Console notifies you), and your comments answer that question or reach the session as messages. In chats, Hermes uses the omp tools and gets the "finished" and "needs you" notes, and <code>/omp</code> gives a summary. Console doesn't show plugin pages, so for every session at once use the omp phone app.</p>
+        <p>Yes, through kanban and chats. Comment <code>@omp</code> on a card to hand it to omp; the card shows the session's status and result, blocks with omp's question (Console notifies you), and your comments answer that question or reach the session as messages. Approvals are answered on the phone app or the omp Sessions page, not in comments. In chats, Hermes uses the omp tools and gets the "finished" and "needs you" notes, and <code>/omp</code> gives a summary. Console doesn't show plugin pages, so for every session at once use the omp phone app.</p>
       </details>
       <details>
         <summary>Are all file changes tracked for diffs and revert?</summary>
@@ -815,7 +814,7 @@
     <h2 id="cta-title">Give your agents somewhere <span class="grad">to keep working.</span></h2>
     <div class="ctas ctas--center">
       <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
-      <a class="btn btn--ghost btn--lg" href="https://github.com/mbaradad/omp-vscode"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
+      <a class="btn btn--ghost btn--lg" href="https://github.com/mbaradad/omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
     </div>
   </div>
 </section>
@@ -840,18 +839,18 @@
       <div>
         <h2>Project</h2>
         <ul>
-          <li><a href="https://github.com/mbaradad/omp-vscode">GitHub</a></li>
-          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/CHANGELOG.md">Changelog</a></li>
-          <li><a href="https://github.com/mbaradad/omp-vscode/issues">Issues</a></li>
-          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a></li>
-          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions">GitHub</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/issues">Issues</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/HERMES.md">Hermes guide</a></li>
         </ul>
       </div>
       <div>
         <h2>Legal</h2>
         <ul>
-          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/LICENSE">MIT License</a></li>
-          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/LICENSE">MIT License</a></li>
+          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/SECURITY.md">Security policy</a></li>
         </ul>
       </div>
     </nav>

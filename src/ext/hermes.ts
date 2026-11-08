@@ -32,15 +32,16 @@ import {
 	updateLines,
 	updatePlugin,
 } from "../shared/hermes-plugin";
-import { type HermesOrigin, hermesOrigin, kanbanUrl, showCardCommand } from "../shared/hermes-origin";
+import { type HermesOrigin, hermesOrigin, kanbanUrl, showCardArgs } from "../shared/hermes-origin";
 import type { OmpApi } from "./api";
+import { plain } from "./plain";
 
 const RESTART_COMMAND = "hermes gateway restart";
 
-/** `hermes -p <profile> <args>` without blocking the extension host. */
-function hermesAsync(hermes: string, target: HermesTarget, args: string[]): Promise<{ ok: boolean; output: string }> {
+/** `hermes <args>` without blocking the extension host (no shell, but for a .cmd shim on Windows). */
+function hermesAsync(hermes: string, args: string[]): Promise<{ ok: boolean; output: string }> {
 	const { promise, resolve } = Promise.withResolvers<{ ok: boolean; output: string }>();
-	const cmd = hermesCommand(hermes, ["-p", target.profile, ...args]);
+	const cmd = hermesCommand(hermes, args);
 	execFile(cmd.file, cmd.args, { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 60_000, shell: cmd.shell, windowsHide: true }, (err, stdout, stderr) => {
 		const out = `${stdout}${stderr}`.trim();
 		resolve({ ok: !err, output: out || err?.message || "" });
@@ -48,11 +49,16 @@ function hermesAsync(hermes: string, target: HermesTarget, args: string[]): Prom
 	return promise;
 }
 
+/** `hermes -p <profile> <args>`. */
+function hermesIn(hermes: string, target: HermesTarget, args: string[]): Promise<{ ok: boolean; output: string }> {
+	return hermesAsync(hermes, ["-p", target.profile, ...args]);
+}
+
 /** Disable → enable (retried once): the running gateway reloads the plugin's new files in place (no restart). */
 async function reload(hermes: string, target: HermesTarget): Promise<{ reload: HermesRun; leftDisabled: boolean }> {
 	const steps = reloadSteps();
 	let step = steps.next();
-	while (!step.done) step = steps.next(await hermesAsync(hermes, target, step.value));
+	while (!step.done) step = steps.next(await hermesIn(hermes, target, step.value));
 	return step.value;
 }
 
@@ -72,7 +78,7 @@ async function update(source: string, target: HermesTarget, hermes: string | und
 function warnLeftDisabled(labels: string[]): void {
 	if (!labels.length) return;
 	void vscode.window
-		.showWarningMessage(`The omp-sessions Hermes plugin was left disabled in profile ${labels.join(", ")}: enabling it again after the update failed twice.`, "Enable")
+		.showWarningMessage(plain(`The omp-sessions Hermes plugin was left disabled in profile ${labels.join(", ")}: enabling it again after the update failed twice.`), "Enable")
 		.then(a => a && vscode.commands.executeCommand("omp.hermes.enable", labels));
 }
 
@@ -160,6 +166,7 @@ function originOf(api: OmpApi, id: string | undefined): HermesOrigin | undefined
 }
 
 export function registerHermesPlugin(api: OmpApi): void {
+	let cardOutput: vscode.OutputChannel | undefined;
 	const source = path.join(api.context.extensionPath, "out", PLUGIN_BUNDLE);
 	// After activation settles: a few file reads per profile, and hermes runs only for copies that changed.
 	const timer = setTimeout(() => void refreshStaleCopies(source), 3000);
@@ -208,7 +215,7 @@ export function registerHermesPlugin(api: OmpApi): void {
 			if (pick.action === "install") lines.push(hermes ? "" : "hermes not found: enable it with `hermes -p <profile> plugins enable omp-sessions`.", ...AFTER_INSTALL);
 			const reports = targets.map(t => pluginReport(source, t));
 			lines.push("", `hermes: ${hermes ?? `not found (${hermesLookup()})`}`, ...reports.map(reportLine));
-			if (hermes) for (const [i, r] of reports.entries()) if (r.lane) lines.push("", `${r.label}:`, (await hermesAsync(hermes, targets[i], ["omp", "status"])).output);
+			if (hermes) for (const [i, r] of reports.entries()) if (r.lane) lines.push("", `${r.label}:`, (await hermesIn(hermes, targets[i], ["omp", "status"])).output);
 			void vscode.window.showInformationMessage("Hermes plugin", { modal: true, detail: lines.join("\n").trim() });
 			warnLeftDisabled(disabled);
 		}),
@@ -237,7 +244,7 @@ export function registerHermesPlugin(api: OmpApi): void {
 			const targets = targetsFrom(arg);
 			if (!targets.length) return;
 			if (!hermes) {
-				void vscode.window.showWarningMessage(`hermes not found (${hermesLookup()}).`);
+				void vscode.window.showWarningMessage(plain(`hermes not found (${hermesLookup()}).`));
 				return;
 			}
 			const lines = targets.map(t => {
@@ -251,13 +258,13 @@ export function registerHermesPlugin(api: OmpApi): void {
 			const [target] = targetsFrom(profile);
 			if (!target || (state !== "on" && state !== "off")) return;
 			if (!hermes) {
-				void vscode.window.showWarningMessage(`hermes not found (${hermesLookup()}).`);
+				void vscode.window.showWarningMessage(plain(`hermes not found (${hermesLookup()}).`));
 				return;
 			}
 			const command = `hermes -p ${target.label} omp lane ${state}`;
 			const ok = await vscode.window.showWarningMessage(`Turn the kanban lane ${state} in profile ${target.label}?`, { modal: true, detail: `Runs: ${command}` }, `Turn ${state === "on" ? "On" : "Off"}`);
 			if (!ok) return;
-			const r = await hermesAsync(hermes, target, ["omp", "lane", state]);
+			const r = await hermesIn(hermes, target, ["omp", "lane", state]);
 			rerunDoctor([r.output || (r.ok ? "done" : "failed")], r.ok ? "Kanban lane" : "Kanban lane: command failed");
 		}),
 
@@ -271,11 +278,11 @@ export function registerHermesPlugin(api: OmpApi): void {
 			if (!configured && !running) {
 				const pick = await vscode.window.showWarningMessage(
 					"No running Hermes dashboard found",
-					{ modal: true, detail: `Hermes doesn't record a running dashboard on this machine. Start it with \`hermes dashboard\`, set omp.hermes.dashboardUrl when it runs elsewhere, or show card ${origin.card} in a terminal.` },
-					"Show Card in Terminal",
+					{ modal: true, detail: `Hermes doesn't record a running dashboard on this machine. Start it with \`hermes dashboard\`, set omp.hermes.dashboardUrl when it runs elsewhere, or show card ${origin.card} here.` },
+					"Show Card",
 					`Open ${DEFAULT_DASHBOARD_URL}`,
 				);
-				if (pick === "Show Card in Terminal") await vscode.commands.executeCommand("omp.hermes.showCard", arg);
+				if (pick === "Show Card") await vscode.commands.executeCommand("omp.hermes.showCard", arg);
 				if (pick !== `Open ${DEFAULT_DASHBOARD_URL}`) return;
 			}
 			// openExternal forwards a remote machine's localhost port to this window's machine itself (Remote-SSH,
@@ -284,13 +291,27 @@ export function registerHermesPlugin(api: OmpApi): void {
 			// The Kanban page has no link to a board or card: say where to look.
 			vscode.window.setStatusBarMessage(`$(link-external) Hermes Kanban: card ${origin.card}${origin.board ? ` on board ${origin.board}` : ""}`, 15_000);
 		}),
-		vscode.commands.registerCommand("omp.hermes.showCard", (arg?: unknown) => {
+		vscode.commands.registerCommand("omp.hermes.showCard", async (arg?: unknown) => {
 			const origin = originOf(api, api.idFrom(arg));
 			if (!origin?.card) return;
-			// The command is PowerShell on Windows: open a PowerShell terminal whatever the default shell is.
-			const term = vscode.window.createTerminal({ name: `Hermes card ${origin.card}`, shellPath: process.platform === "win32" ? "powershell.exe" : undefined });
-			term.show();
-			term.sendText(showCardCommand(findHermes() ?? "hermes", { ...origin, card: origin.card }, process.platform));
+			const args = showCardArgs({ ...origin, card: origin.card });
+			if (!args) {
+				void vscode.window.showWarningMessage("This session's Hermes card or board tag isn't a plain Hermes id, so omp won't pass it to hermes.");
+				return;
+			}
+			const hermes = findHermes();
+			if (!hermes) {
+				void vscode.window.showWarningMessage(plain(`hermes not found (${hermesLookup()}).`));
+				return;
+			}
+			cardOutput ??= vscode.window.createOutputChannel("Hermes Card");
+			const out = cardOutput;
+			out.clear();
+			out.appendLine(`$ hermes ${args.join(" ")}`);
+			out.show(true);
+			const r = await hermesAsync(hermes, args);
+			out.appendLine(r.output || (r.ok ? "(no output)" : "failed"));
 		}),
+		{ dispose: () => cardOutput?.dispose() },
 	);
 }

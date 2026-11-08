@@ -1,6 +1,6 @@
 // Spawns the real session host (bundled by test/run.mjs) against test/fake-omp.mjs in a throwaway
 // OMP_VSCODE_HOME, and talks to it over its Unix socket like the extension does.
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -183,15 +183,22 @@ export class Host {
 		this.dir = path.join(this.home, "sessions", id);
 	}
 
+	/** Runs the `--daemonize` launcher, without waiting for the host it starts; resolves with the launcher's exit code. */
+	spawnLauncher(extraArgs: string[] = []): Promise<number | null> {
+		const child = spawn(process.execPath, [HOST_JS, "--daemonize", "--id", this.id, "--cwd", this.cwd, "--omp", FAKE_OMP, ...extraArgs], {
+			env: { ...process.env, OMP_VSCODE_HOME: this.home, FAKE_OMP_SESSIONS: this.sessions, FAKE_OMP_LOG: this.fakeLog, ...this.env },
+			stdio: "ignore",
+		});
+		const { promise, resolve } = Promise.withResolvers<number | null>();
+		child.on("exit", resolve);
+		return promise;
+	}
+
 	/** Launches `host.js --daemonize` and waits until the socket accepts connections. */
 	async start(extraArgs: string[] = []): Promise<void> {
 		const before = this.metaOrUndefined()?.pid;
-		const r = spawnSync(process.execPath, [HOST_JS, "--daemonize", "--id", this.id, "--cwd", this.cwd, "--omp", FAKE_OMP, ...extraArgs], {
-			env: { ...process.env, OMP_VSCODE_HOME: this.home, FAKE_OMP_SESSIONS: this.sessions, FAKE_OMP_LOG: this.fakeLog, ...this.env },
-			encoding: "utf8",
-			timeout: 5000,
-		});
-		if (r.status !== 0) throw new Error(`host launcher failed (${r.status}): ${r.stderr}`);
+		const status = await this.spawnLauncher(extraArgs);
+		if (status !== 0) throw new Error(`host launcher failed (${status})`);
 		const meta = await until(() => {
 			const m = this.metaOrUndefined();
 			return m && m.pid !== before && m.ompPid ? m : undefined;

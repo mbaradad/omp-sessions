@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { SessionMeta } from "../shared/protocol";
 import { openFile } from "./diff";
+import { plain } from "./plain";
 import { resolveOmpPath } from "./sessions";
 
 /** Commands that `command:` links in the chat may run (see openLink). */
@@ -91,6 +92,26 @@ export async function openLink(url: string, meta: SessionMeta | undefined, chatC
 	try {
 		await showText(await ompRead(url, cwd));
 	} catch (err) {
-		void vscode.window.showWarningMessage(`Could not open ${url}: ${(err as Error).message}`);
+		void vscode.window.showWarningMessage(plain(`Could not open ${url}: ${(err as Error).message}`));
 	}
+}
+
+/**
+ * omp's `open_url` request (a login page, a docs link): opened only for http(s), and only after the
+ * user agrees, since whatever drives the agent can make it ask.
+ */
+export async function openUrlFromOmp(url: string): Promise<void> {
+	let uri: vscode.Uri;
+	try {
+		uri = vscode.Uri.parse(url, true);
+	} catch {
+		return;
+	}
+	if (uri.scheme !== "http" && uri.scheme !== "https") {
+		void vscode.window.showWarningMessage(plain(`omp asked to open a ${uri.scheme}: link; only web links are opened: ${url}`));
+		return;
+	}
+	const pick = await vscode.window.showInformationMessage(plain(`omp wants to open ${url}`), "Open", "Copy Link");
+	if (pick === "Open") await vscode.env.openExternal(uri);
+	else if (pick === "Copy Link") await vscode.env.clipboard.writeText(url);
 }

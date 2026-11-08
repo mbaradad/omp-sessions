@@ -5,6 +5,7 @@ import { diffTexts } from "../shared/diff";
 import { EMPTY_BLOB, type SessionMeta, blobPath } from "../shared/protocol";
 import type { SnapshotProvider } from "./diff";
 import type { ChatPanel } from "./panel";
+import { plain } from "./plain";
 import type { SessionManager } from "./sessions";
 
 export interface IntegrationApi {
@@ -444,10 +445,10 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 				await vscode.workspace.fs.writeFile(uri, content);
 			}
 		} catch (err) {
-			void vscode.window.showErrorMessage(`Could not revert ${shown}: ${err instanceof Error ? err.message : String(err)}`);
+			void vscode.window.showErrorMessage(plain(`Could not revert ${shown}: ${err instanceof Error ? err.message : String(err)}`));
 			return;
 		}
-		void vscode.window.showInformationMessage(deletes ? `Deleted ${shown} (created by "${meta.title}").` : `Reverted ${shown} to its content before "${meta.title}".`);
+		void vscode.window.showInformationMessage(plain(deletes ? `Deleted ${shown} (created by "${meta.title}").` : `Reverted ${shown} to its content before "${meta.title}".`));
 		decorateVisible();
 	});
 }

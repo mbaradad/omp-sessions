@@ -149,6 +149,9 @@ button.secondary:hover { background: var(--vscode-button-secondaryHoverBackgroun
 .md li { margin: 0.15em 0; }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
 .md-img { max-width: 100%; border-radius: 6px; }
+.md-img-load { display: inline-block; max-width: 100%; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 0.9em; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.md-img-load:hover { color: inherit; border-style: solid; }
+.md-img-url { font-family: var(--mono); }
 .codeblock { border: 1px solid var(--border-soft); border-radius: var(--radius); overflow: hidden; margin: 0.6em 0; background: var(--vscode-textCodeBlock-background, var(--card)); }
 .code-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 2px 10px; font-size: 0.8em; color: var(--muted); border-bottom: 1px solid var(--border-soft); font-family: var(--mono); }
 .codeblock pre { margin: 0; padding: 9px 12px; overflow-x: auto; font-family: var(--mono); font-size: var(--mono-size); line-height: 1.5; }

@@ -126,3 +126,39 @@ test("service migration (systemd): stop + remove the old unit, install + start t
 		else process.env.OMP_VSCODE_HOME = saved;
 	}
 });
+
+test("service migration (launchd): boot out + remove the old agent, bootstrap the new one under the new label; idempotent", { skip: process.platform === "win32" }, async () => {
+	const home = temp();
+	const saved = { home: process.env.OMP_VSCODE_HOME, path: process.env.PATH };
+	process.env.OMP_VSCODE_HOME = path.join(home, "state");
+	// `launchctl bootout` runs directly (its failure doesn't matter): a fake one on PATH records it.
+	const bin = path.join(home, "bin");
+	const log = path.join(home, "launchctl.log");
+	fs.mkdirSync(bin);
+	fs.writeFileSync(path.join(bin, "launchctl"), `#!/bin/sh\necho "launchctl $@" >> ${JSON.stringify(log)}\nexit 0\n`, { mode: 0o755 });
+	process.env.PATH = `${bin}${path.delimiter}${saved.path ?? ""}`;
+	try {
+		const calls: string[] = [];
+		const exec = (cmd: string, argv: string[]) => (calls.push(`${cmd} ${argv.join(" ")}`), true);
+		const old = legacyServicePaths(home).launchd;
+		const oldText = serviceUnitText("launchd", "/usr/local/bin/node", "/rt/server.js", ["PATH=/usr/bin"]).replace(`<string>${LAUNCHD_LABEL}</string>`, "<string>dev.omp.vs-server</string>");
+		fs.mkdirSync(path.dirname(old), { recursive: true });
+		fs.writeFileSync(old, oldText);
+		const to = serviceUnitPaths(home).launchd;
+		assert.deepEqual(await migrateLegacyService("darwin", home, exec), { from: old, to, started: true });
+		assert.equal(fs.existsSync(old), false);
+		const text = fs.readFileSync(to, "utf8");
+		assert.equal(text, renamedServiceText("launchd", oldText));
+		assert.ok(text.includes(`<string>${LAUNCHD_LABEL}</string>`) && text.includes("<string>/usr/local/bin/node</string><string>/rt/server.js</string>"));
+		const domain = `gui/${os.userInfo().uid}`;
+		assert.deepEqual(calls, [`launchctl bootstrap ${domain} ${to}`]);
+		assert.deepEqual(fs.readFileSync(log, "utf8").trim().split("\n"), [`launchctl bootout ${domain}/dev.omp.vs-server`, `launchctl bootout ${domain}/${LAUNCHD_LABEL}`]);
+		assert.equal(await migrateLegacyService("darwin", home, exec), undefined, "second run: nothing to do");
+		assert.equal(calls.length, 1);
+	} finally {
+		for (const [key, value] of [["OMP_VSCODE_HOME", saved.home], ["PATH", saved.path]] as const) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+});

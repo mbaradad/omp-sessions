@@ -74,8 +74,6 @@ const dirs = {
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 const stateFile = path.join(tmp, "e2e-state.json");
 const fakeLog = path.join(tmp, "fake-omp.log");
-fs.mkdirSync(path.join(dirs.workspace, ".vscode"));
-fs.writeFileSync(path.join(dirs.workspace, ".vscode", "settings.json"), JSON.stringify({ "omp.path": fakeOmp }, null, 1));
 fs.writeFileSync(path.join(dirs.workspace, "existing.txt"), "original line\n");
 // A git repository (one commit) for the Source Control commands.
 for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]]) {
@@ -90,6 +88,8 @@ fs.writeFileSync(
 	path.join(dirs.userData, "User", "settings.json"),
 	JSON.stringify(
 		{
+			// omp.path is machine-scoped: a workspace can't set it.
+			"omp.path": fakeOmp,
 			"security.workspace.trust.enabled": false,
 			"workbench.startupEditor": "none",
 			"telemetry.telemetryLevel": "off",

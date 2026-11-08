@@ -7,11 +7,12 @@
 // - omp settings the host writes into an extra `--config` overlay (`session-overlay.yml`) from
 //   `session-config.json`: `disabledExtensions` (`skill:<name>`, `mcp:<name>`, …) merged with the
 //   user's own list, and built-in tool gates (`bash.enabled: false`, …).
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PERMISSION_MODE_INFO, permissionModeOf } from "./permissions";
 import { sessionDir, stateRoot } from "./protocol";
+import { spawnTarget } from "./win-spawn";
 
 export interface SessionToggles {
 	/** omp extension ids turned off for this session: `skill:<n>`, `mcp:<n>`, `rule:<n>`, `extension-module:<n>`. */
@@ -194,6 +195,17 @@ export function readLaunchArgs(id: string): string[] | undefined {
 	return undefined;
 }
 
+/** launch.json `title`: an explicit title a queued session was created with, not yet handed to its first host. */
+export function readLaunchTitle(id: string): string | undefined {
+	try {
+		const parsed: unknown = JSON.parse(fs.readFileSync(path.join(sessionDir(id), "launch.json"), "utf8"));
+		if (isRecord(parsed) && typeof parsed.title === "string" && parsed.title.trim()) return parsed.title;
+	} catch {
+		/* none */
+	}
+	return undefined;
+}
+
 /** Rewrites launch.json `ompArgs` keeping every other field (used on the next resume). */
 export function writeLaunchArgs(id: string, ompArgs: string[]): void {
 	const file = path.join(sessionDir(id), "launch.json");
@@ -206,6 +218,12 @@ export function writeLaunchArgs(id: string, ompArgs: string[]): void {
 	}
 	fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 	writeAtomic(file, JSON.stringify({ ...launch, ompArgs }));
+}
+
+/** Sets (undefined: clears) a session's `--model` launch flag: the model its next resume starts on. */
+export function setLaunchModel(id: string, model: string | undefined): void {
+	const args = readLaunchArgs(id) ?? [];
+	writeLaunchArgs(id, applyFlags(args, { ...readFlags(args), model }));
 }
 
 // ---- project defaults (per user, keyed by project folder; readable by the CLI and the daemon) ----
@@ -300,21 +318,19 @@ export function parseConfigValue(stdout: string): unknown {
 
 /** omp's effective value of one setting in `cwd` (`omp config get <key> --json`); undefined when unreadable. */
 export function readOmpSetting(omp: string, key: string, cwd: string, env: NodeJS.ProcessEnv, log: (...a: unknown[]) => void = () => {}): unknown {
-	try {
-		const out = execFileSync(omp, ["config", "get", key, "--json"], {
-			cwd,
-			env,
-			encoding: "utf8",
-			timeout: 15_000,
-			stdio: ["ignore", "pipe", "ignore"],
-			windowsHide: true,
-			shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(omp),
-		});
-		return parseConfigValue(out);
-	} catch (err) {
-		log(`session-config: could not read ${key}`, String(err));
-		return undefined;
-	}
+	const target = spawnTarget(omp, ["config", "get", key, "--json"]);
+	const res = spawnSync(target.file, target.args, {
+		cwd,
+		env,
+		encoding: "utf8",
+		timeout: 15_000,
+		stdio: ["ignore", "pipe", "ignore"],
+		windowsHide: true,
+		windowsVerbatimArguments: target.windowsVerbatimArguments,
+	});
+	if (res.status === 0) return parseConfigValue(res.stdout);
+	log(`session-config: could not read ${key}`, String(res.error ?? `exit ${res.status ?? res.signal}`));
+	return undefined;
 }
 
 /**

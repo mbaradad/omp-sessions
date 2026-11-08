@@ -94,7 +94,7 @@ test("a model error fails the task and disarms autoRun", async t => {
 	assert.equal(h.fakeCommands("prompt").length, 1);
 });
 
-test("host restart with a running task resets it to pending and disarms autoRun", async t => {
+test("host crash with a running task: back to pending as interrupted, autoRun disarmed, neither rerun nor continued", async t => {
 	const h = await launch(t);
 	const { client: c } = await h.connect();
 	c.send({ t: "queue", ops: [{ op: "add", title: "slow 20000" }, { op: "run" }] });
@@ -103,6 +103,8 @@ test("host restart with a running task resets it to pending and disarms autoRun"
 		const q: TaskQueue = JSON.parse(fs.readFileSync(path.join(h.dir, "queue.json"), "utf8"));
 		return q.tasks[0]?.status === "running";
 	}, "running task persisted");
+	// meta.json says working too: the crash cut a turn short, which must still not be continued (it was a queued task).
+	await until(() => h.meta().status === "working", "meta says working");
 	const { pid, ompPid } = h.meta();
 	// A crash, not a stop: no chance to update the queue.
 	process.kill(pid, "SIGKILL");
@@ -115,7 +117,11 @@ test("host restart with a running task resets it to pending and disarms autoRun"
 	assert.ok(snapshot.queue);
 	assert.equal(snapshot.queue.autoRun, false);
 	assert.equal(snapshot.queue.tasks[0].status, "pending");
-	assert.equal(snapshot.queue.tasks[0].summary, "Interrupted: the session host restarted.");
+	assert.equal(typeof snapshot.queue.tasks[0].interrupted, "number");
+	assert.equal(snapshot.meta.queue?.interrupted, 1);
+	await sleep(1500);
+	assert.equal(h.fakeCommands("prompt").length, 1, "only the original run");
+	assert.equal(h.meta().status, "idle");
 });
 
 test(

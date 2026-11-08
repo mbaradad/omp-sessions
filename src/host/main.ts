@@ -9,7 +9,11 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { isAuthError } from "../shared/health";
+import { TranscriptUsage, sessionTranscripts, totalCost } from "../shared/cost";
+import { HOST_CRASHED, isAuthError, settleDeadHost } from "../shared/health";
+import { hostLockPath } from "../shared/launch";
+import { prepareResume } from "../shared/omp-paths";
+import { beforeBoot, claimLock, lockOwner, pidAlive, releaseLock } from "../shared/process-lock";
 import {
 	type ClientToHost,
 	DIALOG_METHODS,
@@ -26,7 +30,9 @@ import {
 } from "../shared/protocol";
 import { QueueRunner } from "./queue-runner";
 import { EDIT_TOOLS, PLAN_PROMPT_PREFIX, type PermissionMode, PERMISSION_MODE_INFO, autoApproval, isPermissionMode, permissionModeInArgs, permissionModeOf, withoutApprovalArgs } from "../shared/permissions";
-import { applyFlags, readFlags, readOmpSetting, sessionOverlayArgs } from "../shared/session-config";
+import { applyFlags, readFlags, readOmpSetting, sessionOverlayArgs, setLaunchModel } from "../shared/session-config";
+import { privateSocketDir, randomPipeName } from "../shared/server-protocol";
+import { spawnTarget } from "../shared/win-spawn";
 
 // ---------- args ----------
 interface HostArgs {
@@ -34,8 +40,6 @@ interface HostArgs {
 	cwd: string;
 	omp: string;
 	resume?: string;
-	/** Resume with `omp --restore`: also continue the interrupted turn and its subagents. */
-	restore?: boolean;
 	/** Extension version that launched this host, recorded in meta for upgrade checks. */
 	hostVersion?: string;
 	title?: string;
@@ -56,10 +60,7 @@ function parseArgs(argv: string[]): HostArgs {
 		else if (key === "--cwd") out.cwd = value;
 		else if (key === "--omp") out.omp = value;
 		else if (key === "--resume") out.resume = value;
-		else if (key === "--restore") {
-			out.resume = value;
-			out.restore = true;
-		} else if (key === "--host-version") out.hostVersion = value;
+		else if (key === "--host-version") out.hostVersion = value;
 		else if (key === "--title") out.title = value;
 		else if (key === "--goal") out.goal = value;
 		else if (key === "--launched-by") out.launchedBy = value;
@@ -80,6 +81,28 @@ if (rawArgs[0] === "--daemonize") {
 const args = parseArgs(rawArgs);
 const dir = sessionDir(args.id);
 fs.mkdirSync(path.join(dir, "blobs"), { recursive: true, mode: 0o700 });
+const metaPath = path.join(dir, "meta.json");
+const lockFile = hostLockPath(args.id);
+{
+	// Never run two hosts (two omp processes) for one session: a second launch (a double resume, the
+	// scheduler racing a person) exits here, before anything slow runs. The lock holds a process
+	// stamp, so a crashed host's lock (even with its pid reused) is taken over. Hosts of older
+	// versions hold no lock: a meta naming a live pid from this boot still blocks.
+	const prior = readJson<SessionMeta>(metaPath);
+	const priorOwner = lockOwner(lockFile);
+	const legacyHost = prior && prior.status !== "stopped" && prior.pid !== process.pid && prior.pid !== priorOwner?.pid && pidAlive(prior.pid) && !beforeBoot(prior.updatedAt);
+	// A lock holder whose meta already says stopped is exiting: its successor may start.
+	const exiting = (owner: Record<string, unknown>) => {
+		const m = readJson<SessionMeta>(metaPath);
+		return m?.status === "stopped" && m.pid === owner.pid;
+	};
+	if (legacyHost || !claimLock(lockFile, { id: args.id }, exiting)) {
+		// Synchronous: the log stream isn't open yet and nothing below may run.
+		fs.appendFileSync(path.join(dir, "host.log"), `[${new Date().toISOString()}] another host is already running for this session: ${legacyHost ? prior.pid : String(lockOwner(lockFile)?.pid)}\n`);
+		process.exit(0);
+	}
+	process.on("exit", () => releaseLock(lockFile));
+}
 const logStream = fs.createWriteStream(path.join(dir, "host.log"), { flags: "a" });
 function log(...parts: unknown[]): void {
 	logStream.write(`[${new Date().toISOString()}] ${parts.map(p => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`);
@@ -92,34 +115,29 @@ process.on("SIGINT", () => void stop("SIGINT"));
 
 // ---------- meta ----------
 const IS_WINDOWS = process.platform === "win32";
-/** Windows uses a named pipe; elsewhere a Unix socket (falling back to a short tmp path when the
- * state dir would exceed the ~104-byte sun_path limit). */
+/** Windows uses a named pipe with a fresh random name per start (clients read it from meta.socket, so
+ * other users can neither guess nor squat it); elsewhere a Unix socket, falling back to a private tmp
+ * folder when the state dir would exceed the ~104-byte sun_path limit. Throws when that folder isn't safe to use. */
 function computeSocketPath(): string {
-	if (IS_WINDOWS) return `\\\\.\\pipe\\omp-vscode-${args.id}`;
+	if (IS_WINDOWS) return randomPipeName(`omp-vscode-${args.id}`);
 	const preferred = path.join(dir, "s.sock");
 	if (Buffer.byteLength(preferred) < 100) return preferred;
-	const short = path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`);
-	fs.mkdirSync(short, { recursive: true, mode: 0o700 });
-	return path.join(short, `${args.id}.sock`);
+	return path.join(privateSocketDir(), `${args.id}.sock`);
 }
-const socketPath = computeSocketPath();
-const metaPath = path.join(dir, "meta.json");
+/** Why the host can't start (reported in meta, then it exits). */
+let startupError: string | undefined;
+let socketPath = "";
+try {
+	socketPath = computeSocketPath();
+} catch (err) {
+	startupError = err instanceof Error ? err.message : String(err);
+}
 const previous = readJson<SessionMeta>(metaPath);
-// Never run two hosts (two omp processes) for one session: a double "resume" exits here.
-if (previous && previous.status !== "stopped" && previous.pid !== process.pid && pidAlive(previous.pid)) {
-	// Synchronous: the log stream isn't open yet and nothing below may run.
-	fs.appendFileSync(path.join(dir, "host.log"), `[${new Date().toISOString()}] another host is already running for this session: ${previous.pid}\n`);
-	process.exit(0);
-}
-
-function pidAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return rec(err)?.code === "EPERM";
-	}
-}
+/**
+ * The previous host died mid-turn (crash, kill, reboot): that turn is continued once omp is ready
+ * (see continueInterruptedTurn). We hold the session lock, so a previous host that isn't stopped is dead.
+ */
+const crashedMidTurn = !!previous && settleDeadHost(previous, false).exitReason === HOST_CRASHED;
 const meta: SessionMeta = {
 	id: args.id,
 	cwd: args.cwd,
@@ -131,6 +149,7 @@ const meta: SessionMeta = {
 	cost: previous?.cost,
 	updatedAt: Date.now(),
 	ompSessionFile: args.resume ?? previous?.ompSessionFile,
+	ompSessionFiles: previous?.ompSessionFiles,
 	hostVersion: args.hostVersion,
 	hostPath: path.resolve(process.argv[1]),
 	launchedBy: args.launchedBy,
@@ -196,6 +215,8 @@ function publishMeta(activity = true): void {
 let messages: unknown[] = [];
 /** Client `bash` requests in flight (rewritten id → command), recorded into the mirror on response. */
 const pendingBash = new Map<string, string>();
+/** Client `set_model` requests in flight (rewritten id → `provider/modelId`), persisted for resume on success. */
+const pendingModel = new Map<string, string>();
 let inflight: { messageId: string; message: unknown } | null = null;
 const running = new Map<string, RunningTool>();
 const pendingUi: UiRequest[] = [];
@@ -205,12 +226,46 @@ let agentActive = false;
 const changes: FileChange[] = [];
 const changesPath = path.join(dir, "changes.jsonl");
 
+// ---------- cost ----------
+// meta.cost and task costs come from the session's transcripts (main agent, subagents, side calls;
+// src/shared/cost.ts): the numbers the VS Code dashboard shows too.
+const usage = new TranscriptUsage();
+let costTimer: NodeJS.Timeout | undefined;
+
+/** Cost of every transcript this session used. */
+async function sessionCost(): Promise<number> {
+	return totalCost(await usage.records(sessionTranscripts(meta)));
+}
+
+function scheduleCost(): void {
+	clearTimeout(costTimer);
+	costTimer = setTimeout(() => {
+		void sessionCost().then(
+			cost => {
+				if (cost === (meta.cost ?? 0)) return;
+				meta.cost = cost;
+				// Not activity: the turn that caused it already stamped updatedAt.
+				publishMeta(false);
+			},
+			err => log("cost", String(err)),
+		);
+	}, 500).unref();
+}
+
+/** omp now writes `file` (new/switched/forked session, or a sibling file): the previous one still counts for the cost. */
+function setSessionFile(file: string | undefined): void {
+	if (!file || file === meta.ompSessionFile) return;
+	if (meta.ompSessionFile) meta.ompSessionFiles = [...new Set([...(meta.ompSessionFiles ?? []), meta.ompSessionFile])].filter(f => f !== file);
+	meta.ompSessionFile = file;
+}
+
 // ---------- task queue ----------
 // The runner (queue-runner.ts) owns queue.json, dispatch, per-task options, and concurrency slots.
 const queueRunner = new QueueRunner(args.id, path.join(dir, "queue.json"), {
 	log,
 	sendOmp,
 	request,
+	sessionCost,
 	idle: () => !stopping && !finished && meta.status !== "starting" && !agentActive && pendingUi.length === 0,
 	setBusy: busy => {
 		agentActive = busy;
@@ -220,10 +275,7 @@ const queueRunner = new QueueRunner(args.id, path.join(dir, "queue.json"), {
 		await resync();
 		refreshState();
 	},
-	notice: (level, message) => {
-		messages.push({ role: "notice", level, message, timestamp: Date.now() });
-		broadcast({ t: "event", ev: { type: "notice", level, message } });
-	},
+	notice: addNotice,
 	changed: (queue, summary) => {
 		meta.queue = summary;
 		broadcast({ t: "queue", queue });
@@ -369,6 +421,16 @@ function onToolEnd(toolCallId: string, toolName: string, result: unknown): void 
 // do in the TUI (omp only auto-continues goals for "interactive" by default).
 const overlayPath = path.join(dir, "omp-overlay.yml");
 fs.writeFileSync(overlayPath, "goal:\n  continuationModes:\n    - interactive\n    - rpc\n");
+// omp can't open a transcript `omp gc` archived (.jsonl.gz): restore it first; a vanished one starts fresh.
+const resume = meta.ompSessionFile ? prepareResume(meta.ompSessionFile) : undefined;
+let resumeNotice: { level: "info" | "warning"; message: string } | undefined;
+if (resume?.kind === "restored") {
+	meta.ompSessionFile = resume.file;
+	resumeNotice = { level: "info", message: `Restored the omp transcript from omp's archive (${resume.archive}).` };
+} else if (resume?.kind === "missing") {
+	resumeNotice = { level: "warning", message: `Could not resume the omp transcript ${resume.file}: ${resume.reason}. This is a new conversation.` };
+}
+if (resumeNotice) log("resume", resumeNotice.message);
 const ompArgv = [
 	"--mode",
 	"rpc-ui",
@@ -376,7 +438,7 @@ const ompArgv = [
 	args.cwd,
 	"--config",
 	overlayPath,
-	...(meta.ompSessionFile ? [args.restore ? "--restore" : "--resume", meta.ompSessionFile] : []),
+	...(resume && resume.kind !== "missing" ? ["--resume", resume.file] : []),
 	// The host answers approval prompts by the session's permission mode (extension_ui_request below).
 	...withoutApprovalArgs(args.ompArgs),
 	"--approval-mode",
@@ -395,9 +457,10 @@ const currentPath = env[pathKey] ?? "";
 env[pathKey] = [...extraPath.filter(p => !currentPath.split(path.delimiter).includes(p) && fs.existsSync(p)), currentPath].filter(Boolean).join(path.delimiter);
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VSCODE_IPC_HOOK_CLI;
-if (!fs.existsSync(args.cwd)) {
-	log("folder does not exist:", args.cwd);
-	Object.assign(meta, { status: "stopped", exitCode: 1, exitReason: `folder not found: ${args.cwd}` });
+const fatal = startupError ?? (fs.existsSync(args.cwd) ? undefined : `folder not found: ${args.cwd}`);
+if (fatal) {
+	log("cannot start:", fatal);
+	Object.assign(meta, { status: "stopped", exitCode: 1, exitReason: fatal });
 	saveMeta(true);
 	process.exit(1);
 }
@@ -406,12 +469,20 @@ ompArgv.push(...sessionOverlayArgs(dir, args.omp, args.cwd, env, log));
 // Starting permission mode: the session's launch flag, else omp's own setting (default yolo = auto).
 meta.permissionMode = permissionModeInArgs(args.ompArgs) ?? permissionModeOf(readOmpSetting(args.omp, "tools.approvalMode", args.cwd, env, log)) ?? "auto";
 log("spawn", args.omp, ompArgv);
-// npm/bun shims on Windows are .cmd files, which need a shell to start.
-const child: ChildProcessWithoutNullStreams = spawn(args.omp, ompArgv, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: IS_WINDOWS && /\.(cmd|bat)$/i.test(args.omp) });
+// npm/bun shims on Windows are .cmd files: started through cmd.exe with every argument escaped.
+const target = spawnTarget(args.omp, ompArgv);
+const child: ChildProcessWithoutNullStreams = spawn(target.file, target.args, { cwd: args.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: target.windowsVerbatimArguments });
 meta.ompPid = child.pid;
 saveMeta(true);
 
-child.stderr.on("data", (d: Buffer) => logStream.write(d));
+/** omp's last stderr line: why it exited when it exits non-zero (a rejected flag, a startup error). */
+let lastStderr = "";
+child.stderr.on("data", (d: Buffer) => {
+	logStream.write(d);
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping terminal color codes
+	const lines = d.toString("utf8").replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+	if (lines.length) lastStderr = lines[lines.length - 1].slice(0, 300);
+});
 child.stdout.on("error", err => log("stdout error", String(err)));
 child.on("error", err => {
 	log("child error", String(err));
@@ -419,7 +490,14 @@ child.on("error", err => {
 });
 child.on("exit", (code, signal) => {
 	log("child exit", code, signal);
-	finish(code, signal ? `signal ${signal}` : code === 0 ? "exited" : `exit code ${code}`);
+	const done = () => finish(code, signal ? `signal ${signal}` : code === 0 ? "exited" : lastStderr ? `exit code ${code}: ${lastStderr}` : `exit code ${code}`);
+	// stderr may still hold omp's last words: let it drain briefly.
+	if (child.stderr.readableEnded) return done();
+	const timer = setTimeout(done, 300);
+	child.stderr.once("end", () => {
+		clearTimeout(timer);
+		done();
+	});
 });
 child.stdin.on("error", err => log("stdin error", String(err)));
 
@@ -510,11 +588,12 @@ function refreshState(): void {
 		state = next;
 		const label = modelLabel(next.model);
 		meta.model = label ?? meta.model;
-		meta.ompSessionFile = str(next.sessionFile) ?? meta.ompSessionFile;
+		setSessionFile(str(next.sessionFile));
 		meta.ompSessionId = str(next.sessionId) ?? meta.ompSessionId;
 		meta.plan = Array.isArray(next.todoPhases) ? (next.todoPhases as SessionMeta["plan"]) : meta.plan;
 		if (typeof next.sessionName === "string" && next.sessionName && next.sessionName !== meta.title) meta.title = next.sessionName;
 		publishMeta();
+		scheduleCost();
 		if (prevSession && next.sessionId && prevSession !== next.sessionId) await resync();
 		else broadcast({ t: "state", state });
 	}, 120);
@@ -540,25 +619,30 @@ async function onReady(): Promise<void> {
 	if (st.success) state = slimState(st.data);
 	const msgs = await request({ type: "get_messages" });
 	if (msgs.success) messages = messagesOf(msgs.data);
+	if (resumeNotice) messages.push({ role: "notice", ...resumeNotice, timestamp: Date.now() });
 	meta.model = modelLabel(state?.model) ?? meta.model;
-	meta.ompSessionFile = str(state?.sessionFile) ?? meta.ompSessionFile;
+	setSessionFile(str(state?.sessionFile));
 	meta.ompSessionId = str(state?.sessionId) ?? meta.ompSessionId;
 	meta.plan = Array.isArray(state?.todoPhases) ? (state.todoPhases as SessionMeta["plan"]) : meta.plan;
-	if (typeof state?.sessionName === "string" && state.sessionName) meta.title = state.sessionName;
-	else if (meta.title !== "New session") sendOmp({ type: "set_session_name", name: meta.title });
+	// omp names the session itself (generated title, /rename): adopt that. Only an explicit title
+	// (`--title`, a rename) is sent as the session name: omp then keeps it and stops generating one.
+	if (args.title && args.title !== state?.sessionName) sendOmp({ type: "set_session_name", name: args.title });
+	else if (typeof state?.sessionName === "string" && state.sessionName) meta.title = state.sessionName;
 	meta.status = "idle";
 	meta.queue = queueRunner.summary();
 	recomputeStatus();
 	publishMeta();
+	scheduleCost();
 	for (const c of clients) if (c.helloed) sendSnapshot(c);
-	queueRunner.schedule(1000);
+	const continued = continueInterruptedTurn();
+	queueRunner.schedule(continued ? 2000 : 1000);
 	const models = await request({ type: "get_available_models" });
 	const available = rec(models.data)?.models;
 	if (models.success && Array.isArray(available) && available.length === 0) noteAuthProblem("no model is available");
 	if (args.goal && !previous) {
+		// A local placeholder until omp titles the session.
 		if (meta.title === "New session") {
 			meta.title = titleFromPrompt(`Goal: ${args.goal}`);
-			sendOmp({ type: "set_session_name", name: meta.title });
 			publishMeta();
 		}
 		const res = await request({ type: "goal", op: "create", objective: args.goal });
@@ -567,6 +651,46 @@ async function onReady(): Promise<void> {
 			broadcast({ t: "event", ev: { type: "notice", level: "error", message: `Could not start goal: ${String(res.error)}` } });
 		}
 	}
+}
+
+/**
+ * The previous host died mid-turn (crash, kill, reboot) and this is a person's resume: omp has no
+ * way to restore an interrupted turn over RPC (`--restore` is TUI-only), so it gets one follow-up
+ * prompt to carry on. One rule with the task queue: when the turn was a queued task, that task is
+ * back in the queue as interrupted with auto-run off (settleInterrupted) and is NOT continued here,
+ * so it can't run twice; a person restarts it. Scheduler launches never continue a turn either.
+ * Returns true when the prompt went out.
+ */
+function continueInterruptedTurn(): boolean {
+	if (!crashedMidTurn || !meta.ompSessionFile || resume?.kind === "missing") return false;
+	if (queueRunner.hasInterrupted) {
+		addNotice("warning", "The session host stopped unexpectedly and a queued task is marked interrupted; the queue is paused and the turn was not continued. Run the task again to restart it.");
+		return false;
+	}
+	if (args.launchedBy === "scheduler") {
+		addNotice("warning", "The session host stopped mid-turn; that turn was not continued automatically. Send a message to carry on.");
+		return false;
+	}
+	addNotice("info", "The session host stopped mid-turn; asked omp to continue the interrupted turn.");
+	log("continuing the turn interrupted by a host crash");
+	agentActive = true;
+	recomputeStatus();
+	void request({ type: "prompt", message: CONTINUE_PROMPT }).then(res => {
+		if (res.success) return;
+		log("continue prompt failed", res.error);
+		agentActive = false;
+		recomputeStatus();
+		queueRunner.schedule();
+	});
+	return true;
+}
+
+const CONTINUE_PROMPT = "The previous turn was interrupted because the session host stopped unexpectedly (crash or reboot). Continue where you left off; check the state of any work in progress first.";
+
+/** Persistent notice in the session timeline. */
+function addNotice(level: "info" | "warning" | "error", message: string): void {
+	messages.push({ role: "notice", level, message, timestamp: Date.now() });
+	broadcast({ t: "event", ev: { type: "notice", level, message } });
 }
 
 /**
@@ -623,6 +747,18 @@ function handleFrame(frame: OmpFrame): void {
 				// omp records `bash` output in its transcript but emits no message events for it.
 				if (frame.success && data) messages.push({ role: "bashExecution", command: bashCommand, output: data.output, exitCode: data.exitCode, cancelled: data.cancelled, timestamp: Date.now() });
 			}
+			const model = pendingModel.get(id);
+			if (model !== undefined) {
+				pendingModel.delete(id);
+				// A person switched the model: the next resume starts on it too (launch.json `--model`).
+				if (frame.success) {
+					try {
+						setLaunchModel(args.id, model);
+					} catch (err) {
+						log("launch.json write failed", String(err));
+					}
+				}
+			}
 			if (frame.success && typeof frame.command === "string") {
 				if (SESSION_CHANGING[frame.command]) void resync().then(refreshState);
 				else if (!frame.command.startsWith("get_")) refreshState();
@@ -642,9 +778,8 @@ function handleFrame(frame: OmpFrame): void {
 			if (msg?.role === "assistant") {
 				const text = textOf(msg).trim();
 				if (text) meta.lastText = text.slice(0, 300);
-				const cost = rec(rec(msg.usage)?.cost)?.total;
-				if (typeof cost === "number") meta.cost = (meta.cost ?? 0) + cost;
 				saveMeta();
+				scheduleCost();
 				queueRunner.onAssistantMessage(msg);
 				if (msg.stopReason === "error" && isAuthError(str(msg.errorMessage))) noteAuthProblem(String(msg.errorMessage));
 				else if (msg.stopReason !== "error" && msg.stopReason !== "aborted" && meta.authProblem) {
@@ -828,13 +963,14 @@ function onClientMessage(c: Client, msg: ClientToHost): void {
 			// Queries (get_*) are clients syncing; anything else is a person acting on the session.
 			if (!cmd.type.startsWith("get_")) markUserActive();
 			const text = msg.cmd.message;
+			// A local placeholder until omp titles the session itself (never sent: omp would treat it as a user title).
 			if (cmd.type === "prompt" && meta.title === "New session" && typeof text === "string" && !text.startsWith("/")) {
 				meta.title = titleFromPrompt(text);
-				sendOmp({ type: "set_session_name", name: meta.title });
 				publishMeta();
 			}
 			if (cmd.type === "prompt" && meta.permissionMode === "plan" && typeof text === "string" && !/^[/!]/.test(text) && !text.startsWith(PLAN_PROMPT_PREFIX)) cmd.message = PLAN_PROMPT_PREFIX + text;
 			if (cmd.type === "bash" && typeof msg.cmd.command === "string") pendingBash.set(cmd.id, msg.cmd.command);
+			if (cmd.type === "set_model" && typeof msg.cmd.provider === "string" && typeof msg.cmd.modelId === "string") pendingModel.set(cmd.id, `${msg.cmd.provider}/${msg.cmd.modelId}`);
 			sendOmp(cmd);
 			return;
 		}
@@ -891,6 +1027,7 @@ function setPermissionMode(mode: PermissionMode): void {
 	queueRunner.schedule();
 }
 
+// We hold the session lock: a socket file left at our path belongs to a dead (or exiting) host.
 if (!IS_WINDOWS) {
 	try {
 		fs.unlinkSync(socketPath);
@@ -967,6 +1104,8 @@ function finish(code: number | null, reason: string): void {
 	meta.exitReason = meta.exitReason ?? reason;
 	pendingUi.length = 0;
 	saveMeta(true);
+	// meta says stopped: a successor may start now, while this process winds down.
+	releaseLock(lockFile);
 	broadcast({ t: "meta", meta });
 	setTimeout(() => {
 		for (const c of clients) c.sock.end();

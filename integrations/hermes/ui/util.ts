@@ -57,7 +57,9 @@ export const STATE_LABEL: Record<State, string> = {
 	working: "Working",
 	starting: "Starting",
 	queued: "Queued",
+	scheduled: "Scheduled",
 	idle: "Done",
+	interrupted: "Interrupted",
 	stopped: "Stopped",
 };
 
@@ -71,10 +73,13 @@ export function stateText(s: Session, now = Date.now()): string {
 		case "starting":
 			return "Starting";
 		case "queued":
-			if (s.startAt) return `Starts ${until(s.startAt, now)}`;
 			return s.waiting ? `Waiting for a slot${s.waiting.position ? ` · #${s.waiting.position}` : ""}` : "Queued";
+		case "scheduled":
+			return s.startAt ? `Starts ${until(s.startAt, now)}` : "Scheduled";
 		case "idle":
 			return "Done for now";
+		case "interrupted":
+			return "Interrupted (crash or reboot)";
 		case "stopped":
 			return s.queue.total > 0 && s.queue.done >= s.queue.total ? "Finished" : "Stopped";
 	}
@@ -238,22 +243,34 @@ export function icon(name: IconName, size = 14, title?: string): ReactElement {
 	);
 }
 
-/** The omp mark (the site's logo glyph) in the brand gradient. */
+/** The omp Sessions app mark (as in the extension icon): the π glyph in the brand gradient on a
+ *  dark rounded tile with a corner glow, so it reads at sidebar sizes on light and dark themes. */
 export function logo(size = 22): ReactElement {
 	return h(
 		"svg",
-		{ className: "omps-logo", width: size, height: size, viewBox: "8 8 48 48", "aria-hidden": true },
+		{ className: "omps-logo", width: size, height: size, viewBox: "0 0 64 64", "aria-hidden": true },
 		h(
 			"defs",
 			null,
+			h("linearGradient", { id: "omps-logo-tile", x1: 0, y1: 0, x2: 0.4, y2: 1 }, h("stop", { offset: 0, stopColor: "#2b1a45" }), h("stop", { offset: 1, stopColor: "#0d0914" })),
+			h(
+				"radialGradient",
+				{ id: "omps-logo-glow", cx: 1, cy: 1, r: 0.75 },
+				h("stop", { offset: 0, stopColor: "#ed4abf", stopOpacity: 0.75 }),
+				h("stop", { offset: 0.45, stopColor: "#7b5cff", stopOpacity: 0.35 }),
+				h("stop", { offset: 1, stopColor: "#7b5cff", stopOpacity: 0 }),
+			),
 			h(
 				"linearGradient",
-				{ id: "omps-grad", x1: 0, y1: 0, x2: 1, y2: 1 },
-				h("stop", { offset: 0, stopColor: "#ed4abf" }),
-				h("stop", { offset: 0.5, stopColor: "#9b4dff" }),
-				h("stop", { offset: 1, stopColor: "#5ad8e6" }),
+				{ id: "omps-logo-glyph", x1: 0, y1: 0, x2: 1, y2: 1 },
+				h("stop", { offset: 0, stopColor: "#f06ccb" }),
+				h("stop", { offset: 0.5, stopColor: "#b07bff" }),
+				h("stop", { offset: 1, stopColor: "#6fe0ec" }),
 			),
 		),
-		h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-grad)" }),
+		h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-tile)" }),
+		h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-glow)" }),
+		h("rect", { x: 2.5, y: 2.5, width: 59, height: 59, rx: 14.5, fill: "none", stroke: "rgba(255,255,255,0.16)" }),
+		h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-logo-glyph)", transform: "translate(3.2 0.6) scale(0.9)" }),
 	);
 }

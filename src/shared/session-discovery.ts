@@ -6,6 +6,8 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { ompPaths } from "./omp-paths";
+import { spawnTarget } from "./win-spawn";
 
 export interface SkillInfo {
 	name: string;
@@ -36,11 +38,6 @@ export interface Capabilities {
 function rec(v: unknown): Record<string, unknown> | undefined {
 	// Parsed JSON objects; arrays/primitives excluded.
 	return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
-}
-
-/** omp's per-user agent folder (`PI_CODING_AGENT_DIR` overrides). */
-export function agentDir(home = os.homedir()): string {
-	return process.env.PI_CODING_AGENT_DIR || path.join(home, ".omp", "agent");
 }
 
 /** `omp skill list --json` → skills (hidden ones dropped); undefined when the output is not that shape. */
@@ -91,7 +88,7 @@ export function scanSkills(cwd: string, home = os.homedir()): SkillInfo[] {
 		{ dir: path.join(cwd, ".omp", "skills"), source: "omp:project" },
 		{ dir: path.join(cwd, ".agents", "skills"), source: "agents:project" },
 		{ dir: path.join(cwd, ".claude", "skills"), source: "claude:project" },
-		{ dir: path.join(agentDir(home), "skills"), source: "omp:user" },
+		{ dir: path.join(ompPaths({ home }).agentDir, "skills"), source: "omp:user" },
 		{ dir: path.join(home, ".agents", "skills"), source: "agents:user" },
 	];
 	const seen = new Set<string>();
@@ -135,14 +132,15 @@ function readJson(file: string): unknown {
  * Cursor and VS Code configs, plus `extraFiles` (e.g. the session's VS Code bridge). First wins.
  */
 export function scanMcpServers(cwd: string, home = os.homedir(), extraFiles: Array<{ file: string; source: string }> = []): McpServerInfo[] {
-	const userOmp = path.join(agentDir(home), "mcp.json");
+	const agentDir = ompPaths({ home }).agentDir;
+	const userOmp = path.join(agentDir, "mcp.json");
 	const userConfig = rec(readJson(userOmp));
 	const disabled = new Set(Array.isArray(userConfig?.disabledServers) ? userConfig.disabledServers.filter((x): x is string => typeof x === "string") : []);
 	const forced = new Set(Array.isArray(userConfig?.enabledServers) ? userConfig.enabledServers.filter((x): x is string => typeof x === "string") : []);
 	const sources: Array<{ file: string; source: string; pick: (json: Record<string, unknown>) => unknown }> = [
 		...[".omp/mcp.json", ".omp/.mcp.json"].map(f => ({ file: path.join(cwd, f), source: "omp project", pick: (j: Record<string, unknown>) => j.mcpServers })),
 		{ file: userOmp, source: "omp user", pick: j => j.mcpServers },
-		{ file: path.join(agentDir(home), ".mcp.json"), source: "omp user", pick: j => j.mcpServers },
+		{ file: path.join(agentDir, ".mcp.json"), source: "omp user", pick: j => j.mcpServers },
 		...["mcp.json", ".mcp.json"].map(f => ({ file: path.join(cwd, f), source: f, pick: (j: Record<string, unknown>) => j.mcpServers })),
 		...[".claude/.mcp.json", ".claude/mcp.json"].map(f => ({ file: path.join(cwd, f), source: "Claude project", pick: (j: Record<string, unknown>) => j.mcpServers })),
 		{ file: path.join(home, ".claude.json"), source: "Claude", pick: j => ({ ...rec(j.mcpServers), ...rec(rec(rec(j.projects)?.[cwd])?.mcpServers) }) },
@@ -185,10 +183,12 @@ export function parseConfigList(stdout: string): Map<string, unknown> {
 /** Runs omp and resolves its stdout (undefined on failure/timeout). */
 export function runOmp(omp: string, args: string[], cwd: string, timeoutMs = 30_000): Promise<string | undefined> {
 	const { promise, resolve } = Promise.withResolvers<string | undefined>();
+	// `.cmd` shims on Windows go through cmd.exe with quoted arguments (the folder is user-chosen).
+	const target = spawnTarget(omp, args);
 	execFile(
-		omp,
-		args,
-		{ cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(omp) },
+		target.file,
+		target.args,
+		{ cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: target.windowsVerbatimArguments },
 		(err, stdout) => resolve(err ? undefined : stdout),
 	);
 	return promise;

@@ -1,20 +1,29 @@
 """Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (read with ctx.get_config,
 written with update_setting).
 
-    omp_sessions: /path/to/omp-sessions        # default: PATH, then ~/.local/bin/omp-sessions (%LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd on Windows)
+    omp_sessions: /path/to/omp-sessions        # default: PATH, ~/.local/bin/omp-sessions, %LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd, ~/.omp/vscode/runtime/cli.js
     notify: true                   # tell the Hermes session that started an omp session when it settles
+    agent_approvals: false         # let the Hermes agent answer omp's approval dialogs (omp_session_answer, omp_session_mode)
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions
       assignee: omp
       mode: ask                    # starting permission mode of card sessions (default: omp's)
+      comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@omp` assigns cards ("*": anyone)
       boards:                      # empty: every board, with the defaults above
         lightscale:
           folder: /home/me/src/lightscale   # cwd for cards with a scratch workspace
           group: Lightscale                 # omp group of the board's sessions (default: board name)
           mode: edits
           assignee: omp
+          model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: omp Sessions' default)
+          comment_authors: [dashboard, alice]   # replaces the lane's list on this board
     projects:                      # Hermes project id/slug/name (or any name you like) -> folder
       lightscale: /home/me/src/lightscale
+
+Comment authors: the Hermes dashboard and Hermes Console post as `dashboard`, `hermes kanban comment`
+as the profile name (or `--author`), and Hermes agents' kanban tools as their profile name. The
+default trusts only `dashboard` (the token-protected UI a person uses), so other profiles' agents,
+which may act on untrusted input, can't prompt omp or hand it cards; list a profile to trust it.
 """
 
 from __future__ import annotations
@@ -25,7 +34,11 @@ from typing import Any, Callable, Mapping, Optional
 
 PLUGIN_ID = "omp-sessions"
 MODES = ("ask", "edits", "plan", "auto")
+# Permission modes from most to least restrictive.
+MODE_ORDER = ("plan", "ask", "edits", "auto")
 DEFAULT_ASSIGNEE = "omp"
+DEFAULT_COMMENT_AUTHORS = ("dashboard",)
+ANY_AUTHOR = "*"
 
 
 @dataclass
@@ -37,6 +50,12 @@ class BoardLane:
     group: str
     folder: Optional[str] = None
     mode: Optional[str] = None
+    model: Optional[str] = None
+    comment_authors: tuple[str, ...] = DEFAULT_COMMENT_AUTHORS
+
+    def trusts(self, author: str) -> bool:
+        """Whether `author`'s comments reach omp and their `@omp` mentions assign cards."""
+        return ANY_AUTHOR in self.comment_authors or author.strip().lower() in self.comment_authors
 
 
 @dataclass
@@ -44,6 +63,7 @@ class LaneSettings:
     enabled: bool = False
     assignee: str = DEFAULT_ASSIGNEE
     mode: Optional[str] = None
+    comment_authors: tuple[str, ...] = DEFAULT_COMMENT_AUTHORS
     boards: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -51,6 +71,7 @@ class LaneSettings:
 class Settings:
     omp_sessions: Optional[str] = None
     notify: bool = True
+    agent_approvals: bool = False
     lane: LaneSettings = field(default_factory=LaneSettings)
     projects: dict[str, str] = field(default_factory=dict)
 
@@ -64,16 +85,28 @@ def _mode(v: Any) -> Optional[str]:
     return s.lower() if s and s.lower() in MODES else None
 
 
+def parse_authors(v: Any) -> Optional[tuple[str, ...]]:
+    """A list of comment authors (or one comma-separated string), lowercased; None when not given."""
+    if isinstance(v, str):
+        v = v.split(",")
+    if not isinstance(v, (list, tuple)):
+        return None
+    return tuple(dict.fromkeys(str(a).strip().lower() for a in v if str(a).strip()))
+
+
 def _board_entry(v: Any) -> dict[str, Any]:
     if not isinstance(v, Mapping):
         return {}
     out: dict[str, Any] = {}
-    for key in ("folder", "group", "assignee"):
+    for key in ("folder", "group", "assignee", "model"):
         s = _str(v.get(key))
         if s:
             out[key] = s
     if _mode(v.get("mode")):
         out["mode"] = _mode(v.get("mode"))
+    authors = parse_authors(v.get("comment_authors"))
+    if authors is not None:
+        out["comment_authors"] = list(authors)
     return out
 
 
@@ -88,13 +121,16 @@ def parse_settings(raw: Mapping[str, Any]) -> Settings:
         boards = {str(k): {} for k in boards_raw if _str(k)}
     projects_raw = raw.get("projects")
     projects = {str(k): str(v) for k, v in projects_raw.items() if _str(v)} if isinstance(projects_raw, Mapping) else {}
+    authors = parse_authors(lane_raw.get("comment_authors"))
     return Settings(
         omp_sessions=_str(raw.get("omp_sessions")),
         notify=raw.get("notify") is not False,
+        agent_approvals=raw.get("agent_approvals") is True,
         lane=LaneSettings(
             enabled=lane_raw.get("enabled") is True,
             assignee=(_str(lane_raw.get("assignee")) or DEFAULT_ASSIGNEE).lower(),
             mode=_mode(lane_raw.get("mode")),
+            comment_authors=DEFAULT_COMMENT_AUTHORS if authors is None else authors,
             boards=boards,
         ),
         projects=projects,
@@ -114,12 +150,14 @@ def board_lane(s: Settings, slug: str, board_name: Optional[str] = None) -> Opti
         group=e.get("group") or board_name or slug,
         folder=e.get("folder"),
         mode=e.get("mode") or s.lane.mode,
+        model=e.get("model"),
+        comment_authors=tuple(e["comment_authors"]) if "comment_authors" in e else s.lane.comment_authors,
     )
 
 
 def read_settings(ctx: Any) -> Settings:
     raw: dict[str, Any] = {}
-    for key in ("omp_sessions", "notify", "lane", "projects"):
+    for key in ("omp_sessions", "notify", "agent_approvals", "lane", "projects"):
         v = ctx.get_config(key, None)
         if v is not None:
             raw[key] = v

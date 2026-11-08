@@ -3,13 +3,15 @@
 //
 // Layout under stateRoot() (~/.omp/vscode, OMP_VSCODE_HOME overrides):
 //   scheduler.json                 { maxConcurrent: number (0 = unlimited), paused?: boolean }
-//   slots/<sessionId>.json         lease { pid, since, taskId } held while a queued task runs
-//   slots/waiting/<sessionId>.json { pid, since } a host with a runnable queued task but no slot
+//   slots/<sessionId>.json         lease { pid, since, taskId, …stamp } held while a queued task runs
+//   slots/waiting/<sessionId>.json { pid, since, …stamp } a host with a runnable queued task but no slot
 //   slots/.lock                    short global mutex (O_EXCL create) around check+acquire
-// Leases and waiting entries whose pid is dead are stale: ignored and removed by the next caller.
+// Leases and waiting entries whose process is gone are stale: ignored and removed by the next caller.
+// The stamp (process-lock.ts) keeps a reused pid (after a reboot) from holding a slot forever.
 // Only queued tasks are gated; prompts typed in a chat always go straight to omp.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { processStamp, stampAlive } from "./process-lock";
 import { stateRoot } from "./protocol";
 
 export interface SchedulerConfig {
@@ -88,16 +90,6 @@ export function writeScheduler(cfg: SchedulerConfig): void {
 	writeJson(schedulerPath(), normalizeScheduler(cfg));
 }
 
-export function pidAlive(pid: number): boolean {
-	if (!Number.isInteger(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return rec(err)?.code === "EPERM";
-	}
-}
-
 function unlink(file: string): void {
 	try {
 		fs.unlinkSync(file);
@@ -106,7 +98,7 @@ function unlink(file: string): void {
 	}
 }
 
-/** Entries of `dir` with a live pid; files of dead pids are removed. */
+/** Entries of `dir` whose process still runs; files of dead processes are removed. */
 function liveEntries(dir: string): Array<{ sessionId: string; pid: number; since: number; raw: Record<string, unknown> }> {
 	let names: string[] = [];
 	try {
@@ -120,7 +112,7 @@ function liveEntries(dir: string): Array<{ sessionId: string; pid: number; since
 		const file = path.join(dir, name);
 		const r = rec(readJson(file));
 		const pid = typeof r?.pid === "number" ? r.pid : 0;
-		if (!r || !pidAlive(pid)) {
+		if (!r || !stampAlive(r)) {
 			// Writes are atomic (temp + rename), so unreadable or dead-pid entries are garbage.
 			unlink(file);
 			continue;
@@ -182,7 +174,7 @@ export function tryAcquireSlot(sessionId: string, taskId: string, order: (ids: s
 		const leaseFile = path.join(slotsDir(), `${sessionId}.json`);
 		const waitFile = path.join(waitingDir(), `${sessionId}.json`);
 		if (leases.some(l => l.sessionId === sessionId && l.pid === pid)) {
-			writeJson(leaseFile, { pid, since: Date.now(), taskId });
+			writeJson(leaseFile, { ...processStamp(pid), since: Date.now(), taskId });
 			unlink(waitFile);
 			return { acquired: true };
 		}
@@ -190,7 +182,7 @@ export function tryAcquireSlot(sessionId: string, taskId: string, order: (ids: s
 		let self = waiting.find(w => w.sessionId === sessionId);
 		if (!self || self.pid !== pid) {
 			self = { sessionId, pid, since: self?.since ?? Date.now() };
-			writeJson(waitFile, { pid, since: self.since });
+			writeJson(waitFile, { ...processStamp(pid), since: self.since });
 			waiting = [...waiting.filter(w => w.sessionId !== sessionId), self].sort((a, b) => a.since - b.since || a.sessionId.localeCompare(b.sessionId));
 		}
 		const ids = waiting.map(w => w.sessionId);
@@ -200,7 +192,7 @@ export function tryAcquireSlot(sessionId: string, taskId: string, order: (ids: s
 		const position = ranked.indexOf(sessionId) + 1;
 		const free = cfg.paused ? 0 : cfg.maxConcurrent === 0 ? Number.POSITIVE_INFINITY : cfg.maxConcurrent - leases.length;
 		if (position > free) return { acquired: false, position, since: self.since };
-		writeJson(leaseFile, { pid, since: Date.now(), taskId });
+		writeJson(leaseFile, { ...processStamp(pid), since: Date.now(), taskId });
 		unlink(waitFile);
 		return { acquired: true };
 	} finally {

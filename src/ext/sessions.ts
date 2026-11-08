@@ -4,9 +4,13 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { settleDeadHost } from "../shared/health";
-import { type LaunchOptions, canConnect, findOmp, launchHost, pidAlive, readHostVersion, sendToHost } from "../shared/launch";
+import { type LaunchOptions, canConnect, findOmp, hostAlive, launchHost, readHostVersion, sendToHost } from "../shared/launch";
+import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import { type FileChange, type QueueOp, type SessionMeta, type TaskQueue, sessionDir, sessionsRoot } from "../shared/protocol";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
+import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
+import { plain } from "./plain";
+import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
 const rootCache = new Map<string, ProjectInfo>();
@@ -23,9 +27,20 @@ export function projectRoot(cwd: string): ProjectInfo {
 	return found;
 }
 
-function isWithin(child: string, parent: string): boolean {
-	const rel = path.relative(parent, child);
-	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+const realCache = new Map<string, string>();
+
+/** `p` with symlinks resolved (cached: a folder's real location rarely changes); `p` when it doesn't exist. */
+function realPath(p: string): string {
+	let real = realCache.get(p);
+	if (real === undefined) {
+		try {
+			real = fs.realpathSync.native(p);
+		} catch {
+			real = p;
+		}
+		realCache.set(p, real);
+	}
+	return real;
 }
 
 /** Finds the omp executable: `omp.path` setting, PATH, then common install locations. */
@@ -91,7 +106,7 @@ export class SessionManager implements vscode.Disposable {
 			} catch {
 				continue;
 			}
-			if (meta.status !== "stopped") meta = settleDeadHost(meta, pidAlive(meta.pid));
+			if (meta.status !== "stopped") meta = settleDeadHost(meta, hostAlive(meta));
 			next.set(id, meta);
 		}
 		let changed = next.size !== this.sessions.size;
@@ -116,11 +131,34 @@ export class SessionManager implements vscode.Disposable {
 		});
 	}
 
-	/** Session folder overlaps a workspace folder; sessions in linked git worktrees count for their main repository. */
+	/**
+	 * The session's folder is a workspace folder or inside one (as spelled, or with symlinks resolved); sessions
+	 * in linked git worktrees count for their main repository. Workspace folders are local paths on the
+	 * extension host's machine: `file:` (local or remote extension host) or `vscode-remote:` URIs.
+	 */
 	inWorkspace(meta: SessionMeta): boolean {
+		const folders = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === "file" || f.uri.scheme === "vscode-remote").map(f => f.uri.fsPath);
+		if (!folders.length) return false;
 		const project = projectRoot(meta.cwd);
 		const dirs = project.worktree ? [meta.cwd, project.root] : [meta.cwd];
-		return (vscode.workspace.workspaceFolders ?? []).some(f => f.uri.scheme === "file" && dirs.some(d => isWithin(d, f.uri.fsPath) || isWithin(f.uri.fsPath, d)));
+		return withinAny(dirs, folders) || withinAny(dirs.map(realPath), folders.map(realPath));
+	}
+
+	/** `omp.sessionScope`, or "all" in a window without folders. */
+	scope(): SessionScope {
+		if (!vscode.workspace.workspaceFolders?.length) return "all";
+		const v = vscode.workspace.getConfiguration("omp").get<string>("sessionScope");
+		return isSessionScope(v) ? v : "workspace";
+	}
+
+	/** Listed by this window's views (Sessions, board, tasks, status bar) under the current scope. */
+	inScope(meta: SessionMeta): boolean {
+		return this.scope() === "all" || this.inWorkspace(meta);
+	}
+
+	/** Whether this window notifies about the session: its workspace's sessions, or every one with `omp.notifyAllSessions`. */
+	notifies(meta: SessionMeta): boolean {
+		return vscode.workspace.getConfiguration("omp").get<boolean>("notifyAllSessions", false) || this.inWorkspace(meta);
 	}
 
 	changes(id: string): FileChange[] {
@@ -159,7 +197,7 @@ export class SessionManager implements vscode.Disposable {
 				omp,
 				hostVersion: this.version,
 				extraArgs,
-				onError: err => void vscode.window.showErrorMessage(`Could not start the omp session host: ${err.message}`),
+				onError: err => void vscode.window.showErrorMessage(plain(`Could not start the omp session host: ${err.message}`)),
 			},
 			opts,
 		);
@@ -229,71 +267,46 @@ export interface HistoryEntry {
 	cwd: string;
 	title: string;
 	mtime: number;
+	/** Moved to omp's archive by `omp gc`; resuming restores it first. */
+	archived: boolean;
 }
 
-/** omp session transcripts recorded for `cwd` (from TUI or other hosts), newest first. */
-export function listOmpHistory(cwd: string): HistoryEntry[] {
-	const root = path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".omp", "agent"), "sessions");
+/** omp's folders for the sessions this extension starts (`--profile`/`--session-dir` in `omp.extraArgs` count). */
+export function configuredOmpPaths(): OmpPaths {
+	return ompPathsForArgs(vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? []);
+}
+
+/** omp session transcripts recorded for `cwd` (from TUI or other hosts, archived ones included), newest first. */
+export async function listOmpHistory(cwd: string): Promise<HistoryEntry[]> {
 	const out: HistoryEntry[] = [];
-	let dirs: string[] = [];
-	try {
-		dirs = fs.readdirSync(root);
-	} catch {
-		return out;
-	}
-	for (const d of dirs) {
-		const full = path.join(root, d);
-		let files: string[] = [];
+	for (const { file, mtimeMs, archived } of await listTranscripts(configuredOmpPaths())) {
+		let start: string;
 		try {
-			files = fs.readdirSync(full).filter(f => f.endsWith(".jsonl"));
+			start = readTranscriptStart(file, 4096);
 		} catch {
 			continue;
 		}
-		for (const f of files) {
-			const file = path.join(full, f);
-			const head = readHead(file, 4096);
-			let title = "";
-			let sessionCwd = "";
-			for (const line of head.split("\n").slice(0, 3)) {
-				try {
-					const o = JSON.parse(line) as { type?: string; title?: string; cwd?: string };
-					if (o.type === "title" && o.title) title = o.title;
-					if (o.type === "session" && o.cwd) sessionCwd = o.cwd;
-				} catch {
-					/* partial line */
-				}
-			}
-			if (sessionCwd !== cwd) continue;
-			const st = fs.statSync(file);
-			if (st.size < 600) continue;
-			out.push({ file, cwd: sessionCwd, title: title || firstUserText(file) || path.basename(f, ".jsonl"), mtime: st.mtimeMs });
-		}
+		const head = parseHead(start);
+		// Under 600 bytes: a header without a conversation.
+		if (head.cwd !== cwd || start.length < 600) continue;
+		out.push({ file, cwd, title: head.title || firstUserText(file) || path.basename(file).replace(/\.jsonl(\.gz)?$/, ""), mtime: mtimeMs, archived });
 	}
-	return out.sort((a, b) => b.mtime - a.mtime);
-}
-
-function readHead(file: string, bytes: number): string {
-	const fd = fs.openSync(file, "r");
-	try {
-		const buf = Buffer.alloc(bytes);
-		const n = fs.readSync(fd, buf, 0, bytes, 0);
-		return buf.subarray(0, n).toString("utf8");
-	} finally {
-		fs.closeSync(fd);
-	}
+	return out;
 }
 
 function firstUserText(file: string): string {
-	const head = readHead(file, 64 * 1024);
+	let head: string;
+	try {
+		head = readTranscriptStart(file, 64 * 1024);
+	} catch {
+		return "";
+	}
 	for (const line of head.split("\n")) {
 		if (!line.includes('"role":"user"')) continue;
-		try {
-			const o = JSON.parse(line) as { message?: { content?: Array<{ type: string; text?: string }> } };
-			const text = o.message?.content?.find(c => c.type === "text")?.text;
-			if (text) return text.split("\n")[0].slice(0, 80);
-		} catch {
-			/* skip */
-		}
+		const message = parseTranscriptLine(line)?.message;
+		const content = isRecord(message) && Array.isArray(message.content) ? message.content : [];
+		const block = content.find(c => isRecord(c) && c.type === "text");
+		if (isRecord(block) && typeof block.text === "string" && block.text) return block.text.split("\n")[0].slice(0, 80);
 	}
 	return "";
 }

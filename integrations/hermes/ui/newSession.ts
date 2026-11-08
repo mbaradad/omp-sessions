@@ -1,9 +1,11 @@
-// New session: what to do, where (a project, a folder or a kanban board), mode, group, tags, and
-// when (now, queued for a free slot, or at a time).
+// New session: what to do, where (a project, a folder or a kanban board), mode, model, group, tags,
+// and when (now, queued for a free slot, or at a time).
 import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Places, type StartBody, type Started } from "./api";
 import { Button, ErrorBox, Field, Segmented, useDismiss } from "./components";
+import { ModelPicker, useModels } from "./models";
 import { h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { icon } from "./util";
+import { openInVscode } from "./vscode";
 
 type Where = StartBody["where"]["kind"];
 type When = StartBody["when"];
@@ -12,16 +14,24 @@ const AT_PRESETS: ReadonlyArray<{ label: string; at: () => string }> = [
 	{ label: "+30m", at: () => "+30m" },
 	{ label: "+1h", at: () => "+1h" },
 	{ label: "+3h", at: () => "+3h" },
-	{ label: "Tonight 22:00", at: () => "22:00" },
-	{ label: "Tomorrow 09:00", at: () => localIso(9) },
+	{ label: "Tonight 22:00", at: () => nextLocal(22, 0) },
+	{ label: "Tomorrow 09:00", at: () => nextLocal(9, 1) },
 ];
 
-/** Tomorrow at `hour`:00 local time, as omp-sessions --at takes it (2026-01-31T09:00). */
-function localIso(hour: number): string {
+/**
+ * `hour`:00 of this browser's day `days` ahead (tonight: tomorrow if already past), as an ISO time with
+ * its UTC offset (2026-01-31T09:00+01:00), so omp's machine starts it at the time shown here whatever
+ * its own time zone.
+ */
+function nextLocal(hour: number, days: number): string {
 	const d = new Date();
-	d.setDate(d.getDate() + 1);
+	d.setDate(d.getDate() + days);
+	d.setHours(hour, 0, 0, 0);
+	if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
 	const pad = (n: number): string => String(n).padStart(2, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00`;
+	const off = -d.getTimezoneOffset();
+	const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
 }
 
 export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () => void; onStarted: (s: Started) => void }): ReactElement {
@@ -40,6 +50,10 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 	const [at, setAt] = useState("+1h");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [model, setModel] = useState("");
+	const models = useModels(p.host);
+	const [opening, setOpening] = useState(false);
+	const [folderNote, setFolderNote] = useState<string | null>(null);
 	const root = useRef<HTMLElement | null>(null);
 	useDismiss(p.onClose, root);
 
@@ -81,6 +95,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 			...(group.trim() ? { group: group.trim() } : {}),
 			...(tags.trim() ? { tags: tags.split(",").map(t => t.trim()).filter(Boolean) } : {}),
 			...(when === "at" ? { at: at.trim() } : {}),
+			...(model.trim() ? { model: model.trim() } : {}),
 		};
 		try {
 			p.onStarted(await p.host.request<Started>("/sessions", { method: "POST", body }));
@@ -96,6 +111,26 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 		...(places?.hermesProjects.length ? [h("optgroup", { key: "h", label: "Hermes projects" }, ...places.hermesProjects.map(x => h("option", { key: x.id, value: `project:${x.slug}` }, x.path ? `${x.name} — ${x.path}` : x.name)))] : []),
 		...(places && Object.keys(places.configured).length ? [h("optgroup", { key: "c", label: "omp-sessions projects" }, ...Object.entries(places.configured).map(([name, path]) => h("option", { key: name, value: `project:${name}` }, `${name} — ${path}`)))] : []),
 	];
+	// The folder the current choice runs in, when the page knows it (for Open in VS Code).
+	const chosenFolder = ((): string | null => {
+		if (where === "folder") return folder.trim() || null;
+		if (where === "board") return boards.find(b => b.slug === board)?.folder ?? null;
+		const name = project.slice(project.indexOf(":") + 1);
+		if (project.startsWith("folder:")) return name;
+		return places?.configured[name] ?? places?.hermesProjects.find(x => x.slug === name)?.path ?? null;
+	})();
+	const openFolder = async (): Promise<void> => {
+		if (!chosenFolder) return;
+		setOpening(true);
+		setFolderNote(null);
+		try {
+			setFolderNote(await openInVscode(p.host, "/folders/vscode", { path: chosenFolder }));
+		} catch (err) {
+			setFolderNote(errorMessage(err));
+		} finally {
+			setOpening(false);
+		}
+	};
 
 	return h(
 		"div",
@@ -171,6 +206,14 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 									)
 								: h("div", { className: "omps-field-hint" }, "No kanban boards."),
 					where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and omp group (set them in Boards).") : null,
+					chosenFolder
+						? h(
+								"div",
+								{ className: "omps-field-hint" },
+								h(Button, { small: true, kind: "ghost", icon: "external", label: "Open in VS Code", title: `Open ${chosenFolder} in VS Code`, busy: opening, onClick: () => void openFolder() }),
+								folderNote ? ` ${folderNote}` : null,
+							)
+						: null,
 				),
 				h(
 					"div",
@@ -185,6 +228,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 							options: [{ value: "default", label: "Default", title: "omp's configured mode" }, ...MODES.map(m => ({ value: m, label: MODE_INFO[m].label, title: MODE_INFO[m].detail }))],
 						}),
 					}),
+					h(Field, { label: "Model", htmlFor: "omps-model", children: h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }) }),
 				),
 				h(
 					"div",
@@ -211,7 +255,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 						onChange: setWhen,
 						options: [
 							{ value: "now", label: "Start now" },
-							{ value: "queue", label: "Queue", title: "Starts when omp's concurrency limit has a free slot" },
+							{ value: "queue", label: "Queue", title: "Starts when the omp Sessions scheduler's concurrency limit has a free slot" },
 							{ value: "at", label: "Schedule" },
 						],
 					}),
@@ -222,7 +266,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 								h("input", { className: "omps-input omps-mono", "aria-label": "Start time", value: at, placeholder: "+30m, 14:30 or 2026-01-31T09:00", onChange: (e: Event) => setAt((e.target as HTMLInputElement).value) }),
 								h("div", { className: "omps-at-presets" }, ...AT_PRESETS.map(x => h("button", { key: x.label, type: "button", className: "omps-chip omps-chip-btn", onClick: () => setAt(x.at()) }, x.label))),
 							)
-						: h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under omp's concurrency limit." : "Starts right away."),
+						: h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under the omp Sessions scheduler's concurrency limit." : "Starts right away."),
 				),
 				error ? h(ErrorBox, { message: error }) : null,
 			),

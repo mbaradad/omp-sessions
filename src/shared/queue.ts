@@ -5,8 +5,9 @@ import * as fs from "node:fs";
 import type { QueueOp, QueueTask, QueueTaskOptions, QueueTaskStatus, SessionMeta, TaskQueue } from "./protocol";
 
 const STATUSES: Record<QueueTaskStatus, true> = { pending: true, running: true, done: true, failed: true, skipped: true };
-const MAX_TITLE = 500;
-const MAX_NOTES = 20_000;
+/** Longer task titles are cut: long prompts belong in the notes. */
+export const MAX_TITLE = 500;
+export const MAX_NOTES = 20_000;
 const MAX_TASKS = 500;
 const MAX_SUBTASKS = 200;
 export const MAX_RETRIES = 10;
@@ -65,6 +66,23 @@ function resetRun(t: QueueTask): void {
 	delete t.attempts;
 	delete t.durationMs;
 	delete t.cost;
+	delete t.interrupted;
+}
+
+/**
+ * A queue whose host died (crash, reboot) while a task ran: the task goes back to pending, marked
+ * interrupted, and the whole queue stops (auto-run off, scheduled start dropped). The one rule for
+ * every place that finds such a queue (the next host, the server/CLI listing): an interrupted task
+ * is never rerun unattended; a person restarts it (`run`/auto-run on). Returns false when no task
+ * was running.
+ */
+export function settleInterrupted(q: TaskQueue, now = Date.now()): boolean {
+	const running = q.tasks.filter(t => t.status === "running");
+	if (running.length === 0) return false;
+	for (const t of running) Object.assign(t, { status: "pending", interrupted: now, finishedAt: undefined, summary: "Interrupted: the session host stopped while this task ran (crash or reboot). Run it again to restart it." });
+	q.autoRun = false;
+	delete q.startAt;
+	return true;
 }
 
 function subtaskInput(v: unknown): { title: string; done: boolean } | undefined {
@@ -118,6 +136,8 @@ export function normalizeQueue(raw: unknown): TaskQueue {
 		if (duration !== undefined && duration >= 0) task.durationMs = duration;
 		const cost = finite(tr.cost);
 		if (cost !== undefined && cost >= 0) task.cost = cost;
+		const interrupted = finite(tr.interrupted);
+		if (interrupted !== undefined && interrupted > 0 && status === "pending") task.interrupted = interrupted;
 		tasks.push(task);
 		if (tasks.length >= MAX_TASKS) break;
 	}
@@ -160,6 +180,7 @@ export function applyQueueOps(queue: TaskQueue, ops: QueueOp[], now = Date.now()
 				// The host owns a running task's outcome; clients can't flip it mid-run.
 				if (typeof o.status === "string" && o.status in STATUSES && o.status !== "running" && t.status !== "running") {
 					t.status = o.status as QueueTaskStatus;
+					delete t.interrupted;
 					if (t.status === "done" || t.status === "skipped") {
 						t.finishedAt = now;
 						if (t.status === "done") for (const s of t.subtasks) s.done = true;
@@ -253,11 +274,13 @@ export function applyQueueOps(queue: TaskQueue, ops: QueueOp[], now = Date.now()
 				}
 				break;
 			case "schedule": {
-				// A scheduled start means "not now": the runner waits for the time.
+				// A scheduled start means "not now": the runner waits for the time. Scheduling is a person
+				// restarting the queue, so an interrupted task becomes plain pending work again.
 				const at = finite(o.at);
 				if (at !== undefined && at > 0) {
 					q.startAt = at;
 					q.autoRun = false;
+					for (const t of q.tasks) if (t.status === "pending" && t.interrupted) resetRun(t);
 				} else if (o.at === null) delete q.startAt;
 				break;
 			}
@@ -275,6 +298,8 @@ export function queueSummary(q: TaskQueue): NonNullable<SessionMeta["queue"]> {
 		autoRun: q.autoRun,
 	};
 	if (q.startAt) out.startAt = q.startAt;
+	const interrupted = q.tasks.filter(t => t.status === "pending" && t.interrupted).length;
+	if (interrupted) out.interrupted = interrupted;
 	return out;
 }
 

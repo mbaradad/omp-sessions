@@ -31,7 +31,9 @@ md.use({
 		},
 		image(token: Tokens.Image) {
 			const href = token.href ?? "";
-			if (/^(https?:|data:image\/)/.test(href)) return `<img class="md-img" src="${escapeHtml(href)}" alt="${escapeHtml(token.text)}">`;
+			if (/^data:image\//.test(href)) return `<img class="md-img" src="${escapeHtml(href)}" alt="${escapeHtml(token.text)}">`;
+			// A remote image loads only when clicked: fetching it on render would let the agent send data to any server unseen.
+			if (/^https?:/.test(href)) return `<button type="button" class="md-img-load" data-src="${escapeHtml(href)}" data-alt="${escapeHtml(token.text)}" title="Load this image from the web">Load image ${escapeHtml(token.text ? `“${token.text}” ` : "")}from <span class="md-img-url">${escapeHtml(href)}</span></button>`;
 			return `<a class="ext-link" data-url="${escapeHtml(href)}">${escapeHtml(token.text || href)}</a>`;
 		},
 		code(token: Tokens.Code) {
@@ -193,6 +195,15 @@ function renderMentionChips(): void {
 		),
 	);
 }
+
+// A remote markdown image loads when its placeholder is clicked.
+document.addEventListener("click", e => {
+	const load = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(".md-img-load");
+	const src = load?.dataset.src;
+	if (!load || !src) return;
+	e.preventDefault();
+	load.replaceWith(h("img", { class: "md-img", src, alt: load.dataset.alt ?? "" }));
+});
 
 // Click any chat image to view it full size.
 document.addEventListener("click", e => {

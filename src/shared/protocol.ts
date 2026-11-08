@@ -19,6 +19,8 @@ export interface SessionMeta {
 	createdAt: number;
 	updatedAt: number;
 	ompSessionFile?: string;
+	/** Earlier omp transcripts of this session (a fresh-context task or /new switched files), oldest first. */
+	ompSessionFiles?: string[];
 	ompSessionId?: string;
 	model?: string;
 	exitCode?: number | null;
@@ -27,11 +29,12 @@ export interface SessionMeta {
 	changedFiles: number;
 	/** Last assistant text (truncated), for tree tooltips. */
 	lastText?: string;
-	/** Accumulated model cost (USD) of assistant turns seen by this host. */
+	/** Model cost (USD) of this session's transcripts: main agent, subagents and side calls (src/shared/cost.ts). */
 	cost?: number;
 	/** Task queue summary for tree badges. `waiting`: the next task waits for a global concurrency slot
-	 * (`position` 1-based among waiting sessions, `since` epoch ms). */
-	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; waiting?: { position: number; since: number } };
+	 * (`position` 1-based among waiting sessions, `since` epoch ms). `interrupted`: pending tasks a host
+	 * crash or reboot cut short (see QueueTask.interrupted). */
+	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number } };
 	/** omp's own todo plan (phases → tasks), mirrored for the Tasks view. */
 	plan?: Array<{ name: string; tasks: Array<{ content: string; status: string; blocker?: string }> }>;
 	/** Extension version whose host.js runs this session (absent: hosts that predate the field). */
@@ -93,8 +96,14 @@ export interface QueueTask {
 	attempts?: number;
 	/** Wall time spent running (all attempts of the current run). */
 	durationMs?: number;
-	/** Model cost (USD) of the assistant turns of the current run. */
+	/** Model cost (USD) of the current run, subagents and side calls included (src/shared/cost.ts). */
 	cost?: number;
+	/**
+	 * Epoch ms when the host died (crash, reboot) while this task ran: it went back to pending and
+	 * the queue stopped (auto-run off), because interrupted tasks never rerun unattended. Cleared
+	 * when the task runs again.
+	 */
+	interrupted?: number;
 }
 
 export interface QueueTaskOptions {

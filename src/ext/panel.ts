@@ -10,6 +10,7 @@ import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
 import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
+import { readTranscriptText } from "../shared/transcript-files";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { HostClient } from "./client";
@@ -20,7 +21,7 @@ import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
 import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
 import { exportMarkdown } from "./export";
-import { openLink } from "./links";
+import { openLink, openUrlFromOmp } from "./links";
 import type { SessionManager } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage, slimRunningTool } from "./slim";
@@ -134,12 +135,7 @@ function rec(v: unknown): Record<string, unknown> | undefined {
 /** Messages recorded in an omp session file (used to show stopped sessions). */
 function readTranscript(file: string | undefined): unknown[] {
 	if (!file) return [];
-	let raw = "";
-	try {
-		raw = fs.readFileSync(file, "utf8");
-	} catch {
-		return [];
-	}
+	const raw = readTranscriptText(file);
 	const out: unknown[] = [];
 	for (const line of raw.split("\n")) {
 		if (!line.includes('"type":"message"')) continue;
@@ -342,7 +338,8 @@ export class ChatPanel implements vscode.Disposable {
 		const meta = this.meta;
 		if (!meta) return;
 		this.updateTitle();
-		if (this.lastStatus === "stopped" && meta.status !== "stopped") this.attach();
+		// A restarted host can listen elsewhere (Windows pipes get a fresh name per start).
+		if ((this.lastStatus === "stopped" && meta.status !== "stopped") || (meta.status !== "stopped" && this.client && this.client.socketPath !== meta.socket)) this.attach();
 		else if (meta.status === "stopped" && this.lastStatus !== "stopped" && this.lastStatus !== undefined) {
 			this.post({ type: "meta", meta });
 		}
@@ -469,7 +466,7 @@ export class ChatPanel implements vscode.Disposable {
 				}
 				if (ev.type === "extension_ui_request" && ev.method === "open_url") {
 					const target = typeof ev.launchUrl === "string" ? ev.launchUrl : typeof ev.url === "string" ? ev.url : undefined;
-					if (target) void vscode.env.openExternal(vscode.Uri.parse(target, true));
+					if (target) void openUrlFromOmp(target);
 				}
 				const slim = slimFrame(ev);
 				if (slim) this.post({ type: "event", ev: slim });

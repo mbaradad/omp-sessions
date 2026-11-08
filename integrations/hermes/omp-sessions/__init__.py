@@ -1,7 +1,8 @@
-"""omp-sessions: Hermes plugin for omp coding sessions (the omp Sessions VS Code extension's omp-sessions CLI).
+"""omp-sessions: Hermes plugin for omp coding sessions, run by the omp Sessions server through its
+omp-sessions CLI (the same sessions VS Code, the omp phone app and the CLI show).
 
 - Tools (toolset omp_sessions) to list, start, queue, schedule, check, wait on, answer, steer and stop
-  omp sessions.
+  omp sessions, add tasks to their queues, set priority, and read the server's status.
 - Notifications: a Hermes session that started an omp session gets a message when it settles.
 - Kanban lane: cards assigned to `omp` run as omp sessions and report back to the card.
 - Bundled skill `omp-sessions:omp-sessions`, `/omp`, and `hermes omp …`.
@@ -53,7 +54,7 @@ class Plugin:
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
         self.store = Store(_ProfileState(ctx))
-        self.notifier = Notifier(self.store, self.omp, inject_with(ctx), lambda: self.settings().notify)
+        self.notifier = Notifier(self.store, self.omp, inject_with(ctx), lambda: self.settings().notify, lambda: self.settings().agent_approvals)
         # Machine-wide (shared by every profile that runs the plugin), like the kanban boards.
         self.lane = Lane(Store(FileState(lane_data_dir)), self.settings, self.omp)
         self.tools = Tools(self.settings, self.omp, self.notifier)

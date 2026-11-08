@@ -1,7 +1,7 @@
 {
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
-	"description": "A task server for oh-my-pi (omp) coding agents: background sessions with a task queue each, scheduled starts and a global concurrency limit, locally or over Remote-SSH. They keep working when you close VS Code and reattach when you return. Run parallel git-worktree sessions, track every session on a kanban board, review or revert native diffs, and drive the same sessions from the terminal, your phone or Hermes Agent.",
+	"description": "A task server for oh-my-pi (omp) coding agents: background sessions with a task queue each, scheduled starts and a global concurrency limit, locally or over Remote-SSH. Sessions keep running with no client open; drive them from VS Code, the omp-sessions terminal command, your phone or Hermes Agent. In VS Code: open any session with the full chat, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
 	"version": "0.6.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
@@ -10,13 +10,13 @@
 	"icon": "media/icon.png",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/mbaradad/omp-vscode.git"
+		"url": "https://github.com/mbaradad/omp-sessions.git"
 	},
 	"bugs": {
-		"url": "https://github.com/mbaradad/omp-vscode/issues"
+		"url": "https://github.com/mbaradad/omp-sessions/issues"
 	},
-	"homepage": "https://github.com/mbaradad/omp-vscode#readme",
-	"qna": "https://github.com/mbaradad/omp-vscode/issues",
+	"homepage": "https://github.com/mbaradad/omp-sessions#readme",
+	"qna": "https://github.com/mbaradad/omp-sessions/issues",
 	"preview": true,
 	"keywords": [
 		"omp",
@@ -257,6 +257,12 @@
 				"title": "New Session with Options…",
 				"category": "omp",
 				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "omp.setDefaultModel",
+				"title": "Set Default Model for New Sessions…",
+				"category": "omp",
+				"icon": "$(sparkle)"
 			},
 			{
 				"command": "omp.reviewChanges",
@@ -712,6 +718,18 @@
 				"icon": "$(eye)"
 			},
 			{
+				"command": "omp.sessions.showAll",
+				"title": "Show All Sessions",
+				"category": "omp",
+				"icon": "$(globe)"
+			},
+			{
+				"command": "omp.sessions.showWorkspace",
+				"title": "Show This Workspace's Sessions",
+				"category": "omp",
+				"icon": "$(root-folder)"
+			},
+			{
 				"command": "omp.organize.showArchived",
 				"title": "Show Archived Sessions",
 				"category": "omp",
@@ -936,9 +954,9 @@
 			},
 			{
 				"command": "omp.hermes.showCard",
-				"title": "Show Hermes Card in Terminal",
+				"title": "Show Hermes Card",
 				"category": "omp",
-				"icon": "$(terminal)"
+				"icon": "$(note)"
 			},
 			{
 				"command": "omp.hermes.update",
@@ -982,6 +1000,16 @@
 					"command": "omp.organize.showFinished",
 					"when": "view == omp.sessions && omp.sessions.hideFinished",
 					"group": "navigation@5"
+				},
+				{
+					"command": "omp.sessions.showAll",
+					"when": "view == omp.sessions && !omp.sessions.scopeAll && workspaceFolderCount != 0",
+					"group": "navigation@6"
+				},
+				{
+					"command": "omp.sessions.showWorkspace",
+					"when": "view == omp.sessions && omp.sessions.scopeAll && workspaceFolderCount != 0",
+					"group": "navigation@6"
 				},
 				{
 					"command": "omp.organize.sortBy",
@@ -1637,6 +1665,14 @@
 					"when": "omp.sessions.hideFinished"
 				},
 				{
+					"command": "omp.sessions.showAll",
+					"when": "!omp.sessions.scopeAll && workspaceFolderCount != 0"
+				},
+				{
+					"command": "omp.sessions.showWorkspace",
+					"when": "omp.sessions.scopeAll && workspaceFolderCount != 0"
+				},
+				{
 					"command": "omp.organize.showArchived",
 					"when": "!omp.sessions.showArchived"
 				},
@@ -1901,7 +1937,7 @@
 				"omp.dashboard.includeTerminalSessions": {
 					"type": "boolean",
 					"default": false,
-					"description": "Usage dashboard and today's spend also count omp sessions started outside VS Code (all transcripts under ~/.omp/agent/sessions)."
+					"description": "Usage dashboard and today's spend also count omp sessions run without omp Sessions, e.g. plain omp in a terminal (all transcripts under ~/.omp/agent/sessions)."
 				},
 				"omp.snapshotRetentionDays": {
 					"type": "number",
@@ -1912,7 +1948,8 @@
 				"omp.path": {
 					"type": "string",
 					"default": "",
-					"description": "Path to the omp executable on the machine running the extension. Empty = search PATH, ~/.local/bin, ~/.bun/bin."
+					"scope": "machine",
+					"markdownDescription": "Path to the omp executable on the machine omp runs on: an absolute path, `~/…`, or a command name on PATH. Every omp session on that machine uses it (VS Code, `omp-sessions`, the phone app, Hermes); it can't be set per workspace. Empty: search PATH, ~/.local/bin, ~/.bun/bin."
 				},
 				"omp.extraArgs": {
 					"type": "array",
@@ -1920,7 +1957,8 @@
 						"type": "string"
 					},
 					"default": [],
-					"description": "Extra omp CLI arguments for new sessions, e.g. [\"--model\", \"opus\"]."
+					"scope": "machine",
+					"description": "Extra omp CLI arguments for new sessions on this machine, from any client, e.g. [\"--model\", \"opus\"]. Can't be set per workspace."
 				},
 				"omp.sendWhileBusy": {
 					"type": "string",
@@ -2000,12 +2038,26 @@
 				"omp.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Keep the per-user `omp-sessions` server running: it starts stopped sessions whose task queue has work when a concurrency slot is free (also after a reboot), stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command (`omp: Install omp-sessions Command`)."
+					"markdownDescription": "Start the per-user `omp-sessions` server when VS Code opens (clients also start it whenever they need it; it keeps running until `omp-sessions server stop`). It starts stopped sessions whose task queue has work when a concurrency slot is free, stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command, the phone app and Hermes."
 				},
-				"omp.showAllSessions": {
+				"omp.server.installService": {
 					"type": "boolean",
-					"default": false,
-					"description": "Also list stopped sessions from folders outside this workspace."
+					"default": true,
+					"scope": "machine",
+					"markdownDescription": "Install the `omp-sessions` server as a user service (systemd user unit, launchd agent) the first time it starts, so it comes back after a crash or reboot. Off: the server still starts on demand but not at login. Same as `omp-sessions config set service on|off`; removing an installed service is `omp-sessions server uninstall` (the install notice's **Turn Off** does both). Never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
+				},
+				"omp.sessionScope": {
+					"type": "string",
+					"enum": [
+						"workspace",
+						"all"
+					],
+					"enumDescriptions": [
+						"Sessions whose folder is a workspace folder or inside one (any status).",
+						"Every omp session on this machine."
+					],
+					"default": "workspace",
+					"description": "Which sessions the Sessions view, Tasks view, Sessions Board and status bar list. A window without folders lists all sessions."
 				},
 				"omp.saveBeforePrompt": {
 					"type": "boolean",
@@ -2016,6 +2068,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Notify when a session finishes or needs input while its chat is not visible."
+				},
+				"omp.notifyAllSessions": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "Notify about every omp session on this machine, including those started from `omp-sessions`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
 				},
 				"omp.showChangeDecorations": {
 					"type": "boolean",

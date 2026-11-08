@@ -17,7 +17,7 @@ export class HostClient implements vscode.Disposable {
 	connected = false;
 
 	constructor(
-		private readonly socketPath: string,
+		readonly socketPath: string,
 		private readonly clientName: string,
 		private readonly canReconnect: () => boolean,
 	) {

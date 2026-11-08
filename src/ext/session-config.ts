@@ -27,8 +27,9 @@ import {
 } from "../shared/session-config";
 import { type Capabilities, discoverCapabilities } from "../shared/session-discovery";
 import type { OmpApi } from "./api";
-import { listModels } from "./launch-options";
+import { defaultModelLabel, loadModels } from "./launch-options";
 import { pickPermissionMode } from "./permissions";
+import { plain } from "./plain";
 import { projectRoot, resolveOmpPath } from "./sessions";
 
 /** The editable state: managed launch flags plus overlay toggles. */
@@ -119,7 +120,7 @@ export async function pickMcp(draft: SettingsDraft, caps: Capabilities, title: s
 	];
 	const off = caps.mcp.filter(s => s.disabledByConfig).map(s => s.name);
 	if (!items.length) {
-		void vscode.window.showInformationMessage(`No MCP servers configured for this folder${off.length ? ` (disabled in omp's mcp.json: ${off.join(", ")})` : ""}.`);
+		void vscode.window.showInformationMessage(plain(`No MCP servers configured for this folder${off.length ? ` (disabled in omp's mcp.json: ${off.join(", ")})` : ""}.`));
 		return false;
 	}
 	const picked = await vscode.window.showQuickPick(items, {
@@ -141,12 +142,13 @@ async function pickModel(cwd: string, current: string | undefined, running: stri
 	qp.title = title;
 	qp.placeholder = `Model${running ? ` (running now: ${running})` : ""}`;
 	qp.matchOnDescription = true;
-	const head = [{ label: "$(settings) omp default model", description: current ? "" : "current", selector: null }];
+	const head = [{ label: "$(settings) Default model", description: `${defaultModelLabel({ default: null, ompDefault: null })}${current ? "" : " · current"}`, selector: null }];
 	qp.items = head;
 	qp.busy = true;
 	qp.show();
-	void listModels(cwd).then(models => {
-		qp.items = [...head, ...models.map(m => ({ label: m.name, description: `${m.selector}${m.selector === current ? " · current" : ""}`, detail: m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k context` : undefined, selector: m.selector }))];
+	void loadModels(cwd).then(list => {
+		const top = [{ ...head[0], description: `${defaultModelLabel(list)}${current ? "" : " · current"}` }];
+		qp.items = [...top, ...list.models.map(m => ({ label: m.name, description: `${m.selector}${m.selector === current ? " · current" : ""}${m.default ? " · default" : ""}`, detail: m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k context` : undefined, selector: m.selector }))];
 		const active = qp.items.find(i => i.selector === current);
 		if (active) qp.activeItems = [active];
 		qp.busy = false;
@@ -339,7 +341,7 @@ async function applyToSession(api: OmpApi, id: string, original: string[], befor
 	const meta = api.sessions.get(id);
 	if (!meta) return;
 	if (meta.status === "stopped") {
-		const a = await vscode.window.showInformationMessage(`Saved settings of "${meta.title}"; they apply when it is resumed.`, "Resume now");
+		const a = await vscode.window.showInformationMessage(plain(`Saved settings of "${meta.title}"; they apply when it is resumed.`), "Resume now");
 		if (a) await api.launchAndOpen({ cwd: meta.cwd, id });
 		return;
 	}
@@ -361,15 +363,15 @@ async function applyToSession(api: OmpApi, id: string, original: string[], befor
 		JSON.stringify(normalizeToggles(before.toggles)) !== JSON.stringify(normalizeToggles(draft.toggles)) || RESTART_FLAGS.some(k => before.flags[k] !== draft.flags[k]) || (modeChanged && meta.permissionMode === undefined);
 	const liveNote = live.length ? `Switched ${live.join(" and ")} now. ` : "";
 	if (!restartNeeded) {
-		void vscode.window.showInformationMessage(`${liveNote}Saved settings of "${meta.title}".`);
+		void vscode.window.showInformationMessage(plain(`${liveNote}Saved settings of "${meta.title}".`));
 		return;
 	}
 	const now = "Apply now (restart session)";
 	const later = "Apply on next resume";
 	const choice =
 		meta.status === "idle"
-			? await vscode.window.showInformationMessage(`${liveNote}The other changes need "${meta.title}" to restart; the conversation continues after it.`, now, later)
-			: await vscode.window.showWarningMessage(`${liveNote}"${meta.title}" is ${meta.status === "working" ? "working" : "waiting for input"}; the other changes apply when it restarts.`, "Restart now anyway", later);
+			? await vscode.window.showInformationMessage(plain(`${liveNote}The other changes need "${meta.title}" to restart; the conversation continues after it.`), now, later)
+			: await vscode.window.showWarningMessage(plain(`${liveNote}"${meta.title}" is ${meta.status === "working" ? "working" : "waiting for input"}; the other changes apply when it restarts.`), "Restart now anyway", later);
 	if (choice === now || choice === "Restart now anyway") await restart(api, id);
 }
 
@@ -412,7 +414,7 @@ async function sessionSettings(api: OmpApi, arg: unknown): Promise<void> {
 				return;
 			case "saveDefault":
 				writeProjectDefaults(root, { args: applyFlags([], draft.flags), toggles: draft.toggles });
-				void vscode.window.showInformationMessage(`New omp sessions in ${root} start with these settings.`);
+				void vscode.window.showInformationMessage(plain(`New omp sessions in ${root} start with these settings.`));
 				break;
 			case "useDefault":
 				if (defaults) draft = { flags: readFlags(defaults.args), toggles: normalizeToggles(defaults.toggles) };

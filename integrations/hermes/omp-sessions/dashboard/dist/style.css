@@ -35,6 +35,8 @@
   --t-working: var(--o-blue);
   --t-starting: var(--o-blue);
   --t-queued: var(--o-purple);
+  --t-scheduled: var(--o-purple);
+  --t-interrupted: var(--o-yellow);
   --t-idle: var(--o-green);
   --t-stopped: color-mix(in srgb, var(--o-fg) 38%, transparent);
   position: relative;
@@ -715,6 +717,12 @@
 .tone-queued {
   --tone: var(--t-queued);
 }
+.tone-scheduled {
+  --tone: var(--t-scheduled);
+}
+.tone-interrupted {
+  --tone: var(--t-interrupted);
+}
 .tone-idle {
   --tone: var(--t-idle);
 }
@@ -813,6 +821,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.omps-card-vscode {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--o-faint);
+  cursor: pointer;
+  opacity: 0;
+}
+.omps-card:hover .omps-card-vscode,
+.omps-card:focus-within .omps-card-vscode,
+.omps-card-vscode:focus-visible {
+  opacity: 1;
+}
+.omps-card-vscode:hover {
+  color: var(--o-fg);
+  background: var(--o-hover);
 }
 .omps-chip {
   display: inline-flex;
@@ -1217,6 +1245,26 @@
   flex-wrap: wrap;
 }
 .omps-mode-row .omps-section-label {
+  margin: 0;
+}
+.omps-model-picker {
+  display: inline-flex;
+  flex: 1;
+  min-width: 12rem;
+}
+.omps-model-picker .omps-input {
+  width: 100%;
+}
+.omps-default-model {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.omps-default-model .omps-field {
+  flex: 1;
+  min-width: 16rem;
   margin: 0;
 }
 .omps-question {

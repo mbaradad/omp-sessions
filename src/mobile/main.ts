@@ -5,7 +5,8 @@ import { plainExcerpt } from "../shared/excerpt";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode } from "../shared/permissions";
 import type { SessionMeta, UiRequest } from "../shared/protocol";
 import type { SessionInfo } from "../shared/server-protocol";
-import { AuthError, action, createSession, isSessionMeta, listProjects, listSessions, pair, sessionList } from "./api";
+import type { AgentState } from "../shared/session-report";
+import { AuthError, type MachineSummary, type PhoneModel, action, createSession, isSessionMeta, listModels, listProjects, listSessions, machineStatus, pair, sessionList } from "./api";
 import { ago, basename, h, isRecord, money, num, str } from "./dom";
 import { Transcript, dialogCard } from "./transcript";
 
@@ -34,7 +35,8 @@ function toast(text: string, error = true): void {
 
 function failed(err: unknown): void {
 	if (err instanceof AuthError) {
-		showPair(err.message === "invalid token" ? "This phone's pairing is no longer valid (the token changed). Pair it again." : undefined);
+		const stale = err.message === "invalid token" || err.message.startsWith("pairing expired");
+		showPair(stale ? "This phone's pairing is no longer valid (the token changed). Pair it again." : undefined);
 		return;
 	}
 	toast(err instanceof Error ? err.message : String(err));
@@ -74,30 +76,35 @@ function project(meta: SessionMeta): string {
 	return basename(meta.cwd);
 }
 
-type Group = "input" | "working" | "idle" | "stopped";
+type Group = "input" | "interrupted" | "working" | "queued" | "idle" | "stopped";
 const GROUPS: Array<{ id: Group; label: string }> = [
 	{ id: "input", label: "Needs input" },
+	{ id: "interrupted", label: "Interrupted" },
 	{ id: "working", label: "Working" },
+	{ id: "queued", label: "Queued & scheduled" },
 	{ id: "idle", label: "Idle" },
 	{ id: "stopped", label: "Stopped" },
 ];
 
+/** The server's agent state (`show`'s); a stopped session from an older server has none. */
+function stateOf(info: SessionInfo): AgentState {
+	return info.state ?? (info.meta.status === "waiting" ? "needs_input" : info.meta.status === "stopped" ? "stopped" : info.meta.status);
+}
+
 function groupOf(info: SessionInfo): Group {
-	if (info.column === "input" || info.meta.status === "waiting") return "input";
-	if (info.column === "working" || info.column === "waiting" || info.meta.status === "starting" || info.meta.status === "working") return "working";
-	return info.meta.status === "stopped" ? "stopped" : "idle";
+	const state = stateOf(info);
+	if (state === "needs_input") return "input";
+	if (state === "starting") return "working";
+	if (state === "scheduled") return "queued";
+	return state;
 }
 
 function statusLabel(meta: SessionMeta, info?: SessionInfo): string {
 	if (info?.waiting) return info.waiting.launch ? "queued" : `waiting #${info.waiting.position}`;
-	switch (meta.status) {
-		case "waiting":
-			return "needs input";
-		case "starting":
-			return "starting";
-		default:
-			return meta.status;
-	}
+	if (!info) return meta.status === "waiting" ? "needs input" : meta.status;
+	const state = stateOf(info);
+	if (state === "scheduled" && info.queue.startAt) return `scheduled ${new Date(info.queue.startAt).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`;
+	return state === "needs_input" ? "needs input" : state;
 }
 
 function queueText(q: SessionInfo["queue"]): string {
@@ -171,22 +178,45 @@ function sessionRow(info: SessionInfo): HTMLElement {
 	return h(
 		"a",
 		{ class: `srow ${groupOf(info)}`, href: `#/s/${m.id}` },
-		h("div", { class: "srow-top" }, h("span", { class: "stitle" }, m.title || "New session"), h("span", { class: `chip ${m.status}` }, statusLabel(m, info))),
+		h("div", { class: "srow-top" }, h("span", { class: "stitle" }, m.title || "New session"), h("span", { class: `chip ${stateOf(info)}` }, statusLabel(m, info))),
 		h("div", { class: "smeta" }, meta),
 		m.lastText ? h("div", { class: "slast" }, plainExcerpt(m.lastText)) : null,
 	);
+}
+
+/** One line on the machine: server version and uptime, what sessions are doing, the scheduler; problems below it. */
+function statusStrip(s: MachineSummary): HTMLElement {
+	const states = ["needs_input", "working", "queued", "scheduled", "interrupted"].flatMap(k => (s.byState[k] ? [`${s.byState[k]} ${k.replace("_", " ")}`] : []));
+	const line = [
+		`server ${s.version}${s.startedAt ? ` · up ${ago(s.startedAt)}` : ""}`,
+		...states,
+		s.pending ? `${s.pending} tasks pending` : "",
+		s.maxConcurrent ? `limit ${s.maxConcurrent}` : "",
+		s.paused ? "scheduler paused" : "",
+	].filter(Boolean);
+	return h("div", { class: "machine" }, h("div", { class: "dim small" }, line.join(" · ")), ...s.problems.map(p => h("p", { class: "note warning" }, p)));
 }
 
 function showList(): void {
 	const list = h("main", { class: "list" });
 	const dot = h("span", { class: "live-dot", title: "Live updates" });
 	const pull = h("div", { class: "pull" }, "Release to refresh");
+	let machine: HTMLElement | null = null;
+	const loadStatus = () =>
+		machineStatus().then(
+			s => {
+				machine = s ? statusStrip(s) : null;
+				render();
+			},
+			() => {},
+		);
 	const render = () => {
 		dot.classList.toggle("on", live);
 		const visible = sessions.filter(s => !s.archived);
 		const groups = GROUPS.map(g => ({ ...g, items: visible.filter(s => groupOf(s) === g.id) })).filter(g => g.items.length);
 		list.replaceChildren(
 			pull,
+			machine ?? "",
 			...(groups.length
 				? groups.map(g => h("section", { class: `group ${g.id}` }, h("h2", {}, g.label, h("span", { class: "count" }, String(g.items.length))), ...g.items.map(sessionRow)))
 				: [h("div", { class: "empty" }, h("p", {}, "No sessions yet."), h("a", { class: "button primary", href: "#/new" }, "Start one"))]),
@@ -195,7 +225,7 @@ function showList(): void {
 	app.replaceChildren(header("omp Sessions", { right: h("div", { class: "row" }, dot, h("a", { class: "button icon plus", href: "#/new", "aria-label": "New session" }, "+")) }), list);
 	listListeners.add(render);
 	render();
-	refresh().catch(failed);
+	refresh().then(loadStatus, failed);
 
 	// Pull to refresh.
 	let startY: number | undefined;
@@ -213,7 +243,7 @@ function showList(): void {
 		if (startY !== undefined && pulled > 120) {
 			listStream?.close();
 			listStream = undefined;
-			refresh().catch(failed);
+			refresh().then(loadStatus, failed);
 		}
 		startY = undefined;
 		pulled = 0;
@@ -242,7 +272,38 @@ function showSession(id: string): void {
 	const bar = h("header", { class: "bar" }, h("button", { class: "icon back", "aria-label": "Back", onclick: () => go("#/") }, "‹"), h("div", { class: "titles" }, titleEl, subEl));
 	const modes = h("div", { class: "seg", role: "radiogroup", "aria-label": "Permission mode" });
 	const controls = h("div", { class: "controls" });
-	const tools = h("div", { class: "toolbar" }, modes, controls);
+	const modelSelect = h("select", { class: "model", "aria-label": "Model", title: "Model" });
+	const tools = h("div", { class: "toolbar" }, modes, modelSelect, controls);
+	let models: PhoneModel[] = [];
+	/** The model the select shows; it is rebuilt only when that changes, so it never resets while open. */
+	let shownModel: string | undefined;
+	const renderModel = () => {
+		const current = meta?.model ?? "";
+		shownModel = current;
+		const list = !current || models.some(m => m.selector === current) ? models : [{ selector: current, name: current, isDefault: false }, ...models];
+		modelSelect.replaceChildren(
+			...(list.length ? list.map(m => h("option", { value: m.selector, selected: m.selector === current }, `${m.name}${m.isDefault ? " · default" : ""}`)) : [h("option", { value: "" }, "Model")]),
+		);
+	};
+	modelSelect.addEventListener("change", async () => {
+		const model = modelSelect.value;
+		if (!model || model === meta?.model) return;
+		try {
+			const res = await action(id, "model", { model });
+			if (meta) meta = { ...meta, model };
+			toast(isRecord(res) && res.applied === "next-resume" ? `${model} from the next resume` : `Model: ${model}`, false);
+		} catch (err) {
+			failed(err);
+		}
+		renderModel();
+	});
+	listModels().then(
+		list => {
+			models = list;
+			renderModel();
+		},
+		() => {},
+	);
 	const input = h("textarea", { rows: 1, placeholder: "Message omp…", enterkeyhint: "send" });
 	const buttons = h("div", { class: "send-buttons" });
 	const composer = h("form", { class: "composer", onsubmit: (e: Event) => e.preventDefault() }, input, buttons);
@@ -266,15 +327,16 @@ function showSession(id: string): void {
 	};
 	input.addEventListener("input", autosize);
 
-	const act = (name: "abort" | "stop" | "resume", label: string) =>
+	const act = (name: "abort" | "stop" | "resume" | "continue", label: string, title?: string) =>
 		h(
 			"button",
 			{
 				class: name === "stop" ? "danger" : "",
+				...(title ? { title } : {}),
 				onclick: async () => {
 					try {
 						await action(id, name);
-						if (name === "resume") reconnectSoon();
+						if (name === "resume" || name === "continue") reconnectSoon();
 					} catch (err) {
 						failed(err);
 					}
@@ -283,10 +345,28 @@ function showSession(id: string): void {
 			label,
 		);
 
+	/** Asks VS Code on the machine to open this session; the link also opens it from a browser on that computer. */
+	const vscodeButton = h("button", { title: "Open in VS Code on the computer running it" }, "VS Code");
+	/** The button, or after a request the link that opens the session from a browser on the VS Code computer. */
+	let vscodeEl: HTMLElement = vscodeButton;
+	vscodeButton.addEventListener("click", async () => {
+		try {
+			const res = await action(id, "vscode");
+			const url = isRecord(res) ? str(res.url) : "";
+			toast("Sent: the VS Code window last used opens it when focused (within 2 minutes).", false);
+			if (url.startsWith("vscode")) {
+				vscodeEl = h("a", { class: "button", href: url }, "Open link");
+				renderChrome();
+			}
+		} catch (err) {
+			failed(err);
+		}
+	});
 	const renderChrome = () => {
 		const info = infoOf(id);
 		const m = meta ?? info?.meta;
 		titleEl.textContent = m?.title || "Session";
+		if ((meta?.model ?? "") !== shownModel) renderModel();
 		subEl.textContent = m ? [project(m), statusLabel(m, info), info ? queueText(info.queue) : "", money(m.cost)].filter(Boolean).join(" · ") : "";
 		const working = busy || m?.status === "working" || m?.status === "starting";
 		const stopped = m?.status === "stopped";
@@ -306,13 +386,23 @@ function showSession(id: string): void {
 				),
 			),
 		);
-		controls.replaceChildren(...(stopped ? [act("resume", "Resume")] : [working ? act("abort", "Abort") : null, act("stop", "Stop")].filter(b => b !== null)));
+		const state = info ? stateOf(info) : undefined;
+		// Work ahead decides first: a scheduled or queued start can be cancelled, an interrupted session continued.
+		const sessionControls =
+			state === "interrupted"
+				? [act("continue", "Continue", "Run the interrupted task again, or let omp finish the cut-off turn"), stopped ? null : act("stop", "Stop")]
+				: stopped && (state === "scheduled" || state === "queued")
+					? [act("stop", state === "scheduled" ? "Cancel schedule" : "Unqueue", "It won't start by itself; its tasks stay"), act("resume", "Resume")]
+					: stopped
+						? [act("resume", "Resume")]
+						: [working ? act("abort", "Abort") : null, act("stop", "Stop")];
+		controls.replaceChildren(...sessionControls.filter(b => b !== null), vscodeEl);
 		buttons.replaceChildren(
 			...(working && !stopped
-				? [h("button", { class: "ghost", type: "button", title: "Send after the current turn", onclick: () => void send(false) }, "Queue"), h("button", { class: "primary", type: "button", title: "Steer the current turn", onclick: () => void send(true) }, "Steer")]
+				? [h("button", { class: "ghost", type: "button", title: "Send when the current turn ends", onclick: () => void send(false) }, "After turn"), h("button", { class: "primary", type: "button", title: "Steer the current turn", onclick: () => void send(true) }, "Steer")]
 				: [h("button", { class: "primary", type: "button", onclick: () => void send(false) }, stopped ? "Resume & send" : "Send")]),
 		);
-		input.placeholder = stopped ? "Resumes the session…" : working ? "Steer or queue…" : "Message omp…";
+		input.placeholder = stopped ? "Resumes the session…" : working ? "Steer, or send after this turn…" : "Message omp…";
 	};
 
 	const setMode = async (mode: PermissionMode) => {

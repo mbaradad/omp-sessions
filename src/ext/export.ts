@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { conversationMarkdown } from "../shared/export-md";
 import type { SessionMeta } from "../shared/protocol";
 import type { ToWebview } from "../shared/webview";
+import { plain } from "./plain";
 
 export async function exportMarkdown(mode: "copy" | "save", messages: unknown[], meta: SessionMeta | undefined, post: (msg: ToWebview) => void): Promise<void> {
 	if (!messages.length) {
@@ -26,6 +27,6 @@ export async function exportMarkdown(mode: "copy" | "save", messages: unknown[],
 	if (!target) return;
 	await vscode.workspace.fs.writeFile(target, Buffer.from(markdown, "utf8"));
 	post({ type: "notice", level: "info", markdown: true, text: `Saved the conversation to \`${target.fsPath}\`` });
-	const open = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`, "Open");
+	const open = await vscode.window.showInformationMessage(plain(`Saved ${path.basename(target.fsPath)}`), "Open");
 	if (open) await vscode.window.showTextDocument(target, { preview: true });
 }

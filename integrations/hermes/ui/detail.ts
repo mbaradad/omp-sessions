@@ -1,9 +1,11 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
-// the permission mode switch, Stop, and Open in VS Code.
-import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type VscodeLink } from "./api";
+// the permission mode and model switches, Stop, and Open in VS Code (the chat, or the project folder).
+import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
+import { ModelPicker, useModels } from "./models";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, stateText } from "./util";
+import { openInVscode } from "./vscode";
 
 const POLL_MS = 3000;
 
@@ -107,9 +109,11 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [text, setText] = useState("");
-	const [followUp, setFollowUp] = useState(false);
+	const [steer, setSteer] = useState(false);
 	const [confirmStop, setConfirmStop] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
+	const [model, setModel] = useState("");
+	const models = useModels(p.host);
 	const root = useRef<HTMLElement | null>(null);
 	const tick = useRef(0);
 	useDismiss(p.onClose, root);
@@ -156,24 +160,16 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 
 	const send = (): void => {
 		if (!text.trim()) return;
-		void act("send", "send", { text, followUp: s?.state === "working" && followUp }, () => setText(""));
+		void act("send", "send", { text, steer: s?.state === "working" && steer }, () => setText(""));
 	};
 
 	// The VS Code window last used on omp's machine takes the request; the link brings that window up.
-	const openVscode = async (): Promise<void> => {
-		setBusy("vscode");
+	const openVscode = async (what: "vscode" | "project"): Promise<void> => {
+		setBusy(what);
 		setActionError(null);
 		setNotice(null);
 		try {
-			const link = await p.host.request<VscodeLink>(`/sessions/${encodeURIComponent(p.id)}/vscode`, { method: "POST", body: {} });
-			await p.host.openVscode(link);
-			setNotice(
-				link.authority
-					? `Opening in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.`
-					: link.authority === ""
-						? "Opening in VS Code on omp's machine."
-						: "No VS Code window has used omp Sessions on omp's machine yet: the link opens VS Code here, which needs the omp Sessions extension.",
-			);
+			setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`));
 		} catch (err) {
 			setActionError(errorMessage(err));
 		} finally {
@@ -182,6 +178,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 	};
 
 	const view = s ?? p.summary;
+	const questionId = view?.question?.id;
 	const working = view?.state === "working" || view?.state === "starting";
 	return h(
 		"aside",
@@ -196,7 +193,8 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 				h("h2", { id: "omps-detail-title", className: "omps-drawer-title" }, view?.title ?? shortId(p.id)),
 				view ? h("div", { className: "omps-drawer-sub" }, icon("folder", 12), h("span", { title: view.cwd }, view.cwdLabel ?? view.cwd), h("span", { className: "omps-sep" }, "·"), h("code", null, shortId(view.id))) : null,
 			),
-			h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session in VS Code", busy: busy === "vscode", onClick: () => void openVscode() }),
+			h(Button, { kind: "ghost", small: true, icon: "folder", label: "Open project in VS Code", title: "Open the session's project folder in VS Code (its Hermes project or board folder, else its git repository)", busy: busy === "project", onClick: () => void openVscode("project") }),
+			h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session's chat in VS Code", busy: busy === "vscode", onClick: () => void openVscode("vscode") }),
 			h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose }),
 		),
 		h(
@@ -206,7 +204,9 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 			error && view ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 			actionError ? h(ErrorBox, { message: actionError }) : null,
 			notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-			view?.state === "needs_input" && view.question ? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: answer => void act("answer", "answer", { answer }) }) : null,
+			view?.state === "needs_input" && view.question
+				? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: answer => void act("answer", "answer", { answer, question: questionId }) })
+				: null,
 			view
 				? h(
 						"dl",
@@ -214,7 +214,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Meta, { label: "Status", children: stateText(view, p.now) }),
 						view.group ? h(Meta, { label: "Group", children: view.group }) : null,
 						view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-						view.startAt && view.state === "queued" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+						view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
 						view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
 						view.model ? h(Meta, { label: "Model", children: view.model }) : null,
 						h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
@@ -240,12 +240,27 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						}),
 					)
 				: null,
+			view
+				? h(
+						"form",
+						{
+							className: "omps-mode-row",
+							onSubmit: (e: Event) => {
+								e.preventDefault();
+								if (model.trim() && model.trim() !== view.model) void act("model", "model", { model: model.trim() }, () => setModel(""));
+							},
+						},
+						h("label", { className: "omps-section-label", htmlFor: "omps-detail-model" }, "Model"),
+						h(ModelPicker, { id: "omps-detail-model", models: models.models, value: model, onChange: setModel, disabled: busy === "model", placeholder: view.model ?? undefined, label: `Switch model (now ${view.model ?? "the default"})` }),
+						h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model }),
+					)
+				: null,
 			h(
 				"section",
 				{ className: "omps-reply", "aria-label": "Last reply" },
 				h("div", { className: "omps-section-label" }, "Last reply"),
 				view?.reply ? h("div", { className: "omps-md" }, ...markdown(view.reply)) : view?.excerpt ? h("div", { className: "omps-md" }, h("p", null, plain(view.excerpt))) : h("div", { className: "omps-muted" }, view ? "No reply yet." : "Loading…"),
-				view?.exitReason ? h("div", { className: "omps-exit" }, `Stopped: ${view.exitReason}`) : null,
+				view?.exitReason ? h("div", { className: "omps-exit" }, `${view.state === "interrupted" ? "Interrupted" : "Stopped"}: ${view.exitReason}`) : null,
 			),
 		),
 		view
@@ -265,7 +280,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 							className: "omps-input",
 							rows: 2,
 							value: text,
-							placeholder: working ? "Steer the current turn…" : view.state === "stopped" ? "Send a prompt (resumes the session)…" : "Send a follow-up…",
+							placeholder: working ? (steer ? "Steer the current turn…" : "Send a follow-up for after this turn…") : view.state === "stopped" || view.state === "interrupted" ? "Send a prompt (resumes the session)…" : "Send a follow-up…",
 							"aria-label": "Message to the session",
 							onChange: (e: Event) => setText((e.target as HTMLTextAreaElement).value),
 							onKeyDown: (e: KeyboardEvent) => {
@@ -282,12 +297,13 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 								? h(
 										"label",
 										{ className: "omps-check" },
-										h("input", { type: "checkbox", checked: followUp, onChange: (e: Event) => setFollowUp((e.target as HTMLInputElement).checked) }),
-										"After this turn",
+										h("input", { type: "checkbox", checked: steer, onChange: (e: Event) => setSteer((e.target as HTMLInputElement).checked) }),
+										"Steer this turn",
 									)
 								: h("span", { className: "omps-hint" }, "Ctrl+Enter to send"),
 							h("span", { className: "omps-grow" }),
-							view.state !== "stopped"
+							// An interrupted session whose host still runs (an interrupted task) can be stopped.
+							view.state !== "stopped" && !(view.state === "interrupted" && view.status === "stopped")
 								? confirmStop
 									? h(
 											"span",
@@ -298,7 +314,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 										)
 									: h(Button, { small: true, kind: "ghost", icon: "stop", label: "Stop", onClick: () => setConfirmStop(true) })
 								: null,
-							h(Button, { type: "submit", small: true, kind: "primary", icon: "send", label: working && !followUp ? "Steer" : "Send", busy: busy === "send", disabled: !text.trim() }),
+							h(Button, { type: "submit", small: true, kind: "primary", icon: "send", label: working && steer ? "Steer" : "Send", busy: busy === "send", disabled: !text.trim() }),
 						),
 					),
 				)

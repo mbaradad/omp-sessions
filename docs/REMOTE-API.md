@@ -1,6 +1,6 @@
 # Remote access: phone app and HTTP API
 
-The per-user `omp-sessions` server can also listen on HTTP. It serves a phone web app and a small JSON API with live updates (Server-Sent Events). The app is a PWA you can add to your home screen. Through the same API, another app or web server can list your sessions, start new ones, follow them live, prompt them, answer their questions and switch their permission mode.
+The per-user `omp-sessions` server can also listen on HTTP. It serves a phone web app and a small JSON API with live updates (Server-Sent Events). The app is a PWA you can add to your home screen. Through the same API, another app or web server can check the server's status, list your sessions, start new ones, follow them live, prompt them, answer their questions, switch their permission mode or model, and open them in VS Code.
 
 Remote access is **off** by default. When it is on, it serves the same sessions as VS Code and `omp-sessions`, on the machine where they run (the Remote-SSH host, if you use one).
 
@@ -17,7 +17,7 @@ Remote access is **off** by default. When it is on, it serves the same sessions 
 
 The default port is `7413`.
 
-#### Behind Tailscale Serve or an HTTPS proxy (and WSL)
+#### Behind Tailscale Serve or an HTTPS proxy
 
 Bind to `localhost` and tell omp-sessions the URL the phone opens with `--url`. The pairing link and QR code then use that URL, and the server accepts writes from that origin. The phone talks HTTPS to the proxy, so the token and your sessions' traffic are encrypted even where plain `lan` would not be.
 
@@ -28,7 +28,7 @@ tailscale serve --bg 7413                 # prints https://<machine>.<tailnet>.t
 omp-sessions remote on --bind localhost --url https://<machine>.<tailnet>.ts.net
 ```
 
-**WSL 2** (default NAT networking): Tailscale usually runs on Windows, so Linux has no Tailscale address and `--bind tailscale` fails. Run `tailscale serve --bg 7413` in a Windows terminal instead: Windows forwards `localhost:7413` into WSL, so Serve reaches the omp-sessions listener on WSL's `127.0.0.1`. Then run the `omp-sessions remote on --bind localhost --url …` line above inside WSL. **omp: Connect Phone…** offers this as *Behind Tailscale Serve or an HTTPS proxy* and recommends it when it detects WSL without Tailscale.
+**Windows with WSL 2** (default NAT networking): Tailscale usually runs on Windows, so Linux has no Tailscale address and `--bind tailscale` fails. Run `tailscale serve --bg 7413` in a Windows terminal instead: Windows forwards `localhost:7413` into WSL, so Serve reaches the omp-sessions listener on WSL's `127.0.0.1`. Then run the `omp-sessions remote on --bind localhost --url …` line above inside WSL. **omp: Connect Phone…** offers this as *Behind Tailscale Serve or an HTTPS proxy* and recommends it when it detects WSL without Tailscale.
 
 `omp-sessions remote on --url none` goes back to plain addresses.
 
@@ -48,14 +48,14 @@ omp-sessions remote on                    # bind tailscale, port 7413
 omp-sessions remote on --bind lan --port 8080
 omp-sessions remote on --bind localhost --url https://box.tailnet.ts.net   # behind tailscale serve / a proxy
 omp-sessions remote qr                    # QR code (Unicode half blocks) + pairing URL
-omp-sessions remote status                # on/off, listening address, last error
+omp-sessions remote status                # on/off, listening address, last error, proxy warnings
 omp-sessions remote rotate                # new token: every paired phone has to pair again
 omp-sessions remote off
 ```
 
 The pairing URL is `http://<host>:<port>/#pair=<token>`, or `<public URL>#pair=<token>` behind a proxy. When the app opens it, it:
 
-1. posts the token to `/api/pair`, which sets an HttpOnly cookie;
+1. posts the token to `/api/pair`, which sets an HttpOnly cookie (it holds an HMAC of the token, not the token);
 2. removes the fragment from the address bar and history;
 3. stores nothing else.
 
@@ -76,14 +76,16 @@ The token is 32 random bytes, created the first time remote access is turned on.
 Every `/api/*` request except `GET /api/health` and `POST /api/pair` needs the token, sent one of two ways:
 
 - `Authorization: Bearer <token>`, for scripts, servers and other apps.
-- The `omp_vs` cookie (`HttpOnly; SameSite=Strict; Path=/`), set by `POST /api/pair`, for browsers.
+- The pairing cookie, set by `POST /api/pair`, for browsers: `omp_sessions` (`HttpOnly; SameSite=Strict; Path=/`), or `__Host-omp_sessions` with `Secure` when the public URL is HTTPS. Its value is an HMAC of the token. Phones paired by 0.5.0 (cookie `omp_vs`) keep working; the cookie is replaced on their next request.
 
 Requests authenticated by the cookie that change something must send `Content-Type: application/json`. If they carry an `Origin` header, it must be this server's own. This blocks cross-site form posts.
 
 Rules:
 
 - Tokens are compared in constant time.
-- After 5 failed token checks, the client address is locked out for 60 s. The lockout doubles with each further failure, up to about an hour. While locked out, even the right token gets `429` with `Retry-After`. Failures older than 10 minutes are forgotten.
+- After 5 failed token checks, the client address is locked out for 60 s. The lockout doubles with each further failure, up to about an hour. While locked out, even the right token gets `429` with `Retry-After`. Failures older than 10 minutes are forgotten. At most 1024 addresses are tracked. If 50 failures arrive within a minute from anywhere, only addresses that signed in during the last 7 days get in for the next 5 minutes.
+- After `omp-sessions remote rotate`, a browser with the old cookie gets `401` "pairing expired" and is told to drop the cookie. That doesn't count toward the lockout, so the phone can always pair again.
+- The client address comes from `X-Forwarded-For` only when a public URL is set and the listener is bound to `localhost` (a proxy on the same machine); `omp-sessions remote status` warns otherwise.
 - No CORS headers are sent, so pages on other origins can't read the API.
 - Request bodies are capped at 1 MiB.
 
@@ -125,17 +127,17 @@ The server's version. Needs no auth.
 
 ```bash
 curl -sS $OMP/api/health
-# {"version":"0.5.0"}
+# {"version":"0.6.0"}
 ```
 
 ### `POST /api/pair` `{token}`
 
-Checks the token and sets the `omp_vs` cookie for one year. Failed checks count toward the lockout.
+Checks the token and sets the pairing cookie for one year. Failed checks count toward the lockout.
 
 ```bash
 curl -sS -i -X POST -H "Content-Type: application/json" -d "{\"token\":\"$TOKEN\"}" $OMP/api/pair
 # HTTP/1.1 200 OK
-# set-cookie: omp_vs=…; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000
+# set-cookie: omp_sessions=…; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000
 # {"ok":true}
 ```
 
@@ -153,7 +155,7 @@ interface SessionInfo {
 		id: string;
 		cwd: string;
 		title: string;
-		status: "starting" | "idle" | "working" | "waiting" | "stopped"; // waiting = needs input
+		status: "starting" | "idle" | "working" | "waiting" | "stopped"; // the omp process; waiting = needs input
 		createdAt: number;
 		updatedAt: number;
 		cost?: number;
@@ -164,8 +166,9 @@ interface SessionInfo {
 		exitReason?: string;
 		// …
 	};
-	column: "waiting" | "working" | "input" | "idle" | "stopped"; // board column; "waiting" = for a concurrency slot
-	queue: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number };
+	column: "waiting" | "scheduled" | "working" | "input" | "idle" | "stopped"; // board column; "waiting" = for a concurrency slot
+	state: "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped"; // what it is doing, as omp-sessions show reports it
+	queue: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number };
 	priority: "urgent" | "high" | "normal" | "low";
 	order: number;
 	group?: string;
@@ -173,6 +176,26 @@ interface SessionInfo {
 	archived?: boolean;
 	waiting?: { position: number; since?: number; launch?: boolean };
 }
+```
+
+`state` is the field to read. `scheduled`: it waits for `queue.startAt`. `interrupted`: a crash or reboot cut a queued task short; the queue is paused and the task waits for a person (it is never rerun on its own).
+
+### `GET /api/status`
+
+The machine overview, the same JSON as `omp-sessions status --json`: `ok` and `problems`, the server (pid, version, uptime), the login service, the omp path, the default model, sessions by state, pending and running tasks, the scheduler, and remote access.
+
+```bash
+api $OMP/api/status
+# {"cli":"0.6.0","ok":true,"problems":[],"server":{"running":true,…},"sessions":{"total":12,"byState":{"idle":3,…}},…}
+```
+
+### `GET /api/models[?q=search]`
+
+The models omp can use, as `omp-sessions models --json` prints them. `default` is omp Sessions' default model for new sessions (`omp-sessions config set model`), `ompDefault` omp's own.
+
+```bash
+api "$OMP/api/models?q=sonnet"
+# {"models":[{"selector":"anthropic/claude-sonnet-4-5","provider":"anthropic","id":"claude-sonnet-4-5","name":"Claude Sonnet 4.5","default":true,…}],"default":"anthropic/claude-sonnet-4-5","ompDefault":null}
 ```
 
 ### `GET /api/projects`
@@ -192,7 +215,7 @@ Starts a session in `cwd`: an absolute path, or one starting with `~/`. The serv
 | --- | --- |
 | `prompt` | Sent once the host is up. The call returns after omp accepted it. |
 | `task` | Queue-only, like `omp-sessions new --task`. The session is created stopped, with the task in its queue, and the server starts it when a concurrency slot is free. Give either `prompt` or `task`, not both. |
-| `mode` | The starting permission mode (`ask`, `edits`, `plan`, `auto`), passed as the `--approval-mode` launch flag. Without it, the session uses the project's or omp's default. |
+| `mode` | The starting permission mode (`ask`, `edits`, `plan`, `auto`), passed as the `--approval-mode` launch flag. Without it, the session uses the project's or omp's default. The model is the default model (see `GET /api/models`). |
 | `title` | Defaults to the first line of the prompt or task. |
 
 ```bash
@@ -307,6 +330,29 @@ api -X POST $OMP/api/sessions/mw6fetfd435bb4/stop
 # {"stopped":true}
 ```
 
+On a session that is only queued or scheduled, it cancels the queued start instead: `{"stopped":false,"unqueued":true}`. A running session's queue is paused first, so the server doesn't start it again.
+
+```bash
+```
+
+### `POST /api/sessions/:id/model` `{model}`
+
+Switches the model (`provider/id`, from `GET /api/models`). `applied` is `"live"` for a running session, or `"next-resume"` for a stopped one.
+
+```bash
+api -X POST -d '{"model":"anthropic/claude-sonnet-4-5"}' $OMP/api/sessions/mw6fetfd435bb4/model
+# {"id":"mw6fetfd435bb4","model":"anthropic/claude-sonnet-4-5","applied":"live"}
+```
+
+### `POST /api/sessions/:id/vscode` `{authority?}`
+
+Asks VS Code on this machine to open the session. The VS Code window last used (or a window with `authority`, e.g. `ssh-remote+box`; `""` means a local window) opens the chat when it next gains focus, within two minutes. `url` opens it directly from a browser on the computer running VS Code. With `authority`, the link goes over that remote authority even when no window of it has been recorded yet (`windowAt: null`). An `authority` that isn't a VS Code remote authority gets `400`.
+
+```bash
+api -X POST -d '{}' $OMP/api/sessions/mw6fetfd435bb4/vscode
+# {"url":"vscode://vscode-remote/ssh-remote+box/home/me/src/app","authority":"ssh-remote+box","windowAt":1794150605617}
+```
+
 ### `POST /api/sessions/:id/resume`
 
 Restarts omp on the same transcript.
@@ -314,6 +360,15 @@ Restarts omp on the same transcript.
 ```bash
 api -X POST $OMP/api/sessions/mw6fetfd435bb4/resume
 # {"started":true}
+```
+
+### `POST /api/sessions/:id/continue`
+
+Continues an interrupted session. If a crash or reboot cut a queued task short, that task runs again and the response is the session's queue (`{"queue": …}`); otherwise it resumes like `/resume` (a turn the host crash cut short is finished).
+
+```bash
+api -X POST $OMP/api/sessions/mw6fetfd435bb4/continue
+# {"queue":{"tasks":[…],"autoRun":true,…}}
 ```
 
 ### `POST /api/sessions/:id/mode` `{mode}`
@@ -348,18 +403,18 @@ api -X POST -d '{"id":"approve-k3j2","value":"Approve"}' $OMP/api/sessions/mw6fe
 
 The app is built from `src/mobile/` into `out/mobile.{html,js,css}`, `out/manifest.webmanifest` and `out/mobile-icon.{png,svg}`. The extension copies these files into `~/.omp/vscode/runtime/` next to `server.js`. The app uses no framework and makes no external requests, and it has no service worker, so nothing is cached. It has three screens:
 
-- **Sessions:** grouped as *Needs input*, *Working*, *Idle* and *Stopped*. Each row shows the title, project, status, queue progress, cost and last text. The list updates live, and pulling down refreshes it.
+- **Sessions:** a status line (server, sessions working and waiting, problems) above the list, grouped by state: *Needs input*, *Interrupted*, *Working*, *Queued & scheduled*, *Idle* and *Stopped* (a scheduled session shows its start, e.g. "scheduled Tue 14:30"). Each row shows the title, project, state, queue progress, cost and last text. The list updates live, and pulling down refreshes it.
 - **Session:**
   - The transcript renders text as markdown and tool calls as compact rows; edits show the file and `+n −m`. Replies stream in live.
-  - The composer sends a message. While omp works, it offers *Steer* (into the current turn) or *Queue* (after it).
+  - The composer sends a message. While omp works, it offers *Steer* (into the current turn) or *After turn* (a follow-up).
   - Dialogs and approvals appear as cards you can answer.
-  - A permission mode switcher (Ask / Edits / Plan / Auto) and Abort / Stop / Resume sit in the toolbar.
+  - A permission mode switcher (Ask / Edits / Plan / Auto), a model picker, Abort / Stop / Resume, and **VS Code** (opens the session in VS Code on your computer) sit in the toolbar. A scheduled or queued stopped session offers *Cancel schedule* or *Unqueue* next to Resume; an interrupted one offers *Continue*.
 - **New session:** a recent-folder picker or a typed path, a prompt, a permission mode, and *Queue only*.
 
 ## Security notes
 
 - **The token is a password for your sessions.** Anyone who has it can run commands on the machine through omp. Don't share the pairing link or screenshots of the QR code. `omp-sessions remote rotate` (or *Rotate Remote Access Token*) unpairs every device at once.
-- **Prefer Tailscale.** Its traffic is end-to-end encrypted, and only your own devices can reach the address. On `lan`, everything, including the token and the cookie, crosses the network in clear text. Plain HTTP is also why the cookie can't be marked `Secure`.
+- **Prefer Tailscale.** Its traffic is end-to-end encrypted, and only your own devices can reach the address. On `lan`, everything, including the token during pairing, crosses the network in clear text. Over plain HTTP the cookie can't be marked `Secure`; behind an HTTPS public URL it is.
 - **`localhost` + your own TLS** (Caddy, nginx, `tailscale serve`, an SSH tunnel) is the way to expose it further. Keep the proxy on the same origin and pass `Authorization` and cookies through.
 - The server only runs as your user and serves your sessions. It never adds CORS headers, refuses cross-origin cookie writes, caps bodies at 1 MiB and locks out addresses that guess tokens.
 - `remote.json` is written with mode `0600`. The server logs pairings and rejected tokens, but never a token, to `~/.omp/vscode/server.log`.

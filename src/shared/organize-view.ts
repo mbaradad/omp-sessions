@@ -89,14 +89,12 @@ export interface ViewInput {
 	sortBy: SortMode;
 	filter: string;
 	showArchived: boolean;
-	/** Listed at all in this window (workspace scoping rules). */
+	/** Listed at all in this window (`omp.sessionScope`, hidden finished sessions). */
 	visible(m: SessionMeta): boolean;
 	inWorkspace(m: SessionMeta): boolean;
 	project(m: SessionMeta): { root: string; isRepo: boolean };
 	/** Window has no folder open: everything is "local". */
 	noWorkspace: boolean;
-	/** `omp.showAllSessions`: other-folder sessions are all listed (labels only). */
-	showAll: boolean;
 }
 
 function sessionNodes(list: readonly SessionMeta[], parent: string, project?: string): ViewNode[] {
@@ -179,7 +177,7 @@ export function buildView(input: ViewInput): ViewNode[] {
 		const local = input.noWorkspace ? rest : rest.filter(m => input.inWorkspace(m));
 		const other = input.noWorkspace ? [] : rest.filter(m => !input.inWorkspace(m));
 		nodes.push(...sessionNodes(sorted(local), ROOT_KEY));
-		if (other.length) nodes.push(section("other", "other", input.showAll ? "Other folders" : "Running in other folders", other));
+		if (other.length) nodes.push(section("other", "other", "Other folders", other));
 	}
 
 	if (archived.length) nodes.push(section("archived", "archived", "Archived", archived));
