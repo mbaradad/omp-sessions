@@ -1,7 +1,7 @@
 {
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
-	"description": "Run oh-my-pi (omp) coding-agent sessions in the background — locally or over Remote-SSH — that keep working when you close VS Code and reattach when you return. Queue tasks with a global concurrency limit, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
+	"description": "A task server for oh-my-pi (omp) coding agents: background sessions with a task queue each, scheduled starts and a global concurrency limit, locally or over Remote-SSH. They keep working when you close VS Code and reattach when you return. Run parallel git-worktree sessions, track every session on a kanban board, review or revert native diffs, and drive the same sessions from the terminal, your phone or Hermes Agent.",
 	"version": "0.6.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
@@ -73,7 +73,8 @@
 	"main": "./out/extension.js",
 	"activationEvents": [
 		"onStartupFinished",
-		"onWebviewPanel:omp.chat"
+		"onWebviewPanel:omp.chat",
+		"onUri"
 	],
 	"contributes": {
 		"viewsContainers": {

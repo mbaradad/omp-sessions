@@ -18,6 +18,10 @@ export default {
 			React,
 			css,
 			request: (path, options) => ctx.rest(path, options?.body === undefined ? { method: options?.method ?? "GET" } : { method: options.method ?? "POST", body: options.body }),
+			// Desktop opens only web links (no vscode://), so the dashboard's redirect page, in the browser.
+			openVscode: async link => {
+				if (!(await ctx.os.openExternal(link.page))) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${link.url}`);
+			},
 		});
 		ctx.registerMany([
 			{ id: "page", area: ROUTES_AREA, data: { path: ROUTE }, render: () => React.createElement(Page, null) },

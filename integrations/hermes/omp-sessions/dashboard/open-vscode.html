@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!-- omp Sessions: opens the vscode:// link in its #fragment. Hermes Desktop opens only web links, so its
+     "Open in VS Code" opens this page in the browser. Served without sign-in: it holds no data. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Opening VS Code…</title>
+<style>
+	:root { color-scheme: light dark; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+	body { max-width: 34rem; margin: 18vh auto; padding: 0 1.5rem; }
+	h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 .5rem; }
+	p { margin: .5rem 0; opacity: .8; }
+	a.button { display: inline-block; margin-top: 1rem; padding: .5rem 1rem; border-radius: 6px; background: #0066b8; color: #fff; text-decoration: none; font-weight: 500; }
+	code { font-size: .85em; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1 id="title">Opening the omp session in VS Code…</h1>
+<p id="hint">Allow the browser to open Visual Studio Code if it asks. You can close this tab afterwards.</p>
+<p><a class="button" id="open" href="#">Open in VS Code</a></p>
+<p><code id="link"></code></p>
+<script>
+	const target = decodeURIComponent(location.hash.slice(1));
+	if (/^(vscode|vscode-insiders|vscodium)(-[a-z]+)?:\/\//.test(target)) {
+		document.getElementById("open").href = target;
+		document.getElementById("link").textContent = target;
+		location.replace(target);
+	} else {
+		document.getElementById("title").textContent = "No VS Code link";
+		document.getElementById("hint").textContent = "Use Open in VS Code on the omp Sessions page.";
+		document.getElementById("open").remove();
+	}
+</script>
+</body>
+</html>

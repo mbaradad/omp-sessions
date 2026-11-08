@@ -67,7 +67,15 @@ export function hermesChecks(f: HermesFacts): Check[] {
 	for (const r of installed.filter(p => p.status === "enabled" && p.injection === false))
 		out.push({ level: "warn", title: `Notifications off in ${r.label}`, detail: "allow_gateway_injection is false: Hermes sessions there aren't told when their omp sessions finish or need input.", fixes: [{ label: "Allow", command: "omp.hermes.enable", args: [r.label] }] });
 	const note = f.lane?.status?.lastNotification;
-	if (note && !note.ok) out.push({ level: "warn", title: `Hermes refused the last notification (${f.lane?.profile})`, detail: `${ago(f.now / 1000 - note.at)}${note.session ? `, omp session ${note.session.slice(0, 8)}` : ""}. allow_gateway_injection off is the usual cause.` });
+	if (note && !note.ok) {
+		const consent = installed.find(r => r.label === f.lane?.profile)?.injection;
+		const when = `${ago(f.now / 1000 - note.at)}${note.session ? `, omp session ${note.session.slice(0, 8)}` : ""}`;
+		out.push(
+			consent === true
+				? { level: "info", title: `Hermes didn't deliver the last notification (${f.lane?.profile})`, detail: `${when}. Notifications are allowed there, so the chat that started the session had ended (a one-shot \`hermes chat -Q\` or a closed CLI chat). Chats in the gateway, the dashboard and Desktop get them.` }
+				: { level: "warn", title: `Hermes refused the last notification (${f.lane?.profile})`, detail: `${when}. allow_gateway_injection off is the usual cause.` },
+		);
+	}
 
 	// Kanban lane against the dispatcher.
 	const lanes = installed.filter(r => r.lane);

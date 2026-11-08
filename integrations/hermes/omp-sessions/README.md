@@ -6,7 +6,7 @@ Hermes hands coding work to [oh-my-pi](https://omp.sh) (`omp`) sessions instead 
 
 - **Tools** (toolset `omp_sessions`): list sessions and projects; start a session now, queue it, or schedule it for later in a folder, a known project or a board's folder; check, wait on, answer, steer, switch the permission mode of, and stop a session.
 - **Notifications**: when a session a Hermes chat started finishes or needs input, that chat gets a message.
-- **Kanban lane**: cards assigned to `omp` run as omp sessions (one omp group per board); the reply becomes the card's result, a question blocks the card until answered, and dependent cards chain as usual.
+- **Kanban lane**: cards assigned to `omp` run as omp sessions (one omp group per board); the reply becomes the card's result, a question blocks the card until answered, and dependent cards chain as usual. Comments on a card answer omp or reach its session, and `@omp` in a comment hands a card to omp, so kanban-only clients such as Hermes Console can drive it.
 - **Dashboard and Desktop page**: a live board of omp sessions (needs you, working, queued and scheduled, done, stopped) with answers, follow-ups, mode switches and new sessions, plus the lane's boards and linked cards. In the web dashboard it's the **omp Sessions** tab; in Hermes Desktop, turn it on under Capabilities → Plugins (Desktop in remote mode: add it there with *Install from Git* first).
 - **Skill** `omp-sessions:omp-sessions`, `/omp` in chats (`/omp take <card>` hands a kanban card to omp, also from Hermes Console on Android) and `hermes omp …` in a terminal.
 

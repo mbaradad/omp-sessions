@@ -15,6 +15,19 @@ export interface Host {
 	request<T>(path: string, options?: RequestOptions): Promise<T>;
 	/** The page's CSS, when the host doesn't load dist/style.css itself (Desktop). */
 	css?: string;
+	/** Opens an "Open in VS Code" link: the dashboard (a browser) opens `url`; Desktop opens only web links, so `page`. */
+	openVscode(link: VscodeLink): Promise<void>;
+}
+
+/** POST /sessions/<id>/vscode: the request is recorded on omp's machine; these links bring up VS Code. */
+export interface VscodeLink {
+	/** vscode://… link. */
+	url: string;
+	/** Web page of this dashboard that opens `url`. */
+	page: string;
+	/** Remote authority of the VS Code window last used on omp's machine ("" local, null none recorded). */
+	authority?: string | null;
+	windowAt?: number | null;
 }
 
 export type State = "queued" | "starting" | "working" | "needs_input" | "idle" | "stopped";

@@ -8,6 +8,7 @@ import importlib.util
 import json
 import sys
 import unittest
+import urllib.parse
 from unittest import mock
 
 import test_plugin as base
@@ -162,6 +163,31 @@ class DashboardApiTest(unittest.TestCase):
             self.assertTrue(self.post("/lane", {"enabled": True})["enabled"])
         finally:
             CONFIG.write_text(self.config_text)
+
+    def test_open_in_vscode_records_the_request_and_links_the_last_window(self) -> None:
+        queued = self.post("/sessions", {"prompt": "echo vscode", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})
+        sid = queued["id"]
+        request = base.OMP_HOME / "vscode-open.json"
+        window = base.OMP_HOME / "vscode-window.json"
+        try:
+            window.unlink(missing_ok=True)
+            link = self.post(f"/sessions/{sid[:8]}/vscode", {})
+            self.assertEqual(link["url"], f"vscode://mbaradad.omp-sessions/open?session={sid}", "no window recorded: the extension's handler")
+            self.assertIsNone(link["authority"])
+            self.assertEqual(json.loads(request.read_text())["session"], sid)
+            window.write_text(json.dumps({"authority": "ssh-remote+ws", "scheme": "vscode", "at": 1}))
+            link = self.post(f"/sessions/{sid}/vscode", {})
+            self.assertEqual(link["url"], f"vscode://vscode-remote/ssh-remote+ws{WORK}")
+            self.assertEqual(link["authority"], "ssh-remote+ws")
+            # The redirect page for Hermes Desktop: on the address the request came in on, link in the fragment.
+            base_url, _, fragment = link["page"].partition("#")
+            self.assertRegex(base_url, r"^http://testserver/dashboard-plugins/(@[^/]+/)?omp-sessions/open-vscode\.html$")
+            self.assertEqual(urllib.parse.unquote(fragment), link["url"])
+            self.assertTrue((API_FILE.parent / "open-vscode.html").is_file())
+            self.assertIn("no session matches", self.post("/sessions/nope-nope/vscode", {}, status=400)["error"])
+        finally:
+            window.unlink(missing_ok=True)
+            request.unlink(missing_ok=True)
 
     def test_missing_omp_vs_is_explained(self) -> None:
         with mock.patch.object(self.api.ompvs, "find_omp_vs", return_value=None):

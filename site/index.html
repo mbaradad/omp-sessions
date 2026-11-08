@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>omp Sessions · background coding agents for VS Code</title>
-<meta name="description" content="Run oh-my-pi (omp) coding-agent sessions in the background, locally or over Remote-SSH. They keep working when you close VS Code and reattach when you come back. Free, MIT, no telemetry.">
+<title>omp Sessions · a task server for coding agents</title>
+<meta name="description" content="Run oh-my-pi (omp) coding agents as background jobs: a queue per session, scheduled starts and one concurrency limit, kept by a small server on your machine. Drive it from VS Code, the terminal, your phone or Hermes Agent. Free, MIT, no telemetry.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0c0812" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#faf8fd" media="(prefers-color-scheme: light)">
@@ -15,18 +15,18 @@
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="omp Sessions">
-<meta property="og:title" content="omp Sessions: coding agents that keep working when you leave">
-<meta property="og:description" content="Background oh-my-pi (omp) sessions for VS Code, locally or over Remote-SSH. Close VS Code, sleep the laptop, drop SSH; reopen and pick up where they are. Free, MIT, no telemetry.">
+<meta property="og:title" content="omp Sessions: a task server for your coding agents">
+<meta property="og:description" content="Background oh-my-pi (omp) sessions with task queues, scheduled starts and a concurrency limit. Drive them from VS Code, the terminal, your phone or Hermes Agent. Free, MIT, no telemetry.">
 <meta property="og:url" content="https://mbaradad.github.io/omp-vscode/">
 <meta property="og:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="omp Sessions: coding agents that keep working when you leave. Background omp sessions for VS Code.">
+<meta property="og:image:alt" content="omp Sessions: a task server for your coding agents.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="omp Sessions: coding agents that keep working when you leave">
-<meta name="twitter:description" content="Background oh-my-pi (omp) sessions for VS Code, locally or over Remote-SSH. Free, MIT, no telemetry.">
+<meta name="twitter:title" content="omp Sessions: a task server for your coding agents">
+<meta name="twitter:description" content="Background oh-my-pi (omp) sessions with task queues, scheduled starts and a concurrency limit. Free, MIT, no telemetry.">
 <meta name="twitter:image" content="https://mbaradad.github.io/omp-vscode/assets/og.png">
-<meta name="twitter:image:alt" content="omp Sessions: coding agents that keep working when you leave.">
+<meta name="twitter:image:alt" content="omp Sessions: a task server for your coding agents.">
 
 <link rel="stylesheet" href="styles.css">
 <script src="main.js" defer></script>
@@ -76,13 +76,13 @@
     </a>
     <nav class="nav__links" aria-label="Primary">
       <a href="#why">Why</a>
-      <a href="#new">New in 0.6</a>
-      <a href="#features">Features</a>
       <a href="#queue">Queue</a>
+      <a href="#features">VS&nbsp;Code</a>
+      <a href="#new">New in 0.6</a>
+      <a href="#cli">CLI</a>
       <a href="#phone">Phone</a>
       <a href="#hermes">Hermes</a>
       <a href="#setup">Setup</a>
-      <a href="#cli">CLI</a>
       <a href="#faq">FAQ</a>
     </nav>
     <div class="nav__cta">
@@ -103,8 +103,8 @@
       <span class="pill__text">Permission modes, checkpoints, voice, a phone app and a Hermes plugin</span>
       <svg class="i i--sm" aria-hidden="true"><use href="#i-arrow"/></svg>
     </a>
-    <h1 id="hero-title" class="hero__title">Coding agents that keep working <span class="grad">when you leave.</span></h1>
-    <p class="lede">omp Sessions runs <a href="https://omp.sh">oh-my-pi</a> agent sessions from VS&nbsp;Code in detached background processes, on your computer or over <span class="nw">Remote-SSH</span>. Close VS&nbsp;Code, sleep the laptop, drop the connection. Reopen, and everything that happened meanwhile is there.</p>
+    <h1 id="hero-title" class="hero__title">A task server for <span class="grad">your coding agents.</span></h1>
+    <p class="lede">omp Sessions runs <a href="https://omp.sh">oh-my-pi</a> sessions as background jobs on your machine. Give each one a queue of tasks, schedule when it starts and cap how many run at once. Sessions keep working when you close VS&nbsp;Code or drop SSH, and the server starts queued work again after a reboot. Drive it all from VS&nbsp;Code, the terminal, your phone or Hermes Agent.</p>
     <div class="ctas">
       <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
       <a class="btn btn--ghost btn--lg" href="https://open-vsx.org/extension/mbaradad/omp-sessions">Get it on Open VSX</a>
@@ -117,7 +117,7 @@
       <li>Free &amp; MIT</li>
       <li>No telemetry</li>
       <li>Linux, macOS &amp; WSL</li>
-      <li>Local or Remote-SSH</li>
+      <li>Local or remote</li>
     </ul>
   </div>
 
@@ -192,39 +192,25 @@
 <section class="section" id="why" aria-labelledby="why-title">
   <div class="wrap">
     <header class="shead">
-      <p class="eyebrow">Built to be left alone</p>
-      <h2 id="why-title">Your laptop sleeps. <span class="grad">Your agents don't.</span></h2>
-      <p class="sub">Each session runs in its own detached host process on the machine where VS Code's extension host runs: your computer for local folders, the server over Remote-SSH. VS Code is a window onto the session, not its parent.</p>
+      <p class="eyebrow">Why a server</p>
+      <h2 id="why-title">More than omp <span class="grad">in tmux.</span></h2>
+      <p class="sub">tmux keeps one omp process alive. omp Sessions keeps the work moving: each session runs in its own detached host, the <code>omp-vs</code> server queues, schedules and limits them, and any window, script or agent picks them up where they are.</p>
     </header>
 
-    <figure class="arch reveal">
-      <figcaption class="sr-only">Architecture: VS Code, in a local window or connected over Remote-SSH, talks to the machine with your code. Each session has a detached session host process that talks to omp over stdio. When VS Code closes or the connection drops, the host and omp keep running.</figcaption>
-      <div class="arch__row" aria-hidden="true">
-        <div class="node">
-          <span class="node__ic"><svg class="i"><use href="#i-laptop"/></svg></span>
-          <span class="node__t">VS Code</span>
-          <span class="node__s">here or on a laptop</span>
-        </div>
-        <div class="link link--flaky">
-          <span class="link__line"><i></i><i></i><i></i></span>
-          <span class="link__label"><span class="on">local or Remote-SSH</span><span class="off">window closed · still running</span></span>
-        </div>
-        <div class="node node--host">
-          <span class="node__ic"><svg class="i"><use href="#i-server"/></svg></span>
-          <span class="node__t">Session host</span>
-          <span class="node__s">detached · one per session</span>
-        </div>
-        <div class="link">
-          <span class="link__line"><i></i><i></i><i></i></span>
-          <span class="link__label">stdio JSONL</span>
-        </div>
-        <div class="node node--omp">
-          <span class="node__ic"><svg class="i"><use href="#i-pi"/></svg></span>
-          <span class="node__t">omp</span>
-          <span class="node__s">keeps working</span>
-        </div>
-      </div>
-    </figure>
+    <table class="vs reveal">
+      <thead>
+        <tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col">omp in tmux</th><th scope="col">omp Sessions</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">Keeps running when you close the window or lose SSH</th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">A queue per session<small>tasks run in order, with retries, time limits and a model per task</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">Scheduled starts<small>at 22:00, tomorrow at 07:30, or in +2h</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">One concurrency limit across sessions<small>waiting work starts as slots free up, even after a reboot</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">Knows when omp needs you<small>a <em>needs input</em> status, notifications, answer from anywhere</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">Review what changed<small>diffs, revert, checkpoints, cost per session</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">Many clients on one session<small>VS&nbsp;Code, terminal, phone, HTTP API, Hermes, other agents</small></th><td>one terminal</td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+      </tbody>
+    </table>
 
     <ol class="timeline">
       <li class="tl reveal">
@@ -264,8 +250,164 @@
   </div>
 </section>
 
+<!-- ───────────────────────── Queue ───────────────────────── -->
+<section class="section section--tint" id="queue" aria-labelledby="queue-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">The server: queue &amp; scheduler</p>
+      <h2 id="queue-title">Queue it tonight. <span class="grad">Read the results tomorrow.</span></h2>
+      <p class="sub">Each session's queue belongs to its background host, which feeds tasks to omp one after another whenever the session is idle. Scheduled queues start on time, and the <code>omp-vs</code> server launches waiting work as slots free up, even for stopped sessions. Nothing needs to stay open.</p>
+    </header>
+
+    <div class="queue">
+      <div class="shot shot--big reveal">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">2/3 running · 5 waiting</span></div>
+        <img src="assets/shots/tasks.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Tasks view: queued tasks with subtasks across sessions, with progress and checkboxes.">
+      </div>
+      <div class="qgrid">
+        <div class="mini reveal">
+          <h3>Tasks with subtasks</h3>
+          <p>Write <code>Title :: step; step</code>, drag to reorder (also between sessions), or press <kbd>Alt</kbd>+<kbd>Enter</kbd> in the chat to queue instead of send.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Per-task options</h3>
+          <p>Model, thinking level, fresh context, 1–5 retries with backoff and a time limit. The host applies them task by task.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Scheduled starts</h3>
+          <p>Start a queue at <code>22:00</code>, at <code>2026-11-08 07:30</code>, or in <code>+2h</code>.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>One global limit</h3>
+          <p>Queues across all sessions share a concurrency limit that the hosts enforce themselves. The <code>omp-vs</code> server starts waiting sessions as slots free up, even after a reboot.</p>
+        </div>
+      </div>
+    </div>
+    <p class="fine reveal">A failure or an interruption pauses the queue. Tasks interrupted by a crash are never rerun unattended.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── How it fits together ───────────────────────── -->
+<section class="section" id="fit" aria-labelledby="fit-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">How it fits together</p>
+      <h2 id="fit-title">One server. <span class="grad">Every way in.</span></h2>
+      <p class="sub">One <code>omp-vs</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
+    </header>
+    <figure class="fit reveal">
+      <figcaption class="sr-only">Five clients (VS Code, the omp-vs terminal command, the phone app and HTTP API, Hermes Agent, and other agents through the omp-sessions skill) all talk to one omp-vs server per machine. The server starts and schedules sessions; each session runs in its own detached host process with omp.</figcaption>
+      <ul class="fit__clients" aria-hidden="true">
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-vscode"/></svg></span><span class="fitc__t">VS Code</span><span class="fitc__s">chat, board, diffs, checkpoints</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-terminal"/></svg></span><span class="fitc__t">Terminal</span><span class="fitc__s"><code>omp-vs</code> attach, queue, scripts</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-phone"/></svg></span><span class="fitc__t">Phone &amp; HTTP</span><span class="fitc__s">web app, JSON + SSE API</span></li>
+        <li class="fitc fitc--hermes"><span class="fitc__ic"><svg class="i"><use href="#i-bot"/></svg></span><span class="fitc__t">Hermes</span><span class="fitc__s">tools, kanban lane, sidebar page</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="fitc__t">Other agents</span><span class="fitc__s">omp, Claude Code, Codex via the skill</span></li>
+      </ul>
+      <div class="fit__bus" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="fit__server" aria-hidden="true">
+        <span class="fit__srv-ic"><svg class="i"><use href="#i-server"/></svg></span>
+        <span class="fit__srv-t">omp-vs server <small>one per machine</small></span>
+        <span class="fit__chips"><span>queue &amp; schedule</span><span>concurrency limit</span><span>groups &amp; tags</span><span>phone &amp; HTTP API</span></span>
+      </div>
+      <div class="fit__bus fit__bus--hosts" aria-hidden="true"><i></i><i></i><i></i></div>
+      <ul class="fit__hosts" aria-hidden="true">
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>auth refactor · working</small></span></li>
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>flaky test · needs you</small></span></li>
+        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>board card · queued</small></span></li>
+      </ul>
+    </figure>
+    <div class="trio">
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
+        <h3>Hermes plugin</h3>
+        <p>Tools, notifications, a kanban lane, a sidebar page, and <code>/omp</code> in any chat, Hermes Console included. <a href="#hermes">More below</a>.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
+        <h3>A skill for other agents</h3>
+        <p><em>omp: Install omp Sessions Skill for Agents…</em> teaches omp, Claude Code and Codex to hand work to background omp sessions and pick up the result.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
+        <h3>Built for scripts</h3>
+        <p><code>omp-vs new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Features ───────────────────────── -->
+<section class="section section--tint" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">VS&nbsp;Code, the main way in</p>
+      <h2 id="features-title">Feels like part of VS&nbsp;Code, <span class="grad">because it is.</span></h2>
+      <p class="sub">Native views, native diffs, your theme's colors. omp works in the server's sessions; VS&nbsp;Code shows you what it did and what's next in the queue.</p>
+    </header>
+
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">Chat</p>
+        <h3>A chat that knows it lives in an editor.</h3>
+        <p>Open a session in an editor tab or the side bar, or drag the Chat view to the secondary side bar next to your code. Replies stream in; tool calls become cards with live durations.</p>
+        <ul class="ticks">
+          <li><code>file:line</code> links open in the editor; symbol links resolve through this window</li>
+          <li>Inline diffs with word-level highlights. Click a line to jump there</li>
+          <li><kbd>@</kbd> for files, <kbd>/</kbd> for commands, <kbd>!</kbd> for a shell command</li>
+          <li>Paste or drop images and any file: PDFs, docs, archives</li>
+          <li>Edit &amp; resend or fork from any prompt; <kbd>Enter</kbd> steers while omp works</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Chat</span></div>
+        <img src="assets/shots/chat.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp chat in VS Code: an inline diff, a bash tool call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context, cost and tokens per second.">
+      </div>
+    </div>
+
+    <div class="row row--flip reveal">
+      <div class="row__text">
+        <p class="kicker">Review</p>
+        <h3>See every change. Undo any of them.</h3>
+        <p>The session host snapshots each file before and after every omp edit, so reviews are exact and reverts are safe, even for changes made while you were away.</p>
+        <ul class="ticks">
+          <li><em>Diff</em> opens VS Code's own diff editor for any tool call; <em>Revert</em> restores the file to before it</li>
+          <li><em>N files changed</em> opens a multi-file review of everything the session touched</li>
+          <li>A <span class="pi-badge">π</span> badge in the Explorer and changed-line markers in open editors</li>
+          <li>CodeLens on changed lines: diff, revert, or jump to the chat</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Review</span></div>
+        <img src="assets/shots/review.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Review Changes: every file an omp session changed in VS Code's multi-file diff editor.">
+      </div>
+    </div>
+
+    <div class="duo-head reveal">
+      <p class="kicker">Overview</p>
+      <h3>Run ten sessions. <span class="keep">Know where each one stands.</span></h3>
+    </div>
+    <div class="duo">
+      <figure class="duo__item reveal">
+        <div class="shot">
+          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions</span></div>
+          <img src="assets/shots/sessions.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions view with sessions across two projects, and a chat waiting on a bash approval in Ask mode.">
+        </div>
+        <figcaption><strong>Sessions view.</strong> Grouped by project with working and needs-input counts, or by your own nested groups, by status, or flat. Filter with free text, <code>#tag</code> and <code>project:name</code>; hide finished sessions with one click.</figcaption>
+      </figure>
+      <figure class="duo__item reveal">
+        <div class="shot">
+          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions Board</span></div>
+          <img src="assets/shots/board.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Sessions Board: a kanban of omp sessions in columns, with priorities, colors, queue progress and cost on each card.">
+        </div>
+        <figcaption><strong>Sessions Board.</strong> A kanban of every session, by status, your own lanes, group or priority, with a swimlane per project. Drag cards; set priority, color, pins and tags; see queue progress, cost and unread at a glance.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
 <!-- ───────────────────────── New in 0.6 ───────────────────────── -->
-<section class="section section--tint" id="new" aria-labelledby="new-title">
+<section class="section" id="new" aria-labelledby="new-title">
   <div class="wrap">
     <header class="shead">
       <p class="eyebrow"><span class="ver">0.6</span> What's new</p>
@@ -332,114 +474,8 @@
   </div>
 </section>
 
-<!-- ───────────────────────── Features ───────────────────────── -->
-<section class="section" id="features" aria-labelledby="features-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">In the editor</p>
-      <h2 id="features-title">Feels like part of VS&nbsp;Code, <span class="grad">because it is.</span></h2>
-      <p class="sub">Native views, native diffs, your theme's colors. omp works in the background; VS Code shows you what it did.</p>
-    </header>
-
-    <div class="row reveal">
-      <div class="row__text">
-        <p class="kicker">Chat</p>
-        <h3>A chat that knows it lives in an editor.</h3>
-        <p>Open a session in an editor tab or the side bar, or drag the Chat view to the secondary side bar next to your code. Replies stream in; tool calls become cards with live durations.</p>
-        <ul class="ticks">
-          <li><code>file:line</code> links open in the editor; symbol links resolve through this window</li>
-          <li>Inline diffs with word-level highlights. Click a line to jump there</li>
-          <li><kbd>@</kbd> for files, <kbd>/</kbd> for commands, <kbd>!</kbd> for a shell command</li>
-          <li>Paste or drop images and any file: PDFs, docs, archives</li>
-          <li>Edit &amp; resend or fork from any prompt; <kbd>Enter</kbd> steers while omp works</li>
-        </ul>
-      </div>
-      <div class="shot">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Chat</span></div>
-        <img src="assets/shots/chat.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp chat in VS Code: an inline diff, a bash tool call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context, cost and tokens per second.">
-      </div>
-    </div>
-
-    <div class="row row--flip reveal">
-      <div class="row__text">
-        <p class="kicker">Review</p>
-        <h3>See every change. Undo any of them.</h3>
-        <p>The session host snapshots each file before and after every omp edit, so reviews are exact and reverts are safe, even for changes made while you were away.</p>
-        <ul class="ticks">
-          <li><em>Diff</em> opens VS Code's own diff editor for any tool call; <em>Revert</em> restores the file to before it</li>
-          <li><em>N files changed</em> opens a multi-file review of everything the session touched</li>
-          <li>A <span class="pi-badge">π</span> badge in the Explorer and changed-line markers in open editors</li>
-          <li>CodeLens on changed lines: diff, revert, or jump to the chat</li>
-        </ul>
-      </div>
-      <div class="shot">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Review</span></div>
-        <img src="assets/shots/review.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Review Changes: every file an omp session changed in VS Code's multi-file diff editor.">
-      </div>
-    </div>
-
-    <div class="duo-head reveal">
-      <p class="kicker">Overview</p>
-      <h3>Run ten sessions. <span class="keep">Know where each one stands.</span></h3>
-    </div>
-    <div class="duo">
-      <figure class="duo__item reveal">
-        <div class="shot">
-          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions</span></div>
-          <img src="assets/shots/sessions.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions view with sessions across two projects, and a chat waiting on a bash approval in Ask mode.">
-        </div>
-        <figcaption><strong>Sessions view.</strong> Grouped by project with working and needs-input counts, or by your own nested groups, by status, or flat. Filter with free text, <code>#tag</code> and <code>project:name</code>; hide finished sessions with one click.</figcaption>
-      </figure>
-      <figure class="duo__item reveal">
-        <div class="shot">
-          <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions Board</span></div>
-          <img src="assets/shots/board.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Sessions Board: a kanban of omp sessions in columns, with priorities, colors, queue progress and cost on each card.">
-        </div>
-        <figcaption><strong>Sessions Board.</strong> A kanban of every session, by status, your own lanes, group or priority, with a swimlane per project. Drag cards; set priority, color, pins and tags; see queue progress, cost and unread at a glance.</figcaption>
-      </figure>
-    </div>
-  </div>
-</section>
-
-<!-- ───────────────────────── Queue ───────────────────────── -->
-<section class="section section--tint" id="queue" aria-labelledby="queue-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">Task queue &amp; scheduler</p>
-      <h2 id="queue-title">Queue it tonight. <span class="grad">Read the results tomorrow.</span></h2>
-      <p class="sub">Each session's queue belongs to its background host, which feeds tasks to omp one after another whenever the session is idle. VS Code doesn't need to be open.</p>
-    </header>
-
-    <div class="queue">
-      <div class="shot shot--big reveal">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">2/3 running · 5 waiting</span></div>
-        <img src="assets/shots/tasks.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Tasks view: queued tasks with subtasks across sessions, with progress and checkboxes.">
-      </div>
-      <div class="qgrid">
-        <div class="mini reveal">
-          <h3>Tasks with subtasks</h3>
-          <p>Write <code>Title :: step; step</code>, drag to reorder (also between sessions), or press <kbd>Alt</kbd>+<kbd>Enter</kbd> in the chat to queue instead of send.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>Per-task options</h3>
-          <p>Model, thinking level, fresh context, 1–5 retries with backoff and a time limit. The host applies them task by task.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>Scheduled starts</h3>
-          <p>Start a queue at <code>22:00</code>, at <code>2026-11-08 07:30</code>, or in <code>+2h</code>.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>One global limit</h3>
-          <p>Queues across all sessions share a concurrency limit that the hosts enforce themselves. The <code>omp-vs</code> server starts waiting sessions as slots free up, even after a reboot.</p>
-        </div>
-      </div>
-    </div>
-    <p class="fine reveal">A failure or an interruption pauses the queue. Tasks interrupted by a crash are never rerun unattended.</p>
-  </div>
-</section>
-
 <!-- ───────────────────────── CLI ───────────────────────── -->
-<section class="section" id="cli" aria-labelledby="cli-title">
+<section class="section section--tint" id="cli" aria-labelledby="cli-title">
   <div class="wrap cli">
     <div class="cli__text reveal">
       <p class="eyebrow">omp-vs</p>
@@ -484,7 +520,7 @@
 </section>
 
 <!-- ───────────────────────── Phone ───────────────────────── -->
-<section class="section section--tint" id="phone" aria-labelledby="phone-title">
+<section class="section" id="phone" aria-labelledby="phone-title">
   <div class="wrap phonesec">
     <div class="phonesec__text reveal">
       <p class="eyebrow">Phone app &amp; HTTP API</p>
@@ -507,7 +543,7 @@
 </section>
 
 <!-- ───────────────────────── Hermes ───────────────────────── -->
-<section class="section" id="hermes" aria-labelledby="hermes-title">
+<section class="section section--tint" id="hermes" aria-labelledby="hermes-title">
   <div class="wrap">
     <header class="shead">
       <p class="eyebrow">Hermes Agent plugin</p>
@@ -521,7 +557,7 @@
         <ul class="ticks">
           <li>Tools to start, queue or schedule a session for later, check it, answer it, steer it and stop it</li>
           <li>The chat that started a session gets a message when it finishes or needs you</li>
-          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board; the reply becomes the card's result</li>
+          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board; the reply becomes the card's result, and comments on the card answer omp or steer it</li>
           <li>Each session runs in a folder, a known project or the board's folder, in the permission mode you pick</li>
           <li>In VS&nbsp;Code, those sessions carry a <em>Hermes · board · card</em> chip, with <em>Open Hermes Card</em></li>
         </ul>
@@ -535,7 +571,7 @@
       <div class="row__text">
         <p class="kicker">Dashboard &amp; Desktop</p>
         <h3>An omp Sessions page in Hermes's sidebar.</h3>
-        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode or stop it; start new work now, queued or at a time; set up the kanban lane per board.</p>
+        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode, stop it or open its chat in VS&nbsp;Code; start new work now, queued or at a time; set up the kanban lane per board.</p>
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
@@ -551,61 +587,11 @@
           <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable</span></code>
           <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
         </div>
-        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, chats and tasks work too, and <code>/omp take &lt;card&gt;</code> hands a card to omp. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
+        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes omp lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, comment <code>@omp</code> on a card to hand it to omp and answer it in the comments; chats and <code>/omp</code> work too. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes Desktop · omp Sessions</span></div>
         <img src="assets/shots/hermes-desktop.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Sessions page in Hermes Desktop, opened from the left sidebar under Scheduled jobs: two sessions need input with their questions and answer options, three are working, two queued, two done and two stopped.">
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ───────────────────────── How it fits together ───────────────────────── -->
-<section class="section section--tint" id="fit" aria-labelledby="fit-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">How it fits together</p>
-      <h2 id="fit-title">One server. <span class="grad">Every way in.</span></h2>
-      <p class="sub">One <code>omp-vs</code> server per machine owns the sessions: the queue, the schedule, groups and tags. Everything you drive them from talks to it, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
-    </header>
-    <figure class="fit reveal">
-      <figcaption class="sr-only">Five clients (VS Code, the omp-vs terminal command, the phone app and HTTP API, Hermes Agent, and other agents through the omp-sessions skill) all talk to one omp-vs server per machine. The server starts and schedules sessions; each session runs in its own detached host process with omp.</figcaption>
-      <ul class="fit__clients" aria-hidden="true">
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-vscode"/></svg></span><span class="fitc__t">VS Code</span><span class="fitc__s">chat, board, diffs, checkpoints</span></li>
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-terminal"/></svg></span><span class="fitc__t">Terminal</span><span class="fitc__s"><code>omp-vs</code> attach, queue, scripts</span></li>
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-phone"/></svg></span><span class="fitc__t">Phone &amp; HTTP</span><span class="fitc__s">web app, JSON + SSE API</span></li>
-        <li class="fitc fitc--hermes"><span class="fitc__ic"><svg class="i"><use href="#i-bot"/></svg></span><span class="fitc__t">Hermes</span><span class="fitc__s">tools, kanban lane, sidebar page</span></li>
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="fitc__t">Other agents</span><span class="fitc__s">omp, Claude Code, Codex via the skill</span></li>
-      </ul>
-      <div class="fit__bus" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="fit__server" aria-hidden="true">
-        <span class="fit__srv-ic"><svg class="i"><use href="#i-server"/></svg></span>
-        <span class="fit__srv-t">omp-vs server <small>one per machine</small></span>
-        <span class="fit__chips"><span>queue &amp; schedule</span><span>concurrency limit</span><span>groups &amp; tags</span><span>phone &amp; HTTP API</span></span>
-      </div>
-      <div class="fit__bus fit__bus--hosts" aria-hidden="true"><i></i><i></i><i></i></div>
-      <ul class="fit__hosts" aria-hidden="true">
-        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>auth refactor · working</small></span></li>
-        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>flaky test · needs you</small></span></li>
-        <li><svg class="i"><use href="#i-pi"/></svg><span>session host + omp<small>board card · queued</small></span></li>
-      </ul>
-    </figure>
-    <div class="trio">
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
-        <h3>Hermes plugin</h3>
-        <p>Tools, notifications, a kanban lane, a sidebar page, and <code>/omp</code> in any chat, Hermes Console included. <a href="#hermes">See above</a>.</p>
-      </div>
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
-        <h3>A skill for other agents</h3>
-        <p><em>omp: Install omp Sessions Skill for Agents…</em> teaches omp, Claude Code and Codex to hand work to background omp sessions and pick up the result.</p>
-      </div>
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
-        <h3>Built for scripts</h3>
-        <p><code>omp-vs new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
       </div>
     </div>
   </div>
@@ -812,7 +798,7 @@
       </details>
       <details>
         <summary>Does it work with Hermes Console on Android?</summary>
-        <p>Through Hermes itself, yes: chats call the omp tools and get the "finished" and "needs you" notes, cards the lane runs show as <code>@omp</code> and notify you when they block, and <code>/omp take &lt;card&gt;</code> hands a card to omp. Console doesn't show plugin pages, so for the sessions themselves use the omp phone app.</p>
+        <p>Yes, through kanban and chats. Comment <code>@omp</code> on a card to hand it to omp; the card shows the session's status and result, blocks with omp's question (Console notifies you), and your comments answer that question or reach the session as messages. In chats, Hermes uses the omp tools and gets the "finished" and "needs you" notes, and <code>/omp</code> gives a summary. Console doesn't show plugin pages, so for every session at once use the omp phone app.</p>
       </details>
       <details>
         <summary>Are all file changes tracked for diffs and revert?</summary>

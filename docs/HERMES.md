@@ -151,7 +151,16 @@ hermes kanban --board lightscale assign t_1234abcd omp      # an existing card (
 
 `--board` goes before the verb. A card without parents starts `ready`; with open parents it waits in `todo` until they are done.
 
-From any chat (including clients whose assignee picker lists only Hermes profiles, such as Hermes Console), `/omp take <card id> [board]` assigns an existing card to the lane's assignee; `hermes omp take <card id> [--board b]` does the same in a terminal.
+From any chat (including clients whose assignee picker lists only Hermes profiles, such as Hermes Console), `/omp take <card id> [board]` assigns an existing card to the lane's assignee; `hermes omp take <card id> [--board b]` does the same in a terminal. On a board the lane takes, a comment that mentions `@omp` does it too.
+
+### Talk to a card's session through comments
+
+Comments on a card the lane runs reach its omp session, so any kanban client can steer it:
+
+- While omp waits on a question, the first new comment is the answer (an option's number or label, or free text); the lane then unblocks the card.
+- Otherwise comments arrive as a message: a follow-up while omp works, a new prompt once it is idle (the card is completed again from the new reply).
+- Comments are held until the card's queued task has started, so they never jump the concurrency limit.
+- The lane confirms each delivery with its own comment (`omp session 1a2b3c4d: passed the comment on`), and says so when omp rejects an answer.
 
 ### Turn it on and configure it
 
@@ -239,13 +248,15 @@ The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web d
 
 - **Status strip:** `omp-vs` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
 - **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply. Filter by board, group or project, or search (`/`).
-- **Detail panel** (click a card): the question with one button per answer, the full last reply, a follow-up box (it steers a working session, or queues the text after the turn), the permission mode switch, and Stop.
+- **Detail panel** (click a card): the question with one button per answer, the full last reply, a follow-up box (it steers a working session, or queues the text after the turn), the permission mode switch, Stop, and **VS Code** (below).
 - **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
 - **Boards:** the lane switch, and per board (the ones in the lane first) the lane's folder, omp group, mode and assignee, the cards it runs as omp sessions with their status, and the ready cards it takes next.
 
 ![A session that needs an answer](images/hermes-detail.png)
 
 The page refreshes every few seconds while it is visible. Lane settings it changes are the active profile's, like `hermes omp lane` and `hermes omp board`.
+
+**Open in VS Code.** The detail panel's **VS Code** button opens the session's chat in the VS Code window you last used on omp's machine, including a Remote-SSH window on your laptop. Every window of the extension records itself (`vscode-window.json` in the `omp-vs` state folder, `~/.omp/vscode`) when it gains focus; the button records the request there (`vscode-open.json`, valid for two minutes) and opens a link that brings that window up: `vscode://vscode-remote/<authority><session folder>` for a remote window (VS Code focuses the window holding that folder, or opens one), or `vscode://mbaradad.omp-sessions/open?session=<id>` for a local one. The window takes the request when it gains focus and opens the chat. In the dashboard the browser asks before opening VS Code. Hermes Desktop opens only web links, so it opens a small page of the dashboard (`/dashboard-plugins/omp-sessions/open-vscode.html`, served without sign-in; it holds nothing but the link) in your browser, which then asks to open VS Code. The same works from a terminal: `omp-vs vscode <session>` records the request and prints the link.
 
 What it takes:
 
@@ -261,9 +272,9 @@ The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashbo
 
 - **Chats**: Hermes calls the `omp_session_*` tools as usual (Console shows them as steps), and the note that a session finished or needs input arrives in the chat that started it.
 - **`/omp`**: a short summary (how many sessions need you, are working, queued, done, and which need you); `/omp status` for the lane; `/omp take <card> [board]` routes a kanban card to omp, which Console's assignee picker can't (it lists only profiles).
-- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. When a card's session asks a question, the card is blocked with the question as the reason, and Console notifies you. Answer it from VS Code, the omp phone app, the dashboard page or `omp-vs answer` (not with a card comment); the lane then unblocks the card.
+- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. Comment `@omp` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
 
-For the omp sessions themselves on Android, pair the omp phone app (**omp: Connect Phone…**): it lists every session, follows it live, and answers questions and approvals.
+For the omp sessions themselves on Android (every session, not only cards), pair the omp phone app (**omp: Connect Phone…**): it lists them, follows them live, and answers questions and approvals.
 
 ## Troubleshooting
 

@@ -4,9 +4,9 @@
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/mbaradad.omp-sessions?color=ed4abf)](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-5ad8e6)](LICENSE)
 
-![omp Sessions: coding agents that keep working when you leave. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
+![omp Sessions: a task server for your coding agents. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
 
-Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one session per task, and drive them from VS Code, a terminal or your phone. Sessions live in their own process on the machine with your code — your computer, or the server you reach over Remote-SSH — so closing VS Code, sleeping the laptop or dropping SSH doesn't stop them. Come back and everything that happened meanwhile is there: answers, diffs, questions waiting for you.
+omp Sessions is a task server for [oh-my-pi](https://omp.sh) (`omp`) coding agents. A small `omp-vs` server on the machine with your code keeps every session in its own background process, works through each session's queue of tasks in order, starts scheduled work on time and caps how many tasks run at once, picking queued work up again after a reboot. That's the difference from omp in tmux: work keeps moving without you, not just the process. VS Code is the main way to drive it; the terminal, your phone, Hermes Agent and other agents reach the same sessions. Close VS Code, sleep the laptop or drop SSH, and come back to everything that happened meanwhile: answers, diffs, questions waiting for you.
 
 **[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Setup guide: workstation, laptop, phone](docs/SETUP.md)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
 
@@ -16,8 +16,8 @@ Run [oh-my-pi](https://omp.sh) (`omp`) coding agents in the background, one sess
 
 | Use case | How |
 | --- | --- |
-| **Long jobs on a remote box** | Start a big refactor over Remote-SSH, close the laptop, reconnect tomorrow to the finished work and the full transcript. |
 | **A queue for the day, or the night** | Tasks with subtasks per session, a global "N at a time" limit, scheduled starts (`02:00`, `+2h`). They run with VS Code closed and resume after a reboot. |
+| **Long jobs on a remote box** | Start a big refactor over Remote-SSH, close the laptop, reconnect tomorrow to the finished work and the full transcript. |
 | **Several attempts at once** | *Best-of-N* runs the same task in N git worktrees; compare the branches and merge the best one. |
 | **Careful work on code that matters** | **Ask** or **Plan** mode, every edit in VS Code's diff editor, and undo for any turn — files and conversation together. |
 | **Supervising from anywhere** | The phone app shows what's working, waiting or done; approve a command, steer a session or start a new one from the couch. |

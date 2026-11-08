@@ -788,6 +788,7 @@ function DetailPanel(p) {
   const [text, setText] = useState("");
   const [followUp, setFollowUp] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [notice, setNotice] = useState(null);
   const root = useRef(null);
   const tick = useRef(0);
   useDismiss(p.onClose, root);
@@ -807,6 +808,7 @@ function DetailPanel(p) {
     setS(p.summary);
     setConfirmStop(false);
     setActionError(null);
+    setNotice(null);
     void load();
     const timer = setInterval(() => {
       if (!document.hidden) void load();
@@ -831,6 +833,22 @@ function DetailPanel(p) {
     if (!text.trim()) return;
     void act("send", "send", { text, followUp: s?.state === "working" && followUp }, () => setText(""));
   };
+  const openVscode = async () => {
+    setBusy("vscode");
+    setActionError(null);
+    setNotice(null);
+    try {
+      const link = await p.host.request(`/sessions/${encodeURIComponent(p.id)}/vscode`, { method: "POST", body: {} });
+      await p.host.openVscode(link);
+      setNotice(
+        link.authority ? `Opening in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.` : link.authority === "" ? "Opening in VS Code on omp's machine." : "No VS Code window has used omp Sessions on omp's machine yet: the link opens VS Code here, which needs the omp Sessions extension."
+      );
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
   const view = s ?? p.summary;
   const working = view?.state === "working" || view?.state === "starting";
   return h(
@@ -846,6 +864,7 @@ function DetailPanel(p) {
         h("h2", { id: "omps-detail-title", className: "omps-drawer-title" }, view?.title ?? shortId(p.id)),
         view ? h("div", { className: "omps-drawer-sub" }, icon("folder", 12), h("span", { title: view.cwd }, view.cwdLabel ?? view.cwd), h("span", { className: "omps-sep" }, "·"), h("code", null, shortId(view.id))) : null
       ),
+      h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session in VS Code", busy: busy === "vscode", onClick: () => void openVscode() }),
       h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })
     ),
     h(
@@ -854,6 +873,7 @@ function DetailPanel(p) {
       error && !view ? h(ErrorBox, { message: error, onRetry: () => void load() }) : null,
       error && view ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
       actionError ? h(ErrorBox, { message: actionError }) : null,
+      notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
       view?.state === "needs_input" && view.question ? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: (answer) => void act("answer", "answer", { answer }) }) : null,
       view ? h(
         "dl",
@@ -1591,6 +1611,7 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-filter select option { background: var(--o-raised); color: var(--o-fg); }
 .omps-total { font-size: 12px; }
 .omps-stale { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--o-yellow); margin: -4px 0 10px; }
+.omps-notice { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--o-muted); margin: -4px 0 10px; }
 
 /* ---------- board ---------- */
 /* Columns wrap instead of scrolling sideways in a narrow pane; empty ones take less room. */
@@ -1845,7 +1866,11 @@ var desktop_default = {
       kind: "desktop",
       React,
       css: style_default,
-      request: (path, options) => ctx.rest(path, options?.body === void 0 ? { method: options?.method ?? "GET" } : { method: options.method ?? "POST", body: options.body })
+      request: (path, options) => ctx.rest(path, options?.body === void 0 ? { method: options?.method ?? "GET" } : { method: options.method ?? "POST", body: options.body }),
+      // Desktop opens only web links (no vscode://), so the dashboard's redirect page, in the browser.
+      openVscode: async (link) => {
+        if (!await ctx.os.openExternal(link.page)) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${link.url}`);
+      }
     });
     ctx.registerMany([
       { id: "page", area: ROUTES_AREA, data: { path: ROUTE }, render: () => React.createElement(Page, null) },

@@ -216,6 +216,52 @@ class PluginTest(unittest.TestCase):
         self.assertTrue((WORK / "a.txt").exists())
         self.assertIn("a.txt", done.result or "")
 
+    def comments(self, board: str, card_id: str) -> list:
+        with kbc.connect_closing(board=board) as conn:
+            return kb.list_comments(conn, card_id)
+
+    def comment(self, board: str, card_id: str, body: str, author: str = "dashboard") -> None:
+        with kbc.connect_closing(board=board) as conn:
+            kb.add_comment(conn, card_id, author, body)
+
+    def test_a_comment_answers_omps_question(self) -> None:
+        card = self.create("asking", "write c.txt hi")
+        self.tick("asking")
+        self.tick_until("asking", card, lambda t: t.status == "blocked", "needs_input block")
+        self.comment("asking", card, "1")
+        self.tick("asking")
+        self.assertTrue(any(c.author == "omp" and "answered omp's question" in c.body for c in self.comments("asking", card)))
+        done = self.tick_until("asking", card, lambda t: t.status == "done", "done after the comment answered")
+        self.assertTrue((WORK / "c.txt").exists())
+        self.assertIn("c.txt", done.result or "")
+
+    def test_a_comment_reaches_the_working_session_as_a_follow_up(self) -> None:
+        card = self.create("proj", "slow 4000")
+        self.tick("proj")
+        [s] = until(lambda: tagged(card), "session")
+        until(lambda: (json.loads(omp_vs("show", s["meta"]["id"], "--json").stdout).get("queue") or {}).get("running") == 1, "the card's task running", 20)
+        self.tick("proj")  # own "Queued as" comment is not forwarded
+        self.assertFalse(any("passed the" in c.body for c in self.comments("proj", card)))
+        self.comment("proj", card, "echo banana")
+        self.tick("proj")
+        self.assertTrue(any(c.author == "omp" and "passed the comment on as a follow-up" in c.body for c in self.comments("proj", card)))
+        done = self.tick_until("proj", card, lambda t: t.status == "done", "done after the follow-up")
+        self.assertIn("banana", done.result or "")
+
+    def test_mentioning_omp_in_a_comment_assigns_the_card(self) -> None:
+        with kbc.connect_closing(board="proj") as conn:
+            card = kb.create_task(conn, title="echo mentioned", board="proj")
+            other = kb.create_task(conn, title="echo not mine", board="proj")
+        self.tick("proj")  # the board's mention watermark starts at the newest comment
+        self.comment("proj", other, "mail me at someone@omp.dev")
+        self.comment("proj", card, "@omp can you take this?")
+        self.tick("proj")
+        self.assertEqual(self.card("proj", card).assignee, "omp")
+        self.assertIn(self.card("proj", other).assignee, (None, ""))
+        self.assertTrue(any(c.author == "omp" and "mentioned @omp" in c.body for c in self.comments("proj", card)))
+        done = self.tick_until("proj", card, lambda t: t.status == "done", "mentioned card done")
+        self.assertEqual(done.result, "mentioned")
+
     def test_failed_task_blocks_transient_and_unblock_retries_in_the_same_session(self) -> None:
         card = self.create("proj", "fail boom")
         self.tick("proj")

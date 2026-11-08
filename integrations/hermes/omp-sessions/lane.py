@@ -8,6 +8,10 @@ or the board/project folder for scratch cards), queues an omp session there with
 while it works, `needs_input` block while it waits on a question, `complete` with its final reply,
 `transient` block when it fails, stops or is removed.
 
+Cards are also a way to talk to the session from clients that only show kanban (Hermes Console on
+Android): a comment on a linked card answers omp's open question or reaches the session as a
+message, and `@omp` in a comment on any card of a lane board assigns that card to the lane.
+
 Card <-> session links and the lane's lock are machine-wide (store.lane_data_dir, beside the shared
 kanban boards), so several profiles' gateways never run two lane passes at once; before creating a
 session the lane also looks for an omp session tagged `card:<id>`, so a card never gets two sessions
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -62,6 +67,17 @@ def clip(text: str, limit: int) -> str:
 def one_line(text: str, limit: int = 200) -> str:
     line = next((l.strip() for l in text.splitlines() if l.strip()), "")
     return line if len(line) <= limit else f"{line[: limit - 1]}…"
+
+
+def last_comment_id(conn: Any, card_id: str) -> int:
+    from hermes_cli import kanban_db as kb
+
+    return max((c.id for c in kb.list_comments(conn, card_id)), default=0)
+
+
+def mentions(assignee: str) -> re.Pattern[str]:
+    """`@omp` (the lane's assignee) as a word, not inside an e-mail address or `@@omp`."""
+    return re.compile(rf"(?<![\w@])@{re.escape(assignee)}(?![\w-])", re.IGNORECASE)
 
 
 # ---------- pure: prompt ----------
@@ -294,6 +310,11 @@ class Lane:
                     errors.append(f"{key}: {exc}")
                 self._save(links)
             if cfg is not None:
+                try:
+                    self._mentions(conn, slug, links, cfg)
+                except Exception as exc:
+                    log.warning("omp lane: mentions on %s: %s", slug, exc, exc_info=True)
+                    errors.append(f"mentions: {exc}")
                 free = capacity(omp.scheduler())
                 for task in kb.list_tasks(conn, assignee=cfg.assignee, status="ready"):
                     if free <= 0:
@@ -323,7 +344,7 @@ class Lane:
             return False  # someone else got it, or a parent is open again
         link: dict[str, Any] = {"board": slug, "card": task.id, "title": task.title, "assignee": cfg.assignee, "state": "active", "asked": [], "created_at": time.time()}
         if existing:
-            link.update(session=existing["meta"]["id"], cwd=existing["meta"].get("cwd"))
+            link.update(session=existing["meta"]["id"], cwd=existing["meta"].get("cwd"), comment_seen=last_comment_id(conn, task.id))
             links[key] = link
             log.info("omp lane: %s re-linked to existing session %s", key, short(link["session"]))
             return True
@@ -399,15 +420,50 @@ class Lane:
         link.update(session=sid, state="active", asked=[], heartbeat_at=time.time())
         link.pop("error", None)
         log.info("omp lane: %s/%s -> omp session %s in %s", slug, task.id, short(sid), link["cwd"])
-        kb.add_comment(
+        link["comment_seen"] = kb.add_comment(
             conn,
             task.id,
             AUTHOR,
             f"Queued as omp session {short(sid)} in {link['cwd']}"
             + (f" (branch {link['branch']})" if link.get("branch") else "")
             + f". It starts when omp has a free slot. Watch or steer it in VS Code (omp Sessions), with `omp-vs attach {short(sid)}`, "
-            "or in the omp phone app; this card is updated when it finishes or needs input.",
+            "or in the omp phone app, or comment here: comments reach the session. This card is updated when it finishes or needs input.",
         )
+
+    def _mentions(self, conn: Any, slug: str, links: dict, cfg: BoardLane) -> None:
+        """`@omp` in a comment assigns the card to the lane: the way to hand a card to omp from Hermes
+        Console, whose assignee picker only lists Hermes profiles. Watermark per board (comment row id)."""
+        from hermes_cli import kanban_db as kb
+
+        marks = self.store.get("mention_seen", {})
+        marks = marks if isinstance(marks, dict) else {}
+        top = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM task_comments").fetchone()[0])
+        seen = marks.get(slug)
+        if not isinstance(seen, int) or seen > top:  # first pass on this board, or the board was recreated
+            marks[slug] = top
+            self.store.set("mention_seen", marks)
+            return
+        if seen == top:
+            return
+        pattern = mentions(cfg.assignee)
+        rows = conn.execute("SELECT id, task_id, author, body FROM task_comments WHERE id > ? ORDER BY id", (seen,)).fetchall()
+        for row in rows:
+            marks[slug] = int(row["id"])
+            card_id, author = str(row["task_id"]), str(row["author"])
+            if author == AUTHOR or not pattern.search(str(row["body"])) or link_key(slug, card_id) in links:
+                continue
+            task = kb.get_task(conn, card_id)
+            if task is None or task.status in ("done", "archived") or (task.assignee or "").lower() == cfg.assignee:
+                continue
+            try:
+                kb.assign_task(conn, card_id, cfg.assignee)
+            except RuntimeError as exc:  # a Hermes worker runs it under a claim
+                kb.add_comment(conn, card_id, AUTHOR, f"Couldn't assign this card to {cfg.assignee}: {exc}")
+                continue
+            when = "now" if task.status == "ready" else f"once the card is ready (it is {task.status})"
+            kb.add_comment(conn, card_id, AUTHOR, f"Assigned to {cfg.assignee} because {author} mentioned @{cfg.assignee}. The omp lane runs it as an omp session {when}.")
+            log.info("omp lane: %s/%s assigned to %s by a mention from %s", slug, card_id, cfg.assignee, author)
+        self.store.set("mention_seen", marks)
 
     # -- linked cards --
 
@@ -436,10 +492,58 @@ class Lane:
                     self._create(conn, slug, link, task, cfg, omp)
             return
         report = omp.show(link["session"])
+        if self._forward_comments(conn, link, report, omp):
+            return  # the session got something new: look at it again next tick
         for act in decide(card, link, report, assignee):
             self._apply(conn, slug, links, key, link, act, report, cfg, omp)
             if key not in links:
                 return
+
+    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpVs) -> bool:
+        """New comments on the card from anyone but the lane (Hermes Console, the dashboard, other
+        agents) go to the omp session: the first answers omp's open question, the rest arrive as a
+        message (a follow-up while omp works). Held until the card's queued task has started, so they
+        never run ahead of it or of omp's concurrency limit. True when something was sent."""
+        from hermes_cli import kanban_db as kb
+
+        card_id, sid = link["card"], str(link["session"])
+        seen = link.get("comment_seen")
+        if not isinstance(seen, int):  # linked before comments were forwarded: only newer ones count
+            link["comment_seen"] = last_comment_id(conn, card_id)
+            return False
+        state = report.get("state") if report else None
+        q = report.get("queue") if report and isinstance(report.get("queue"), dict) else {}
+        if state in ("queued", "starting") or (int(q.get("running") or 0) == 0 and int(q.get("done") or 0) == 0 and int(q.get("pending") or 0) > 0):
+            return False
+        new = kb.list_comments_after(conn, card_id, after_id=seen)
+        if not new:
+            return False
+        link["comment_seen"] = new[-1].id
+        theirs = [c for c in new if c.author != AUTHOR and c.body.strip()]
+        if not theirs:
+            return False
+        if report is None:
+            kb.add_comment(conn, card_id, AUTHOR, f"omp session {short(sid)} is gone, so that comment went nowhere. Unblock the card to start a new session, then comment again.")
+            return False
+        done: list[str] = []
+        question = report.get("question") if isinstance(report.get("question"), dict) else None
+        if state == "needs_input" and question:
+            first, theirs = theirs[0], theirs[1:]
+            r = omp.run(["answer", sid, first.body.strip()])
+            if r.code != 0:
+                err = one_line(r.stderr or r.stdout or f"omp-vs answer exited with {r.code}", 300)
+                kb.add_comment(conn, card_id, AUTHOR, f"omp didn't take that as an answer ({err}). Reply with one of the options, or answer in VS Code or the omp phone app.")
+                return False
+            done.append(f"answered omp's question with \"{one_line(first.body, 80)}\"")
+        if theirs:
+            busy = state not in ("idle", "stopped")
+            text = "\n\n".join(f"{c.author}: {c.body.strip()}" for c in theirs)
+            omp.ok(["send", sid, "-", *(["--follow-up"] if busy else [])], stdin=f"New comment on Hermes kanban card {link['board']}/{card_id}:\n{text}", timeout=90)
+            n = "comments" if len(theirs) > 1 else "comment"
+            done.append(f"passed the {n} on" + (" as a follow-up" if busy else ""))
+        kb.add_comment(conn, card_id, AUTHOR, f"omp session {short(sid)}: {' and '.join(done)}.")
+        log.info("omp lane: %s/%s: %s", link["board"], card_id, "; ".join(done))
+        return True
 
     def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: OmpVs) -> None:
         from hermes_cli import kanban_db as kb
@@ -460,11 +564,11 @@ class Lane:
                 if kbd.heartbeat_worker(conn, card_id, note=note):
                     link["heartbeat_at"] = time.time()
         elif kind == "block_input":
-            if kb.block_task(conn, card_id, reason=f"omp needs input (answer in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}", kind="needs_input"):
+            if kb.block_task(conn, card_id, reason=f"omp needs input (answer with a comment on this card, in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}", kind="needs_input"):
                 link["input_blocked"] = True
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "comment_input":
-            kb.add_comment(conn, card_id, AUTHOR, f"omp needs input again (answer in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}")
+            kb.add_comment(conn, card_id, AUTHOR, f"omp needs input again (answer with a comment on this card, in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}")
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "unblock":
             kb.unblock_task(conn, card_id)

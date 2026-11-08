@@ -22,6 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -375,6 +376,24 @@ def session_action(sid: str, action: str, body: dict) -> dict:
     raise ApiError(404, f"unknown action {action}")
 
 
+def open_in_vscode(sid: str, base_url: str) -> dict:
+    """Asks the VS Code window last used on omp's machine to open the session (`omp-vs vscode`).
+
+    `url` is the vscode:// link (a browser opens it); `page` is a page of this dashboard that opens
+    it, for hosts that only open web links (Hermes Desktop): it is served without sign-in and holds
+    nothing but a redirect, so `base_url` is the address the caller reached this dashboard at."""
+    o = require_omp(settings())
+    out = o.json(["vscode", sid, "--json"])
+    url = out.get("url") if isinstance(out, dict) else None
+    if not isinstance(url, str) or not url:
+        raise ApiError(502, "omp-vs vscode printed no link")
+    # The profile segment serves the requesting profile's copy (the page's own `?profile=`).
+    profile = profile_name()
+    scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
+    page = f"{base_url.rstrip('/')}/dashboard-plugins/{scope}omp-sessions/open-vscode.html#{quote(url, safe='')}"
+    return {"url": url, "page": page, "authority": out.get("authority"), "windowAt": out.get("windowAt")}
+
+
 # ---------- overview, places, boards ----------
 
 
@@ -567,6 +586,11 @@ async def get_session(sid: str) -> Any:
 @router.post("/sessions")
 async def post_session(request: Request) -> Any:
     return await _run(start_session, await _body(request), write=True)
+
+
+@router.post("/sessions/{sid}/vscode")
+async def post_session_vscode(sid: str, request: Request) -> Any:
+    return await _run(open_in_vscode, sid, str(request.base_url), write=True)
 
 
 @router.post("/sessions/{sid}/{action}")

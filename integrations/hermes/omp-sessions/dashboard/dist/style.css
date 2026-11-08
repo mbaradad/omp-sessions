@@ -549,6 +549,14 @@
   color: var(--o-yellow);
   margin: -4px 0 10px;
 }
+.omps-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--o-muted);
+  margin: -4px 0 10px;
+}
 .omps-board {
   display: flex;
   flex-wrap: wrap;

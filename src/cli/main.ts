@@ -20,6 +20,7 @@ import { COLUMNS, type OpName, type ServerOps, type SessionInfo, serverLogPath, 
 import { type AgentState, SETTLED_STATES, type SessionReport, agentState, dialogAnswer, sessionReport } from "../shared/session-report";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
 import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, findHermes, hermesLookup, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin, updatePlugin } from "../shared/hermes-plugin";
+import { OPEN_REQUEST_TTL_MS, readWindow, requestOpen, vscodeLink } from "../shared/vscode-open";
 import { type Args, UsageError, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
 import { renderMessage } from "./render";
@@ -347,6 +348,21 @@ async function cmdShow(args: Args): Promise<number> {
 	const report = await reportFor(findSession(args._[0] ?? "."));
 	if (flag(args, "json")) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 	else printReport(report);
+	return 0;
+}
+
+/** Asks the VS Code window last used on this machine to open the session; prints the link that brings it up. */
+function cmdVscode(args: Args): number {
+	const meta = findSession(args._[0] ?? ".");
+	const win = readWindow();
+	requestOpen(meta.id);
+	const url = vscodeLink(meta, win);
+	if (flag(args, "json")) {
+		process.stdout.write(`${JSON.stringify({ id: meta.id, url, authority: win?.authority ?? null, windowAt: win?.at ?? null }, null, 2)}\n`);
+		return 0;
+	}
+	const where = !win ? "no VS Code window recorded on this machine yet" : `last used: ${win.authority || "a local window"}, ${ago(win.at)} ago`;
+	process.stdout.write(`${url}\n${c.dim(`Open this link on the computer running VS Code (${where}); the window takes the request within ${OPEN_REQUEST_TTL_MS / 60_000} minutes.`)}\n`);
 	return 0;
 }
 
@@ -983,6 +999,8 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
   wait [session] [--timeout 30m] [--json]
                                   block until it is idle (exit 0), needs input (3) or stopped (4)
   answer <session> <choice>       answer its waiting question: option number/text, yes/no, text
+  vscode [session] [--json]       open it in the VS Code window last used on this machine (prints the
+                                  link to open on the computer running VS Code, e.g. over Remote-SSH)
   projects [--json]               folders sessions ran in, newest first
   attach [session]                chat in the terminal (Ctrl-C aborts a turn, Ctrl-D detaches)
   send <session> <text|-> [--follow-up] [-w|--wait]
@@ -1110,6 +1128,8 @@ async function main(argv: string[]): Promise<number> {
 			return cmdWait(args);
 		case "answer":
 			return cmdAnswer(args);
+		case "vscode":
+			return cmdVscode(args);
 		case "projects":
 			return cmdProjects(args);
 		case "skill":

@@ -69,6 +69,13 @@ test("notifications: allow_gateway_injection off, and a refused notification", (
 	assert.deepEqual(warnings(f)[0].fixes, [{ label: "Allow", command: "omp.hermes.enable", args: ["default"] }]);
 });
 
+test("an undelivered notification with notifications allowed is not a warning (the chat had ended)", () => {
+	const f = facts([profile("default", { lane: true, injection: true })]);
+	f.lane = { profile: "default", status: { dispatcherNotes: [], dispatcher: { at: NOW / 1000 - 10, profile: "default" }, lastNotification: { at: NOW / 1000 - 120, ok: false, session: "0123456789" } } };
+	assert.deepEqual(warnings(f), []);
+	assert.equal(hermesChecks(f).find(c => c.title.startsWith("Hermes didn't deliver"))?.level, "info");
+});
+
 test("lane on in several profiles, dispatcher in default: one warning, turn off the others", () => {
 	const w = warnings(facts([profile("default", { lane: true }), profile("work", { lane: true }), profile("ops", { lane: true })]));
 	assert.equal(w.length, 1);

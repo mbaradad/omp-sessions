@@ -27,6 +27,7 @@ import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
 import { registerToolbox } from "./toolbox";
+import { registerVscodeOpen } from "./vscode-open";
 import { registerWorktrees } from "./worktree";
 
 const panels = new Map<string, ChatPanel>();
@@ -502,6 +503,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerPermissions(api);
 	registerAgentSkill(api);
 	registerHermesPlugin(api);
+	registerVscodeOpen(api);
 	registerRemote(api, registerServer(api));
 
 	// ---------- status bar ----------

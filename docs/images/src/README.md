@@ -1,6 +1,6 @@
 # README graphics
 
-`hero.html`, `how-it-works.html`, `a-day.html`, `phone.html` and `setup.html` are the sources of the PNGs one folder up (`setup.png` is used by `docs/SETUP.md`). Most embed the screenshots in `docs/images/` (see `docs/PUBLISHING.md` §5), so re-render them after retaking screenshots. Render at 2× from the repository root:
+`hero.html`, `how-it-works.html`, `a-day.html`, `phone.html` and `setup.html` are the sources of the PNGs one folder up (`setup.png` is used by `docs/SETUP.md`); `og.html` is the website's link preview, `site/assets/og.png`, rendered at 1×. Most embed the screenshots in `docs/images/` (see `docs/PUBLISHING.md` §5), so re-render them after retaking screenshots. Render at 2× from the repository root:
 
 ```sh
 npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 1200,580 "file://$PWD/docs/images/src/hero.html" docs/images/hero.png
@@ -8,6 +8,7 @@ npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 120
 npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 1200,500 "file://$PWD/docs/images/src/a-day.html" docs/images/a-day.png
 npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 1200,640 "file://$PWD/docs/images/src/phone.html" docs/images/phone.png
 npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 1200,640 "file://$PWD/docs/images/src/setup.html" docs/images/setup.png
+npx -y playwright screenshot --viewport-size 1200,630 "file://$PWD/docs/images/src/og.html" site/assets/og.png
 ```
 
 The viewport height is the `body` height in each file. Fonts: Inter (falls back to the system sans).

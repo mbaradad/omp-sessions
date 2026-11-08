@@ -1,6 +1,6 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
-// the permission mode switch and Stop.
-import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session } from "./api";
+// the permission mode switch, Stop, and Open in VS Code.
+import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type VscodeLink } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, stateText } from "./util";
@@ -109,6 +109,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 	const [text, setText] = useState("");
 	const [followUp, setFollowUp] = useState(false);
 	const [confirmStop, setConfirmStop] = useState(false);
+	const [notice, setNotice] = useState<string | null>(null);
 	const root = useRef<HTMLElement | null>(null);
 	const tick = useRef(0);
 	useDismiss(p.onClose, root);
@@ -130,6 +131,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 		setS(p.summary);
 		setConfirmStop(false);
 		setActionError(null);
+		setNotice(null);
 		void load();
 		const timer = setInterval(() => {
 			if (!document.hidden) void load();
@@ -157,6 +159,28 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 		void act("send", "send", { text, followUp: s?.state === "working" && followUp }, () => setText(""));
 	};
 
+	// The VS Code window last used on omp's machine takes the request; the link brings that window up.
+	const openVscode = async (): Promise<void> => {
+		setBusy("vscode");
+		setActionError(null);
+		setNotice(null);
+		try {
+			const link = await p.host.request<VscodeLink>(`/sessions/${encodeURIComponent(p.id)}/vscode`, { method: "POST", body: {} });
+			await p.host.openVscode(link);
+			setNotice(
+				link.authority
+					? `Opening in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.`
+					: link.authority === ""
+						? "Opening in VS Code on omp's machine."
+						: "No VS Code window has used omp Sessions on omp's machine yet: the link opens VS Code here, which needs the omp Sessions extension.",
+			);
+		} catch (err) {
+			setActionError(errorMessage(err));
+		} finally {
+			setBusy(null);
+		}
+	};
+
 	const view = s ?? p.summary;
 	const working = view?.state === "working" || view?.state === "starting";
 	return h(
@@ -172,6 +196,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 				h("h2", { id: "omps-detail-title", className: "omps-drawer-title" }, view?.title ?? shortId(p.id)),
 				view ? h("div", { className: "omps-drawer-sub" }, icon("folder", 12), h("span", { title: view.cwd }, view.cwdLabel ?? view.cwd), h("span", { className: "omps-sep" }, "·"), h("code", null, shortId(view.id))) : null,
 			),
+			h(Button, { kind: "ghost", small: true, icon: "external", label: "VS Code", title: "Open this session in VS Code", busy: busy === "vscode", onClick: () => void openVscode() }),
 			h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose }),
 		),
 		h(
@@ -180,6 +205,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 			error && !view ? h(ErrorBox, { message: error, onRetry: () => void load() }) : null,
 			error && view ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 			actionError ? h(ErrorBox, { message: actionError }) : null,
+			notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
 			view?.state === "needs_input" && view.question ? h(AnswerBox, { key: view.question.id, q: view.question, busy: busy === "answer", onAnswer: answer => void act("answer", "answer", { answer }) }) : null,
 			view
 				? h(

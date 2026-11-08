@@ -119,7 +119,7 @@ def status_text(d: dict) -> str:
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
         + (f" · last note {'delivered' if last.get('ok') else 'REFUSED'} {_ago(last.get('at'))}" if last else "")
-        + (" (is plugins.entries.omp-sessions.allow_gateway_injection true?)" if last and not last.get("ok") else "")
+        + (" (allow_gateway_injection off, or the chat that started the session had ended, e.g. a one-shot `hermes chat -Q`)" if last and not last.get("ok") else "")
         + f" · {d['watches']} watched session(s)"
     )
     boards = lane["boards"]

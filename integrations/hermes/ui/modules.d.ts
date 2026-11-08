@@ -26,6 +26,8 @@ declare module "@hermes/plugin-sdk" {
 	export interface PluginContext {
 		rest<T>(path: string, opts?: PluginRestOptions): Promise<T>;
 		registerMany(cs: Contribution[]): () => void;
+		/** Opens http(s)/mailto links with the OS; false when refused or unavailable. */
+		os: { openExternal(url: string): Promise<boolean> };
 	}
 	export const ROUTES_AREA: string;
 	export const SIDEBAR_NAV_AREA: string;

@@ -36,6 +36,10 @@ if (sdk && registry) {
 						? { method: options?.method ?? "GET" }
 						: { method: options.method ?? "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options.body) },
 				),
+			// The browser asks before handing vscode:// to VS Code; the page stays.
+			openVscode: async link => {
+				window.location.href = link.url;
+			},
 		}),
 	);
 }
