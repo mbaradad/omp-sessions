@@ -4,7 +4,7 @@
 // Layout under stateRoot() (~/.omp/vscode, OMP_VSCODE_HOME overrides):
 //   scheduler.json                 { maxConcurrent: number (0 = unlimited), paused?: boolean }
 //   slots/<sessionId>.json         lease { pid, since, taskId, …stamp } held while a queued task runs
-//   slots/waiting/<sessionId>.json { pid, since, …stamp } a host with a runnable queued task but no slot
+//   slots/waiting/<sessionId>.json { pid, since, seq, …stamp } a host with a runnable queued task but no slot
 //   slots/.lock                    short global mutex (O_EXCL create) around check+acquire
 // Leases and waiting entries whose process is gone are stale: ignored and removed by the next caller.
 // The stamp (process-lock.ts) keeps a reused pid (after a reboot) from holding a slot forever.
@@ -33,8 +33,14 @@ export interface SlotLease {
 export interface SlotWaiter {
 	sessionId: string;
 	pid: number;
+	/** When it started waiting (wall clock). */
 	since: number;
+	/** Arrival order, taken under the mutex: the line is first come, first served by it, as `since` can
+	 *  step back with the wall clock (NTP, WSL2) and let a later waiter cut in. */
+	seq: number;
 }
+
+const byArrival = (a: SlotWaiter, b: SlotWaiter) => a.seq - b.seq || a.since - b.since || a.sessionId.localeCompare(b.sessionId);
 
 export type AcquireResult = { acquired: true } | { acquired: false; position: number; since: number } | { acquired: false; busy: true };
 
@@ -129,11 +135,11 @@ export function listLeases(): SlotLease[] {
 		.sort((a, b) => a.since - b.since);
 }
 
-/** Hosts waiting for a slot, oldest first (before any user ordering). */
+/** Hosts waiting for a slot, first come first (before any user ordering). */
 export function listWaiting(): SlotWaiter[] {
 	return liveEntries(waitingDir())
-		.map(e => ({ sessionId: e.sessionId, pid: e.pid, since: e.since }))
-		.sort((a, b) => a.since - b.since || a.sessionId.localeCompare(b.sessionId));
+		.map(e => ({ sessionId: e.sessionId, pid: e.pid, since: e.since, seq: typeof e.raw.seq === "number" ? e.raw.seq : 0 }))
+		.sort(byArrival);
 }
 
 /** Short global mutex; undefined when another process holds it (caller retries shortly). */
@@ -162,7 +168,7 @@ function tryLock(): (() => void) | undefined {
 
 /**
  * Tries to take a slot for the next queued task of `sessionId`. Waiters are ranked by `order`
- * (given ids sorted by waiting-since, returns them in start order); the first `free` of them may
+ * (given ids in arrival order, returns them in start order); the first `free` of them may
  * start. Not acquired → the caller is (still) registered as waiting, with its 1-based position.
  */
 export function tryAcquireSlot(sessionId: string, taskId: string, order: (ids: string[]) => string[] = ids => ids, pid = process.pid): AcquireResult {
@@ -181,9 +187,9 @@ export function tryAcquireSlot(sessionId: string, taskId: string, order: (ids: s
 		let waiting = listWaiting();
 		let self = waiting.find(w => w.sessionId === sessionId);
 		if (!self || self.pid !== pid) {
-			self = { sessionId, pid, since: self?.since ?? Date.now() };
-			writeJson(waitFile, { ...processStamp(pid), since: self.since });
-			waiting = [...waiting.filter(w => w.sessionId !== sessionId), self].sort((a, b) => a.since - b.since || a.sessionId.localeCompare(b.sessionId));
+			self = { sessionId, pid, since: self?.since ?? Date.now(), seq: self?.seq ?? Math.max(0, ...waiting.map(w => w.seq)) + 1 };
+			writeJson(waitFile, { ...processStamp(pid), since: self.since, seq: self.seq });
+			waiting = [...waiting.filter(w => w.sessionId !== sessionId), self].sort(byArrival);
 		}
 		const ids = waiting.map(w => w.sessionId);
 		const ordered = order(ids);

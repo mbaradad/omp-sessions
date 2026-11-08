@@ -2,11 +2,10 @@
 // selects by the session's mode, switchable live (also for prompts already waiting).
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { PLAN_PROMPT_PREFIX } from "../../src/shared/permissions";
-import { launch } from "./harness";
+import { launch, tempDir } from "./harness";
 
 const launchArgs = (h: { dir: string }) => JSON.parse(fs.readFileSync(path.join(h.dir, "launch.json"), "utf8")).ompArgs as string[];
 
@@ -32,8 +31,7 @@ test("no flag and no omp setting: auto approves every tool without asking", asyn
 });
 
 test("the omp Sessions default mode (config set mode) applies when the session asks for none; a launch flag wins", async t => {
-	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-mode-default-"));
-	t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+	const home = tempDir(t, "omp-mode-default-");
 	fs.writeFileSync(path.join(home, "launcher.json"), JSON.stringify({ mode: "plan" }));
 	const byDefault = await launch(t, { home });
 	assert.equal((await byDefault.connect()).snapshot.meta.permissionMode, "plan");

@@ -508,10 +508,16 @@ function sendOmp(cmd: Record<string, unknown>): void {
 
 let hostSeq = 0;
 const hostPending = new Map<string, (res: OmpFrame) => void>();
-function request(cmd: Record<string, unknown>): Promise<OmpFrame> {
+/** Sends a command of the host's own; resolves with omp's response. `apply` runs as the response frame
+ *  is handled: an await resumes only after the frames read along with it (same stdout chunk) were
+ *  handled, so state those frames build on (the message mirror) must be replaced there, not after it. */
+function request(cmd: Record<string, unknown>, apply?: (res: OmpFrame) => void): Promise<OmpFrame> {
 	const id = `h:${++hostSeq}`;
 	const { promise, resolve } = Promise.withResolvers<OmpFrame>();
-	hostPending.set(id, resolve);
+	hostPending.set(id, res => {
+		apply?.(res);
+		resolve(res);
+	});
 	sendOmp({ ...cmd, id });
 	return promise;
 }
@@ -601,12 +607,11 @@ function refreshState(): void {
 }
 
 async function resync(): Promise<void> {
-	const res = await request({ type: "get_messages" });
-	if (res.success) {
-		messages = messagesOf(res.data);
-	}
-	inflight = null;
-	running.clear();
+	await request({ type: "get_messages" }, res => {
+		if (res.success) messages = messagesOf(res.data);
+		inflight = null;
+		running.clear();
+	});
 	broadcast({ t: "reset", messages, state });
 }
 
@@ -618,9 +623,10 @@ async function onReady(): Promise<void> {
 	await request({ type: "set_subagent_subscription", level: "progress" });
 	const st = await request({ type: "get_state" });
 	if (st.success) state = slimState(st.data);
-	const msgs = await request({ type: "get_messages" });
-	if (msgs.success) messages = messagesOf(msgs.data);
-	if (resumeNotice) messages.push({ role: "notice", ...resumeNotice, timestamp: Date.now() });
+	await request({ type: "get_messages" }, res => {
+		if (res.success) messages = messagesOf(res.data);
+		if (resumeNotice) messages.push({ role: "notice", ...resumeNotice, timestamp: Date.now() });
+	});
 	meta.model = modelLabel(state?.model) ?? meta.model;
 	setSessionFile(str(state?.sessionFile));
 	meta.ompSessionId = str(state?.sessionId) ?? meta.ompSessionId;

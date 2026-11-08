@@ -7,6 +7,9 @@
 - `hermes omp status` and the Hermes page list only boards that still exist; a service unit's `PATH` no longer repeats entries.
 - Resuming a session right after it stopped could still leave it unreachable when the file system reused the old socket's inode: the stopping host now closes its socket before anything else can bind there.
 - The HTTP API reads the body of a request it refuses (wrong content type, origin or auth) before answering, so clients get the error instead of a reset connection.
+- Queued tasks' durations and retry backoff, and `omp-sessions wait`'s timeout and settle time, use the monotonic clock: a wall clock that steps (NTP, WSL2) no longer gives negative durations or stretches and cuts waits. Sessions waiting for a concurrency slot are served in arrival order, so a clock stepping back no longer lets a later one cut in, and a finished queued task is saved as done before its slot is freed, so under a limit of 1 no one sees two queued tasks running at once.
+- A reply to a prompt sent while its session was still starting (`omp-sessions new` with a prompt, the HTTP API) could be missing from the session's history for anyone opening it later: the host's startup read of the transcript no longer overwrites messages that arrived with it.
+- Following a session (`omp-sessions attach`/`tail`, the phone app's live stream, server subscriptions) no longer misses what the host sends right after its snapshot, such as an approval question asked at that moment.
 
 ## 0.6.0
 

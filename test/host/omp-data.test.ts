@@ -1,16 +1,14 @@
 // Resuming a session whose omp transcript `omp gc` archived (or that vanished).
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import * as zlib from "node:zlib";
-import { alive, isRecord, launch, textOf, until } from "./harness";
+import { alive, isRecord, launch, tempDir, textOf, until } from "./harness";
 
 test("resume restores an archived transcript; a vanished one starts fresh with a warning", async t => {
 	// omp's layout: <agent>/sessions/<slug>/<file>.jsonl, archived to <agent>/archive/sessions/<slug>/<file>.jsonl.gz.
-	const agent = fs.mkdtempSync(path.join(os.tmpdir(), "omp-agent-"));
-	t.after(() => fs.rmSync(agent, { recursive: true, force: true }));
+	const agent = tempDir(t, "omp-agent-");
 	const slug = "--work--";
 	const h = await launch(t, { env: { FAKE_OMP_SESSIONS: path.join(agent, "sessions", slug) } });
 	const { client: c } = await h.connect();

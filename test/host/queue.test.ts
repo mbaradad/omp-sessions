@@ -38,7 +38,10 @@ test("autoRun feeds pending tasks to omp in order; each finishes done with its s
 		],
 	);
 	assert.ok(done.tasks[0].subtasks.every(s => s.done), "subtasks completed with the task");
-	assert.ok((done.tasks[0].finishedAt ?? 0) <= (done.tasks[1].startedAt ?? 0), "ran sequentially");
+	// Order from the host's own queue broadcasts, not wall-clock stamps (the clock can step back, e.g. WSL2).
+	const queues = c.msgs.flatMap(m => (m.t === "queue" ? [m.queue] : []));
+	assert.ok(queues.every(q => statuses(q).filter(s => s === "running").length <= 1), "one task at a time");
+	assert.equal(queues.find(q => q.tasks[1]?.status === "running")?.tasks[0].status, "done", "the second started after the first finished");
 	assert.equal(done.autoRun, true);
 
 	const prompts = h.fakeCommands("prompt");

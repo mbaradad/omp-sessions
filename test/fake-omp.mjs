@@ -59,8 +59,10 @@ const TOOL_DELAY = Number(process.env.FAKE_OMP_TOOL_DELAY ?? 30);
 const READY_DELAY = Number(process.env.FAKE_OMP_READY_DELAY ?? 0);
 fs.mkdirSync(sessionsDir, { recursive: true });
 
+// `mono`: ms on the system's monotonic clock (process.hrtime), comparable across processes and immune to
+// wall-clock steps (NTP, WSL2), for ordering and interval assertions.
 function debug(entry) {
-	if (logFile) fs.appendFileSync(logFile, `${JSON.stringify({ t: Date.now(), pid: process.pid, ...entry })}\n`);
+	if (logFile) fs.appendFileSync(logFile, `${JSON.stringify({ mono: Number(process.hrtime.bigint()) / 1e6, pid: process.pid, ...entry })}\n`);
 }
 // `omp config get <key> --json` (the host reads disabledExtensions for session overlays).
 if (argv[0] === "config") {

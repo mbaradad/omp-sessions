@@ -76,7 +76,7 @@ test("sessionInfos: queued stopped sessions are in the waiting column, ranked wi
 		["done", queue([task("done")])],
 	]);
 	const data = org({ "q-low": "low", host: "normal" });
-	const infos = sessionInfos({ metas, queues, org: data, waiters: [{ sessionId: "host", pid: 1, since: 5 }], launches: ["q-low"] });
+	const infos = sessionInfos({ metas, queues, org: data, waiters: [{ sessionId: "host", pid: 1, since: 5, seq: 1 }], launches: ["q-low"] });
 	const by = new Map(infos.map(i => [i.meta.id, i]));
 	assert.equal(by.get("host")?.column, "waiting");
 	assert.deepEqual(by.get("host")?.waiting, { position: 1, since: 5 });

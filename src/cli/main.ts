@@ -464,15 +464,16 @@ async function cmdWait(args: Args): Promise<number> {
 	return waitFor(meta, timeout, flag(args, "json"));
 }
 
-/** Waits until the session settles (or `timeout` ms pass), prints its report; the exit code says why. */
+/** Waits until the session settles (or `timeout` ms pass), prints its report; the exit code says why.
+ *  Times are on the monotonic clock: a stepping wall clock (NTP, WSL2) must not stretch or cut the wait. */
 async function waitFor(meta: SessionMeta, timeout: number | undefined, json: boolean): Promise<number> {
 	const b = await backend();
-	const deadline = timeout === undefined ? Infinity : Date.now() + timeout;
+	const deadline = timeout === undefined ? Infinity : performance.now() + timeout;
 	let settledSince: number | undefined;
 	for (;;) {
 		const info = (await b.call("list", { all: true })).find(i => i.meta.id === meta.id);
 		if (!info) throw new Error(`session ${shortId(meta.id)} is gone`);
-		const now = Date.now();
+		const now = performance.now();
 		if (SETTLED_STATES[agentState(info)]) {
 			settledSince ??= now;
 			if (now - settledSince >= SETTLE_MS) break;

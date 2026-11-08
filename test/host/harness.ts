@@ -49,12 +49,19 @@ export function removeSocket(socket: string | undefined): void {
 	if (socket && process.platform !== "win32") fs.rmSync(socket, { force: true });
 }
 
+/** Ms on the system's monotonic clock, as the fake logs it (`FakeLogEntry.mono`). Intervals and
+ *  orderings are asserted on it, never on wall-clock stamps: the wall clock can step (NTP; WSL2 jumps
+ *  back ~3 s every half minute). Deadlines here use performance.now() for the same reason. */
+export function monoNow(): number {
+	return Number(process.hrtime.bigint()) / 1e6;
+}
+
 export async function until<T>(probe: () => T | undefined | false, what: string, timeout = 8000): Promise<T> {
-	const deadline = Date.now() + timeout;
+	const deadline = performance.now() + timeout;
 	for (;;) {
 		const value = probe();
 		if (value !== undefined && value !== false) return value;
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+		if (performance.now() > deadline) throw new Error(`timed out waiting for ${what}`);
 		await sleep(20);
 	}
 }
@@ -152,8 +159,8 @@ export class Client {
 
 export interface FakeLogEntry {
 	kind: "argv" | "cmd" | "exit";
-	/** Epoch ms when the fake logged the entry. */
-	t: number;
+	/** monoNow() when the fake logged the entry. */
+	mono: number;
 	pid: number;
 	argv?: string[];
 	cmd?: { type: string; [k: string]: unknown };
@@ -172,6 +179,7 @@ export class Host {
 	}
 	private readonly clients: Client[] = [];
 	private readonly pids = new Set<number>();
+	private disposed: Promise<void> | undefined;
 
 	constructor(
 		readonly id: string,
@@ -218,9 +226,9 @@ export class Host {
 	/** A crashed predecessor leaves its socket file behind, and meta is written before the host listens:
 	 *  only a connect proves the host serves the session. */
 	async waitListening(): Promise<void> {
-		const deadline = Date.now() + 8000;
+		const deadline = performance.now() + 8000;
 		while (!(await canConnect(this.socket))) {
-			if (Date.now() > deadline) throw new Error("timed out waiting for host socket");
+			if (performance.now() > deadline) throw new Error("timed out waiting for host socket");
 			await sleep(25);
 		}
 	}
@@ -261,8 +269,14 @@ export class Host {
 		return this.fakeEntries().flatMap(e => (e.kind === "cmd" && e.cmd?.type === type ? [e.cmd] : []));
 	}
 
-	/** Closes clients, kills every host/omp process this sandbox started, removes the sandbox. */
-	async dispose(): Promise<void> {
+	/** Closes clients, kills every host/omp process this sandbox started, removes the sandbox. Once:
+	 *  killing the same pids again later could hit unrelated processes that reused them. */
+	dispose(): Promise<void> {
+		this.disposed ??= this.teardown();
+		return this.disposed;
+	}
+
+	private async teardown(): Promise<void> {
 		await Promise.all(this.clients.map(c => c.close()));
 		const m = this.metaOrUndefined();
 		if (m) {
@@ -291,10 +305,26 @@ export class Host {
 }
 
 let seq = 0;
+/** Hosts each test launched, so a test's shared temp dirs outlive them (tempDir). */
+const launched = new WeakMap<TestContext, Host[]>();
+
 /** New host sandbox, started, disposed after the test. */
 export async function launch(t: TestContext, opts: { args?: string[]; env?: Record<string, string>; home?: string } = {}): Promise<Host> {
 	const host = new Host(`t${process.pid}-${++seq}`, opts.env, opts.home);
+	launched.set(t, [...(launched.get(t) ?? []), host]);
 	t.after(() => host.dispose());
 	await host.start(opts.args);
 	return host;
+}
+
+/** Temp dir the test's hosts share (an OMP_VSCODE_HOME, omp's data), removed after the test. after()
+ *  hooks run in the order they were added, so this one, added before the hosts were launched, first
+ *  disposes them: a live host writing into the dir would break its removal. */
+export function tempDir(t: TestContext, prefix: string): string {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	t.after(async () => {
+		await Promise.all((launched.get(t) ?? []).map(h => h.dispose()));
+		await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+	});
+	return dir;
 }

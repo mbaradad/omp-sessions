@@ -1,26 +1,31 @@
 // Global concurrency slots across independent session hosts sharing one OMP_VSCODE_HOME:
 // limit, waiting position, user ordering (organize.json), stale leases, unlimited.
+// Orders are proven by state, never by timing or wall-clock stamps (the clock can step back, e.g.
+// WSL2): a queued `ask` task holds its slot until the test answers its dialog, and a host saves the
+// finished task to queue.json before it frees the slot.
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { type TestContext, test } from "node:test";
 import { emptyOrgData } from "../../src/shared/organize";
 import type { QueueTask, TaskQueue } from "../../src/shared/protocol";
-import { type Client, type Host, launch, until } from "./harness";
+import { type Client, type Host, launch, tempDir, until } from "./harness";
+
+interface Session {
+	h: Host;
+	c: Client;
+}
 
 function sharedHome(t: TestContext, scheduler?: object): string {
-	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vsc-sched-"));
+	const home = tempDir(t, "omp-vsc-sched-");
 	fs.mkdirSync(path.join(home, "sessions"), { recursive: true });
 	if (scheduler) fs.writeFileSync(path.join(home, "scheduler.json"), JSON.stringify(scheduler));
-	// Removed after the test; the hosts' dispose kills their processes either way.
-	t.after(() => fs.rmSync(home, { recursive: true, force: true }));
 	return home;
 }
 
-async function hosts(t: TestContext, home: string, n: number): Promise<Array<{ h: Host; c: Client }>> {
-	const out: Array<{ h: Host; c: Client }> = [];
+async function hosts(t: TestContext, home: string, n: number): Promise<Session[]> {
+	const out: Session[] = [];
 	for (let i = 0; i < n; i++) {
 		const h = await launch(t, { home });
 		const { client: c } = await h.connect();
@@ -34,20 +39,36 @@ async function doneTask(c: Client, timeout = 15000): Promise<QueueTask> {
 	return q.tasks[0];
 }
 
-const overlaps = (a: QueueTask, b: QueueTask) => (a.startedAt ?? 0) < (b.finishedAt ?? 0) && (b.startedAt ?? 0) < (a.finishedAt ?? 0);
+/** The session's queue as its host last saved it. */
+function savedQueue(s: Session): TaskQueue {
+	return JSON.parse(fs.readFileSync(path.join(s.h.dir, "queue.json"), "utf8"));
+}
+
+function queueTask(s: Session, title: string): void {
+	s.c.send({ t: "queue", ops: [{ op: "add", title }, { op: "run" }] });
+}
+
+/** Waits until the session's queued `ask` task runs, stopped at its dialog: the session holds its slot
+ *  until the returned function answers. */
+async function askOpen(s: Session): Promise<() => void> {
+	const req = await s.c.event("extension_ui_request", ev => ev.method === "ask", 0, 15000);
+	return () => s.c.send({ t: "ui_response", res: { id: String(req.id), answers: [{ id: "q1", selectedOptions: ["alpha"] }] } });
+}
 
 test("maxConcurrent=1: the second session's task waits for the slot, then runs", async t => {
 	const home = sharedHome(t, { maxConcurrent: 1 });
 	const [a, b] = await hosts(t, home, 2);
-	a.c.send({ t: "queue", ops: [{ op: "add", title: "slow 800" }, { op: "run" }] });
-	await a.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running");
-	b.c.send({ t: "queue", ops: [{ op: "add", title: "slow 300" }, { op: "run" }] });
+	queueTask(a, "ask");
+	const answerA = await askOpen(a);
+	queueTask(b, "echo b");
 	const waiting = await b.c.waitFor("meta", m => !!m.meta.queue?.waiting);
 	assert.equal(waiting.meta.queue?.waiting?.position, 1);
 	assert.ok(fs.existsSync(path.join(home, "slots", "waiting", `${b.h.id}.json`)), "waiting marker written");
-	const [ta, tb] = await Promise.all([doneTask(a.c), doneTask(b.c)]);
-	assert.ok(!overlaps(ta, tb), `ran one at a time: ${ta.startedAt}-${ta.finishedAt} / ${tb.startedAt}-${tb.finishedAt}`);
-	assert.ok((tb.startedAt ?? 0) >= (ta.finishedAt ?? 0));
+	assert.equal(savedQueue(b).tasks[0].status, "pending");
+	answerA();
+	await b.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running", 0, 15000);
+	assert.equal(savedQueue(a).tasks[0].status, "done", "B started only once A's task was done");
+	await Promise.all([doneTask(a.c), doneTask(b.c)]);
 	await b.c.waitFor("meta", m => m.meta.queue?.done === 1 && !m.meta.queue.waiting);
 	await until(() => fs.readdirSync(path.join(home, "slots")).filter(f => f.endsWith(".json")).length === 0, "leases released");
 	assert.deepEqual(fs.readdirSync(path.join(home, "slots", "waiting")), []);
@@ -56,21 +77,23 @@ test("maxConcurrent=1: the second session's task waits for the slot, then runs",
 test("waiting sessions start in the user's order (organize.json priority), re-read while waiting", async t => {
 	const home = sharedHome(t, { maxConcurrent: 1 });
 	const [a, b, c] = await hosts(t, home, 3);
-	a.c.send({ t: "queue", ops: [{ op: "add", title: "slow 2000" }, { op: "run" }] });
-	await a.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running");
-	b.c.send({ t: "queue", ops: [{ op: "add", title: "echo b" }, { op: "run" }] });
+	queueTask(a, "ask");
+	const answerA = await askOpen(a);
+	queueTask(b, "echo b");
 	await b.c.waitFor("meta", m => m.meta.queue?.waiting?.position === 1);
-	c.c.send({ t: "queue", ops: [{ op: "add", title: "echo c" }, { op: "run" }] });
+	queueTask(c, "ask");
 	await c.c.waitFor("meta", m => m.meta.queue?.waiting?.position === 2);
 	// The user bumps C to urgent: it moves ahead of B while both wait.
+	const from = c.c.mark();
 	const org = emptyOrgData();
 	org.sessions[c.h.id] = { priority: "urgent" };
 	fs.writeFileSync(path.join(home, "organize.json"), JSON.stringify(org));
-	await c.c.waitFor("meta", m => m.meta.queue?.waiting?.position === 1, 0, 5000);
-	// Order without wall-clock timestamps (clocks can step, e.g. WSL2): B still pends when C runs.
-	await c.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running", 0, 15000);
-	const bNow = [...b.c.msgs].reverse().find(m => m.t === "queue");
-	assert.equal(bNow?.t === "queue" ? bNow.queue.tasks[0]?.status : undefined, "pending", "C (urgent) ran before B");
+	await c.c.waitFor("meta", m => m.meta.queue?.waiting?.position === 1, from, 5000);
+	answerA();
+	// C takes the freed slot and keeps it at its dialog: B can't have started.
+	const answerC = await askOpen(c);
+	assert.equal(savedQueue(b).tasks[0].status, "pending", "C (urgent) ran before B");
+	answerC();
 	const [tb, tc] = await Promise.all([doneTask(b.c), doneTask(c.c)]);
 	assert.equal(tb.status, "done");
 	assert.equal(tc.status, "done");
@@ -91,18 +114,21 @@ test("a stale lease of a dead process doesn't take a slot", async t => {
 test("maxConcurrent=0 (default) is unlimited: queued tasks of two sessions run in parallel", async t => {
 	const home = sharedHome(t);
 	const [a, b] = await hosts(t, home, 2);
-	a.c.send({ t: "queue", ops: [{ op: "add", title: "slow 1500" }, { op: "run" }] });
-	b.c.send({ t: "queue", ops: [{ op: "add", title: "slow 1500" }, { op: "run" }] });
-	const [ta, tb] = await Promise.all([doneTask(a.c), doneTask(b.c)]);
-	assert.ok(overlaps(ta, tb), "ran concurrently");
+	queueTask(a, "ask");
+	const answerA = await askOpen(a);
+	queueTask(b, "echo b");
+	await doneTask(b.c);
+	assert.equal(savedQueue(a).tasks[0].status, "running", "B ran while A's task was running");
+	answerA();
+	await doneTask(a.c);
 });
 
 test("interactive prompts are not gated by the limit", async t => {
 	const home = sharedHome(t, { maxConcurrent: 1 });
 	const [a, b] = await hosts(t, home, 2);
-	a.c.send({ t: "queue", ops: [{ op: "add", title: "slow 1500" }, { op: "run" }] });
-	await a.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running");
-	const res = await b.c.prompt("echo direct", 3000);
+	queueTask(a, "ask");
+	await askOpen(a);
+	const res = await b.c.prompt("echo direct");
 	assert.equal(res.status, "completed");
-	assert.equal((await a.c.waitFor("queue", m => m.queue.tasks[0]?.status === "running")).queue.tasks[0].status, "running", "A still running meanwhile");
+	assert.equal(savedQueue(a).tasks[0].status, "running", "A still holds the only slot");
 });

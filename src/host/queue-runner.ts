@@ -30,6 +30,7 @@ export interface QueueRunnerHost {
 interface ActiveTask {
 	id: string;
 	promptId: string;
+	/** performance.now() at dispatch: durations use the monotonic clock, as wall time can step (NTP, WSL2). */
 	started: number;
 	/** The prompt went out (false while switching model/session). */
 	prompted: boolean;
@@ -68,7 +69,7 @@ export class QueueRunner {
 	private active: ActiveTask | null = null;
 	private dispatchTimer: NodeJS.Timeout | undefined;
 	private startTimer: NodeJS.Timeout | undefined;
-	/** Auto-retry backoff: nothing is dispatched before this time. */
+	/** Auto-retry backoff: nothing is dispatched before this performance.now() time. */
 	private holdUntil = 0;
 	/** Set while the next task waits for a global concurrency slot. */
 	private waiting: { position: number; since: number } | undefined;
@@ -201,7 +202,7 @@ export class QueueRunner {
 		}
 	}
 
-	/** Queued-task start order of waiting sessions: the user's board order (Organize), else waiting time. */
+	/** Queued-task start order of waiting sessions: the user's board order (Organize), else arrival order. */
 	private order(ids: string[]): string[] {
 		try {
 			return schedulingOrder(readOrgFile(), ids);
@@ -236,7 +237,7 @@ export class QueueRunner {
 			return;
 		}
 		if (!this.host.idle()) return;
-		const wait = this.holdUntil - Date.now();
+		const wait = this.holdUntil - performance.now();
 		if (wait > 0) {
 			this.schedule(wait);
 			return;
@@ -274,7 +275,7 @@ export class QueueRunner {
 		task.finishedAt = undefined;
 		task.summary = undefined;
 		delete task.interrupted;
-		const a: ActiveTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}`, started: Date.now(), prompted: false, restore: {} };
+		const a: ActiveTask = { id: task.id, promptId: `q:${task.id}:${Date.now().toString(36)}`, started: performance.now(), prompted: false, restore: {} };
 		this.active = a;
 		this.host.setBusy(true);
 		this.host.log("queue dispatch", task.id, task.title, task.options ?? {});
@@ -344,13 +345,11 @@ export class QueueRunner {
 		}
 		const spent = a.costBase === undefined ? 0 : (await this.host.sessionCost()) - a.costBase;
 		this.active = null;
-		releaseSlot(this.sessionId);
 		const task = this.queue.tasks.find(t => t.id === a.id);
 		let delay = 800;
 		if (task) {
-			const now = Date.now();
-			task.finishedAt = now;
-			task.durationMs = (task.durationMs ?? 0) + (now - a.started);
+			task.finishedAt = Date.now();
+			task.durationMs = (task.durationMs ?? 0) + Math.round(performance.now() - a.started);
 			if (spent > 0) task.cost = (task.cost ?? 0) + spent;
 			if (a.result === "completed") {
 				task.status = "done";
@@ -372,7 +371,7 @@ export class QueueRunner {
 				task.attempts = attempts;
 				if (attempts <= allowed) {
 					delay = retryDelay(attempts, this.retryBaseMs);
-					this.holdUntil = now + delay;
+					this.holdUntil = performance.now() + delay;
 					task.status = "pending";
 					task.startedAt = undefined;
 					task.finishedAt = undefined;
@@ -385,6 +384,9 @@ export class QueueRunner {
 			}
 		}
 		this.save();
+		// Only now that the outcome is on disk and broadcast may another session take the slot: nobody
+		// sees two queued tasks running at once under a limit of 1.
+		releaseSlot(this.sessionId);
 		this.schedule(delay);
 	}
 }

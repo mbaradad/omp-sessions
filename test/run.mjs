@@ -44,7 +44,10 @@ if (process.platform === "win32") {
 	fakeOmp = shim;
 }
 const files = entryPoints.map(f => path.join(outDir, path.relative(path.join(root, "test"), f)).replace(/\.ts$/, ".mjs"));
-const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--test-reporter=spec", "--test-timeout=30000", ...files], {
+// node:test applies --test-timeout to each test file as a whole, not only to its tests: it must cover the
+// slowest file (cli.test, ~30 s of serial CLI runs) on a loaded machine. Hangs show up sooner through the
+// harness's own waits, which time out after seconds.
+const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--test-reporter=spec", "--test-timeout=120000", ...files], {
 	stdio: "inherit",
 	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_CLI_JS: cliJs, OMP_TEST_FAKE_OMP: fakeOmp },
 });

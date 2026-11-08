@@ -11,6 +11,8 @@ export class HostConnection {
 	private readonly pending = new Map<string, (res: OmpFrame) => void>();
 	private readonly listeners = new Set<(msg: HostToClient) => void>();
 	private readonly closeListeners = new Set<() => void>();
+	/** Frames read right after the snapshot, kept until whoever awaited open() could subscribe. */
+	private held: HostToClient[] | undefined;
 	closed = false;
 
 	private constructor(private readonly sock: net.Socket) {
@@ -24,29 +26,40 @@ export class HostConnection {
 			} catch {
 				return;
 			}
-			if (msg.t === "response" && typeof msg.res.id === "string") {
-				const done = this.pending.get(msg.res.id);
-				if (done) {
-					this.pending.delete(msg.res.id);
-					done(msg.res);
-				}
-			}
-			for (const l of [...this.listeners]) l(msg);
+			if (this.held) this.held.push(msg);
+			else this.dispatch(msg);
 		});
 		const onClose = () => {
 			if (this.closed) return;
 			this.closed = true;
 			for (const [id, done] of this.pending) done({ type: "response", id, success: false, error: "The session host closed the connection" });
 			this.pending.clear();
-			for (const l of [...this.closeListeners]) l();
+			const notify = () => {
+				for (const l of [...this.closeListeners]) l();
+			};
+			// After the held frames (released first: setImmediate runs in order).
+			if (this.held) setImmediate(notify);
+			else notify();
 		};
 		sock.on("close", onClose);
 		sock.on("error", onClose);
 	}
 
+	private dispatch(msg: HostToClient): void {
+		if (msg.t === "response" && typeof msg.res.id === "string") {
+			const done = this.pending.get(msg.res.id);
+			if (done) {
+				this.pending.delete(msg.res.id);
+				done(msg.res);
+			}
+		}
+		for (const l of [...this.listeners]) l(msg);
+	}
+
 	/**
 	 * Connects, says hello as `client` and resolves with the host's snapshot. Clients named
 	 * `omp-sessions-server…` don't count as people viewing the session (`meta.viewers`).
+	 * Listeners added right after the await see every frame that follows the snapshot.
 	 */
 	static open(socket: string, client: string, timeoutMs = 5000): Promise<{ conn: HostConnection; snapshot: Snapshot }> {
 		const { promise, resolve, reject } = Promise.withResolvers<{ conn: HostConnection; snapshot: Snapshot }>();
@@ -60,6 +73,14 @@ export class HostConnection {
 			if (msg.t !== "snapshot") return;
 			off();
 			clearTimeout(timer);
+			// Frames read along with the snapshot (one socket chunk) would be dispatched before the
+			// opener's await resumes, to no listener yet: hold them until the next macrotask.
+			conn.held = [];
+			setImmediate(() => {
+				const held = conn.held ?? [];
+				conn.held = undefined;
+				for (const m of held) conn.dispatch(m);
+			});
 			resolve({ conn, snapshot: msg });
 		});
 		sock.on("connect", () => conn.write({ t: "hello", client }));

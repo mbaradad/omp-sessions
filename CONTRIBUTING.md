@@ -34,6 +34,7 @@ npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, 
 
 - Tests never call a model. `test/fake-omp.mjs` is a scripted stand-in for `omp --mode rpc-ui`; its prompts are commands (`echo`, `write`, `edit`, `ask`, `slow`, `fail`, `/<cmd>`), documented at the top of the file.
 - Pure logic goes in `test/unit/<feature>.test.ts`. Behaviour that needs a running host goes in `test/host/<feature>.test.ts` (see `test/host/harness.ts`): it starts the real host in a temporary `OMP_VSCODE_HOME` against the fake omp.
+- Host tests wait for observable state, not for time: order is proven by the host's broadcasts or saved files (an `ask` task holds its turn until the test answers), intervals by the fake log's monotonic `mono` stamps. Never compare wall-clock timestamps across a wait: the clock can step (WSL2 jumps back ~3 s every half minute). Dirs several hosts share come from `tempDir(t)`, which outlives them.
 - `TEST_FILTER=<regex>` runs only matching test files. `TEST_OUT=<dir>` bundles somewhere other than `.test-out/`.
 - Scripts must never touch your real sessions: set `OMP_VSCODE_HOME` to a temp directory.
 - CI (`.github/workflows/ci.yml`) runs typecheck + tests on Linux and macOS (Windows is allowed to fail), the desktop e2e under xvfb on Linux, and packages the VSIX.
