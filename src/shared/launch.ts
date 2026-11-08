@@ -182,13 +182,22 @@ export function ompPathProblem(p: string): string | undefined {
 	return `omp.path must be an absolute path (got "${value}")`;
 }
 
+/**
+ * PATH plus the common install locations of omp and bun: where findOmp looks, and the PATH to run omp
+ * with when the caller's PATH is minimal (a service), so omp's `#!/usr/bin/env bun` resolves.
+ */
+export function ompSearchDirs(): string[] {
+	const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
+	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+	return dirs;
+}
+
 /** Finds the omp executable: explicit path (ignored when unusable, see ompPathProblem), PATH, then common install locations. */
 export function findOmp(configured?: string): string | undefined {
 	const explicit = configured?.trim();
 	if (explicit && !ompPathProblem(explicit)) return explicit.startsWith("~/") ? path.join(os.homedir(), explicit.slice(2)) : explicit;
-	const dirs = (process.env.PATH ?? "").split(path.delimiter);
-	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
-	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+	const dirs = ompSearchDirs();
 	const names = process.platform === "win32" ? ["omp.exe", "omp.cmd", "omp.bat", "omp"] : ["omp"];
 	for (const d of dirs) {
 		if (!d) continue;

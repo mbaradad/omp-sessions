@@ -909,6 +909,12 @@
 				"icon": "$(terminal)"
 			},
 			{
+				"command": "omp.server.start",
+				"title": "Start omp-sessions Server",
+				"category": "omp",
+				"icon": "$(play)"
+			},
+			{
 				"command": "omp.server.restart",
 				"title": "Restart omp-sessions Server",
 				"category": "omp",
@@ -919,6 +925,17 @@
 				"title": "Show omp-sessions Server Log",
 				"category": "omp",
 				"icon": "$(output)"
+			},
+			{
+				"command": "omp.server.install",
+				"title": "Install omp-sessions Login Service",
+				"category": "omp"
+			},
+			{
+				"command": "omp.server.statusInTerminal",
+				"title": "Show omp-sessions Status in Terminal",
+				"category": "omp",
+				"icon": "$(terminal)"
 			},
 			{
 				"command": "omp.remote.connectPhone",

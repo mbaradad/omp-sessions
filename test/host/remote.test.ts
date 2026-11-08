@@ -12,7 +12,7 @@ import type { SessionMeta } from "../../src/shared/protocol";
 import { type RemoteStatus, parseRemoteConfig, resolveBind, tailscaleAddress, tokenMatches, trustsProxy } from "../../src/shared/remote";
 import { qrHalfBlocks, qrMatrix } from "../../src/shared/remote-qr";
 import { ServerClient } from "../../src/shared/server-client";
-import { alive, isRecord, textOf, until } from "./harness";
+import { alive, isRecord, removeSocket, textOf, until } from "./harness";
 
 const SERVER_JS = process.env.OMP_TEST_SERVER_JS ?? "";
 const FAKE_OMP = process.env.OMP_TEST_FAKE_OMP ?? "";
@@ -25,8 +25,12 @@ let base = "";
 
 const auth = { authorization: `Bearer ${TOKEN}` };
 
+/** Atomic, like writeRemoteConfig: the server re-reads remote.json on its own schedule, and a torn
+ * read (empty or half-written) would turn the listener off and back on at another random port. */
 function writeRemote(cfg: Record<string, unknown>): void {
-	fs.writeFileSync(path.join(home, "remote.json"), JSON.stringify({ bind: "localhost", port: 0, token: TOKEN, ...cfg }), { mode: 0o600 });
+	const file = path.join(home, "remote.json");
+	fs.writeFileSync(`${file}.tmp`, JSON.stringify({ bind: "localhost", port: 0, token: TOKEN, ...cfg }), { mode: 0o600 });
+	fs.renameSync(`${file}.tmp`, file);
 }
 
 async function remoteStatus(): Promise<RemoteStatus> {
@@ -166,7 +170,7 @@ after(async () => {
 	for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 	await until(() => pids.every(p => !alive(p)) && server?.exitCode !== null, "processes to exit", 5000).catch(() => {});
 	// Killed hosts leave their sockets, possibly in the short tmp fallback outside `home`.
-	for (const m of metas) if (m.socket) fs.rmSync(m.socket, { force: true });
+	for (const m of metas) removeSocket(m.socket);
 	fs.rmSync(home, { recursive: true, force: true });
 });
 

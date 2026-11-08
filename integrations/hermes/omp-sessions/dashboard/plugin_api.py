@@ -559,7 +559,7 @@ def boards_view() -> dict:
     s = settings()
     ln = lane()
     links = ln.links()
-    ticks = ln.store.get("lane_status", {}) or {}
+    ticks = ln.ticks()
     states: dict[str, str] = {}
     if ompsessions.find_omp_sessions(s.omp_sessions):
         try:

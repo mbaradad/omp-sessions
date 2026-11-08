@@ -44,6 +44,11 @@ export function alive(pid: number | undefined): boolean {
 	}
 }
 
+/** Removes a killed host's leftover Unix socket; a Windows named pipe goes away with its process. */
+export function removeSocket(socket: string | undefined): void {
+	if (socket && process.platform !== "win32") fs.rmSync(socket, { force: true });
+}
+
 export async function until<T>(probe: () => T | undefined | false, what: string, timeout = 8000): Promise<T> {
 	const deadline = Date.now() + timeout;
 	for (;;) {
@@ -174,7 +179,9 @@ export class Host {
 		/** Shared OMP_VSCODE_HOME for multi-host tests (not removed on dispose); default: inside the sandbox. */
 		home?: string,
 	) {
-		this.root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vsc-test-"));
+		// Windows: the long name (RUNNER~1 → runneradmin), as git reports paths.
+		const tmp = process.platform === "win32" ? fs.realpathSync.native(os.tmpdir()) : os.tmpdir();
+		this.root = fs.mkdtempSync(path.join(tmp, "omp-vsc-test-"));
 		this.home = home ?? path.join(this.root, "home");
 		this.cwd = path.join(this.root, "work");
 		this.sessions = path.join(this.root, "omp-sessions");
@@ -257,11 +264,18 @@ export class Host {
 			this.pids.add(m.pid);
 			if (m.ompPid) this.pids.add(m.ompPid);
 		}
+		// On Windows meta.ompPid is the `.cmd` shim's cmd.exe: the fake logs its own pid (and its exit).
+		if (process.platform === "win32") {
+			const entries = this.fakeEntries();
+			const exited = new Set(entries.flatMap(e => (e.kind === "exit" ? [e.pid] : [])));
+			for (const e of entries) if (e.kind === "argv" && !exited.has(e.pid)) this.pids.add(e.pid);
+		}
 		for (const pid of this.pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 		await until(() => [...this.pids].every(p => !alive(p)), "sandbox processes to exit", 3000);
 		// A killed host leaves its socket behind, which may be outside the sandbox (the short tmp fallback).
-		if (m?.socket) fs.rmSync(m.socket, { force: true });
-		fs.rmSync(this.root, { recursive: true, force: true });
+		removeSocket(m?.socket);
+		// Windows: a just-killed process may still hold the folder for a moment.
+		await fs.promises.rm(this.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 	}
 }
 

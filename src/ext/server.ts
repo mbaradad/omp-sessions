@@ -3,7 +3,7 @@
 // folder changes with every update), keeps the server running at this version, installs
 // the `omp-sessions` command (`omp.installCli`) and moves what the old command name (0.5.0 and
 // earlier) installed to the new one (shared/rename-migration.ts).
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -11,10 +11,11 @@ import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } fro
 import { ompPathProblem, readHostVersion, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher, migrateLegacyService } from "../shared/rename-migration";
-import { type EnsureServerOptions, LAUNCHD_LABEL, SYSTEMD_UNIT, ServerClient, type ServiceInstall, compareVersions, ensureServer, removeServiceUnit, stopServer } from "../shared/server-client";
+import { type EnsureServerOptions, LAUNCHD_LABEL, SYSTEMD_UNIT, ServerClient, type ServiceInstall, compareVersions, ensureServer, installUserService, removeServiceUnit, stopServer } from "../shared/server-client";
 import { serverLogPath } from "../shared/server-protocol";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import type { OmpApi } from "./api";
+import { type ServerFacts, parseMachineStatus } from "./doctor-server";
 import { plain } from "./plain";
 
 /** Bundles the CLI and server run from, the phone app the server serves, the agent skill the CLI installs (plus the Hermes plugin folder). */
@@ -24,6 +25,8 @@ const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.
 export interface ServerControl {
 	/** Starts the server (or restarts an older one); resolves with a status line, rejects when it does not come up. */
 	ensureRunning(): Promise<string>;
+	/** `omp-sessions status --json` from the installed runtime (never starts the server), or why it could not be read. */
+	status(): Promise<Pick<ServerFacts, "status" | "error">>;
 }
 
 export function runtimeDir(): string {
@@ -223,6 +226,31 @@ export function registerServer(api: OmpApi): ServerControl {
 		return `omp-sessions server ${info.version} running (pid ${info.pid})`;
 	};
 
+	/** Runs the runtime's CLI as the `omp-sessions` launcher would: this node (Electron as Node when it is VS Code's). */
+	const cliEnv = (): NodeJS.ProcessEnv => (getNode().electron ? { ELECTRON_RUN_AS_NODE: "1" } : {});
+	const status = (): Promise<Pick<ServerFacts, "status" | "error">> => {
+		const { promise, resolve } = Promise.withResolvers<Pick<ServerFacts, "status" | "error">>();
+		if (!runtime) {
+			resolve({ error: "the omp-sessions runtime is not installed (see the omp Server output)" });
+			return promise;
+		}
+		execFile(getNode().path, [path.join(runtime, "cli.js"), "status", "--json"], { encoding: "utf8", env: { ...process.env, ...cliEnv(), NO_COLOR: "1" }, timeout: 30_000, windowsHide: true }, (err, stdout, stderr) => {
+			const parsed = parseMachineStatus(stdout);
+			resolve(parsed ? { status: parsed } : { error: (`${stderr}`.trim() || err?.message || "no JSON in the output").slice(0, 400) });
+		});
+		return promise;
+	};
+
+	/** `omp-sessions server install` from the extension: (re)writes the login service for this node and runtime, and starts it. */
+	const installService = async (): Promise<ServiceInstall> => {
+		if (!runtime) throw new Error("the omp-sessions runtime is not installed");
+		await (migration ??= migrate());
+		const installed = await installUserService(path.join(runtime, "server.js"), getNode().path);
+		if (!installed) throw new Error("login services exist on Linux (systemd) and macOS (launchd); on Windows the server starts on demand");
+		log.info(`installed the omp-sessions ${installed.kind} user service ${installed.file}${installed.ok ? "" : " (it did not start)"}`);
+		return installed;
+	};
+
 	// Off the activation path: finding node and starting the server take a moment. The migration
 	// comes first: an old service would hold the server socket.
 	setTimeout(async () => {
@@ -262,6 +290,34 @@ export function registerServer(api: OmpApi): ServerControl {
 				term.sendText(onPath(dir) ? `${COMMAND} help` : `${JSON.stringify(file)} help`);
 			}
 		}),
+		vscode.commands.registerCommand("omp.server.start", async () => {
+			try {
+				void vscode.window.showInformationMessage(plain(await startServer(false)));
+			} catch (err) {
+				void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Server Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
+			}
+		}),
+		vscode.commands.registerCommand("omp.server.install", async () => {
+			try {
+				const r = await installService();
+				const electron = getNode().electron ? " It runs VS Code's own Node, which VS Code updates replace: the next server start re-points it." : "";
+				if (r.ok) void vscode.window.showInformationMessage(plain(`The omp-sessions server is now a ${r.kind} user service (${r.file}): it starts at login and restarts after a crash.${electron}`));
+				else void vscode.window.showWarningMessage(plain(`Wrote the ${r.kind} user service ${r.file}, but it did not start (see ${r.kind === "systemd" ? "systemctl --user status" : "launchctl"}).`));
+			} catch (err) {
+				void vscode.window.showErrorMessage(plain(`Could not install the omp-sessions service: ${err instanceof Error ? err.message : String(err)}`));
+			}
+		}),
+		vscode.commands.registerCommand("omp.server.statusInTerminal", () => {
+			if (!runtime) {
+				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the omp Server output.");
+				return;
+			}
+			const args = [getNode().path, path.join(runtime, "cli.js"), "status"];
+			const windows = process.platform === "win32";
+			const terminal = vscode.window.createTerminal({ name: COMMAND, env: cliEnv(), shellPath: windows ? "powershell.exe" : undefined });
+			terminal.show();
+			terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : args.map(a => `'${a.replace(/'/g, `'\\''`)}'`).join(" "));
+		}),
 		vscode.commands.registerCommand("omp.server.restart", async () => {
 			try {
 				void vscode.window.showInformationMessage(plain(await startServer(true)));
@@ -280,5 +336,5 @@ export function registerServer(api: OmpApi): ServerControl {
 			await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
 		}),
 	);
-	return { ensureRunning: () => startServer(false) };
+	return { ensureRunning: () => startServer(false), status };
 }

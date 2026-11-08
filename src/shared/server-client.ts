@@ -306,9 +306,14 @@ export interface ServiceInstall {
 export async function installUserService(serverScript: string, nodePath = process.execPath, exec: ServiceExec = quietExec): Promise<ServiceInstall | undefined> {
 	const kind = serviceKind();
 	if (!kind) return undefined;
-	const env = ["ELECTRON_RUN_AS_NODE=1", ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${process.env.PATH ?? ""}`];
+	const env = ["ELECTRON_RUN_AS_NODE=1", ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${uniquePath(process.env.PATH ?? "")}`];
 	const ok = await installServiceUnit(kind, serviceUnitText(kind, nodePath, serverScript, env), undefined, exec);
 	return { kind, file: serviceUnitPaths()[kind], ok };
+}
+
+/** PATH without repeated or empty entries (shells that re-export it pile up duplicates). */
+export function uniquePath(value: string): string {
+	return [...new Set(value.split(path.delimiter).filter(Boolean))].join(path.delimiter);
 }
 
 /** Why an on-demand start won't install the service by itself (undefined: it does when none is installed). */

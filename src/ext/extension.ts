@@ -492,10 +492,11 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
 	registerTasks(api);
 	// Feature modules: one `register*(api)` line each.
+	const server = registerServer(api);
 	registerScheduler(api);
 	registerOrganize(api);
 	registerWorktrees(api);
-	registerDoctor(api);
+	registerDoctor(api, server);
 	registerEditorPlus(api);
 	registerToolbox(api);
 	registerDashboard(api);
@@ -507,7 +508,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerAgentSkill(api);
 	registerHermesPlugin(api);
 	registerVscodeOpen(api);
-	registerRemote(api, registerServer(api));
+	registerRemote(api, server);
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);

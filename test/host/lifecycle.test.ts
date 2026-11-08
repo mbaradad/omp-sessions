@@ -97,7 +97,7 @@ test("stop → meta stopped, socket removed, host and omp exit; restart with the
 	);
 });
 
-test("a resume while the stopped host is still exiting keeps the new host's socket", async t => {
+test("a resume while the stopped host is still exiting keeps the new host's socket", { skip: process.platform === "win32" && "no SIGSTOP on Windows" }, async t => {
 	const h = await launch(t);
 	const { client: c } = await h.connect();
 	const oldPid = h.meta().pid;
@@ -116,7 +116,7 @@ test("a resume while the stopped host is still exiting keeps the new host's sock
 	assert.notEqual(snapshot.meta.pid, oldPid);
 });
 
-test("host ignores SIGHUP and keeps serving", async t => {
+test("host ignores SIGHUP and keeps serving", { skip: process.platform === "win32" && "Windows can't send SIGHUP" }, async t => {
 	const h = await launch(t);
 	const { client: c } = await h.connect();
 	const { pid, ompPid } = h.meta();
@@ -162,7 +162,8 @@ test("omp dying takes the host down cleanly: meta stopped with the exit reason",
 	assert.ok(ompPid);
 	process.kill(ompPid, "SIGKILL");
 	const stopped = await c.waitFor("meta", m => m.meta.status === "stopped");
-	assert.equal(stopped.meta.exitReason, "signal SIGKILL");
+	// Windows terminates a killed process with exit code 1; no signal is reported.
+	assert.equal(stopped.meta.exitReason, process.platform === "win32" ? "exit code 1" : "signal SIGKILL");
 	await until(() => !alive(pid) && !fs.existsSync(h.socket), "host exit");
 	assert.equal(h.meta().status, "stopped");
 });

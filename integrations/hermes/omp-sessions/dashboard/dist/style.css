@@ -1534,6 +1534,17 @@ select.omps-input optgroup {
 .omps-field-hint.is-error {
   color: var(--o-red);
 }
+.omps-models-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  word-break: break-word;
+}
+.omps-models-error .omps-btn {
+  color: var(--o-fg2);
+}
 .omps-backdrop {
   position: fixed;
   inset: 0;

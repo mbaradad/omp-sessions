@@ -2,7 +2,7 @@
 // the permission mode and model switches, Stop, and Open in VS Code (the chat, or the project folder).
 import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
-import { ModelPicker, useModels } from "./models";
+import { ModelPicker, ModelsError, useModels } from "./models";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, stateText } from "./util";
 import { openInVscode } from "./vscode";
@@ -255,6 +255,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model }),
 					)
 				: null,
+			view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
 			h(
 				"section",
 				{ className: "omps-reply", "aria-label": "Last reply" },

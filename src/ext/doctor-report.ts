@@ -4,6 +4,7 @@
 import { HOST_CRASHED, HOST_DIED, isOutdated, settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
+import { type ServerFacts, serverChecks } from "./doctor-server";
 
 export type Level = "ok" | "warn" | "error" | "info";
 
@@ -71,6 +72,8 @@ export interface DoctorFacts {
 	socket: { platform: string; sessionsRoot: string; tmpdir: string };
 	sessions: SessionFacts[];
 	cleanupDays: number;
+	/** `omp-sessions status --json` (the server, its service, the omp sessions start with, scheduler, remote access). */
+	server?: ServerFacts;
 	/** Set when Hermes Agent is on this machine (a Hermes home or the hermes command). */
 	hermes?: HermesFacts;
 }
@@ -254,6 +257,7 @@ export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string
 		generatedAt: f.now,
 		sections: [
 			{ title: "omp", checks: omp },
+			...(f.server ? [{ title: "omp-sessions server", checks: serverChecks(f.server) }] : []),
 			{ title: "Environment", checks: env },
 			{ title: "Storage", checks: storage },
 			{ title: `Sessions (${f.sessions.length})`, checks: sessions },

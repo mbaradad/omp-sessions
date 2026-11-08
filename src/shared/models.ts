@@ -3,9 +3,10 @@
 // model for new sessions is `model` in launcher.json (omp's own default, `modelRoles.default`, applies
 // when that is unset). Node-only.
 import { execFile } from "node:child_process";
+import * as path from "node:path";
 import { isRecord } from "./bridge";
 import { HostConnection } from "./host-conn";
-import { findOmp, readLauncherSettings } from "./launch";
+import { findOmp, ompSearchDirs, readLauncherSettings } from "./launch";
 import type { SessionMeta } from "./protocol";
 import { parseConfigValue, readFlags, readLaunchArgs, setLaunchModel } from "./session-config";
 import { spawnTarget } from "./win-spawn";
@@ -59,10 +60,14 @@ function runOmp(omp: string, args: string[], cwd: string): Promise<string> {
 	const { promise, resolve, reject } = Promise.withResolvers<string>();
 	// `.cmd` shims go through cmd.exe with every argument escaped: `search` comes from remote clients.
 	const target = spawnTarget(omp, args);
+	// Windows spells it `Path`: replace that key rather than adding a second one.
+	const env = { ...process.env };
+	const pathKey = Object.keys(env).find(k => k.toUpperCase() === "PATH") ?? "PATH";
+	env[pathKey] = ompSearchDirs().join(path.delimiter);
 	execFile(
 		target.file,
 		target.args,
-		{ cwd, timeout: 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: target.windowsVerbatimArguments },
+		{ cwd, env, timeout: 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: target.windowsVerbatimArguments },
 		(err, stdout, stderr) => (err ? reject(new Error(`omp ${args.join(" ")}: ${stderr.trim().split("\n").pop() || err.message}`)) : resolve(stdout)),
 	);
 	return promise;

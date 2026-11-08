@@ -72,7 +72,8 @@ test("launcher migration: ours moves, the old one goes; idempotent; others' file
 	assert.deepEqual(migrateLegacyLauncher("linux", home, {}), { from, to });
 	assert.equal(fs.existsSync(from), false);
 	assert.equal(fs.readFileSync(to, "utf8"), renamedLauncherText(OLD_SH));
-	assert.equal(fs.statSync(to).mode & 0o111, 0o111, "executable");
+	// Windows has no executable bit.
+	if (process.platform !== "win32") assert.equal(fs.statSync(to).mode & 0o111, 0o111, "executable");
 	assert.equal(migrateLegacyLauncher("linux", home, {}), undefined, "second run: nothing to do");
 
 	// Someone else's omp-sessions at the new path: keep both as they are.
