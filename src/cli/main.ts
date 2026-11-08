@@ -11,7 +11,7 @@ import { HostConnection } from "../shared/host-conn";
 import { type HostLauncher, findOmp, launcherSettingsPath, listMetas, readHostVersion, readLauncherSettings, readMeta, sessionPermissionMode, setSessionPermissionMode, writeLauncherSettings } from "../shared/launch";
 import { type ListFilter, filterSessions, hasFilter } from "../shared/list-filter";
 import { listModels, sessionModel, setSessionModel } from "../shared/models";
-import { PERMISSION_MODES, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
+import { PERMISSION_MODES, PERMISSION_MODE_INFO, isPermissionMode, permissionModeOf } from "../shared/permissions";
 import { ORG_COLORS, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
 import { DIALOG_METHODS, type QueueOp, type QueueTask, type SessionMeta, type TaskQueue, type UiRequest, stateRoot } from "../shared/protocol";
 import { type RemoteStatus, isRemoteBind, newRemoteToken, normalizePublicUrl, pairingUrl, readRemoteConfig, trustsProxy, updateRemoteConfig } from "../shared/remote";
@@ -1154,6 +1154,7 @@ async function cmdStatus(args: Args): Promise<number> {
 	rows.push(row("omp", omp.path ? `${omp.path}${extra}${omp.configured ? c.dim(" (omp.path)") : ""}` : c.red(omp.error ?? "not found")));
 	if (omp.path && omp.launchError) rows.push(row("", c.red(`last launch failed: ${omp.launchError}`)));
 	rows.push(row("model", omp.defaultModel ?? c.dim("omp's default (omp-sessions config set model <provider/id>)")));
+	rows.push(row("mode", omp.defaultMode ?? c.dim("omp's tools.approvalMode, else auto (omp-sessions config set mode <auto|edits|ask|plan>)")));
 	const states = Object.entries(s.sessions.byState).sort(([a], [b]) => (STATE_ORDER.indexOf(a) + 1 || 99) - (STATE_ORDER.indexOf(b) + 1 || 99));
 	rows.push(row("sessions", `${s.sessions.total}${states.length ? ` · ${states.map(([k, n]) => `${n} ${k.replace("_", " ")}`).join(" · ")}` : ""}${s.sessions.archived ? c.dim(` (${s.sessions.archived} archived)`) : ""}`));
 	rows.push(row("tasks", `${s.tasks.pending} pending · ${s.tasks.running} running`));
@@ -1173,7 +1174,7 @@ async function cmdStatus(args: Args): Promise<number> {
 
 // ---------- config (launcher.json: how sessions start omp, the default model, the service) ----------
 
-const CONFIG_KEYS = ["omp.path", "omp.extraArgs", "model", "service"];
+const CONFIG_KEYS = ["omp.path", "omp.extraArgs", "model", "mode", "service"];
 
 /** A key's value as `config get <key> --json` prints it (null: unset). */
 function configValue(key: string): unknown {
@@ -1181,6 +1182,7 @@ function configValue(key: string): unknown {
 	if (key === "omp.path") return s.ompPath ?? null;
 	if (key === "omp.extraArgs") return s.extraArgs ?? [];
 	if (key === "model") return s.model ?? null;
+	if (key === "mode") return s.mode ?? null;
 	return s.service ?? "on";
 }
 
@@ -1208,6 +1210,7 @@ async function cmdConfig(args: Args): Promise<number> {
 					`omp.path       ${s.ompPath ?? c.dim("(not set: PATH and the usual install folders)")}`,
 					`omp.extraArgs  ${s.extraArgs?.length ? s.extraArgs.join(" ") : c.dim("(none)")}`,
 					`model          ${s.model ?? c.dim("(not set: omp's default model)")}`,
+					`mode           ${s.mode ?? c.dim("(not set: omp's tools.approvalMode, else auto)")} ${c.dim("(permission mode of new sessions that ask for none)")}`,
 					`service        ${s.service ?? "on"} ${c.dim("(off: the server isn't installed as a login service by itself)")}`,
 					`omp            ${omp.path ?? c.red(omp.error ?? "not found")}`,
 					c.dim(`${launcherSettingsPath()} · VS Code's omp.path / omp.extraArgs settings, when set, write it too`),
@@ -1241,6 +1244,10 @@ async function cmdConfig(args: Args): Promise<number> {
 					if (!known) throw new Error(`omp doesn't list the model ${m} (omp-sessions models lists them); --force saves it anyway`);
 				}
 				writeLauncherSettings({ model: m === "none" ? undefined : m });
+			} else if (key === "mode") {
+				const v = one("config set mode <auto|edits|ask|plan|none>");
+				if (v !== "none" && !isPermissionMode(v)) throw new UsageError("config set mode <auto|edits|ask|plan|none> (auto approves every tool call; edits asks before commands; ask asks for edits and commands; plan is read-only)");
+				writeLauncherSettings({ mode: isPermissionMode(v) ? v : undefined });
 			} else {
 				const v = one("config set service <on|off>");
 				if (v !== "on" && v !== "off") throw new UsageError("config set service <on|off>");
@@ -1250,7 +1257,7 @@ async function cmdConfig(args: Args): Promise<number> {
 		}
 		case "unset":
 			if (key === undefined) throw new UsageError(`config unset <${CONFIG_KEYS.join("|")}>`);
-			writeLauncherSettings(key === "omp.path" ? { ompPath: undefined } : key === "omp.extraArgs" ? { extraArgs: undefined } : key === "model" ? { model: undefined } : { service: undefined });
+			writeLauncherSettings(key === "omp.path" ? { ompPath: undefined } : key === "omp.extraArgs" ? { extraArgs: undefined } : key === "model" ? { model: undefined } : key === "mode" ? { mode: undefined } : { service: undefined });
 			break;
 		default:
 			throw new UsageError(`unknown config command "${sub}" (get, set, unset)`);
@@ -1312,12 +1319,15 @@ const HELP = `${c.bold("omp-sessions")} — omp Sessions from the terminal ${c.d
 ${c.bold("Machine")}
   status [--json]                 server, service, omp, sessions by state, queued tasks, scheduler and
                                   remote access; exit 1 when something is wrong (never starts the server)
-  config [get [key]] [--json]     settings (launcher.json): omp.path, omp.extraArgs, model, service
+  config [get [key]] [--json]     settings (launcher.json): omp.path, omp.extraArgs, model, mode, service
   config set omp.path <path>      an absolute path, ~/…, or a command name on PATH
   config set omp.extraArgs -- <arg>…
   config set model <provider/id|none> [--force]
                                   default model of new sessions (an explicit --model wins; none: omp's);
                                   only a model omp lists, unless --force
+  config set mode <auto|edits|ask|plan|none>
+                                  permission mode of new sessions that ask for none (an explicit --mode
+                                  wins; none: omp's tools.approvalMode, else auto)
   config set service <on|off>     off: never install the login service by itself · config unset <key>
   models [search] [--json]        the models omp can use (● = the default)
   version [--json]                this CLI and the running server (also --version, -v)

@@ -1656,10 +1656,10 @@
         ),
         h(StatusStrip, { o: overview, error: overviewError, sessions, now, refreshedAt, onBoards: () => setView("boards") }),
         // Desktop keeps its own copy of this page; after a plugin update it can lag the backend it talks to.
-        host.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== "0.6.0" ? h(Notes, {
+        host.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== "0.6.1" ? h(Notes, {
           className: "omps-page-note",
           notes: [
-            `This page is omp Sessions ${"0.6.0"}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → omp Sessions: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`
+            `This page is omp Sessions ${"0.6.1"}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → omp Sessions: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`
           ]
         }) : null,
         h("div", { className: "omps-body" }, main),

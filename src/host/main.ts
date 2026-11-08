@@ -11,7 +11,7 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { TranscriptUsage, sessionTranscripts, totalCost } from "../shared/cost";
 import { HOST_CRASHED, isAuthError, settleDeadHost } from "../shared/health";
-import { hostLockPath } from "../shared/launch";
+import { hostLockPath, readLauncherSettings } from "../shared/launch";
 import { prepareResume } from "../shared/omp-paths";
 import { beforeBoot, claimLock, lockOwner, pidAlive, releaseLock } from "../shared/process-lock";
 import {
@@ -466,8 +466,9 @@ if (fatal) {
 }
 // Per-session skills/tools/MCP toggles (omp: Session Settings) as one more settings overlay.
 ompArgv.push(...sessionOverlayArgs(dir, args.omp, args.cwd, env, log));
-// Starting permission mode: the session's launch flag, else omp's own setting (default yolo = auto).
-meta.permissionMode = permissionModeInArgs(args.ompArgs) ?? permissionModeOf(readOmpSetting(args.omp, "tools.approvalMode", args.cwd, env, log)) ?? "auto";
+// Starting permission mode: the session's launch flag, else the omp Sessions default (`config set mode`),
+// else omp's own setting (default yolo = auto).
+meta.permissionMode = permissionModeInArgs(args.ompArgs) ?? readLauncherSettings().mode ?? permissionModeOf(readOmpSetting(args.omp, "tools.approvalMode", args.cwd, env, log)) ?? "auto";
 log("spawn", args.omp, ompArgv);
 // npm/bun shims on Windows are .cmd files: started through cmd.exe with every argument escaped.
 const target = spawnTarget(args.omp, ompArgv);

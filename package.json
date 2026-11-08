@@ -2,7 +2,7 @@
 	"name": "omp-sessions",
 	"displayName": "omp Sessions",
 	"description": "A task server for oh-my-pi (omp) coding agents: background sessions with a task queue each, scheduled starts and a global concurrency limit, locally or over Remote-SSH. Sessions keep running with no client open; drive them from VS Code, the omp-sessions terminal command, your phone or Hermes Agent. In VS Code: open any session with the full chat, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
-	"version": "0.6.0",
+	"version": "0.6.1",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -263,6 +263,12 @@
 				"title": "Set Default Model for New Sessions…",
 				"category": "omp",
 				"icon": "$(sparkle)"
+			},
+			{
+				"command": "omp.setDefaultMode",
+				"title": "Set Default Permission Mode for New Sessions…",
+				"category": "omp",
+				"icon": "$(shield)"
 			},
 			{
 				"command": "omp.reviewChanges",

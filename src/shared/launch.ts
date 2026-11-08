@@ -8,7 +8,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { settleDeadHost } from "./health";
-import { type PermissionMode, permissionModeInArgs } from "./permissions";
+import { type PermissionMode, isPermissionMode, permissionModeInArgs } from "./permissions";
 import { beforeBoot, lockOwner, stampAlive } from "./process-lock";
 import { type ClientToHost, type SessionMeta, sessionDir, sessionsRoot, stateRoot } from "./protocol";
 import { type SessionToggles, applyFlags, newSessionLaunch, readFlags, readLaunchArgs, readLaunchTitle, writeLaunchArgs, writeSessionToggles } from "./session-config";
@@ -129,6 +129,8 @@ export interface LauncherSettings {
 	model?: string;
 	/** "off": never install the per-user server service automatically. */
 	service?: "on" | "off";
+	/** Permission mode new sessions start in when they ask for none; absent: omp's `tools.approvalMode`, else auto. */
+	mode?: PermissionMode;
 }
 
 export function launcherSettingsPath(): string {
@@ -144,6 +146,7 @@ export function readLauncherSettings(): LauncherSettings {
 		if ("extraArgs" in raw && Array.isArray(raw.extraArgs)) out.extraArgs = raw.extraArgs.filter((a): a is string => typeof a === "string");
 		if ("model" in raw && typeof raw.model === "string" && raw.model.trim()) out.model = raw.model.trim();
 		if ("service" in raw && (raw.service === "on" || raw.service === "off")) out.service = raw.service;
+		if ("mode" in raw && isPermissionMode(raw.mode)) out.mode = raw.mode;
 		return out;
 	} catch {
 		return {};

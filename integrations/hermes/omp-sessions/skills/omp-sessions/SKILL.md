@@ -27,19 +27,17 @@ Use it to hand coding work to omp instead of doing it inline: one session per ta
 
 ```sh
 omp-sessions new /abs/path/to/repo -p "Fix the flaky checkout test. Run the test suite before you finish." \
-  --title "Fix flaky checkout test" --mode auto --tag ticket:ENG-142 --json
+  --title "Fix flaky checkout test" --tag ticket:ENG-142 --json
 ```
 
 This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and returns right away. The session keeps working in the background.
 
 - `-p -` reads the prompt from stdin, which is better for long prompts.
-- `--mode` sets the permission mode:
-  - `auto` approves every tool call;
-  - `edits` applies file edits but asks before commands;
+- Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`omp-sessions config get mode`; normally `auto`, which approves every tool call). The other modes stop the session until a person approves:
+  - `edits` applies file edits but asks before every command (bash included);
   - `ask` asks before every edit and command;
   - `plan` is read-only: edits are refused and the model writes a plan.
-  - Without the flag, the session starts in the user's default.
-  - Unattended work usually needs `auto` or `edits`, otherwise it stops at the first approval.
+  - Never pick `edits` or `ask` for unattended work on your own: it waits at the first command for someone who isn't watching.
 - `--tag` (repeatable) labels the session, e.g. with the ticket or card it works on. The user can filter by tag.
 - `--group <name>` files the session under a group in VS Code, created if missing. Use it to keep related work together, e.g. one group per board or project.
 - `--model provider/id` picks the model (`omp-sessions models --json` lists them). Without it the session uses the project's settings, then the user's default (`omp-sessions config get model`), then omp's own default. `--priority urgent|high|normal|low` matters for queued work.

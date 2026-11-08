@@ -3,6 +3,7 @@
 import * as vscode from "vscode";
 import { readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { type ModelList, listModels } from "../shared/models";
+import { PERMISSION_MODE_INFO } from "../shared/permissions";
 import { pickPermissionMode } from "./permissions";
 import { plain } from "./plain";
 
@@ -47,6 +48,15 @@ export async function chooseDefaultModel(cwd: string): Promise<void> {
 	if (!pick) return;
 	writeLauncherSettings({ model: pick.selector ?? undefined });
 	void vscode.window.showInformationMessage(plain(pick.selector ? `New omp sessions start with ${pick.selector} unless another model is picked.` : "New omp sessions start with omp's own default model."));
+}
+
+/** `omp.setDefaultMode`: the permission mode new sessions start in when they ask for none, for every client. */
+export async function chooseDefaultMode(): Promise<void> {
+	const current = readLauncherSettings().mode;
+	const mode = await pickPermissionMode(current, "Default permission mode for new omp sessions (VS Code, omp-sessions, phone, Hermes)", "omp's tools.approvalMode, else Auto");
+	if (mode === undefined) return;
+	writeLauncherSettings({ mode: mode ?? undefined });
+	void vscode.window.showInformationMessage(mode ? `New omp sessions start in ${PERMISSION_MODE_INFO[mode].label} mode unless another mode is picked.` : "New omp sessions start in omp's tools.approvalMode (Auto when unset).");
 }
 
 /** Shell-like split honoring single/double quotes. */

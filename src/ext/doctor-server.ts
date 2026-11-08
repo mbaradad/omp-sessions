@@ -104,6 +104,7 @@ export function serverChecks(f: ServerFacts): Check[] {
 		if (omp.launchError) out.push({ level: "error", title: "Starting a session failed recently", detail: omp.launchError, fixes: [LOG, TERMINAL] });
 	}
 	out.push({ level: "info", title: `Default model: ${omp.defaultModel ?? "omp's own default"}`, detail: omp.defaultModel ? undefined : "Set one with omp-sessions config set model <provider/id>." });
+	out.push({ level: "info", title: `Default permission mode: ${omp.defaultMode ?? "omp's tools.approvalMode, else Auto"}`, detail: "New sessions that ask for no mode start in it. Edits and Ask wait for a person at the first command.", fixes: [{ label: "Change…", command: "omp.setDefaultMode" }] });
 
 	// The scheduler.
 	const sch = s.scheduler;

@@ -72,7 +72,7 @@ SCHEMAS: dict[str, dict] = {
                 "project": {"type": "string", "description": "Hermes project id/slug/name, or the name of a folder from omp_projects_list."},
                 "board": {"type": "string", "description": "Kanban board slug: run in its configured folder and omp group."},
                 "title": {"type": "string", "description": "Session title (default: from the prompt or task)."},
-                "mode": {"type": "string", "enum": list(MODES), "description": "Permission mode: ask (approve every edit/command), edits (edits auto, commands ask), plan (read-only), auto."},
+                "mode": {"type": "string", "enum": list(MODES), "description": "Permission mode. Leave unset unless the user asked for one: the session starts in the user's default (normally auto: every tool call approved). edits asks before every command and ask before every edit and command, so the session waits for a person; plan is read-only."},
                 "group": {"type": "string", "description": "omp group to file it under."},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Session tags."},
                 "priority": PRIORITY,

@@ -52,6 +52,8 @@ export interface OmpState {
 	launchError?: string;
 	/** The omp Sessions default model of new sessions (`config set model`); unset: omp's own default. */
 	defaultModel?: string;
+	/** The omp Sessions default permission mode of new sessions (`config set mode`); unset: omp's, else auto. */
+	defaultMode?: string;
 }
 
 export interface RemoteState extends RemoteStatus {
@@ -145,7 +147,7 @@ export function machineStatus(input: StatusInput): MachineStatus {
 		running += info.queue.running;
 	}
 	const settings = readLauncherSettings();
-	const omp: OmpState = { ...ompState(), ...(input.launchError ? { launchError: input.launchError } : {}), ...(settings.model ? { defaultModel: settings.model } : {}) };
+	const omp: OmpState = { ...ompState(), ...(input.launchError ? { launchError: input.launchError } : {}), ...(settings.model ? { defaultModel: settings.model } : {}), ...(settings.mode ? { defaultMode: settings.mode } : {}) };
 	const blocker = autoInstallBlocker();
 	const service: ServiceState = { ...serviceState(), autoInstall: !blocker, ...(blocker ? { noAutoInstall: blocker } : {}) };
 	const problems: string[] = [];

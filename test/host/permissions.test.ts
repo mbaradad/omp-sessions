@@ -2,6 +2,7 @@
 // selects by the session's mode, switchable live (also for prompts already waiting).
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { PLAN_PROMPT_PREFIX } from "../../src/shared/permissions";
@@ -28,6 +29,16 @@ test("no flag and no omp setting: auto approves every tool without asking", asyn
 	assert.equal(fs.readFileSync(path.join(h.cwd, "a.txt"), "utf8"), "hi\n");
 	assert.ok(!c.msgs.slice(from).some(m => m.t === "event" && m.ev.type === "extension_ui_request"), "approval never reached the client");
 	assert.ok(!c.msgs.slice(from).some(m => m.t === "meta" && m.meta.status === "waiting"));
+});
+
+test("the omp Sessions default mode (config set mode) applies when the session asks for none; a launch flag wins", async t => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-mode-default-"));
+	t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+	fs.writeFileSync(path.join(home, "launcher.json"), JSON.stringify({ mode: "plan" }));
+	const byDefault = await launch(t, { home });
+	assert.equal((await byDefault.connect()).snapshot.meta.permissionMode, "plan");
+	const explicit = await launch(t, { home, args: ["--omp-arg", "--approval-mode", "--omp-arg", "auto"] });
+	assert.equal((await explicit.connect()).snapshot.meta.permissionMode, "auto");
 });
 
 test("ask forwards the approval; switching to edits answers the waiting prompt and persists the mode", async t => {

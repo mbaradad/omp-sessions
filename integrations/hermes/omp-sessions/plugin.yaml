@@ -1,6 +1,6 @@
 name: omp-sessions
 label: omp Sessions
-version: 0.6.0
+version: 0.6.1
 description: Start, schedule and supervise omp coding sessions (omp-sessions) from Hermes, hear back when they settle, and run kanban cards assigned to omp as omp sessions.
 author: Manel Baradad
 license: MIT

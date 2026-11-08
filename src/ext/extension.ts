@@ -16,7 +16,7 @@ import { registerDoctor } from "./doctor";
 import { registerEditorPlus } from "./editor-plus";
 import { registerHermesPlugin } from "./hermes";
 import { registerEditorIntegration } from "./integration";
-import { askLaunchOptions, chooseDefaultModel } from "./launch-options";
+import { askLaunchOptions, chooseDefaultMode, chooseDefaultModel } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { plain } from "./plain";
 import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
@@ -267,6 +267,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (opts) await launchAndOpen({ cwd, ...opts });
 	});
 	reg("omp.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()));
+	reg("omp.setDefaultMode", () => chooseDefaultMode());
 
 	reg("omp.openSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open omp session"));

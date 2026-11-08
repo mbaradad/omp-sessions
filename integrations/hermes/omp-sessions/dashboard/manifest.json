@@ -3,7 +3,7 @@
   "label": "omp Sessions",
   "description": "omp coding sessions at a glance: what needs you, what is working, queued and scheduled, done; answer, steer, start and stop them, and run kanban cards as omp sessions.",
   "icon": "Activity",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "tab": {
     "path": "/omp-sessions",
     "position": "after:kanban"

@@ -178,9 +178,9 @@ Comments on a card the lane runs can reach its omp session, but only from **trus
 
 ```sh
 hermes omp lane on                                   # every board, assignee omp
-hermes omp lane on --board lightscale --mode edits   # only these boards (repeat --board); starting permission mode
+hermes omp lane on --board lightscale --mode auto    # only these boards (repeat --board); starting permission mode
 hermes omp lane on --comment-authors dashboard,alice # whose comments reach omp ("*": anyone)
-hermes omp board lightscale --folder ~/src/lightscale --group Lightscale --mode ask --model anthropic/claude-sonnet-4-5
+hermes omp board lightscale --folder ~/src/lightscale --group Lightscale --mode auto --model anthropic/claude-sonnet-4-5
 hermes omp project lightscale ~/src/lightscale       # folder for a Hermes project, by id, slug or name
 hermes omp lane off                                  # stop taking new cards; linked cards keep reporting
 hermes omp lane run                                  # one pass now
@@ -201,13 +201,13 @@ plugins:
         lane:
           enabled: true
           assignee: omp
-          mode: edits                  # unset: omp's default
+          mode: auto                   # unset: the omp Sessions default (omp-sessions config set mode), else omp's; edits/ask make cards wait for a person at the first command
           comment_authors: [dashboard] # whose comments reach omp and whose @omp assigns cards ("*": anyone)
           boards:                      # empty: every board
             lightscale:
               folder: /home/me/src/lightscale
               group: Lightscale        # default: the board's name
-              mode: ask
+              mode: auto
               model: anthropic/claude-sonnet-4-5   # unset: the omp Sessions default
               comment_authors: [dashboard, alice]  # replaces the lane's list on this board
         projects:
