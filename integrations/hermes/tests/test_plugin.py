@@ -535,6 +535,36 @@ class PureTest(unittest.TestCase):
         self.assertIn("waiting for input: Pick", ask)
         self.assertIn("Options: a · b", ask)
 
+    def test_a_refused_note_is_retried_for_an_hour_then_dropped(self) -> None:
+        from hermes_plugins.omp_sessions import notify
+        from hermes_plugins.omp_sessions.store import Store
+
+        class State(dict):
+            data_dir = str(TMP)
+
+            def set(self, key, value) -> None:
+                self[key] = value
+
+        class Omp:
+            def show(self, sid):
+                return {"id": sid, "title": "T", "state": "idle", "reply": "ok"}
+
+        answers = [False]
+        store = Store(State())
+        n = notify.Notifier(store, lambda: Omp(), lambda text, session_key: answers[0], lambda: True)
+        n.watch("s1", "chat-1")
+        self.assertEqual(n.poll(force=True), 0)
+        self.assertIn("refused_since", store.get("watches")["s1"], "kept for a retry")
+        answers[0] = True  # consent turned on: the retry delivers and the watch ends
+        self.assertEqual(n.poll(force=True), 1)
+        self.assertEqual(store.get("watches"), {})
+        answers[0] = False
+        n.watch("s2", "chat-gone")
+        n.poll(force=True)
+        store.get("watches")["s2"]["refused_since"] -= notify.REFUSED_GIVE_UP_S + 1
+        n.poll(force=True)
+        self.assertEqual(store.get("watches"), {}, "given up after an hour of refusals")
+
 
 def tearDownModule() -> None:
     omp_vs("server", "stop", check=False)

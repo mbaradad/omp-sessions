@@ -22,6 +22,9 @@ SETTLED = ("idle", "needs_input", "stopped")
 MIN_INTERVAL_S = 15
 # Forget watches nobody could be told about (no gateway, injection not allowed) after this long.
 WATCH_MAX_AGE_S = 7 * 24 * 3600
+# A refused note is retried (consent may be turned on meanwhile) for this long, then dropped: the
+# chat that started the session is usually gone (a one-shot `hermes chat -Q`, a closed CLI chat).
+REFUSED_GIVE_UP_S = 3600
 REPLY_EXCERPT = 600
 
 
@@ -123,9 +126,16 @@ class Notifier:
             # allow_gateway_injection consent; a refused injection is the observable symptom).
             self.store.set("last_inject", {"at": now, "ok": ok, "session": sid})
             if not ok:
+                first = float(w.get("refused_since") or now)
+                if now - first > REFUSED_GIVE_UP_S:
+                    log.info("omp notify: giving up on omp session %s: Hermes refused its note for an hour", sid)
+                    updates[sid] = None
+                elif "refused_since" not in w:
+                    updates[sid] = {**w, "refused_since": now}
                 continue
             delivered += 1
-            updates[sid] = {**w, "last": signature(report)} if report.get("state") == "needs_input" else None
+            kept = {k: v for k, v in w.items() if k != "refused_since"}
+            updates[sid] = {**kept, "last": signature(report)} if report.get("state") == "needs_input" else None
         if updates:
             with self.store.lock("watches"):
                 cur = self._watches()
