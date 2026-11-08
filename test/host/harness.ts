@@ -179,7 +179,9 @@ export class Host {
 		/** Shared OMP_VSCODE_HOME for multi-host tests (not removed on dispose); default: inside the sandbox. */
 		home?: string,
 	) {
-		this.root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vsc-test-"));
+		// Windows: the long name (RUNNER~1 → runneradmin), as git reports paths.
+		const tmp = process.platform === "win32" ? fs.realpathSync.native(os.tmpdir()) : os.tmpdir();
+		this.root = fs.mkdtempSync(path.join(tmp, "omp-vsc-test-"));
 		this.home = home ?? path.join(this.root, "home");
 		this.cwd = path.join(this.root, "work");
 		this.sessions = path.join(this.root, "omp-sessions");
