@@ -120,6 +120,21 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown, heade
 	res.end(text);
 }
 
+/** Reads and discards the rest of a request body (at most a few seconds: a client that never sends it is answered anyway). */
+function drain(req: http.IncomingMessage): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	const timer = setTimeout(resolve, 5000);
+	const done = () => {
+		clearTimeout(timer);
+		resolve();
+	};
+	req.once("end", done);
+	req.once("error", done);
+	req.once("close", done);
+	req.resume();
+	return promise;
+}
+
 function cookieValue(header: string | undefined, name: string): string | undefined {
 	for (const part of (header ?? "").split(";")) {
 		const eq = part.indexOf("=");
@@ -461,10 +476,10 @@ export class RemoteServer {
 				res.destroy();
 				return;
 			}
-			// A request refused before its body was read (wrong type, origin, auth): drain the body so the
-			// client can finish writing it and read the answer instead of hitting a reset connection. Oversized
-			// bodies (413) close the connection instead.
-			if (!req.complete && !(err instanceof HttpError && err.status === 413)) req.resume();
+			// A request refused before its body was read (wrong type, origin, auth): read the body first. Node
+			// closes the connection when it answers a request whose body hasn't arrived, so the client would get
+			// a reset while still writing instead of the error. Oversized bodies (413) close it on purpose.
+			if (!req.complete && !(err instanceof HttpError && err.status === 413)) await drain(req);
 			if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message }, err.headers);
 			const message = err instanceof Error ? err.message : String(err);
 			sendJson(res, /^unknown session/.test(message) ? 404 : 400, { error: message });
