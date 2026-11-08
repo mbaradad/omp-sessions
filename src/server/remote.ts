@@ -461,6 +461,10 @@ export class RemoteServer {
 				res.destroy();
 				return;
 			}
+			// A request refused before its body was read (wrong type, origin, auth): drain the body so the
+			// client can finish writing it and read the answer instead of hitting a reset connection. Oversized
+			// bodies (413) close the connection instead.
+			if (!req.complete && !(err instanceof HttpError && err.status === 413)) req.resume();
 			if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message }, err.headers);
 			const message = err instanceof Error ? err.message : String(err);
 			sendJson(res, /^unknown session/.test(message) ? 404 : 400, { error: message });

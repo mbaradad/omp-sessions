@@ -6,6 +6,7 @@
 - Agents no longer pick a stopping mode on their own: the omp-sessions skill and the Hermes tools tell them to leave the mode unset (the user's default, normally Auto) unless the user asks, since Edits and Ask wait for a person at the first command.
 - `hermes omp status` and the Hermes page list only boards that still exist; a service unit's `PATH` no longer repeats entries.
 - Resuming a session right after it stopped could still leave it unreachable when the file system reused the old socket's inode: the stopping host now closes its socket before anything else can bind there.
+- The HTTP API reads the body of a request it refuses (wrong content type, origin or auth) before answering, so clients get the error instead of a reset connection.
 
 ## 0.6.0
 

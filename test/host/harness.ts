@@ -212,7 +212,12 @@ export class Host {
 		}, "host meta");
 		this.pids.add(meta.pid);
 		if (meta.ompPid) this.pids.add(meta.ompPid);
-		// A crashed predecessor leaves its socket file behind: only a connect proves the new host listens.
+		await this.waitListening();
+	}
+
+	/** A crashed predecessor leaves its socket file behind, and meta is written before the host listens:
+	 *  only a connect proves the host serves the session. */
+	async waitListening(): Promise<void> {
 		const deadline = Date.now() + 8000;
 		while (!(await canConnect(this.socket))) {
 			if (Date.now() > deadline) throw new Error("timed out waiting for host socket");

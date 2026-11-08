@@ -40,6 +40,7 @@ test("two launches of one session at once start one host and one omp", async t =
 	t.after(() => h.dispose());
 	await Promise.all([h.spawnLauncher(), h.spawnLauncher()]);
 	const { pid } = await until(() => (h.metaOrUndefined()?.ompPid ? h.meta() : undefined), "a host started");
+	await h.waitListening();
 	await h.connect();
 	await sleep(1000);
 	assert.equal(h.fakeEntries().filter(e => e.kind === "argv").length, 1);
