@@ -44,6 +44,7 @@ omp Sessions is now a task server for omp coding agents: the `omp-sessions` serv
 - **This workspace or all sessions:** `omp.sessionScope` (toggle in the Sessions view title) chooses whether the Sessions view, Tasks view, Board and status bar list this workspace's sessions or every session on the machine; it replaces `omp.showAllSessions` (migrated once). `omp.notifyAllSessions` extends notifications to sessions outside the workspace.
 - **Open in VS Code** from the terminal, the phone and Hermes picks the right window: the caller's Remote-SSH authority, then a window that has the session's folder, then the last used one; remote links open that window's workspace or the git checkout. `vscode://mbaradad.omp-sessions/open?session=<id>` is handled.
 - *Show Hermes Card* shows the card in a read-only output channel instead of typing into a terminal.
+- **omp Doctor's server section**, from `omp-sessions status --json`: the server (pid, version against the extension's, uptime), the login service (installed, serving this data home, its Node and `server.js` still there), the omp sessions start with and the last launch error, the default model, the scheduler and remote access, with fixes: *Start omp-sessions Server*, *Install omp-sessions Login Service* (also repairs one), *Restart*, *Show omp-sessions Status in Terminal*.
 - Sessions Board columns lay out as a grid again; card excerpts drop Markdown markup.
 
 ### Phone and HTTP API
@@ -63,6 +64,7 @@ omp Sessions is now a task server for omp coding agents: the `omp-sessions` serv
 - `/omp` in a chat is a short summary counting sessions in every state; `/omp take <card>` (or `hermes omp take`) hands an existing card to omp, also from Hermes Console.
 - `hermes omp status` and the page show the kanban dispatcher's last tick, warn when the lane is on in the wrong profile, and report whether the last notification was delivered.
 - The plugin updates itself when the extension updates, in every profile, reloading it in the running gateway; omp Doctor checks plugin, notifications, dispatcher, lane and whether `omp-sessions` is found, with one-click fixes.
+- The page's New session dialog and the model switcher show why the model list failed, with *Retry*.
 - **omp-sessions skill** (*Install omp Sessions Skill for Agents…*, `omp-sessions skill install`) teaches omp, Claude Code, Codex and Hermes to start, schedule and supervise sessions through `omp-sessions`.
 
 ### Security

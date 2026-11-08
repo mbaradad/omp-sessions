@@ -203,7 +203,7 @@ test("ask dialog: status waiting, pendingUi for late clients, ui_response resolv
 	assert.deepEqual(after.pendingUi, []);
 });
 
-test("client `bash` rpc: response routed back by id and a bashExecution lands in the mirror", async t => {
+test("client `bash` rpc: response routed back by id and a bashExecution lands in the mirror", { skip: process.platform === "win32" && "the fake omp's bash is /bin/sh" }, async t => {
 	const h = await launch(t);
 	const { client: c1 } = await h.connect();
 	const res = await c1.rpc({ id: "b1", type: "bash", command: "printf 'out-%s\\n' $((1+1)); pwd; exit 3" });

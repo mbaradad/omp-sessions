@@ -567,14 +567,25 @@
   function useModels(host) {
     const [models, setModels] = useState(null);
     const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(true);
     const load = (fresh) => {
+      setLoading(true);
       loadModels(host, fresh).then((m) => {
         setModels(m);
         setError(null);
-      }).catch((err) => setError(errorMessage(err)));
+      }).catch((err) => setError(errorMessage(err))).finally(() => setLoading(false));
     };
     useEffect(() => load(false), []);
-    return { models, error, reload: () => load(true) };
+    return { models, error, loading, reload: () => load(true) };
+  }
+  function ModelsError(p) {
+    return h(
+      "div",
+      { className: "omps-field-hint is-error omps-models-error", role: "alert" },
+      icon("alert", 12),
+      h("span", null, `Models unavailable: ${p.error}`),
+      h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Retry", busy: p.loading, onClick: p.onRetry })
+    );
   }
   function defaultLabel(m) {
     if (m?.default) return `Default (${m.default})`;
@@ -826,7 +837,7 @@
         }),
         h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
         models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,
-        models.error ? h("span", { className: "omps-field-hint is-error" }, models.error) : null
+        models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null
       ),
       error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
       actionError ? h(ErrorBox, { message: actionError }) : null,
@@ -1079,6 +1090,7 @@
           h(ModelPicker, { id: "omps-detail-model", models: models.models, value: model, onChange: setModel, disabled: busy === "model", placeholder: view.model ?? void 0, label: `Switch model (now ${view.model ?? "the default"})` }),
           h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model })
         ) : null,
+        view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
         h(
           "section",
           { className: "omps-reply", "aria-label": "Last reply" },
@@ -1331,7 +1343,16 @@
                 options: [{ value: "default", label: "Default", title: "omp's configured mode" }, ...MODES.map((m) => ({ value: m, label: MODE_INFO[m].label, title: MODE_INFO[m].detail }))]
               })
             }),
-            h(Field, { label: "Model", htmlFor: "omps-model", children: h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }) })
+            h(Field, {
+              label: "Model",
+              htmlFor: "omps-model",
+              children: h(
+                "div",
+                null,
+                h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }),
+                models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null
+              )
+            })
           ),
           h(
             "div",

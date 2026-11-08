@@ -1,7 +1,9 @@
 // Models omp can use (GET /models, from `omp-sessions models --json`) and a searchable picker that
 // marks the omp Sessions default. An empty value means "the default".
 import { errorMessage, type Host, type Models } from "./api";
+import { Button } from "./components";
 import { h, type ReactElement, useEffect, useState } from "./react";
+import { icon } from "./util";
 
 let cache: { host: Host; models: Promise<Models> } | null = null;
 
@@ -17,19 +19,33 @@ export function loadModels(host: Host, fresh = false): Promise<Models> {
 	return cache.models;
 }
 
-export function useModels(host: Host): { models: Models | null; error: string | null; reload: () => void } {
+export function useModels(host: Host): { models: Models | null; error: string | null; loading: boolean; reload: () => void } {
 	const [models, setModels] = useState<Models | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(true);
 	const load = (fresh: boolean): void => {
+		setLoading(true);
 		loadModels(host, fresh)
 			.then(m => {
 				setModels(m);
 				setError(null);
 			})
-			.catch(err => setError(errorMessage(err)));
+			.catch(err => setError(errorMessage(err)))
+			.finally(() => setLoading(false));
 	};
 	useEffect(() => load(false), []);
-	return { models, error, reload: () => load(true) };
+	return { models, error, loading, reload: () => load(true) };
+}
+
+/** The model list failed to load: why, in line under a model field, and Retry. */
+export function ModelsError(p: { error: string; loading: boolean; onRetry: () => void }): ReactElement {
+	return h(
+		"div",
+		{ className: "omps-field-hint is-error omps-models-error", role: "alert" },
+		icon("alert", 12),
+		h("span", null, `Models unavailable: ${p.error}`),
+		h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Retry", busy: p.loading, onClick: p.onRetry }),
+	);
 }
 
 /** What an empty model choice means. */

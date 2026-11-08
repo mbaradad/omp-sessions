@@ -36,9 +36,16 @@ if (selected.includes("host")) {
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/cli/main.ts")], outfile: cliJs, format: "cjs" });
 }
 
+// Windows can't start a script by its shebang: there omp is an npm `.cmd` shim, and so is the fake.
+let fakeOmp = path.join(root, "test", "fake-omp.mjs");
+if (process.platform === "win32") {
+	const shim = path.join(outDir, "fake-omp.cmd");
+	fs.writeFileSync(shim, `@"${process.execPath}" "${fakeOmp}" %*\r\n`);
+	fakeOmp = shim;
+}
 const files = entryPoints.map(f => path.join(outDir, path.relative(path.join(root, "test"), f)).replace(/\.ts$/, ".mjs"));
 const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--test-reporter=spec", "--test-timeout=30000", ...files], {
 	stdio: "inherit",
-	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_CLI_JS: cliJs, OMP_TEST_FAKE_OMP: path.join(root, "test", "fake-omp.mjs") },
+	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_CLI_JS: cliJs, OMP_TEST_FAKE_OMP: fakeOmp },
 });
 process.exit(res.status ?? 1);

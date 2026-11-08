@@ -32,7 +32,8 @@ let tmp = "";
 let n = 0;
 
 before(() => {
-	tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "omp-worktree-test-"));
+	// .native: Windows expands 8.3 short names (RUNNER~1), as git and the code under test report paths.
+	tmp = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "omp-worktree-test-"));
 	// Isolate from the user's git config and identity; keep the extension state in the temp dir.
 	const globalConfig = path.join(tmp, "gitconfig");
 	fs.writeFileSync(globalConfig, "");

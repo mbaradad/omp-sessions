@@ -25,7 +25,7 @@ test("skill targets follow the platforms installed", () => {
 	assert.deepEqual(detectedPlatforms(home), ["agents", "claude"]);
 	assert.deepEqual(
 		skillTargets("claude", home).map(t => path.relative(home, t.dir)),
-		[".claude/skills/omp-sessions"],
+		[path.join(".claude", "skills", "omp-sessions")],
 	);
 	assert.deepEqual(skillTargets("codex", home), []);
 });

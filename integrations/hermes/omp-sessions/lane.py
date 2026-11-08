@@ -289,6 +289,18 @@ class Lane:
         st[board] = {"at": time.time(), **fields}
         self.store.set("lane_status", st)
 
+    def ticks(self) -> dict[str, dict]:
+        """Last pass per board, for boards that are still open (archived or deleted boards drop out)."""
+        from hermes_cli import kanban_db as kb
+
+        st = self.store.get("lane_status", {})
+        st = st if isinstance(st, dict) else {}
+        try:
+            open_boards = {b.get("slug") for b in kb.list_boards(include_archived=False)}
+        except Exception:
+            return st
+        return {slug: t for slug, t in st.items() if slug in open_boards}
+
     def heartbeat(self, board: Optional[str], *, profile: str, lane_on: bool) -> None:
         """Records that the kanban dispatcher ticked this plugin (machine-wide, so every profile's
         `hermes omp status` and page can tell where the dispatcher runs and whether the lane is there)."""

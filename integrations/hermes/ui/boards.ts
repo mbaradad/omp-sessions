@@ -3,7 +3,7 @@
 // omp Sessions default model.
 import { type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
 import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
-import { defaultLabel, ModelPicker, useModels } from "./models";
+import { defaultLabel, ModelPicker, ModelsError, useModels } from "./models";
 import { h, type ReactElement, useEffect, useState } from "./react";
 import { ago, cx, icon, shortId } from "./util";
 import { openInVscode } from "./vscode";
@@ -242,7 +242,7 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 			}),
 			h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
 			models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,
-			models.error ? h("span", { className: "omps-field-hint is-error" }, models.error) : null,
+			models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
 		),
 		error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 		actionError ? h(ErrorBox, { message: actionError }) : null,

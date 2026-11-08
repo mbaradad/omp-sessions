@@ -12,7 +12,7 @@ import { test } from "node:test";
 import { HostConnection } from "../../src/shared/host-conn";
 import type { QueueTask, SessionMeta, TaskQueue } from "../../src/shared/protocol";
 import { ServerClient } from "../../src/shared/server-client";
-import { alive, launch, until } from "./harness";
+import { alive, launch, removeSocket, until } from "./harness";
 
 const SERVER_JS = process.env.OMP_TEST_SERVER_JS ?? "";
 const FAKE_OMP = process.env.OMP_TEST_FAKE_OMP ?? "";
@@ -74,7 +74,7 @@ test("server: queued sessions start by priority within the limit; done ones stop
 		for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
 		await until(() => [...pids].every(p => !alive(p)) && server.exitCode !== null, "processes to exit", 5000).catch(() => {});
 		// Killed hosts leave their sockets, possibly in the short tmp fallback outside `home`.
-		for (const s of sockets) fs.rmSync(s, { force: true });
+		for (const s of sockets) removeSocket(s);
 		fs.rmSync(home, { recursive: true, force: true });
 	});
 

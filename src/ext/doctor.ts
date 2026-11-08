@@ -29,6 +29,7 @@ import {
 	tail,
 } from "./doctor-report";
 import { plain } from "./plain";
+import type { ServerControl } from "./server";
 import { resolveOmpPath } from "./sessions";
 
 const HIDE_MISSING_KEY = "omp.doctor.hideOmpMissing";
@@ -201,7 +202,7 @@ function bugsUrl(api: OmpApi): string | undefined {
 // would be re-encoded (`&`/`=` escaped), dropping the prefilled issue title and body.
 const openExternalString = vscode.env.openExternal as unknown as (target: string) => Thenable<boolean>;
 
-export function registerDoctor(api: OmpApi): void {
+export function registerDoctor(api: OmpApi, server: ServerControl): void {
 	const { context, sessions } = api;
 	const reg = (id: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 	let missingShown = false;
@@ -444,8 +445,10 @@ export function registerDoctor(api: OmpApi): void {
 			writable = false;
 			writeError = (err as Error).message;
 		}
+		const [sessionFacts, serverStatus, hermes] = await Promise.all([gatherSessions(), server.status(), gatherHermes(context.extensionPath)]);
+		const now = Date.now();
 		return {
-			now: Date.now(),
+			now,
 			extensionVersion: sessions.version,
 			vscodeVersion: vscode.version,
 			nodeVersion: process.versions.node,
@@ -459,9 +462,10 @@ export function registerDoctor(api: OmpApi): void {
 			writable,
 			writeError,
 			socket: { platform: process.platform, sessionsRoot: root, tmpdir: os.tmpdir() },
-			sessions: await gatherSessions(),
+			sessions: sessionFacts,
 			cleanupDays: retentionDays(),
-			hermes: await gatherHermes(context.extensionPath),
+			server: { ...serverStatus, extensionVersion: sessions.version, now },
+			hermes,
 		};
 	}
 

@@ -102,7 +102,7 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
             "mode": settings.lane.mode,
             "comment_authors": list(settings.lane.comment_authors),
             "boards": settings.lane.boards or "all",
-            "ticks": lane.store.get("lane_status", {}) or {},
+            "ticks": lane.ticks(),
             "state": str(lane.store.state.data_dir),
         },
         "projects": settings.projects,

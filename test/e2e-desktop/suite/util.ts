@@ -136,8 +136,11 @@ export class HostClient {
 			const msg = JSON.parse(line) as HostToClient;
 			this.received.push(msg);
 			const i = this.waiters.findIndex(w => w.pred(msg));
-			if (i >= 0) this.waiters.splice(i, 1)[0].resolve(msg);
-			else this.backlog.push(msg);
+			if (i >= 0) {
+				// Frames that arrived while waiting are older than this one: see next().
+				this.backlog.length = 0;
+				this.waiters.splice(i, 1)[0].resolve(msg);
+			} else this.backlog.push(msg);
 		});
 	}
 
@@ -157,10 +160,14 @@ export class HostClient {
 		this.sock.write(`${JSON.stringify(msg)}\n`);
 	}
 
-	/** Next message matching `pred` (including ones already received but not consumed). */
+	/**
+	 * Next message matching `pred`, in arrival order: frames received before it (including ones already
+	 * received but not consumed) are dropped, so a later wait never matches a frame older than this one
+	 * (e.g. the idle meta a hello's viewer count broadcasts, waited for after a "working" meta).
+	 */
 	next(what: string, pred: (m: HostToClient) => boolean, timeoutMs = 20_000): Promise<HostToClient> {
 		const i = this.backlog.findIndex(pred);
-		if (i >= 0) return Promise.resolve(this.backlog.splice(i, 1)[0]);
+		if (i >= 0) return Promise.resolve(this.backlog.splice(0, i + 1)[i]);
 		const { promise, resolve, reject } = Promise.withResolvers<HostToClient>();
 		const waiter = { pred, resolve };
 		this.waiters.push(waiter);

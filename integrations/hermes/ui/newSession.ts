@@ -2,7 +2,7 @@
 // and when (now, queued for a free slot, or at a time).
 import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Places, type StartBody, type Started } from "./api";
 import { Button, ErrorBox, Field, Segmented, useDismiss } from "./components";
-import { ModelPicker, useModels } from "./models";
+import { ModelPicker, ModelsError, useModels } from "./models";
 import { h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { icon } from "./util";
 import { openInVscode } from "./vscode";
@@ -228,7 +228,16 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 							options: [{ value: "default", label: "Default", title: "omp's configured mode" }, ...MODES.map(m => ({ value: m, label: MODE_INFO[m].label, title: MODE_INFO[m].detail }))],
 						}),
 					}),
-					h(Field, { label: "Model", htmlFor: "omps-model", children: h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }) }),
+					h(Field, {
+						label: "Model",
+						htmlFor: "omps-model",
+						children: h(
+							"div",
+							null,
+							h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }),
+							models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
+						),
+					}),
 				),
 				h(
 					"div",

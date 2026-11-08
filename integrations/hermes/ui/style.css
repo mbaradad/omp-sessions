@@ -377,6 +377,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-field-label { font-size: 12px; font-weight: 600; color: var(--o-fg2); }
 .omps-field-hint { font-size: 11.5px; color: var(--o-faint); }
 .omps-field-hint.is-error { color: var(--o-red); }
+.omps-models-error { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; word-break: break-word; }
+.omps-models-error .omps-btn { color: var(--o-fg2); }
 
 /* ---------- dialog (new session) ---------- */
 .omps-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, #000 45%, transparent); backdrop-filter: blur(3px); animation: omps-fade 0.12s ease-out; }

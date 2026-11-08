@@ -570,14 +570,25 @@ function loadModels(host2, fresh = false) {
 function useModels(host2) {
   const [models, setModels] = useState(null);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const load = (fresh) => {
+    setLoading(true);
     loadModels(host2, fresh).then((m) => {
       setModels(m);
       setError(null);
-    }).catch((err) => setError(errorMessage(err)));
+    }).catch((err) => setError(errorMessage(err))).finally(() => setLoading(false));
   };
   useEffect(() => load(false), []);
-  return { models, error, reload: () => load(true) };
+  return { models, error, loading, reload: () => load(true) };
+}
+function ModelsError(p) {
+  return h(
+    "div",
+    { className: "omps-field-hint is-error omps-models-error", role: "alert" },
+    icon("alert", 12),
+    h("span", null, `Models unavailable: ${p.error}`),
+    h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Retry", busy: p.loading, onClick: p.onRetry })
+  );
 }
 function defaultLabel(m) {
   if (m?.default) return `Default (${m.default})`;
@@ -829,7 +840,7 @@ function BoardsPanel(p) {
       }),
       h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
       models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,
-      models.error ? h("span", { className: "omps-field-hint is-error" }, models.error) : null
+      models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null
     ),
     error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
     actionError ? h(ErrorBox, { message: actionError }) : null,
@@ -1082,6 +1093,7 @@ function DetailPanel(p) {
         h(ModelPicker, { id: "omps-detail-model", models: models.models, value: model, onChange: setModel, disabled: busy === "model", placeholder: view.model ?? void 0, label: `Switch model (now ${view.model ?? "the default"})` }),
         h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model })
       ) : null,
+      view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
       h(
         "section",
         { className: "omps-reply", "aria-label": "Last reply" },
@@ -1334,7 +1346,16 @@ function NewSessionDialog(p) {
               options: [{ value: "default", label: "Default", title: "omp's configured mode" }, ...MODES.map((m) => ({ value: m, label: MODE_INFO[m].label, title: MODE_INFO[m].detail }))]
             })
           }),
-          h(Field, { label: "Model", htmlFor: "omps-model", children: h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }) })
+          h(Field, {
+            label: "Model",
+            htmlFor: "omps-model",
+            children: h(
+              "div",
+              null,
+              h(ModelPicker, { id: "omps-model", models: models.models, value: model, onChange: setModel }),
+              models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null
+            )
+          })
         ),
         h(
           "div",
@@ -2031,6 +2052,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-field-label { font-size: 12px; font-weight: 600; color: var(--o-fg2); }
 .omps-field-hint { font-size: 11.5px; color: var(--o-faint); }
 .omps-field-hint.is-error { color: var(--o-red); }
+.omps-models-error { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; word-break: break-word; }
+.omps-models-error .omps-btn { color: var(--o-fg2); }
 
 /* ---------- dialog (new session) ---------- */
 .omps-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, #000 45%, transparent); backdrop-filter: blur(3px); animation: omps-fade 0.12s ease-out; }

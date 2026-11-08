@@ -21,6 +21,7 @@ import {
 	hermesRoot,
 	installPlugin,
 	listProfiles,
+	nativeHermesHome,
 	parseLaneStatus,
 	pluginReport,
 	pluginState,
@@ -57,10 +58,10 @@ function bundle(root: string, version: string): string {
 }
 
 test("hermes home and plugin folder follow HERMES_HOME; a profile home's root is two levels up", () => {
-	assert.equal(hermesHome({}, "/home/u"), path.join("/home/u", ".hermes"));
-	assert.equal(hermesHome({ HERMES_HOME: "/tmp/h" }, "/home/u"), "/tmp/h");
-	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h" }, "/home/u"), "/tmp/h");
-	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h/profiles/work" }, "/home/u"), "/tmp/h");
+	assert.equal(hermesHome({}, "/home/u", "linux"), path.join("/home/u", ".hermes"));
+	assert.equal(hermesHome({ HERMES_HOME: "/tmp/h" }, "/home/u", "linux"), "/tmp/h");
+	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h" }, "/home/u", "linux"), "/tmp/h");
+	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h/profiles/work" }, "/home/u", "linux"), "/tmp/h");
 	assert.equal(pluginTarget("/tmp/h"), path.join("/tmp/h", "plugins", "omp-sessions"));
 });
 
@@ -68,21 +69,21 @@ test("hermes home and root follow Hermes's rules: Windows default, data-dir suff
 	assert.equal(hermesHome({ LOCALAPPDATA: "/c/Users/u/AppData/Local" }, "/c/Users/u", "win32"), path.join("/c/Users/u/AppData/Local", "hermes"));
 	assert.equal(hermesHome({}, "/c/Users/u", "win32"), path.join("/c/Users/u", "AppData", "Local", "hermes"));
 	assert.equal(hermesRoot({ LOCALAPPDATA: "/la" }, "/c/Users/u", "win32"), path.join("/la", "hermes"));
-	assert.equal(hermesHome({ HERMES_DATA_DIR_SUFFIX: "-dev" }, "/home/u"), path.join("/home/u", ".hermes-dev"));
-	assert.equal(hermesHome({ HERMES_HOME: "~/hh" }, "/home/u"), path.join("/home/u", "hh"));
-	assert.equal(hermesHome({ HERMES_HOME: "  " }, "/home/u"), path.join("/home/u", ".hermes"), "blank HERMES_HOME is unset");
-	assert.equal(hermesRoot({ HERMES_HOME: "/home/u/.hermes/profiles/work" }, "/home/u"), path.join("/home/u", ".hermes"));
-	assert.equal(hermesRoot({ HERMES_HOME: "/home/u/.hermes/sandbox" }, "/home/u"), path.join("/home/u", ".hermes"), "inside the default home: the default root");
-	assert.equal(hermesRoot({ HERMES_HOME: "/srv/hermes" }, "/home/u"), "/srv/hermes", "a custom root");
+	assert.equal(hermesHome({ HERMES_DATA_DIR_SUFFIX: "-dev" }, "/home/u", "linux"), path.join("/home/u", ".hermes-dev"));
+	assert.equal(hermesHome({ HERMES_HOME: "~/hh" }, "/home/u", "linux"), path.join("/home/u", "hh"));
+	assert.equal(hermesHome({ HERMES_HOME: "  " }, "/home/u", "linux"), path.join("/home/u", ".hermes"), "blank HERMES_HOME is unset");
+	assert.equal(hermesRoot({ HERMES_HOME: "/home/u/.hermes/profiles/work" }, "/home/u", "linux"), path.join("/home/u", ".hermes"));
+	assert.equal(hermesRoot({ HERMES_HOME: "/home/u/.hermes/sandbox" }, "/home/u", "linux"), path.join("/home/u", ".hermes"), "inside the default home: the default root");
+	assert.equal(hermesRoot({ HERMES_HOME: "/srv/hermes" }, "/home/u", "linux"), "/srv/hermes", "a custom root");
 	assert.deepEqual(resolveTargets({}, { HERMES_HOME: "/srv/hermes" }, "/home/u"), [{ label: "default", home: "/srv/hermes", profile: "default" }]);
 	assert.equal(hermesLookup({ LOCALAPPDATA: "/la" }, "/c/Users/u", "win32"), `PATH, ${path.join("/la", "hermes", "bin")}`);
 	assert.equal(hermesLookup({}, "/home/u", "linux"), "PATH, ~/.local/bin");
 });
 
-/** A fake ~/.hermes: real profiles (identity files), a bare folder, a deleted profile, a bad name. */
+/** A fake default Hermes home (~/.hermes; %LOCALAPPDATA%\hermes on Windows): real profiles (identity files), a bare folder, a deleted profile, a bad name. */
 function profileTree(): { home: string; root: string } {
 	const home = temp();
-	const root = path.join(home, ".hermes");
+	const root = nativeHermesHome({}, home);
 	const mk = (name: string, file?: string) => {
 		fs.mkdirSync(path.join(root, "profiles", name), { recursive: true });
 		if (file) fs.writeFileSync(path.join(root, "profiles", name, file), "");
