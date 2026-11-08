@@ -17,12 +17,14 @@ test("waiters are served first come, first served, even when the wall clock step
 	});
 	writeScheduler({ maxConcurrent: 1 });
 	assert.deepEqual(tryAcquireSlot("running", "t0"), { acquired: true });
-	let now = 10_000;
+	// Mocked near the real clock: lease liveness compares against boot time, which a 1970 "now" would break.
+	const base = Date.now();
+	let now = base;
 	t.mock.method(Date, "now", () => now);
-	assert.deepEqual(tryAcquireSlot("first", "t1"), { acquired: false, position: 1, since: 10_000 });
+	assert.deepEqual(tryAcquireSlot("first", "t1"), { acquired: false, position: 1, since: base });
 	// The clock steps back (WSL2 does, ~3 s at a time): the later arrival still queues behind.
-	now = 7_000;
-	assert.deepEqual(tryAcquireSlot("second", "t2"), { acquired: false, position: 2, since: 7_000 });
-	assert.deepEqual(tryAcquireSlot("first", "t1"), { acquired: false, position: 1, since: 10_000 });
+	now = base - 3000;
+	assert.deepEqual(tryAcquireSlot("second", "t2"), { acquired: false, position: 2, since: base - 3000 });
+	assert.deepEqual(tryAcquireSlot("first", "t1"), { acquired: false, position: 1, since: base });
 	assert.deepEqual(listWaiting().map(w => w.sessionId), ["first", "second"]);
 });
