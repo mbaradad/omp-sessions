@@ -51,7 +51,7 @@ title: omp Sessions
 screenshots:${yamlList(shots, "  ")}
 platforms: [linux, macos]
 known_issues:
-  - Needs the omp Sessions VS Code extension's omp-sessions CLI on PATH (VS Code, "omp: Install omp-sessions Command").
+  - Needs the omp-sessions command on PATH, from the omp Sessions VS Code extension ("omp: Install omp-sessions Command") or the release tarball (npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/omp-sessions-<version>.tgz).
 capabilities:
   provides_tools:${yamlList(list("provides_tools"), "    ")}
   provides_hooks:${yamlList(list("provides_hooks"), "    ")}
