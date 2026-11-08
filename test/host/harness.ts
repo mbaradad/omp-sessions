@@ -270,7 +270,13 @@ export class Host {
 			const exited = new Set(entries.flatMap(e => (e.kind === "exit" ? [e.pid] : [])));
 			for (const e of entries) if (e.kind === "argv" && !exited.has(e.pid)) this.pids.add(e.pid);
 		}
-		for (const pid of this.pids) if (alive(pid)) process.kill(pid, "SIGKILL");
+		for (const pid of this.pids) {
+			try {
+				process.kill(pid, "SIGKILL");
+			} catch {
+				/* already gone (it may exit between a liveness check and the kill) */
+			}
+		}
 		await until(() => [...this.pids].every(p => !alive(p)), "sandbox processes to exit", 3000);
 		// A killed host leaves its socket behind, which may be outside the sandbox (the short tmp fallback).
 		removeSocket(m?.socket);

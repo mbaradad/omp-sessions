@@ -179,8 +179,14 @@ test("server after a reboot: queued work resumes, a task the reboot cut short is
 
 test("host: meta.viewers counts people, not the omp-sessions server or omp-sessions show; prompts stamp userActiveAt", async t => {
 	const h = await launch(t);
-	await sleep(300);
-	const idleSince = h.meta().updatedAt;
+	// Startup (omp's state, title, transcript file) may still touch meta on a slow machine: wait until it settles.
+	let idleSince = h.meta().updatedAt;
+	for (let stable = 0; stable < 2; ) {
+		await sleep(300);
+		const now = h.meta().updatedAt;
+		stable = now === idleSince ? stable + 1 : 0;
+		idleSince = now;
+	}
 	const { client } = await h.connect("panel");
 	await until(() => h.meta().viewers === 1, "viewer counted");
 	await h.connect("omp-sessions-server");
