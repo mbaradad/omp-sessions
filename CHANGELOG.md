@@ -5,6 +5,7 @@
 - **Default permission mode for new sessions**: `omp-sessions config set mode auto|edits|ask|plan` (or *Set Default Permission Mode for New Sessions…* in VS Code) sets the mode every client's new sessions start in when they ask for none; `omp-sessions status`, `config` and the Doctor show it. Order: the session's own mode, then this default, then omp's `tools.approvalMode`, then Auto.
 - Agents no longer pick a stopping mode on their own: the omp-sessions skill and the Hermes tools tell them to leave the mode unset (the user's default, normally Auto) unless the user asks, since Edits and Ask wait for a person at the first command.
 - `hermes omp status` and the Hermes page list only boards that still exist; a service unit's `PATH` no longer repeats entries.
+- Resuming a session right after it stopped could still leave it unreachable when the file system reused the old socket's inode: the stopping host now closes its socket before anything else can bind there.
 
 ## 0.6.0
 

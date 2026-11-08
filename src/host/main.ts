@@ -1062,19 +1062,9 @@ server.on("error", err => {
 	log("socket server error", String(err));
 	if (!finished) void stop("socket unavailable");
 });
-/** Inode of the socket this host bound; a resumed successor binds a new file at the same path. */
-let socketIno: number | undefined;
-function ownsSocket(): boolean {
-	try {
-		return fs.statSync(socketPath).ino === socketIno;
-	} catch {
-		return false;
-	}
-}
 server.listen(socketPath, () => {
 	if (!IS_WINDOWS) {
 		try {
-			socketIno = fs.statSync(socketPath).ino;
 			fs.chmodSync(socketPath, 0o600);
 		} catch (err) {
 			log("chmod failed", String(err));
@@ -1104,15 +1094,16 @@ function finish(code: number | null, reason: string): void {
 	meta.exitCode = code;
 	meta.exitReason = meta.exitReason ?? reason;
 	pendingUi.length = 0;
+	// Closing a listening Unix socket unlinks its path (libuv, by name). Do it while the path is surely
+	// ours: before meta says "stopped", no successor host can start and bind there. Connected clients
+	// stay connected and still get the final meta below.
+	server.close();
 	saveMeta(true);
 	// meta says stopped: a successor may start now, while this process winds down.
 	releaseLock(lockFile);
 	broadcast({ t: "meta", meta });
 	setTimeout(() => {
 		for (const c of clients) c.sock.end();
-		// Closing a listening Unix socket unlinks its path (libuv). A resume may already have a new
-		// host listening there once meta.json says "stopped", so only close while the file is ours.
-		if (IS_WINDOWS || ownsSocket()) server.close();
 		logStream.end(() => process.exit(0));
 		// The log may never flush (its folder is gone, disk full): don't outlive the session regardless.
 		setTimeout(() => process.exit(0), 2000);
