@@ -773,7 +773,7 @@ function AnswerBox(p) {
       single && !(others[0] ?? "").trim() ? null : h(Button, { kind: "primary", icon: "send", label: "Answer", busy: p.busy, disabled: !complete, onClick: () => p.onAnswer(answer) })
     );
   } else {
-    body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with omp-vs attach.");
+    body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with omp-sessions attach.");
   }
   return h("section", { className: "omps-question", "aria-label": "omp is asking" }, head, body);
 }
@@ -1200,16 +1200,16 @@ function StatusStrip(p) {
   const { o } = p;
   const items = [];
   if (!o) {
-    items.push(h("span", { key: "l", className: "omps-strip-item omps-muted" }, p.error ? `Status unavailable: ${p.error}` : "Checking omp-vs…"));
+    items.push(h("span", { key: "l", className: "omps-strip-item omps-muted" }, p.error ? `Status unavailable: ${p.error}` : "Checking omp-sessions…"));
   } else {
-    const v = o.ompVs;
+    const v = o.ompSessions;
     const server = o.scheduler?.server ?? Boolean(v.server);
     items.push(
       h(
         "span",
         { key: "omp", className: "omps-strip-item", title: v.command ?? v.hint ?? "" },
         h("span", { className: cx("omps-led", v.found && !v.error ? server ? "is-ok" : "is-warn" : "is-bad") }),
-        h("strong", null, "omp-vs"),
+        h("strong", null, "omp-sessions"),
         v.found ? v.cli ? ` ${v.cli}` : "" : " not installed",
         v.found ? h("span", { className: "omps-muted" }, server ? ` · server ${v.server ?? "running"}` : " · server not running") : null
       )
@@ -1350,19 +1350,19 @@ function createPage(host2) {
       setSelected(s.id);
       refresh();
     };
-    const notInstalled = overview && !overview.ompVs.found;
+    const notInstalled = overview && !overview.ompSessions.found;
     let main;
     if (view === "boards") {
       main = h(BoardsPanel, { host: host2, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
     } else if (notInstalled) {
-      main = h(Empty, { icon: "terminal", title: "omp-vs is not installed", body: overview.ompVs.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
+      main = h(Empty, { icon: "terminal", title: "omp-sessions is not installed", body: overview.ompSessions.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
     } else if (!sessions) {
       main = error ? h(ErrorBox, { message: error, onRetry: refresh }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading sessions…");
     } else if (all.length === 0) {
       main = h(Empty, {
         icon: "sparkle",
         title: "No omp sessions yet",
-        body: "Start one here, from VS Code, with omp-vs new, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+        body: "Start one here, from VS Code, with omp-sessions new, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
         action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) })
       });
     } else {
@@ -1879,7 +1879,7 @@ var desktop_default = {
       {
         id: "open",
         area: PALETTE_AREA,
-        data: { id: "omp-sessions.open", label: "omp Sessions: Open", keywords: ["omp", "sessions", "coding", "agent", "omp-vs"], run: () => host.navigate(ROUTE) }
+        data: { id: "omp-sessions.open", label: "omp Sessions: Open", keywords: ["omp", "sessions", "coding", "agent", "omp-sessions"], run: () => host.navigate(ROUTE) }
       }
     ]);
   }

@@ -1,5 +1,5 @@
 """omp-sessions plugin against real Hermes code (temp HERMES_HOME, real kanban DB, the real plugin
-loader) and the real omp-vs CLI + server with the fake omp (temp OMP_VSCODE_HOME).
+loader) and the real omp-sessions CLI + server with the fake omp (temp OMP_VSCODE_HOME).
 
 Run with `npm run test:hermes` (integrations/hermes/tests/run.mjs sets the environment)."""
 
@@ -33,7 +33,7 @@ os.environ.update(
     HERMES_HOME=str(HERMES_HOME),
     OMP_VSCODE_HOME=str(OMP_HOME),
     FAKE_OMP_SESSIONS=str(TMP / "fake-sessions"),
-    OMP_VS_DONE_GRACE_MS="1000",
+    OMP_SESSIONS_DONE_GRACE_MS="1000",
     NO_COLOR="1",
 )
 os.environ.pop("HERMES_KANBAN_DB", None)
@@ -47,7 +47,7 @@ shutil.copytree(PLUGIN_SRC, HERMES_HOME / "plugins" / "omp-sessions")
     "    omp-sessions:\n"
     "      allow_gateway_injection: true\n"
     "      settings:\n"
-    f"        omp_vs: {CLI}\n"
+    f"        omp_sessions: {CLI}\n"
     "        lane:\n"
     "          enabled: true\n"
     "          boards:\n"
@@ -65,15 +65,15 @@ from hermes_cli import kanban_db_connect as kbc  # noqa: E402
 from hermes_cli.plugins import PluginManager  # noqa: E402
 
 
-def omp_vs(*args: str, stdin: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
+def omp_sessions(*args: str, stdin: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
     p = subprocess.run([NODE, str(CLI), *args], input=stdin, capture_output=True, text=True, timeout=60)
     if check and p.returncode != 0:
-        raise AssertionError(f"omp-vs {' '.join(args)} failed ({p.returncode}): {p.stderr or p.stdout}")
+        raise AssertionError(f"omp-sessions {' '.join(args)} failed ({p.returncode}): {p.stderr or p.stdout}")
     return p
 
 
 def sessions() -> list[dict]:
-    return json.loads(omp_vs("ls", "--all", "--json").stdout)
+    return json.loads(omp_sessions("ls", "--all", "--json").stdout)
 
 
 def tagged(card_id: str) -> list[dict]:
@@ -96,7 +96,7 @@ class PluginTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        omp_vs("server", "start")
+        omp_sessions("server", "start")
         for slug in ("proj", "asking", "other"):
             kbb.create_board(slug, name=f"{slug.title()} board")
         cls.load()
@@ -116,7 +116,7 @@ class PluginTest(unittest.TestCase):
     def tearDownClass(cls) -> None:
         for s in sessions():
             if s["meta"]["status"] != "stopped":
-                omp_vs("stop", s["meta"]["id"], check=False)
+                omp_sessions("stop", s["meta"]["id"], check=False)
 
     # ---- helpers ----
 
@@ -180,7 +180,7 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(s.get("group"), "Project board")
         with kbc.connect_closing(board="proj") as conn:
             comments = kb.list_comments(conn, parent)
-        self.assertTrue(any(s["meta"]["id"][:8] in c.body and "omp-vs attach" in c.body for c in comments), comments)
+        self.assertTrue(any(s["meta"]["id"][:8] in c.body and "omp-sessions attach" in c.body for c in comments), comments)
 
         done = self.tick_until("proj", parent, lambda t: t.status == "done", "parent done")
         self.assertEqual(done.result, "parent result")
@@ -211,7 +211,7 @@ class PluginTest(unittest.TestCase):
         # Ticking again while it still waits doesn't block twice.
         self.tick("asking")
         self.assertEqual(self.card("asking", card).status, "blocked")
-        omp_vs("answer", sid, "1")
+        omp_sessions("answer", sid, "1")
         done = self.tick_until("asking", card, lambda t: t.status == "done", "done after the answer")
         self.assertTrue((WORK / "a.txt").exists())
         self.assertIn("a.txt", done.result or "")
@@ -239,7 +239,7 @@ class PluginTest(unittest.TestCase):
         card = self.create("proj", "slow 4000")
         self.tick("proj")
         [s] = until(lambda: tagged(card), "session")
-        until(lambda: (json.loads(omp_vs("show", s["meta"]["id"], "--json").stdout).get("queue") or {}).get("running") == 1, "the card's task running", 20)
+        until(lambda: (json.loads(omp_sessions("show", s["meta"]["id"], "--json").stdout).get("queue") or {}).get("running") == 1, "the card's task running", 20)
         self.tick("proj")  # own "Queued as" comment is not forwarded
         self.assertFalse(any("passed the" in c.body for c in self.comments("proj", card)))
         self.comment("proj", card, "echo banana")
@@ -279,8 +279,8 @@ class PluginTest(unittest.TestCase):
         self.tick("proj")
         [s] = until(lambda: tagged(card), "session")
         # Remove it once it runs (removing a session the server is launching races with its host).
-        until(lambda: json.loads(omp_vs("show", s["meta"]["id"], "--json").stdout)["state"] == "working", "working")
-        omp_vs("rm", s["meta"]["id"], "-y")
+        until(lambda: json.loads(omp_sessions("show", s["meta"]["id"], "--json").stdout)["state"] == "working", "working")
+        omp_sessions("rm", s["meta"]["id"], "-y")
         t = self.tick_until("proj", card, lambda t: t.status == "blocked", "transient block")
         self.assertEqual(t.block_kind, "transient")
         with kbc.connect_closing(board="proj") as conn:
@@ -295,7 +295,7 @@ class PluginTest(unittest.TestCase):
         type(self).load()
         self.tick("proj")
         self.assertEqual(self.card("proj", card).status, "running")
-        # Lost link (crash between `omp-vs new` and saving it) and the claim released: the lane
+        # Lost link (crash between `omp-sessions new` and saving it) and the claim released: the lane
         # finds the session by its card tag instead of starting another.
         links = self.links()
         links.pop(f"proj/{card}")
@@ -307,7 +307,7 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(self.card("proj", card).status, "running")
         self.assertEqual(self.links()[f"proj/{card}"]["session"], s["meta"]["id"])
         self.assertEqual(len(tagged(card)), 1)
-        omp_vs("stop", s["meta"]["id"], check=False)
+        omp_sessions("stop", s["meta"]["id"], check=False)
 
     def test_cards_of_other_assignees_and_boards_are_left_alone(self) -> None:
         with kbc.connect_closing(board="proj") as conn:
@@ -346,7 +346,7 @@ class PluginTest(unittest.TestCase):
         shutil.copytree(PLUGIN_SRC, p2 / "plugins" / "omp-sessions", dirs_exist_ok=True)
         (p2 / "config.yaml").write_text(
             "plugins:\n  enabled: [omp-sessions]\n  entries:\n    omp-sessions:\n      settings:\n"
-            f"        omp_vs: {CLI}\n        lane:\n          enabled: true\n          boards:\n            proj:\n              folder: {WORK}\n"
+            f"        omp_sessions: {CLI}\n        lane:\n          enabled: true\n          boards:\n            proj:\n              folder: {WORK}\n"
         )
         card = self.create("proj", "slow 3000")
         os.environ["HERMES_HOME"] = str(p2)
@@ -408,13 +408,13 @@ class PluginTest(unittest.TestCase):
         ans = self.tool("omp_session_answer", {"id": sid, "answer": "1"}, session_key=key)
         self.assertTrue(ans.get("answered"), ans)
         until(lambda: (WORK / "b.txt").exists(), "b.txt written")
-        until(lambda: json.loads(omp_vs("show", sid, "--json").stdout)["state"] == "idle", "idle")
+        until(lambda: json.loads(omp_sessions("show", sid, "--json").stdout)["state"] == "idle", "idle")
         self.plugin.notifier.poll(force=True)
         self.assertEqual(len(self.injected), 1, self.injected)
         note = self.injected[0]
         self.assertEqual(note["session_key"], key)
         self.assertIn("finished its turn", note["content"])
-        self.assertIn(f"omp-vs show {sid[:8]}", note["content"])
+        self.assertIn(f"omp-sessions show {sid[:8]}", note["content"])
         # Delivered once.
         self.plugin.notifier.poll(force=True)
         self.assertEqual(len(self.injected), 1)
@@ -426,7 +426,7 @@ class PluginTest(unittest.TestCase):
         s = next(x for x in sessions() if x["meta"]["id"] == res["id"])
         self.assertEqual(s["meta"]["cwd"], str(WORK))
         self.assertEqual(s.get("group"), "Project board")
-        self.assertEqual(json.loads(omp_vs("show", res["id"], "--json").stdout)["state"], "queued")
+        self.assertEqual(json.loads(omp_sessions("show", res["id"], "--json").stdout)["state"], "queued")
         places = self.tool("omp_projects_list", {})
         self.assertTrue(any(b["slug"] == "proj" and b["folder"] == str(WORK) for b in places["boards"]))
         self.assertTrue(any(f["path"] == str(WORK) for f in places["folders"]))
@@ -567,7 +567,7 @@ class PureTest(unittest.TestCase):
 
 
 def tearDownModule() -> None:
-    omp_vs("server", "stop", check=False)
+    omp_sessions("server", "stop", check=False)
     shutil.rmtree(TMP, ignore_errors=True)
 
 

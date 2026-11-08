@@ -1,6 +1,6 @@
 # omp-sessions: omp coding sessions for Hermes
 
-Hermes hands coding work to [oh-my-pi](https://omp.sh) (`omp`) sessions instead of doing it itself. Every session is an ordinary omp session run by the [omp Sessions](https://mbaradad.github.io/omp-vscode/) `omp-vs` server, so you can watch and steer it from VS Code, a terminal (`omp-vs attach`), the omp phone app, or the plugin's page in Hermes.
+Hermes hands coding work to [oh-my-pi](https://omp.sh) (`omp`) sessions instead of doing it itself. Every session is an ordinary omp session run by the [omp Sessions](https://mbaradad.github.io/omp-vscode/) `omp-sessions` server, so you can watch and steer it from VS Code, a terminal (`omp-sessions attach`), the omp phone app, or the plugin's page in Hermes.
 
 ![The omp Sessions page in the Hermes dashboard](https://raw.githubusercontent.com/mbaradad/omp-vscode/main/docs/images/hermes-dashboard.png)
 
@@ -13,7 +13,7 @@ Hermes hands coding work to [oh-my-pi](https://omp.sh) (`omp`) sessions instead 
 ## Requirements
 
 - Hermes Agent 0.23.0 or later.
-- `omp-vs` on `PATH`, in `~/.local/bin`, or in `%LOCALAPPDATA%\omp-vs` on Windows: install the omp Sessions extension in VS Code and run **omp: Install omp-vs Command**. omp itself must be installed and signed in. A gateway started by systemd or launchd may have a minimal `PATH`; the installed command works there because it records the absolute path of its runtime.
+- `omp-sessions` on `PATH`, in `~/.local/bin`, or in `%LOCALAPPDATA%\omp-sessions` on Windows: install the omp Sessions extension in VS Code and run **omp: Install omp-sessions Command**. omp itself must be installed and signed in. A gateway started by systemd or launchd may have a minimal `PATH`; the installed command works there because it records the absolute path of its runtime.
 
 ## Install
 
@@ -22,11 +22,11 @@ hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --en
 hermes config set plugins.entries.omp-sessions.allow_gateway_injection true   # lets notifications reach chats
 ```
 
-Or from VS Code: **omp: Install Hermes Plugin…** (or `omp-vs hermes install --all-profiles`). Turn the kanban lane on in one profile: `hermes omp lane on`. Full guide: [docs/HERMES.md](https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md).
+Or from VS Code: **omp: Install Hermes Plugin…** (or `omp-sessions hermes install --all-profiles`). Turn the kanban lane on in one profile: `hermes omp lane on`. Full guide: [docs/HERMES.md](https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md).
 
 ## What it does on your machine
 
-- **Runs a local command.** Every tool call, page refresh and lane tick runs `omp-vs` (`--json` subcommands) as your user. omp-vs talks to its local server over a Unix socket; the plugin makes no network calls of its own.
+- **Runs a local command.** Every tool call, page refresh and lane tick runs `omp-sessions` (`--json` subcommands) as your user. omp-sessions talks to its local server over a Unix socket; the plugin makes no network calls of its own.
 - **Starts coding agents.** Sessions run omp, which reads and edits files in the session's folder and runs commands there according to its permission mode (`ask`, `edits`, `plan` or `auto`). Lane cards use the board's mode, else omp's default. omp uses your own model provider sign-in and bills it.
 - **Keeps state** in the profile's plugin data (which chat to notify about which session) and, for the lane, in `<kanban home>/plugin-data/omp-sessions-lane/` (card ↔ session links and a lock), next to Hermes's shared kanban boards.
 - **Reads** Hermes's kanban boards through `hermes_cli.kanban_db` to claim, comment on, complete and block cards assigned to `omp`, and the skill files a card names so their paths can be passed to omp.

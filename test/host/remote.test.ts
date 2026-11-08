@@ -1,4 +1,4 @@
-// The omp-vs server's remote HTTP API (docs/REMOTE-API.md) against real hosts and the fake omp:
+// The omp-sessions server's remote HTTP API (docs/REMOTE-API.md) against real hosts and the fake omp:
 // auth (bearer, pairing cookie, CSRF guards, lockout), listing and creating sessions, live
 // session events over SSE, permission mode switches, answering approvals, and turning it off.
 import { type ChildProcess, spawn } from "node:child_process";
@@ -138,7 +138,7 @@ function meta(id: string): SessionMeta | undefined {
 }
 
 before(async () => {
-	home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vs-remote-"));
+	home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-remote-"));
 	cwd = path.join(home, "work");
 	fs.mkdirSync(cwd, { recursive: true });
 	fs.mkdirSync(path.join(home, "sessions"), { recursive: true });

@@ -30,7 +30,7 @@ export default {
 			{
 				id: "open",
 				area: PALETTE_AREA,
-				data: { id: "omp-sessions.open", label: "omp Sessions: Open", keywords: ["omp", "sessions", "coding", "agent", "omp-vs"], run: () => host.navigate(ROUTE) },
+				data: { id: "omp-sessions.open", label: "omp Sessions: Open", keywords: ["omp", "sessions", "coding", "agent", "omp-sessions"], run: () => host.navigate(ROUTE) },
 			},
 		]);
 	},

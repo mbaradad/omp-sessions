@@ -1,4 +1,4 @@
-// "Open in VS Code" from the Hermes page or `omp-vs vscode` (src/shared/vscode-open.ts): this window
+// "Open in VS Code" from the Hermes page or `omp-sessions vscode` (src/shared/vscode-open.ts): this window
 // records itself as the one last used on this machine, takes pending open requests when it gains focus
 // (the request's link focused or opened it), and handles vscode://mbaradad.omp-sessions/open?session=<id>.
 import * as fs from "node:fs";

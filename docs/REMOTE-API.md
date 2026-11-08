@@ -1,8 +1,8 @@
 # Remote access: phone app and HTTP API
 
-The per-user `omp-vs` server can also listen on HTTP. It serves a phone web app and a small JSON API with live updates (Server-Sent Events). The app is a PWA you can add to your home screen. Through the same API, another app or web server can list your sessions, start new ones, follow them live, prompt them, answer their questions and switch their permission mode.
+The per-user `omp-sessions` server can also listen on HTTP. It serves a phone web app and a small JSON API with live updates (Server-Sent Events). The app is a PWA you can add to your home screen. Through the same API, another app or web server can list your sessions, start new ones, follow them live, prompt them, answer their questions and switch their permission mode.
 
-Remote access is **off** by default. When it is on, it serves the same sessions as VS Code and `omp-vs`, on the machine where they run (the Remote-SSH host, if you use one).
+Remote access is **off** by default. When it is on, it serves the same sessions as VS Code and `omp-sessions`, on the machine where they run (the Remote-SSH host, if you use one).
 
 ## Setup
 
@@ -19,18 +19,18 @@ The default port is `7413`.
 
 #### Behind Tailscale Serve or an HTTPS proxy (and WSL)
 
-Bind to `localhost` and tell omp-vs the URL the phone opens with `--url`. The pairing link and QR code then use that URL, and the server accepts writes from that origin. The phone talks HTTPS to the proxy, so the token and your sessions' traffic are encrypted even where plain `lan` would not be.
+Bind to `localhost` and tell omp-sessions the URL the phone opens with `--url`. The pairing link and QR code then use that URL, and the server accepts writes from that origin. The phone talks HTTPS to the proxy, so the token and your sessions' traffic are encrypted even where plain `lan` would not be.
 
 With [Tailscale Serve](https://tailscale.com/kb/1312/serve) (HTTPS with a real certificate, reachable only from your tailnet):
 
 ```bash
 tailscale serve --bg 7413                 # prints https://<machine>.<tailnet>.ts.net/
-omp-vs remote on --bind localhost --url https://<machine>.<tailnet>.ts.net
+omp-sessions remote on --bind localhost --url https://<machine>.<tailnet>.ts.net
 ```
 
-**WSL 2** (default NAT networking): Tailscale usually runs on Windows, so Linux has no Tailscale address and `--bind tailscale` fails. Run `tailscale serve --bg 7413` in a Windows terminal instead: Windows forwards `localhost:7413` into WSL, so Serve reaches the omp-vs listener on WSL's `127.0.0.1`. Then run the `omp-vs remote on --bind localhost --url …` line above inside WSL. **omp: Connect Phone…** offers this as *Behind Tailscale Serve or an HTTPS proxy* and recommends it when it detects WSL without Tailscale.
+**WSL 2** (default NAT networking): Tailscale usually runs on Windows, so Linux has no Tailscale address and `--bind tailscale` fails. Run `tailscale serve --bg 7413` in a Windows terminal instead: Windows forwards `localhost:7413` into WSL, so Serve reaches the omp-sessions listener on WSL's `127.0.0.1`. Then run the `omp-sessions remote on --bind localhost --url …` line above inside WSL. **omp: Connect Phone…** offers this as *Behind Tailscale Serve or an HTTPS proxy* and recommends it when it detects WSL without Tailscale.
 
-`omp-vs remote on --url none` goes back to plain addresses.
+`omp-sessions remote on --url none` goes back to plain addresses.
 
 ### 2. Turn it on and pair the phone
 
@@ -44,13 +44,13 @@ omp-vs remote on --bind localhost --url https://<machine>.<tailnet>.ts.net
 **From a terminal:**
 
 ```bash
-omp-vs remote on                    # bind tailscale, port 7413
-omp-vs remote on --bind lan --port 8080
-omp-vs remote on --bind localhost --url https://box.tailnet.ts.net   # behind tailscale serve / a proxy
-omp-vs remote qr                    # QR code (Unicode half blocks) + pairing URL
-omp-vs remote status                # on/off, listening address, last error
-omp-vs remote rotate                # new token: every paired phone has to pair again
-omp-vs remote off
+omp-sessions remote on                    # bind tailscale, port 7413
+omp-sessions remote on --bind lan --port 8080
+omp-sessions remote on --bind localhost --url https://box.tailnet.ts.net   # behind tailscale serve / a proxy
+omp-sessions remote qr                    # QR code (Unicode half blocks) + pairing URL
+omp-sessions remote status                # on/off, listening address, last error
+omp-sessions remote rotate                # new token: every paired phone has to pair again
+omp-sessions remote off
 ```
 
 The pairing URL is `http://<host>:<port>/#pair=<token>`, or `<public URL>#pair=<token>` behind a proxy. When the app opens it, it:
@@ -69,7 +69,7 @@ The setting lives in `~/.omp/vscode/remote.json` (mode `0600`):
 
 Behind a proxy it also holds `"publicUrl": "https://box.tailnet.ts.net/"` (with `"bind": "localhost"`).
 
-The token is 32 random bytes, created the first time remote access is turned on. The server watches the file and starts, stops or rebinds the listener within seconds. If the bind address doesn't exist yet (for example, Tailscale is still connecting), it retries every 30 s. `omp-vs remote status` shows the reason.
+The token is 32 random bytes, created the first time remote access is turned on. The server watches the file and starts, stops or rebinds the listener within seconds. If the bind address doesn't exist yet (for example, Tailscale is still connecting), it retries every 30 s. `omp-sessions remote status` shows the reason.
 
 ## Authentication
 
@@ -106,13 +106,13 @@ The static app files (`/`, `/mobile.js`, `/mobile.css`, `/manifest.webmanifest`,
   | `429` | locked out |
   | `502` | session host unreachable |
 
-- Session ids are the ids `omp-vs ls` shows in full (`SessionInfo.meta.id`).
+- Session ids are the ids `omp-sessions ls` shows in full (`SessionInfo.meta.id`).
 - Responses are `Cache-Control: no-store`.
 
 The examples below assume:
 
 ```bash
-export OMP=http://100.101.102.103:7413   # omp-vs remote status prints the URL
+export OMP=http://100.101.102.103:7413   # omp-sessions remote status prints the URL
 export TOKEN=$(node -p 'require(require("os").homedir()+"/.omp/vscode/remote.json").token')
 alias api='curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"'
 ```
@@ -141,7 +141,7 @@ curl -sS -i -X POST -H "Content-Type: application/json" -d "{\"token\":\"$TOKEN\
 
 ### `GET /api/sessions`
 
-Every session as `SessionInfo[]`, the shape `omp-vs ls --json` prints. Running sessions come first, then most recently active. Archived sessions are included with `archived: true`.
+Every session as `SessionInfo[]`, the shape `omp-sessions ls --json` prints. Running sessions come first, then most recently active. Archived sessions are included with `archived: true`.
 
 ```bash
 api $OMP/api/sessions
@@ -186,12 +186,12 @@ api $OMP/api/projects
 
 ### `POST /api/sessions` `{cwd, prompt?, title?, mode?, task?}`
 
-Starts a session in `cwd`: an absolute path, or one starting with `~/`. The server's create operation runs it, the same one `omp-vs new` uses.
+Starts a session in `cwd`: an absolute path, or one starting with `~/`. The server's create operation runs it, the same one `omp-sessions new` uses.
 
 | Field | Meaning |
 | --- | --- |
 | `prompt` | Sent once the host is up. The call returns after omp accepted it. |
-| `task` | Queue-only, like `omp-vs new --task`. The session is created stopped, with the task in its queue, and the server starts it when a concurrency slot is free. Give either `prompt` or `task`, not both. |
+| `task` | Queue-only, like `omp-sessions new --task`. The session is created stopped, with the task in its queue, and the server starts it when a concurrency slot is free. Give either `prompt` or `task`, not both. |
 | `mode` | The starting permission mode (`ask`, `edits`, `plan`, `auto`), passed as the `--approval-mode` launch flag. Without it, the session uses the project's or omp's default. |
 | `title` | Defaults to the first line of the prompt or task. |
 
@@ -358,7 +358,7 @@ The app is built from `src/mobile/` into `out/mobile.{html,js,css}`, `out/manife
 
 ## Security notes
 
-- **The token is a password for your sessions.** Anyone who has it can run commands on the machine through omp. Don't share the pairing link or screenshots of the QR code. `omp-vs remote rotate` (or *Rotate Remote Access Token*) unpairs every device at once.
+- **The token is a password for your sessions.** Anyone who has it can run commands on the machine through omp. Don't share the pairing link or screenshots of the QR code. `omp-sessions remote rotate` (or *Rotate Remote Access Token*) unpairs every device at once.
 - **Prefer Tailscale.** Its traffic is end-to-end encrypted, and only your own devices can reach the address. On `lan`, everything, including the token and the cookie, crosses the network in clear text. Plain HTTP is also why the cookie can't be marked `Secure`.
 - **`localhost` + your own TLS** (Caddy, nginx, `tailscale serve`, an SSH tunnel) is the way to expose it further. Keep the proxy on the same origin and pass `Authorization` and cookies through.
 - The server only runs as your user and serves your sessions. It never adds CORS headers, refuses cross-origin cookie writes, caps bodies at 1 MiB and locks out addresses that guess tokens.

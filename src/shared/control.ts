@@ -1,4 +1,4 @@
-// Session operations behind the omp-vs server and CLI (the CLI runs them in-process when no
+// Session operations behind the omp-sessions server and CLI (the CLI runs them in-process when no
 // server is up), plus the pure planning the server's scheduler uses. Node-only; no vscode.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -223,7 +223,7 @@ export interface ControlEnv {
 	launcher(): HostLauncher;
 	/** A server launches queued sessions (queue-only `create` then waits for it). */
 	serverUp(): boolean;
-	/** Name used when connecting to hosts (`omp-vs-server…` doesn't count as a viewer). */
+	/** Name used when connecting to hosts (`omp-sessions-server…` doesn't count as a viewer). */
 	clientName: string;
 	/** Sessions the server is backing off from (crash loops). */
 	blocked?(id: string): boolean;
@@ -309,7 +309,7 @@ export class Control {
 		organizeNew(org, id, args);
 		this.env.changed?.();
 		if (args.prompt) {
-			if (!(await waitForHost(id))) throw new Error(`session ${id} did not start (see omp-vs tail ${id.slice(0, 8)})`);
+			if (!(await waitForHost(id))) throw new Error(`session ${id} did not start (see omp-sessions tail ${id.slice(0, 8)})`);
 			await this.prompt({ id, text: args.prompt });
 		}
 		return { id, started: true };

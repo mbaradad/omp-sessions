@@ -1,14 +1,16 @@
-// The omp-vs server and CLI from the extension's side: mirrors `omp.path`/`omp.extraArgs` into
+// The omp-sessions server and CLI from the extension's side: mirrors `omp.path`/`omp.extraArgs` into
 // launcher.json, installs host/server/cli bundles into a stable runtime folder (the extension
-// folder changes with every update), keeps the server running at this version, and installs
-// the `omp-vs` command (`omp.installCli`).
+// folder changes with every update), keeps the server running at this version, installs
+// the `omp-sessions` command (`omp.installCli`) and moves what the old command name (0.5.0 and
+// earlier) installed to the new one (shared/rename-migration.ts).
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { readHostVersion, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
+import { migrateLegacyLauncher, migrateLegacyService } from "../shared/rename-migration";
 import { ServerClient, compareVersions, ensureServer, stopServer } from "../shared/server-client";
 import { serverLogPath } from "../shared/server-protocol";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
@@ -44,7 +46,7 @@ export function installRuntime(outDir: string, version: string): string {
 	if (complete && current === version) return dir;
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	for (const f of RUNTIME_FILES) copyAtomic(path.join(outDir, f), path.join(dir, f));
-	// The Hermes plugin `omp-vs hermes install` copies from (a folder: swapped in whole).
+	// The Hermes plugin `omp-sessions hermes install` copies from (a folder: swapped in whole).
 	const plugin = path.join(dir, PLUGIN_BUNDLE);
 	const tmp = `${plugin}.${process.pid}.tmp`;
 	fs.rmSync(tmp, { recursive: true, force: true });
@@ -52,7 +54,7 @@ export function installRuntime(outDir: string, version: string): string {
 	fs.rmSync(plugin, { recursive: true, force: true });
 	fs.renameSync(tmp, plugin);
 	const pkg = path.join(dir, "package.json");
-	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "omp-vs-runtime", version, private: true }));
+	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "omp-sessions-runtime", version, private: true }));
 	fs.renameSync(`${pkg}.tmp`, pkg);
 	return dir;
 }
@@ -74,26 +76,6 @@ function findSystemNode(): string | undefined {
 function runtimeNode(): { path: string; electron: boolean } {
 	const node = findSystemNode();
 	return node ? { path: node, electron: false } : { path: process.execPath, electron: true };
-}
-
-export function cliShimPath(): string {
-	return process.platform === "win32" ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "omp-vs", "omp-vs.cmd") : path.join(os.homedir(), ".local", "bin", "omp-vs");
-}
-
-const SHIM_MARK = "installed by the omp Sessions VS Code extension";
-
-function shimText(node: { path: string; electron: boolean }, cli: string): string {
-	if (process.platform === "win32") {
-		return `@echo off\r\nrem omp-vs: ${SHIM_MARK}\r\n${node.electron ? "set ELECTRON_RUN_AS_NODE=1\r\n" : ""}"${node.path}" "${cli}" %*\r\n`;
-	}
-	const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-	const home = process.env.OMP_VSCODE_HOME ? `OMP_VSCODE_HOME=${q(process.env.OMP_VSCODE_HOME)} ` : "";
-	return `#!/bin/sh\n# omp-vs: ${SHIM_MARK}\n${node.electron ? "ELECTRON_RUN_AS_NODE=1 " : ""}${home}exec ${q(node.path)} ${q(cli)} "$@"\n`;
-}
-
-function writeShim(file: string, text: string): void {
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, text, { mode: 0o755 });
 }
 
 function onPath(dir: string): boolean {
@@ -127,7 +109,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	try {
 		runtime = installRuntime(outDir, version);
 	} catch (err) {
-		log.error(`could not install the omp-vs runtime: ${String(err)}`);
+		log.error(`could not install the omp-sessions runtime: ${String(err)}`);
 	}
 	let node: { path: string; electron: boolean } | undefined;
 	const getNode = () => {
@@ -135,48 +117,70 @@ export function registerServer(api: OmpApi): ServerControl {
 		return node;
 	};
 
-	/** Keeps an existing shim pointing at a runtime that still exists (VS Code updates move its node). */
+	/** Keeps an existing launcher pointing at a runtime that still exists (VS Code updates move its node). */
 	const refreshShim = () => {
 		if (!runtime) return;
-		const file = cliShimPath();
+		const file = launcherPath();
 		let existing: string;
 		try {
 			existing = fs.readFileSync(file, "utf8");
 		} catch {
 			return;
 		}
-		if (!existing.includes(SHIM_MARK)) return;
-		const text = shimText(getNode(), path.join(runtime, "cli.js"));
-		if (text !== existing) writeShim(file, text);
+		if (!isOurLauncher(existing)) return;
+		const text = launcherText(getNode(), path.join(runtime, "cli.js"));
+		if (text !== existing) writeLauncher(file, text);
+	};
+
+	/** Moves the old command's launcher and service to the new name (a no-op once done). */
+	const migrate = async () => {
+		try {
+			const moved = migrateLegacyLauncher();
+			if (moved) {
+				log.info(`replaced the launcher ${moved.from} with ${moved.to}`);
+				const dir = path.dirname(moved.to);
+				if (!onPath(dir)) void vscode.window.showInformationMessage(`The terminal command is now \`${COMMAND}\`, installed at ${moved.to}. Add ${dir} to your PATH to run it.`);
+			}
+		} catch (err) {
+			log.warn(`could not replace the old launcher: ${String(err)}`);
+		}
+		try {
+			const service = await migrateLegacyService();
+			if (service) log.info(`replaced the service ${service.from} with ${service.to}${service.started ? "" : " (it did not start; see systemctl/launchctl)"}`);
+		} catch (err) {
+			log.warn(`could not replace the old service: ${String(err)}`);
+		}
 	};
 
 	const startServer = async (restart: boolean): Promise<string> => {
-		if (!runtime) throw new Error("the omp-vs runtime is not installed");
+		if (!runtime) throw new Error("the omp-sessions runtime is not installed");
 		const script = path.join(runtime, "server.js");
 		if (restart) await stopServer();
 		let client = await ensureServer(script, getNode().path);
-		if (!client) throw new Error(`the omp-vs server did not start (see ${serverLogPath()})`);
+		if (!client) throw new Error(`the omp-sessions server did not start (see ${serverLogPath()})`);
 		let info = await client.request("ping", {}, 3000);
 		if (compareVersions(info.version, version) < 0) {
-			log.info(`restarting omp-vs server ${info.version} → ${version}`);
+			log.info(`restarting omp-sessions server ${info.version} → ${version}`);
 			client.close();
 			await stopServer();
 			client = await ensureServer(script, getNode().path);
-			if (!client) throw new Error(`the omp-vs server did not restart (see ${serverLogPath()})`);
+			if (!client) throw new Error(`the omp-sessions server did not restart (see ${serverLogPath()})`);
 			info = await client.request("ping", {}, 3000);
 		}
 		client.close();
-		return `omp-vs server ${info.version} running (pid ${info.pid})`;
+		return `omp-sessions server ${info.version} running (pid ${info.pid})`;
 	};
 
-	// Off the activation path: finding node and starting the server take a moment.
-	setTimeout(() => {
+	// Off the activation path: finding node and starting the server take a moment. The migration
+	// comes first: an old service would hold the server socket.
+	setTimeout(async () => {
+		await migrate();
 		try {
 			refreshShim();
 		} catch (err) {
-			log.warn(`could not refresh the omp-vs command: ${String(err)}`);
+			log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
 		}
-		if (process.env.OMP_VS_NO_SERVER || !vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true)) return;
+		if (process.env.OMP_SESSIONS_NO_SERVER || !vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true)) return;
 		startServer(false).then(
 			msg => log.info(msg),
 			err => log.error(String(err instanceof Error ? err.message : err)),
@@ -186,23 +190,24 @@ export function registerServer(api: OmpApi): ServerControl {
 	context.subscriptions.push(
 		vscode.commands.registerCommand("omp.installCli", async () => {
 			if (!runtime) {
-				void vscode.window.showErrorMessage("The omp-vs runtime could not be installed; see the omp Server output.");
+				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the omp Server output.");
 				return;
 			}
-			const file = cliShimPath();
+			const file = launcherPath();
 			try {
-				writeShim(file, shimText(getNode(), path.join(runtime, "cli.js")));
+				migrateLegacyLauncher();
+				writeLauncher(file, launcherText(getNode(), path.join(runtime, "cli.js")));
 			} catch (err) {
-				void vscode.window.showErrorMessage(`Could not install omp-vs: ${String(err)}`);
+				void vscode.window.showErrorMessage(`Could not install ${COMMAND}: ${String(err)}`);
 				return;
 			}
 			const dir = path.dirname(file);
-			const hint = onPath(dir) ? "Run `omp-vs help` in a terminal." : `Add ${dir} to your PATH to run it as \`omp-vs\`.`;
-			const pick = await vscode.window.showInformationMessage(`Installed the omp-vs command at ${file}. ${hint}`, "Open Terminal");
+			const hint = onPath(dir) ? `Run \`${COMMAND} help\` in a terminal.` : `Add ${dir} to your PATH to run it as \`${COMMAND}\`.`;
+			const pick = await vscode.window.showInformationMessage(`Installed the ${COMMAND} command at ${file}. ${hint}`, "Open Terminal");
 			if (pick === "Open Terminal") {
-				const term = vscode.window.createTerminal({ name: "omp-vs" });
+				const term = vscode.window.createTerminal({ name: COMMAND });
 				term.show();
-				term.sendText(onPath(dir) ? "omp-vs help" : `${JSON.stringify(file)} help`);
+				term.sendText(onPath(dir) ? `${COMMAND} help` : `${JSON.stringify(file)} help`);
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.restart", async () => {
@@ -217,7 +222,7 @@ export function registerServer(api: OmpApi): ServerControl {
 			if (!fs.existsSync(file)) {
 				const running = await ServerClient.connect();
 				running?.close();
-				void vscode.window.showInformationMessage(running ? "The omp-vs server has not logged anything yet." : "The omp-vs server has not run yet.");
+				void vscode.window.showInformationMessage(running ? "The omp-sessions server has not logged anything yet." : "The omp-sessions server has not run yet.");
 				return;
 			}
 			await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });

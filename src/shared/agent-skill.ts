@@ -1,15 +1,16 @@
 // Installs the omp-sessions skill (skills/omp-sessions/SKILL.md, shipped as out/omp-sessions.SKILL.md)
 // where agent platforms look for skills, so Claude Code, Codex, omp itself and other tools that read
-// ~/.agents/skills can drive omp-vs. Hermes gets the skill with its plugin (hermes-plugin.ts). Only
-// copies we wrote (frontmatter `managed-by: omp-vs`) are replaced or removed. Node-only.
+// ~/.agents/skills can drive omp-sessions. Hermes gets the skill with its plugin (hermes-plugin.ts). Only
+// copies we wrote (frontmatter `managed-by: omp-sessions`, or the older mark) are replaced or removed. Node-only.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { LEGACY_SKILL_MARKER } from "./rename-migration";
 
 export const SKILL_NAME = "omp-sessions";
 /** File name of the skill next to the bundled CLI / extension (build.mjs copies it into out/). */
 export const SKILL_FILE = "omp-sessions.SKILL.md";
-const MARKER = "managed-by: omp-vs";
+const MARKERS = ["managed-by: omp-sessions", LEGACY_SKILL_MARKER];
 
 export type SkillPlatform = "agents" | "claude" | "codex";
 export const SKILL_PLATFORMS: readonly SkillPlatform[] = ["agents", "claude", "codex"];
@@ -47,7 +48,8 @@ export type InstallOutcome = "installed" | "updated" | "unchanged" | "skipped";
 
 function managed(file: string): boolean {
 	try {
-		return fs.readFileSync(file, "utf8").includes(MARKER);
+		const text = fs.readFileSync(file, "utf8");
+		return MARKERS.some(m => text.includes(m));
 	} catch {
 		return false;
 	}

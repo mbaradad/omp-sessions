@@ -1,4 +1,4 @@
-"""Runs the omp-vs CLI (the omp Sessions command line) and parses its JSON output."""
+"""Runs the omp-sessions CLI (the omp Sessions command line) and parses its JSON output."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-# Exit codes of `omp-vs wait`.
+# Exit codes of `omp-sessions wait`.
 WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 124: "timeout"}
 
 
 def agent_state(info: dict) -> str:
-    """The session's state as `omp-vs show --json` reports it, from an `omp-vs ls --json` entry
+    """The session's state as `omp-sessions show --json` reports it, from an `omp-sessions ls --json` entry
     (same rules as agentState in src/shared/session-report.ts): queued, starting, working,
     needs_input, idle or stopped."""
     meta = info.get("meta") if isinstance(info.get("meta"), dict) else {}
@@ -37,8 +37,8 @@ def agent_state(info: dict) -> str:
     return "queued" if pending > 0 and scheduled else "idle"
 
 
-class OmpVsError(RuntimeError):
-    """omp-vs is missing, failed, or printed something that isn't the expected JSON."""
+class OmpSessionsError(RuntimeError):
+    """omp-sessions is missing, failed, or printed something that isn't the expected JSON."""
 
 
 @dataclass
@@ -48,19 +48,19 @@ class Result:
     stderr: str
 
 
-def find_omp_vs(configured: Optional[str] = None) -> Optional[list[str]]:
-    """The command that runs omp-vs: the configured path, then PATH, then where `omp: Install omp-vs
-    Command` puts it (~/.local/bin/omp-vs; %LOCALAPPDATA%\\omp-vs\\omp-vs.cmd on Windows).
+def find_omp_sessions(configured: Optional[str] = None) -> Optional[list[str]]:
+    """The command that runs omp-sessions: the configured path, then PATH, then where `omp: Install omp-sessions
+    Command` puts it (~/.local/bin/omp-sessions; %LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd on Windows).
 
     A path ending in .js (the bundled out/cli.js) runs with node.
     """
     candidates = [configured] if configured else []
-    on_path = shutil.which("omp-vs")
+    on_path = shutil.which("omp-sessions")
     if on_path:
         candidates.append(on_path)
-    candidates.append(str(Path.home() / ".local" / "bin" / "omp-vs"))
+    candidates.append(str(Path.home() / ".local" / "bin" / "omp-sessions"))
     if os.environ.get("LOCALAPPDATA"):
-        candidates.append(str(Path(os.environ["LOCALAPPDATA"]) / "omp-vs" / "omp-vs.cmd"))
+        candidates.append(str(Path(os.environ["LOCALAPPDATA"]) / "omp-sessions" / "omp-sessions.cmd"))
     for c in candidates:
         if not c:
             continue
@@ -75,18 +75,18 @@ def find_omp_vs(configured: Optional[str] = None) -> Optional[list[str]]:
     return None
 
 
-class OmpVs:
+class OmpSessions:
     def __init__(self, configured: Optional[str] = None) -> None:
         self.configured = configured
 
     def command(self) -> list[str]:
-        cmd = find_omp_vs(self.configured)
+        cmd = find_omp_sessions(self.configured)
         if not cmd:
-            raise OmpVsError("omp-vs not found: install it from VS Code (omp: Install omp-vs Command) or set the plugin's omp_vs setting")
+            raise OmpSessionsError("omp-sessions not found: install it from VS Code (omp: Install omp-sessions Command) or set the plugin's omp_sessions setting")
         return cmd
 
     def available(self) -> bool:
-        return find_omp_vs(self.configured) is not None
+        return find_omp_sessions(self.configured) is not None
 
     def run(self, args: Sequence[str], *, stdin: Optional[str] = None, timeout: float = 60) -> Result:
         env = {**os.environ, "NO_COLOR": "1"}
@@ -100,16 +100,16 @@ class OmpVs:
                 env=env,
             )
         except subprocess.TimeoutExpired as exc:
-            raise OmpVsError(f"omp-vs {' '.join(args[:2])} timed out after {int(timeout)}s") from exc
+            raise OmpSessionsError(f"omp-sessions {' '.join(args[:2])} timed out after {int(timeout)}s") from exc
         except OSError as exc:
-            raise OmpVsError(f"could not run omp-vs: {exc}") from exc
+            raise OmpSessionsError(f"could not run omp-sessions: {exc}") from exc
         return Result(p.returncode, p.stdout, p.stderr)
 
     def ok(self, args: Sequence[str], *, stdin: Optional[str] = None, timeout: float = 60) -> str:
         """Runs a command that must succeed; returns its stdout."""
         r = self.run(args, stdin=stdin, timeout=timeout)
         if r.code != 0:
-            raise OmpVsError(_message(r) or f"omp-vs {args[0]} exited with {r.code}")
+            raise OmpSessionsError(_message(r) or f"omp-sessions {args[0]} exited with {r.code}")
         return r.stdout
 
     def json(self, args: Sequence[str], *, stdin: Optional[str] = None, timeout: float = 60) -> Any:
@@ -128,7 +128,7 @@ class OmpVs:
             msg = _message(r)
             if "no session matches" in msg.lower():
                 return None
-            raise OmpVsError(msg or f"omp-vs show exited with {r.code}")
+            raise OmpSessionsError(msg or f"omp-sessions show exited with {r.code}")
         report = parse_json(r.stdout, ["show"])
         return report if isinstance(report, dict) else None
 
@@ -141,11 +141,11 @@ class OmpVs:
         return [p for p in out if isinstance(p, dict)] if isinstance(out, list) else []
 
     def version(self) -> dict:
-        """{"cli": version, "server": version or None, "pid": server pid or None} from `omp-vs version`."""
+        """{"cli": version, "server": version or None, "pid": server pid or None} from `omp-sessions version`."""
         out = self.ok(["version"], timeout=20).strip()
-        m = re.match(r"omp-vs (\S+)(?: · server (\S+) \(pid (\d+)\))?", out)
+        m = re.match(r"omp-sessions (\S+)(?: · server (\S+) \(pid (\d+)\))?", out)
         if not m:
-            raise OmpVsError(f"omp-vs version printed {out[:100]!r}")
+            raise OmpSessionsError(f"omp-sessions version printed {out[:100]!r}")
         return {"cli": m.group(1), "server": m.group(2), "pid": int(m.group(3)) if m.group(3) else None}
 
     def new(
@@ -164,7 +164,7 @@ class OmpVs:
     ) -> dict:
         """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?}."""
         if bool(prompt) == bool(task):
-            raise OmpVsError("give either a prompt or a task")
+            raise OmpSessionsError("give either a prompt or a task")
         args = ["new", cwd, "--detach", "--json"]
         stdin = None
         if prompt:
@@ -189,7 +189,7 @@ class OmpVs:
             args += ["--group", group]
         out = self.json(args, stdin=stdin, timeout=90)
         if not isinstance(out, dict) or not isinstance(out.get("id"), str):
-            raise OmpVsError(f"omp-vs new printed no session id: {str(out)[:200]}")
+            raise OmpSessionsError(f"omp-sessions new printed no session id: {str(out)[:200]}")
         return out
 
 
@@ -197,9 +197,9 @@ def parse_json(text: str, args: Sequence[str]) -> Any:
     try:
         return json.loads(text)
     except ValueError as exc:
-        raise OmpVsError(f"omp-vs {' '.join(args[:1])} printed no JSON: {text.strip()[:200]}") from exc
+        raise OmpSessionsError(f"omp-sessions {' '.join(args[:1])} printed no JSON: {text.strip()[:200]}") from exc
 
 
 def _message(r: Result) -> str:
     text = (r.stderr.strip() or r.stdout.strip()).splitlines()
-    return text[-1].removeprefix("omp-vs: ").strip() if text else ""
+    return text[-1].removeprefix("omp-sessions: ").strip() if text else ""

@@ -1,6 +1,6 @@
 // omp Doctor's Hermes section: the omp-sessions plugin in each Hermes profile, notifications, the
-// kanban lane against where Hermes's dispatcher runs, and the omp-vs the plugin runs. Pure: doctor.ts
-// gathers the facts (shared/hermes-plugin.ts, the same data as `omp-vs hermes status --json`).
+// kanban lane against where Hermes's dispatcher runs, and the omp-sessions the plugin runs. Pure: doctor.ts
+// gathers the facts (shared/hermes-plugin.ts, the same data as `omp-sessions hermes status --json`).
 
 import type { LaneStatus, PluginReport } from "../shared/hermes-plugin";
 import type { Check, Fix } from "./doctor-report";
@@ -16,8 +16,8 @@ export interface HermesFacts {
 	profiles: PluginReport[];
 	/** `hermes -p <profile> omp status --json` from one profile with the plugin enabled. */
 	lane?: { profile: string; status?: LaneStatus; error?: string };
-	/** The omp-vs the plugin finds; `gatewayPath`: the gateway's PATH was readable and searched. */
-	ompVs?: { path: string; via: "setting" | "PATH" | "install" };
+	/** The omp-sessions the plugin finds; `gatewayPath`: the gateway's PATH was readable and searched. */
+	ompSessions?: { path: string; via: "setting" | "PATH" | "install" };
 	gatewayPath: boolean;
 	/** Unix ms. */
 	now: number;
@@ -54,11 +54,11 @@ export function hermesChecks(f: HermesFacts): Check[] {
 		out.push({
 			level: "warn",
 			title: `omp-sessions plugin outdated in ${names(outdated)}`,
-			detail: "omp-vs installed these copies; the extension's bundled plugin is newer. Update replaces them and reloads the plugin in the running gateway (no restart); a changed dashboard page backend loads when the dashboard restarts.",
+			detail: "omp-sessions installed these copies; the extension's bundled plugin is newer. Update replaces them and reloads the plugin in the running gateway (no restart); a changed dashboard page backend loads when the dashboard restarts.",
 			fixes: [{ label: "Update", command: "omp.hermes.update", args: [outdated.map(r => r.label)] }],
 		});
-	if (foreign.length) out.push({ level: "info", title: `omp-sessions plugin in ${names(foreign)} differs from the bundled one`, detail: "Installed with Git or the catalog: omp-vs leaves it alone. Update it with `hermes plugins update omp-sessions`, or replace it with Install… (Replace)." });
-	if (ahead.length) out.push({ level: "info", title: `omp-sessions plugin in ${names(ahead)} is newer than this extension's`, detail: "A newer omp-vs (another editor or the CLI) installed it; this extension leaves it as is. Update the extension to match." });
+	if (foreign.length) out.push({ level: "info", title: `omp-sessions plugin in ${names(foreign)} differs from the bundled one`, detail: "Installed with Git or the catalog: omp-sessions leaves it alone. Update it with `hermes plugins update omp-sessions`, or replace it with Install… (Replace)." });
+	if (ahead.length) out.push({ level: "info", title: `omp-sessions plugin in ${names(ahead)} is newer than this extension's`, detail: "A newer omp-sessions (another editor or the CLI) installed it; this extension leaves it as is. Update the extension to match." });
 	for (const r of off) out.push({ level: "warn", title: `omp-sessions plugin ${r.status ?? "not enabled"} in ${r.label}`, detail: "Installed but Hermes doesn't load it there.", fixes: [{ label: "Enable", command: "omp.hermes.enable", args: [r.label] }] });
 	const missing = f.profiles.filter(r => !r.state.installed);
 	if (missing.length) out.push({ level: "info", title: `Not installed in ${missing.length} profile(s)`, detail: `${names(missing)}. Plugins are per profile: install it where you chat with Hermes about code.`, fixes: [INSTALL] });
@@ -116,16 +116,16 @@ export function hermesChecks(f: HermesFacts): Check[] {
 		out.push({ level: "info", title: `Kanban lane on in ${names(lanes)}`, detail: "Where the dispatcher runs is unknown. With the default multiplexed gateway it ticks in the default profile; turn the lane on there." });
 	if (!lanes.length && installed.some(r => r.status === "enabled")) out.push({ level: "info", title: "Kanban lane off", detail: "Cards assigned to omp run as omp sessions once it is on in the dispatcher's profile.", ...(where ? { fixes: [laneFix(where, true)] } : {}) });
 
-	// omp-vs for the plugin.
+	// The omp-sessions command for the plugin.
 	if (installed.some(r => r.status === "enabled")) {
-		const setting = installed.find(r => r.ompVs)?.ompVs;
-		if (f.ompVs) out.push({ level: "ok", title: "The plugin finds omp-vs", detail: `${f.ompVs.path} (${f.ompVs.via === "setting" ? "omp_vs setting" : f.ompVs.via === "PATH" ? "the gateway's PATH" : "where omp: Install omp-vs Command puts it"})` });
+		const setting = installed.find(r => r.ompSessions)?.ompSessions;
+		if (f.ompSessions) out.push({ level: "ok", title: "The plugin finds omp-sessions", detail: `${f.ompSessions.path} (${f.ompSessions.via === "setting" ? "omp_sessions setting" : f.ompSessions.via === "PATH" ? "the gateway's PATH" : "where omp: Install omp-sessions Command puts it"})` });
 		else
 			out.push({
 				level: f.gatewayPath ? "error" : "warn",
-				title: "The plugin may not find omp-vs",
-				detail: `${setting ? `The omp_vs setting (${setting}) is not an executable, and ` : ""}omp-vs is not where omp: Install omp-vs Command puts it${f.gatewayPath ? " or on the gateway's PATH" : " (the gateway's PATH is unknown: no gateway runs, or it is only read on Linux), so it must be on the gateway's PATH or set as the plugin's omp_vs setting"}.`,
-				fixes: [{ label: "Install omp-vs", command: "omp.installCli" }],
+				title: "The plugin may not find omp-sessions",
+				detail: `${setting ? `The omp_sessions setting (${setting}) is not an executable, and ` : ""}omp-sessions is not where omp: Install omp-sessions Command puts it${f.gatewayPath ? " or on the gateway's PATH" : " (the gateway's PATH is unknown: no gateway runs, or it is only read on Linux), so it must be on the gateway's PATH or set as the plugin's omp_sessions setting"}.`,
+				fixes: [{ label: "Install omp-sessions", command: "omp.installCli" }],
 			});
 	}
 	return out;

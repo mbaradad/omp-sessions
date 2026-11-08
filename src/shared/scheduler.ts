@@ -17,7 +17,7 @@ export interface SchedulerConfig {
 	maxConcurrent: number;
 	/** No new queued task starts anywhere while set; running ones finish. */
 	paused?: boolean;
-	/** The omp-vs daemon stops sessions it launched once their queue is done (absent = true). */
+	/** The omp-sessions daemon stops sessions it launched once their queue is done (absent = true). */
 	stopWhenQueueDone?: boolean;
 }
 

@@ -41,7 +41,7 @@ export function registerAgentSkill(api: OmpApi): void {
 			const picked = await vscode.window.showQuickPick(items, {
 				canPickMany: true,
 				title: "Install the omp-sessions skill",
-				placeHolder: "Agents that should learn to start, schedule and check omp sessions through omp-vs",
+				placeHolder: "Agents that should learn to start, schedule and check omp sessions through omp-sessions",
 			});
 			if (!picked?.length) return;
 			const lines: string[] = [];
@@ -60,7 +60,7 @@ export function registerAgentSkill(api: OmpApi): void {
 					}
 				}
 			}
-			void vscode.window.showInformationMessage("omp-sessions skill", { modal: true, detail: `${lines.join("\n")}\n\nAgents use it through omp-vs; install that with "omp: Install omp-vs Command" if you haven't.` });
+			void vscode.window.showInformationMessage("omp-sessions skill", { modal: true, detail: `${lines.join("\n")}\n\nAgents use it through the omp-sessions command; install that with "omp: Install omp-sessions Command" if you haven't.` });
 		}),
 	);
 }

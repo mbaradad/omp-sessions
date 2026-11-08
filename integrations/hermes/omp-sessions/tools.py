@@ -1,4 +1,4 @@
-"""The omp_* tools (toolset omp_sessions): thin wrappers over the omp-vs CLI."""
+"""The omp_* tools (toolset omp_sessions): thin wrappers over the omp-sessions CLI."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from .lane import one_line
 from .notify import Notifier, current_session_key
-from .ompvs import WAIT_EXIT, OmpVs, OmpVsError
+from .ompsessions import WAIT_EXIT, OmpSessions, OmpSessionsError
 from .settings import MODES, Settings
 
 TOOLSET = "omp_sessions"
@@ -165,26 +165,26 @@ def kanban_boards(settings: Settings) -> list[dict]:
     return out
 
 
-def resolve_place(args: dict, settings: Settings, omp: OmpVs) -> tuple[str, Optional[str]]:
+def resolve_place(args: dict, settings: Settings, omp: OmpSessions) -> tuple[str, Optional[str]]:
     """(cwd, default group) from cwd / board / project."""
     cwd, board, project = _str(args, "cwd"), _str(args, "board"), _str(args, "project")
     if cwd:
         cwd = os.path.abspath(os.path.expanduser(cwd))
         if not os.path.isdir(cwd):
-            raise OmpVsError(f"not a folder: {cwd}")
+            raise OmpSessionsError(f"not a folder: {cwd}")
         return cwd, None
     if board:
         b = next((x for x in kanban_boards(settings) if x["slug"] == board or (x.get("name") or "").lower() == board.lower()), None)
         folder = (b or {}).get("folder") or settings.lane.boards.get(board, {}).get("folder")
         if not folder:
-            raise OmpVsError(f"board {board} has no folder: set one with `hermes omp board {board} --folder <path>`, or pass cwd")
+            raise OmpSessionsError(f"board {board} has no folder: set one with `hermes omp board {board} --folder <path>`, or pass cwd")
         return os.path.expanduser(folder), (b or {}).get("group") or board
     if project:
         return resolve_project(project, settings, omp), None
-    raise OmpVsError("say where to run: cwd, project or board (omp_projects_list shows the options)")
+    raise OmpSessionsError("say where to run: cwd, project or board (omp_projects_list shows the options)")
 
 
-def resolve_project(name: str, settings: Settings, omp: OmpVs) -> str:
+def resolve_project(name: str, settings: Settings, omp: OmpSessions) -> str:
     low = name.lower()
     if name in settings.projects:
         return os.path.expanduser(settings.projects[name])
@@ -199,12 +199,12 @@ def resolve_project(name: str, settings: Settings, omp: OmpVs) -> str:
     if len(hits) == 1:
         return str(hits[0]["path"])
     if len(hits) > 1:
-        raise OmpVsError(f"project {name} matches several folders: {', '.join(str(h['path']) for h in hits[:6])}; pass cwd")
-    raise OmpVsError(f"no project or known folder called {name} (omp_projects_list shows the options); pass cwd")
+        raise OmpSessionsError(f"project {name} matches several folders: {', '.join(str(h['path']) for h in hits[:6])}; pass cwd")
+    raise OmpSessionsError(f"no project or known folder called {name} (omp_projects_list shows the options); pass cwd")
 
 
 class Tools:
-    def __init__(self, settings: Callable[[], Settings], omp: Callable[[], OmpVs], notifier: Notifier) -> None:
+    def __init__(self, settings: Callable[[], Settings], omp: Callable[[], OmpSessions], notifier: Notifier) -> None:
         self.settings = settings
         self.omp = omp
         self.notifier = notifier
@@ -225,13 +225,13 @@ class Tools:
     def _run(self, fn: Callable[[], Any]) -> str:
         try:
             return _ok(fn())
-        except OmpVsError as exc:
+        except OmpSessionsError as exc:
             return _err(str(exc))
 
     def _id(self, args: dict) -> str:
         sid = _str(args, "id")
         if not sid:
-            raise OmpVsError("id is required")
+            raise OmpSessionsError("id is required")
         return sid
 
     def sessions_list(self, args: dict, **_: Any) -> str:
@@ -255,12 +255,12 @@ class Tools:
             omp = self.omp()
             prompt, task = _str(args, "prompt"), _str(args, "task")
             if bool(prompt) == bool(task):
-                raise OmpVsError("give either prompt (start now) or task (queue it)")
+                raise OmpSessionsError("give either prompt (start now) or task (queue it)")
             if _str(args, "at") and not task:
-                raise OmpVsError("at schedules a queued task: use task instead of prompt")
+                raise OmpSessionsError("at schedules a queued task: use task instead of prompt")
             mode = _str(args, "mode")
             if mode and mode not in MODES:
-                raise OmpVsError(f"mode must be one of {', '.join(MODES)}")
+                raise OmpSessionsError(f"mode must be one of {', '.join(MODES)}")
             cwd, group = resolve_place(args, settings, omp)
             res = omp.new(
                 cwd,
@@ -269,7 +269,7 @@ class Tools:
                 subtasks=_list(args, "subtasks"),
                 notes=_str(args, "notes"),
                 at=_str(args, "at"),
-                # omp-vs names queued sessions after the task; prompt sessions after the prompt here.
+                # omp-sessions names queued sessions after the task; prompt sessions after the prompt here.
                 title=_str(args, "title") or (one_line(prompt, 60) if prompt else None),
                 mode=mode,
                 # `hermes` marks where the session came from (VS Code and the page show it), like lane sessions.
@@ -288,7 +288,7 @@ class Tools:
         def go() -> dict:
             report = self.omp().show(self._id(args))
             if report is None:
-                raise OmpVsError(f"no session matches {args.get('id')}")
+                raise OmpSessionsError(f"no session matches {args.get('id')}")
             self.notifier.seen(report)
             return report
 
@@ -305,7 +305,7 @@ class Tools:
             r = self.omp().run(["wait", sid, "--timeout", f"{timeout}s", "--json"], timeout=timeout + 60)
             outcome = WAIT_EXIT.get(r.code)
             if outcome is None:
-                raise OmpVsError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"omp-vs wait exited with {r.code}")
+                raise OmpSessionsError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"omp-sessions wait exited with {r.code}")
             try:
                 report = json.loads(r.stdout) if r.stdout.strip() else None
             except ValueError:
@@ -329,7 +329,7 @@ class Tools:
             sid = self._id(args)
             text = _str(args, "text")
             if not text:
-                raise OmpVsError("text is required")
+                raise OmpSessionsError("text is required")
             self.omp().ok(["send", sid, "-", *(["--follow-up"] if args.get("follow_up") is True else [])], stdin=text, timeout=90)
             self._rearm(sid)
             return {"sent": True}
@@ -341,7 +341,7 @@ class Tools:
             sid = self._id(args)
             answer = _str(args, "answer")
             if not answer:
-                raise OmpVsError("answer is required")
+                raise OmpSessionsError("answer is required")
             out = self.omp().ok(["answer", sid, answer])
             self._rearm(sid)
             return {"answered": True, "output": out.strip()}
@@ -352,7 +352,7 @@ class Tools:
         def go() -> dict:
             mode = _str(args, "mode")
             if mode not in MODES:
-                raise OmpVsError(f"mode must be one of {', '.join(MODES)}")
+                raise OmpSessionsError(f"mode must be one of {', '.join(MODES)}")
             out = self.omp().ok(["mode", self._id(args), mode])
             return {"mode": mode, "output": out.strip()}
 

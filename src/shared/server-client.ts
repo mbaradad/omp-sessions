@@ -1,4 +1,4 @@
-// Client side of the omp-vs server protocol (CLI and extension) and starting the server on
+// Client side of the omp-sessions server protocol (CLI and extension) and starting the server on
 // demand. Node-only; no vscode import.
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -41,7 +41,7 @@ export class ServerClient {
 		const onClose = () => {
 			if (this.closed) return;
 			this.closed = true;
-			for (const [id, done] of this.pending) done({ id, ok: false, error: "the omp-vs server closed the connection" });
+			for (const [id, done] of this.pending) done({ id, ok: false, error: "the omp-sessions server closed the connection" });
 			this.pending.clear();
 			for (const l of [...this.closeListeners]) l();
 		};
@@ -72,11 +72,11 @@ export class ServerClient {
 		const { promise, resolve, reject } = Promise.withResolvers<ServerOps[K]["result"]>();
 		const id = ++this.seq;
 		if (this.closed) {
-			reject(new Error("not connected to the omp-vs server"));
+			reject(new Error("not connected to the omp-sessions server"));
 			return promise;
 		}
 		const timer = setTimeout(() => {
-			if (this.pending.delete(id)) reject(new Error(`the omp-vs server did not answer ${op}`));
+			if (this.pending.delete(id)) reject(new Error(`the omp-sessions server did not answer ${op}`));
 		}, timeoutMs);
 		timer.unref();
 		this.pending.set(id, res => {
@@ -115,24 +115,34 @@ export class ServerClient {
 	}
 }
 
-/** Where `omp-vs server install` puts the per-user service (systemd user unit / launchd agent). */
+/** The per-user service `omp-sessions server install` sets up: systemd user unit / launchd agent label. */
+export const SYSTEMD_UNIT = "omp-sessions.service";
+export const LAUNCHD_LABEL = "dev.omp.sessions-server";
+export const SERVICE_DESCRIPTION = "omp-sessions server (omp Sessions: queued session launcher)";
+
+/** Where `omp-sessions server install` puts the per-user service (systemd user unit / launchd agent). */
 export function serviceUnitPaths(home = os.homedir()): { systemd: string; launchd: string } {
 	return {
-		systemd: path.join(home, ".config", "systemd", "user", "omp-vs.service"),
-		launchd: path.join(home, "Library", "LaunchAgents", "dev.omp.vs-server.plist"),
+		systemd: path.join(home, ".config", "systemd", "user", SYSTEMD_UNIT),
+		launchd: path.join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`),
 	};
 }
 
-export const LAUNCHD_LABEL = "dev.omp.vs-server";
+export type ServiceKind = "systemd" | "launchd";
+
+/** The kind of per-user service `server install` sets up here; undefined where there is none (Windows). */
+export function serviceKind(platform: NodeJS.Platform = process.platform): ServiceKind | undefined {
+	return platform === "linux" ? "systemd" : platform === "darwin" ? "launchd" : undefined;
+}
 
 const xmlText = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-/** The systemd user unit / launchd agent `omp-vs server install` writes; `env` entries are `NAME=value`. */
+/** The systemd user unit / launchd agent `omp-sessions server install` writes; `env` entries are `NAME=value`. */
 export function serviceUnitText(kind: "systemd" | "launchd", node: string, serverScript: string, env: string[]): string {
 	if (kind === "systemd") {
 		return [
 			"[Unit]",
-			"Description=omp-vs server (omp Sessions: queued session launcher)",
+			`Description=${SERVICE_DESCRIPTION}`,
 			"",
 			"[Service]",
 			// exec: `systemctl start` fails when the binary is missing, instead of reporting success.
@@ -168,7 +178,7 @@ ${envXml.join("\n")}
 }
 
 /**
- * Whether an installed unit serves this state folder: `omp-vs server install` records OMP_VSCODE_HOME
+ * Whether an installed unit serves this state folder: `omp-sessions server install` records OMP_VSCODE_HOME
  * (`Environment="OMP_VSCODE_HOME=…"` for systemd, `<key>OMP_VSCODE_HOME</key><string>…</string>` for
  * launchd) only when it is set; a unit without it serves the default folder.
  */
@@ -176,6 +186,36 @@ export function serviceServesHome(unitText: string, kind: "systemd" | "launchd",
 	const key = kind === "systemd" ? "OMP_VSCODE_HOME=" : "<key>OMP_VSCODE_HOME</key>";
 	if (!home) return !unitText.includes(key);
 	return unitText.includes(kind === "systemd" ? `${key}${home}"` : `${key}<string>${xmlText(home)}</string>`);
+}
+
+/** Runs systemctl/launchctl; true when it exited 0. */
+export type ServiceExec = (cmd: string, argv: string[]) => boolean;
+
+const quietExec: ServiceExec = (cmd, argv) => spawnSync(cmd, argv, { stdio: "ignore", timeout: 60_000 }).status === 0;
+
+/**
+ * Writes our service unit and enables + starts it. A running server is stopped first (the service's
+ * server would find it on the socket and exit; sessions keep running). False when systemctl/launchctl
+ * failed: the unit is written, the caller says how to load it.
+ */
+export async function installServiceUnit(kind: "systemd" | "launchd", text: string, home = os.homedir(), exec: ServiceExec = quietExec): Promise<boolean> {
+	const file = serviceUnitPaths(home)[kind];
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, text);
+	await stopServer();
+	if (kind === "systemd") return exec("systemctl", ["--user", "daemon-reload"]) && exec("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT]);
+	// Reinstalling: a loaded agent refuses a second load and would keep the old plist, so unload it first.
+	const domain = `gui/${os.userInfo().uid}`;
+	quietExec("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`]);
+	return exec("launchctl", ["bootstrap", domain, file]);
+}
+
+/** Stops, disables and deletes a service unit (`name`: the systemd unit or launchd label). */
+export function removeServiceUnit(kind: "systemd" | "launchd", file: string, name: string, exec: ServiceExec = quietExec): void {
+	if (kind === "systemd") exec("systemctl", ["--user", "disable", "--now", name]);
+	else quietExec("launchctl", ["bootout", `gui/${os.userInfo().uid}/${name}`]);
+	fs.rmSync(file, { force: true });
+	if (kind === "systemd") exec("systemctl", ["--user", "daemon-reload"]);
 }
 
 /**
@@ -188,7 +228,7 @@ function startService(): boolean {
 	const quiet = { stdio: "ignore" as const, timeout: 10_000 };
 	try {
 		if (process.platform === "linux" && fs.existsSync(systemd) && serviceServesHome(fs.readFileSync(systemd, "utf8"), "systemd", process.env.OMP_VSCODE_HOME)) {
-			return spawnSync("systemctl", ["--user", "start", "omp-vs.service"], quiet).status === 0;
+			return spawnSync("systemctl", ["--user", "start", SYSTEMD_UNIT], quiet).status === 0;
 		}
 		if (process.platform === "darwin" && fs.existsSync(launchd) && serviceServesHome(fs.readFileSync(launchd, "utf8"), "launchd", process.env.OMP_VSCODE_HOME)) {
 			return spawnSync("launchctl", ["kickstart", `gui/${os.userInfo().uid}/${LAUNCHD_LABEL}`], quiet).status === 0;

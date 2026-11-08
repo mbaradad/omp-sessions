@@ -1,5 +1,5 @@
-// omp-vs: the omp Sessions CLI. Lists, starts, chats with and organizes the same background
-// sessions the VS Code extension shows, through the omp-vs server (started on demand) or, when
+// omp-sessions: the omp Sessions CLI. Lists, starts, chats with and organizes the same background
+// sessions the VS Code extension shows, through the omp-sessions server (started on demand) or, when
 // it can't run, directly in-process.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -15,7 +15,8 @@ import { type RemoteStatus, isRemoteBind, newRemoteToken, normalizePublicUrl, pa
 import { qrHalfBlocks } from "../shared/remote-qr";
 import { recentProjects } from "../shared/projects";
 import { transcriptMessages } from "../shared/remote-snapshot";
-import { LAUNCHD_LABEL, ServerClient, compareVersions, ensureServer, readServerLog, serviceUnitPaths, serviceUnitText, stopServer } from "../shared/server-client";
+import { LAUNCHD_LABEL, SYSTEMD_UNIT, ServerClient, compareVersions, ensureServer, installServiceUnit, readServerLog, removeServiceUnit, serviceKind, serviceUnitPaths, serviceUnitText, stopServer } from "../shared/server-client";
+import { migrateLegacyLauncher, removeLegacyService } from "../shared/rename-migration";
 import { COLUMNS, type OpName, type ServerOps, type SessionInfo, serverLogPath, serverSocketPath } from "../shared/server-protocol";
 import { type AgentState, SETTLED_STATES, type SessionReport, agentState, dialogAnswer, sessionReport } from "../shared/session-report";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
@@ -49,7 +50,7 @@ function launcher(): HostLauncher {
 }
 
 function localBackend(): Backend {
-	const control = new Control({ launcher, serverUp: () => false, clientName: "omp-vs-server/cli" });
+	const control = new Control({ launcher, serverUp: () => false, clientName: "omp-sessions-server/cli" });
 	const ops: { [K in OpName]: (args: ServerOps[K]["args"]) => ServerOps[K]["result"] | Promise<ServerOps[K]["result"]> } = {
 		ping: () => ({ pid: process.pid, version: VERSION, root: stateRoot(), startedAt: Date.now() }),
 		list: a => control.list(a),
@@ -65,7 +66,7 @@ function localBackend(): Backend {
 		scheduler: a => control.scheduler(a),
 		remote: () => {
 			const { enabled, bind, port } = readRemoteConfig();
-			return { enabled, bind, port, ...(enabled ? { error: "the omp-vs server is not running (it serves remote access)" } : {}) };
+			return { enabled, bind, port, ...(enabled ? { error: "the omp-sessions server is not running (it serves remote access)" } : {}) };
 		},
 		shutdown: () => ({}),
 	};
@@ -85,7 +86,7 @@ let backendPromise: Promise<Backend> | undefined;
 /** The server when it runs (started on demand, upgraded when older than this CLI), else in-process. */
 function backend(): Promise<Backend> {
 	backendPromise ??= (async () => {
-		if (process.env.OMP_VS_NO_SERVER) return localBackend();
+		if (process.env.OMP_SESSIONS_NO_SERVER) return localBackend();
 		const canStart = fs.existsSync(SERVER_SCRIPT);
 		let client = canStart ? await ensureServer(SERVER_SCRIPT) : await ServerClient.connect();
 		if (client && canStart) {
@@ -101,7 +102,7 @@ function backend(): Promise<Backend> {
 			}
 		}
 		if (client) return serverBackend(client);
-		process.stderr.write(c.dim(`omp-vs: the server did not start (see ${serverLogPath()}); running without it\n`));
+		process.stderr.write(c.dim(`omp-sessions: the server did not start (see ${serverLogPath()}); running without it\n`));
 		return localBackend();
 	})();
 	return backendPromise;
@@ -124,7 +125,7 @@ async function running(meta: SessionMeta): Promise<SessionMeta> {
 	if (meta.status !== "stopped") return meta;
 	process.stderr.write(c.dim(`resuming ${shortId(meta.id)} ${meta.title}…\n`));
 	await (await backend()).call("resume", { id: meta.id });
-	if (!(await waitForHost(meta.id))) throw new Error(`session ${shortId(meta.id)} did not start (omp-vs tail ${shortId(meta.id)})`);
+	if (!(await waitForHost(meta.id))) throw new Error(`session ${shortId(meta.id)} did not start (omp-sessions tail ${shortId(meta.id)})`);
 	return readMeta(meta.id) ?? meta;
 }
 
@@ -182,7 +183,7 @@ async function cmdList(args: Args): Promise<void> {
 	if (shown.length === 0) process.stdout.write(c.dim(all ? "No sessions.\n" : "No running sessions.\n"));
 	else printTable(shown);
 	const hidden = infos.length - shown.length;
-	if (hidden > 0) process.stdout.write(c.dim(`${hidden} finished session${hidden === 1 ? "" : "s"} hidden · omp-vs ls --all\n`));
+	if (hidden > 0) process.stdout.write(c.dim(`${hidden} finished session${hidden === 1 ? "" : "s"} hidden · omp-sessions ls --all\n`));
 	if (shown.some(i => i.waiting)) {
 		const s = await b.call("scheduler", {});
 		const limit = s.maxConcurrent ? `limit ${s.maxConcurrent}` : "no limit";
@@ -251,8 +252,8 @@ async function cmdNew(args: Args): Promise<number> {
 		notes,
 	});
 	// A started session's meta is written by its host as it comes up: wait for it, so the title is known and
-	// the next command (`omp-vs wait .`, `show .`) finds the session.
-	if (!task && res.started && !(await waitForHost(res.id))) throw new Error(`session ${shortId(res.id)} did not start (omp-vs tail ${shortId(res.id)})`);
+	// the next command (`omp-sessions wait .`, `show .`) finds the session.
+	if (!task && res.started && !(await waitForHost(res.id))) throw new Error(`session ${shortId(res.id)} did not start (omp-sessions tail ${shortId(res.id)})`);
 	const meta = readMeta(res.id);
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ id: res.id, started: res.started, title: meta?.title ?? "", cwd, ...(startAt ? { startAt } : {}) })}\n`);
@@ -294,7 +295,7 @@ async function cmdTail(args: Args): Promise<number> {
 	if (meta.status !== "stopped" && flag(args, "follow")) return attach(meta, { history: lines, readOnly: true });
 	let messages: unknown[];
 	if (meta.status !== "stopped") {
-		const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-vs-tail");
+		const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-sessions-tail");
 		conn.close();
 		messages = snapshot.messages;
 	} else messages = transcriptMessages(meta.ompSessionFile);
@@ -302,7 +303,7 @@ async function cmdTail(args: Args): Promise<number> {
 	for (const m of messages.slice(-lines)) for (const l of renderMessage(m, width)) process.stdout.write(`${l}\n`);
 	if (meta.status === "stopped") {
 		process.stdout.write(c.dim(`session stopped${meta.exitReason ? `: ${meta.exitReason}` : ""} (${ago(meta.updatedAt)} ago)\n`));
-		if (flag(args, "follow")) process.stdout.write(c.dim(`omp-vs resume ${shortId(meta.id)} to continue it\n`));
+		if (flag(args, "follow")) process.stdout.write(c.dim(`omp-sessions resume ${shortId(meta.id)} to continue it\n`));
 	}
 	return 0;
 }
@@ -318,7 +319,7 @@ async function reportFor(meta: SessionMeta): Promise<SessionReport> {
 	let pendingUi: UiRequest[] = [];
 	if (info.meta.status !== "stopped") {
 		try {
-			const { conn, snapshot } = await HostConnection.open(info.meta.socket, "omp-vs-show");
+			const { conn, snapshot } = await HostConnection.open(info.meta.socket, "omp-sessions-show");
 			conn.close();
 			messages = snapshot.messages;
 			pendingUi = snapshot.pendingUi;
@@ -338,7 +339,7 @@ function printReport(r: SessionReport): void {
 	if (r.question) {
 		process.stdout.write(`${c.magenta(`? ${r.question.title}`)}${r.question.message ? `\n${r.question.message}` : ""}\n`);
 		r.question.options?.forEach((o, i) => process.stdout.write(`  ${c.bold(String(i + 1))}. ${o}\n`));
-		process.stdout.write(c.dim(`answer: omp-vs answer ${shortId(r.id)} <choice>\n`));
+		process.stdout.write(c.dim(`answer: omp-sessions answer ${shortId(r.id)} <choice>\n`));
 	}
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
@@ -409,7 +410,7 @@ async function cmdAnswer(args: Args): Promise<number> {
 	const meta = findSession(args._[0]);
 	const text = args._.slice(1).join(" ");
 	if (meta.status !== "waiting") throw new Error(`${shortId(meta.id)} ${meta.title} is not waiting for an answer (${meta.status})`);
-	const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-vs-answer");
+	const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-sessions-answer");
 	try {
 		const req = snapshot.pendingUi.find(r => DIALOG_METHODS[r.method]);
 		if (!req) throw new Error("no question is waiting");
@@ -425,7 +426,7 @@ async function cmdAnswer(args: Args): Promise<number> {
 			setTimeout(() => resolve(false), 5000).unref();
 		});
 		conn.write({ t: "ui_response", res: { id: req.id, ...answer.res } });
-		if (!(await resolved)) throw new Error("the session did not take the answer (answer it in VS Code or omp-vs attach)");
+		if (!(await resolved)) throw new Error("the session did not take the answer (answer it in VS Code or omp-sessions attach)");
 		process.stdout.write(`${c.green("answered")} ${shortId(meta.id)} ${typeof req.title === "string" && req.title ? req.title : req.method}\n`);
 		return 0;
 	} finally {
@@ -448,7 +449,7 @@ function cmdProjects(args: Args): number {
 
 function skillContent(): string {
 	const file = path.join(__dirname, SKILL_FILE);
-	if (!fs.existsSync(file)) throw new Error(`${SKILL_FILE} is missing next to the CLI (reinstall it: omp: Install omp-vs Command)`);
+	if (!fs.existsSync(file)) throw new Error(`${SKILL_FILE} is missing next to the CLI (reinstall it: omp: Install omp-sessions Command)`);
 	return fs.readFileSync(file, "utf8");
 }
 
@@ -479,7 +480,7 @@ function cmdSkill(args: Args): number {
 				const mark = outcome === "skipped" ? c.yellow(outcome) : outcome === "unchanged" ? c.dim(outcome) : c.green(outcome);
 				process.stdout.write(`${pad(mark, 10)} ${t.platform}  ${c.dim(path.join(t.dir, "SKILL.md"))}\n`);
 			}
-			if (skipped) process.stdout.write(c.dim("skipped: a SKILL.md omp-vs didn't write is in the way (--force replaces it)\n"));
+			if (skipped) process.stdout.write(c.dim("skipped: a SKILL.md omp-sessions didn't write is in the way (--force replaces it)\n"));
 			return 0;
 		}
 		case "uninstall": {
@@ -524,12 +525,12 @@ function cmdHermes(args: Args): number {
 				const mark = u.outcome === "skipped" || u.outcome === "busy" ? c.yellow(u.outcome) : u.outcome === "unchanged" ? c.dim(u.outcome) : c.green(u.outcome);
 				process.stdout.write(`${pad(mark, 10)} ${several || t.label !== "default" ? `${c.bold(t.label)} ` : ""}${dir}\n`);
 				if (u.outcome === "skipped") {
-					process.stdout.write(c.dim("a plugin folder omp-vs didn't write is in the way (--force replaces it)\n"));
+					process.stdout.write(c.dim("a plugin folder omp-sessions didn't write is in the way (--force replaces it)\n"));
 					failed = true;
 					continue;
 				}
 				if (u.outcome === "busy") {
-					process.stdout.write(c.dim("another omp-vs or VS Code window is installing the plugin there right now; run it again in a moment\n"));
+					process.stdout.write(c.dim("another omp-sessions or VS Code window is installing the plugin there right now; run it again in a moment\n"));
 					failed = true;
 					continue;
 				}
@@ -554,7 +555,7 @@ function cmdHermes(args: Args): number {
 					const res = disablePlugin(hermes, t);
 					if (res.output) process.stdout.write(`${res.output}\n`);
 				}
-				process.stdout.write(uninstallPlugin(dir) ? `${c.yellow("removed")} ${dir}\n` : c.dim(`nothing omp-vs installed at ${dir}\n`));
+				process.stdout.write(uninstallPlugin(dir) ? `${c.yellow("removed")} ${dir}\n` : c.dim(`nothing omp-sessions installed at ${dir}\n`));
 			}
 			return 0;
 		}
@@ -618,7 +619,7 @@ async function cmdAbort(args: Args): Promise<void> {
 }
 
 async function cmdMode(args: Args): Promise<void> {
-	// `omp-vs mode plan` = the latest session in this folder.
+	// `omp-sessions mode plan` = the latest session in this folder.
 	const [ref, want] = args._.length === 1 && permissionModeOf(args._[0].toLowerCase()) ? [".", args._[0]] : [args._[0] ?? ".", args._[1]];
 	const meta = findSession(ref);
 	if (!want) {
@@ -629,7 +630,7 @@ async function cmdMode(args: Args): Promise<void> {
 	}
 	const mode = permissionModeOf(want.toLowerCase());
 	if (!mode) throw new UsageError(`unknown mode "${want}" (${PERMISSION_MODES.join(", ")})`);
-	if (!(await setSessionPermissionMode(meta, mode))) throw new Error(meta.permissionMode ? "the session host is unreachable" : "this session's host predates permission modes; restart it (omp-vs stop + resume) to switch live");
+	if (!(await setSessionPermissionMode(meta, mode))) throw new Error(meta.permissionMode ? "the session host is unreachable" : "this session's host predates permission modes; restart it (omp-sessions stop + resume) to switch live");
 	process.stdout.write(`${c.green(PERMISSION_MODE_INFO[mode].label)} ${shortId(meta.id)} ${meta.title}${meta.status === "stopped" ? c.dim(" (applies when resumed)") : ""}\n`);
 }
 
@@ -644,7 +645,7 @@ function printQueue(meta: SessionMeta, q: TaskQueue): void {
 				? c.blue(`starts ${new Date(q.startAt).toLocaleString()}`)
 				: c.dim("paused");
 	process.stdout.write(`${c.bold(meta.title)} ${c.dim(shortId(meta.id))} · ${state}\n`);
-	if (q.tasks.length === 0) process.stdout.write(c.dim("  no tasks · omp-vs queue <session> add <task>\n"));
+	if (q.tasks.length === 0) process.stdout.write(c.dim("  no tasks · omp-sessions queue <session> add <task>\n"));
 	const width = termWidth();
 	q.tasks.forEach((t, i) => {
 		const color = t.status === "done" ? c.green : t.status === "failed" ? c.red : t.status === "running" ? c.yellow : t.status === "skipped" ? c.dim : (s: string) => s;
@@ -722,7 +723,7 @@ async function cmdQueue(args: Args): Promise<void> {
 	const next = await b.call("queue", { id: meta.id, ops });
 	printQueue(readMeta(meta.id) ?? meta, next);
 	if (!b.server && meta.status === "stopped" && next.autoRun && next.tasks.some(t => t.status === "pending")) {
-		process.stdout.write(c.dim(`the session is stopped: omp-vs resume ${shortId(meta.id)} runs the queue (or start the server: omp-vs server start)\n`));
+		process.stdout.write(c.dim(`the session is stopped: omp-sessions resume ${shortId(meta.id)} runs the queue (or start the server: omp-sessions server start)\n`));
 	}
 }
 
@@ -840,7 +841,7 @@ async function cmdServer(args: Args): Promise<number> {
 		case "status": {
 			const client = await ServerClient.connect();
 			if (!client) {
-				process.stdout.write(`${c.yellow("not running")} ${c.dim("· omp-vs server start (other commands start it on demand)")}\n`);
+				process.stdout.write(`${c.yellow("not running")} ${c.dim("· omp-sessions server start (other commands start it on demand)")}\n`);
 				return 3;
 			}
 			const info = await client.request("ping", {});
@@ -883,7 +884,7 @@ function printRemote(s: RemoteStatus): void {
 	if (s.localUrl) rows.push(`local   ${s.localUrl} ${c.dim("(the proxy in front forwards here)")}`);
 	if (s.error) rows.push(`error   ${c.red(s.error)}`);
 	if (s.listening && s.bind === "lan" && !s.url?.startsWith("https:")) rows.push(c.yellow("plain HTTP: anyone on this network can see the traffic; prefer --bind tailscale"));
-	if (s.url) rows.push(c.dim("pair a phone: omp-vs remote qr (scan it, or open the pairing URL on the phone)"));
+	if (s.url) rows.push(c.dim("pair a phone: omp-sessions remote qr (scan it, or open the pairing URL on the phone)"));
 	process.stdout.write(`${rows.join("\n")}\n`);
 }
 
@@ -921,7 +922,7 @@ async function cmdRemote(args: Args): Promise<number> {
 			return s.enabled && !s.listening ? 1 : 0;
 		}
 		case "qr": {
-			if (!readRemoteConfig().enabled) throw new Error("remote access is off (omp-vs remote on)");
+			if (!readRemoteConfig().enabled) throw new Error("remote access is off (omp-sessions remote on)");
 			const s = await apply();
 			if (!s.url) throw new Error(s.error ?? "remote access is not listening");
 			const url = pairingUrl(s.url, readRemoteConfig().token);
@@ -931,7 +932,7 @@ async function cmdRemote(args: Args): Promise<number> {
 		case "rotate": {
 			const cfg = updateRemoteConfig({ token: newRemoteToken() });
 			await apply();
-			process.stdout.write(`${c.green("new token")} · paired phones must pair again${cfg.enabled ? c.dim(" (omp-vs remote qr)") : ""}\n`);
+			process.stdout.write(`${c.green("new token")} · paired phones must pair again${cfg.enabled ? c.dim(" (omp-sessions remote qr)") : ""}\n`);
 			return 0;
 		}
 		default:
@@ -940,53 +941,34 @@ async function cmdRemote(args: Args): Promise<number> {
 }
 
 async function installService(): Promise<number> {
+	// What 0.5.0 and earlier installed goes first: the old service would hold the server socket.
+	migrateLegacyLauncher();
+	removeLegacyService(undefined, undefined, run);
 	const env = [`ELECTRON_RUN_AS_NODE=1`, ...(process.env.OMP_VSCODE_HOME ? [`OMP_VSCODE_HOME=${process.env.OMP_VSCODE_HOME}`] : []), `PATH=${process.env.PATH ?? ""}`];
-	const { systemd, launchd } = serviceUnitPaths();
-	if (process.platform === "linux") {
-		fs.mkdirSync(path.dirname(systemd), { recursive: true });
-		fs.writeFileSync(systemd, serviceUnitText("systemd", process.execPath, SERVER_SCRIPT, env));
-		// The service's server would find this one on the socket and exit: stop it first (sessions keep running).
-		await stopServer();
-		const ok = run("systemctl", ["--user", "daemon-reload"]) && run("systemctl", ["--user", "enable", "--now", "omp-vs.service"]);
-		process.stdout.write(ok ? `${c.green("installed")} ${systemd}\n` : `${c.yellow("wrote")} ${systemd} ${c.dim("(enable it with: systemctl --user enable --now omp-vs)")}\n`);
-		return ok ? 0 : 1;
-	}
-	if (process.platform === "darwin") {
-		fs.mkdirSync(path.dirname(launchd), { recursive: true });
-		fs.writeFileSync(launchd, serviceUnitText("launchd", process.execPath, SERVER_SCRIPT, env));
-		await stopServer();
-		// Reinstalling: a loaded agent refuses a second load and would keep the old plist, so unload it first.
-		const domain = `gui/${os.userInfo().uid}`;
-		spawnSync("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`], { stdio: "ignore" });
-		const ok = run("launchctl", ["bootstrap", domain, launchd]);
-		process.stdout.write(ok ? `${c.green("installed")} ${launchd}\n` : `${c.yellow("wrote")} ${launchd} ${c.dim(`(load it with: launchctl bootstrap ${domain} ${launchd})`)}\n`);
-		return ok ? 0 : 1;
-	}
-	throw new Error("server install supports Linux (systemd) and macOS (launchd); on Windows the server starts on demand");
+	const kind = serviceKind();
+	if (!kind) throw new Error("server install supports Linux (systemd) and macOS (launchd); on Windows the server starts on demand");
+	const file = serviceUnitPaths()[kind];
+	const ok = await installServiceUnit(kind, serviceUnitText(kind, process.execPath, SERVER_SCRIPT, env), undefined, run);
+	const hint = kind === "systemd" ? `enable it with: systemctl --user enable --now ${SYSTEMD_UNIT}` : `load it with: launchctl bootstrap gui/${os.userInfo().uid} ${file}`;
+	process.stdout.write(ok ? `${c.green("installed")} ${file}\n` : `${c.yellow("wrote")} ${file} ${c.dim(`(${hint})`)}\n`);
+	return ok ? 0 : 1;
 }
 
 function uninstallService(): number {
-	const { systemd, launchd } = serviceUnitPaths();
-	if (process.platform === "linux" && fs.existsSync(systemd)) {
-		run("systemctl", ["--user", "disable", "--now", "omp-vs.service"]);
-		fs.rmSync(systemd, { force: true });
-		run("systemctl", ["--user", "daemon-reload"]);
-		process.stdout.write(`${c.green("removed")} ${systemd}\n`);
+	const kind = serviceKind();
+	const file = kind && serviceUnitPaths()[kind];
+	if (!kind || !file || !fs.existsSync(file)) {
+		process.stdout.write(c.dim("no service installed\n"));
 		return 0;
 	}
-	if (process.platform === "darwin" && fs.existsSync(launchd)) {
-		spawnSync("launchctl", ["bootout", `gui/${os.userInfo().uid}/${LAUNCHD_LABEL}`], { stdio: "ignore" });
-		fs.rmSync(launchd, { force: true });
-		process.stdout.write(`${c.green("removed")} ${launchd}\n`);
-		return 0;
-	}
-	process.stdout.write(c.dim("no service installed\n"));
+	removeServiceUnit(kind, file, kind === "systemd" ? SYSTEMD_UNIT : LAUNCHD_LABEL, run);
+	process.stdout.write(`${c.green("removed")} ${file}\n`);
 	return 0;
 }
 
 // ---------- help ----------
 
-const HELP = `${c.bold("omp-vs")} — omp Sessions from the terminal ${c.dim(`(${VERSION})`)}
+const HELP = `${c.bold("omp-sessions")} — omp Sessions from the terminal ${c.dim(`(${VERSION})`)}
 
 ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (latest session in this folder)")}
   ls [-a|--all] [--json]          running sessions (--all: also finished and archived)
@@ -1040,7 +1022,7 @@ ${c.bold("Remote")}  ${c.dim("(phone app + HTTP API on this machine; prefer Tail
                                   proxy fronts it (tailscale serve, HTTPS): the pairing link uses that URL
   remote off|status|qr|rotate     turn off · show state · pairing QR + URL · new token (unpairs phones)
 
-${c.bold("Agents")}  ${c.dim("(the omp-sessions skill teaches other agents to use omp-vs)")}
+${c.bold("Agents")}  ${c.dim("(the omp-sessions skill teaches other agents to use the omp-sessions command)")}
   skill [status]                  where it is installed
   skill install [agents|claude|codex]… [--dir d] [--force]
                                   install or update it (default: every platform found)
@@ -1053,7 +1035,7 @@ ${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and
                                   plugins are per Hermes profile; default: $HERMES_HOME, else ~/.hermes
                                   (%LOCALAPPDATA%\\hermes on Windows)
 
-  --no-color, NO_COLOR=1          plain output · OMP_VS_NO_SERVER=1 runs without the server
+  --no-color, NO_COLOR=1          plain output · OMP_SESSIONS_NO_SERVER=1 runs without the server
 `;
 
 // ---------- main ----------
@@ -1142,11 +1124,11 @@ async function main(argv: string[]): Promise<number> {
 			const client = await ServerClient.connect();
 			const server = client ? await client.request("ping", {}).catch(() => undefined) : undefined;
 			client?.close();
-			process.stdout.write(`omp-vs ${VERSION}${server ? c.dim(` · server ${server.version} (pid ${server.pid})`) : ""}\n`);
+			process.stdout.write(`omp-sessions ${VERSION}${server ? c.dim(` · server ${server.version} (pid ${server.pid})`) : ""}\n`);
 			return 0;
 		}
 		default:
-			throw new UsageError(`unknown command "${cmd}" (omp-vs help)`);
+			throw new UsageError(`unknown command "${cmd}" (omp-sessions help)`);
 	}
 }
 

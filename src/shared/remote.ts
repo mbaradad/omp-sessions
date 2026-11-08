@@ -1,4 +1,4 @@
-// Remote access to the omp-vs server over HTTP (the phone app and other clients): the config in
+// Remote access to the omp-sessions server over HTTP (the phone app and other clients): the config in
 // `<root>/remote.json` (mode 0600; the server watches it and starts, stops or rebinds its HTTP
 // listener live), the bearer token, bind address resolution and the pairing URL.
 // Node-only; no vscode import. The HTTP API itself is src/server/remote.ts (docs/REMOTE-API.md).

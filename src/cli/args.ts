@@ -1,4 +1,4 @@
-// Argument parsing for `omp-vs` (no side effects, unit-tested).
+// Argument parsing for `omp-sessions` (no side effects, unit-tested).
 
 export class UsageError extends Error {}
 

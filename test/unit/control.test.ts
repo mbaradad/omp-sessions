@@ -1,4 +1,4 @@
-// omp-vs server/CLI decisions: which queued sessions to launch (slots, priority, waiters,
+// omp-sessions server/CLI decisions: which queued sessions to launch (slots, priority, waiters,
 // crash leftovers), how typed session names resolve, list columns, and CLI argument parsing.
 import assert from "node:assert/strict";
 import * as os from "node:os";
@@ -55,7 +55,7 @@ test("launchQueue: stopped sessions with runnable work, by priority; skips archi
 		meta("normal"),
 		meta("urgent"),
 		meta("archived"),
-		meta("gone", { cwd: path.join(os.tmpdir(), "omp-vs-no-such-dir-xyz") }),
+		meta("gone", { cwd: path.join(os.tmpdir(), "omp-sessions-no-such-dir-xyz") }),
 		meta("blocked"),
 		meta("running", { status: "idle" }),
 		meta("paused"),

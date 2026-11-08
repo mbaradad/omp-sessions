@@ -1,4 +1,4 @@
-// Starting session hosts, shared by the VS Code extension, the `omp-vs` server and the `omp-vs`
+// Starting session hosts, shared by the VS Code extension, the `omp-sessions` server and the `omp-sessions`
 // CLI so that every launcher spawns hosts with the same argv, environment and launch.json
 // semantics. Also the small socket/process probes all of them need. Node-only (no vscode).
 import { spawn } from "node:child_process";

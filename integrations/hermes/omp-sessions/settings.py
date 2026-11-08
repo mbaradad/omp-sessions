@@ -1,7 +1,7 @@
 """Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (read with ctx.get_config,
 written with update_setting).
 
-    omp_vs: /path/to/omp-vs        # default: PATH, then ~/.local/bin/omp-vs (%LOCALAPPDATA%\\omp-vs\\omp-vs.cmd on Windows)
+    omp_sessions: /path/to/omp-sessions        # default: PATH, then ~/.local/bin/omp-sessions (%LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd on Windows)
     notify: true                   # tell the Hermes session that started an omp session when it settles
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions
@@ -49,7 +49,7 @@ class LaneSettings:
 
 @dataclass
 class Settings:
-    omp_vs: Optional[str] = None
+    omp_sessions: Optional[str] = None
     notify: bool = True
     lane: LaneSettings = field(default_factory=LaneSettings)
     projects: dict[str, str] = field(default_factory=dict)
@@ -89,7 +89,7 @@ def parse_settings(raw: Mapping[str, Any]) -> Settings:
     projects_raw = raw.get("projects")
     projects = {str(k): str(v) for k, v in projects_raw.items() if _str(v)} if isinstance(projects_raw, Mapping) else {}
     return Settings(
-        omp_vs=_str(raw.get("omp_vs")),
+        omp_sessions=_str(raw.get("omp_sessions")),
         notify=raw.get("notify") is not False,
         lane=LaneSettings(
             enabled=lane_raw.get("enabled") is True,
@@ -119,7 +119,7 @@ def board_lane(s: Settings, slug: str, board_name: Optional[str] = None) -> Opti
 
 def read_settings(ctx: Any) -> Settings:
     raw: dict[str, Any] = {}
-    for key in ("omp_vs", "notify", "lane", "projects"):
+    for key in ("omp_sessions", "notify", "lane", "projects"):
         v = ctx.get_config(key, None)
         if v is not None:
             raw[key] = v

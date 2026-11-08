@@ -17,7 +17,7 @@ function facts(profiles: PluginReport[], over: Partial<HermesFacts> = {}): Herme
 		hermes: "/usr/bin/hermes",
 		profiles,
 		lane: { profile: "default", status: { dispatcherNotes: [], dispatcher: { at: NOW / 1000 - 30, profile: "default", laneOn: true } } },
-		ompVs: { path: "/home/u/.local/bin/omp-vs", via: "install" },
+		ompSessions: { path: "/home/u/.local/bin/omp-sessions", via: "install" },
 		gatewayPath: true,
 		now: NOW,
 		...over,
@@ -45,7 +45,7 @@ test("not installed anywhere: one info with Install; nothing else", () => {
 	);
 });
 
-test("a managed copy newer than the bundle (another editor's omp-vs) is info, never an Update", () => {
+test("a managed copy newer than the bundle (another editor's omp-sessions) is info, never an Update", () => {
 	const checks = hermesChecks(facts([profile("default", { current: false, ahead: true })]));
 	assert.equal(checks.some(c => c.title.startsWith("omp-sessions plugin outdated")), false);
 	const ahead = checks.find(c => c.title === "omp-sessions plugin in default is newer than this extension's");
@@ -128,13 +128,13 @@ test("dispatcher silent or stale: warn when a lane is on", () => {
 	assert.deepEqual(warnings(quiet), [], "no lane: only info");
 });
 
-test("omp-vs: missing is an error when the gateway's PATH was searched, else a warning", () => {
-	const searched = warnings(facts([profile("default", { ompVs: "/nope/omp-vs" })], { ompVs: undefined }));
+test("omp-sessions: missing is an error when the gateway's PATH was searched, else a warning", () => {
+	const searched = warnings(facts([profile("default", { ompSessions: "/nope/omp-sessions" })], { ompSessions: undefined }));
 	assert.deepEqual(
 		searched.map(c => [c.level, c.title, c.fixes?.[0].command]),
-		[["error", "The plugin may not find omp-vs", "omp.installCli"]],
+		[["error", "The plugin may not find omp-sessions", "omp.installCli"]],
 	);
-	assert.match(searched[0].detail ?? "", /omp_vs setting \(\/nope\/omp-vs\)/);
-	assert.equal(warnings(facts([profile("default")], { ompVs: undefined, gatewayPath: false }))[0].level, "warn");
-	assert.equal(hermesChecks(facts([profile("default", { status: "disabled", lane: undefined })], { ompVs: undefined })).some(c => c.title.includes("omp-vs")), false, "not checked when no profile loads the plugin");
+	assert.match(searched[0].detail ?? "", /omp_sessions setting \(\/nope\/omp-sessions\)/);
+	assert.equal(warnings(facts([profile("default")], { ompSessions: undefined, gatewayPath: false }))[0].level, "warn");
+	assert.equal(hermesChecks(facts([profile("default", { status: "disabled", lane: undefined })], { ompSessions: undefined })).some(c => /finds? omp-sessions/.test(c.title)), false, "not checked when no profile loads the plugin");
 });

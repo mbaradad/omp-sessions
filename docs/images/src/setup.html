@@ -41,15 +41,15 @@ svg.wires { position: absolute; inset: 0; }
 		<marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b383ff"/></marker>
 		<marker id="c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5ad8e6"/></marker>
 	</defs>
-	<!-- VS Code -> omp-vs -->
+	<!-- VS Code -> omp-sessions -->
 	<path d="M310 214 L 410 214" stroke="#b383ff" marker-end="url(#a)"/>
 	<!-- Desktop -> Hermes -->
 	<path d="M310 420 L 410 420" stroke="#b383ff" marker-end="url(#a)"/>
-	<!-- phone app -> omp-vs -->
+	<!-- phone app -> omp-sessions -->
 	<path d="M930 214 L 830 214" stroke="#5ad8e6" marker-end="url(#c)"/>
 	<!-- chats -> Hermes -->
 	<path d="M930 420 L 830 420" stroke="#5ad8e6" marker-end="url(#c)"/>
-	<!-- plugin -> omp-vs -->
+	<!-- plugin -> omp-sessions -->
 	<path d="M560 372 L 560 306" stroke="#b383ff" stroke-dasharray="4 4" marker-end="url(#a)"/>
 </svg>
 <div class="edge" style="left:318px;top:190px">local · SSH</div>
@@ -69,7 +69,7 @@ svg.wires { position: absolute; inset: 0; }
 
 <div class="ws"><span class="title">The machine with your code · always on</span></div>
 <div class="box mid" style="top:170px">
-	<h3><span class="ic" style="background:rgba(155,77,255,.18);color:#c9a5ff"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/></svg></span>omp-vs server <span class="dimmer" style="font-weight:500;font-size:13px">systemd / launchd service</span></h3>
+	<h3><span class="ic" style="background:rgba(155,77,255,.18);color:#c9a5ff"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/></svg></span>omp-sessions server <span class="dimmer" style="font-weight:500;font-size:13px">systemd / launchd service</span></h3>
 	<p>Queue, schedule and concurrency limit; starts a detached session host per session, each running omp in your repository.</p>
 	<span class="pill">session host + omp</span><span class="pill">session host + omp</span><span class="pill">phone app + API</span>
 </div>

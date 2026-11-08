@@ -1,4 +1,4 @@
-"""omp-sessions: Hermes plugin for omp coding sessions (the omp Sessions VS Code extension's omp-vs CLI).
+"""omp-sessions: Hermes plugin for omp coding sessions (the omp Sessions VS Code extension's omp-sessions CLI).
 
 - Tools (toolset omp_sessions) to list, start, queue, schedule, check, wait on, answer, steer and stop
   omp sessions.
@@ -16,7 +16,7 @@ from typing import Any
 from .commands import run_cli, sessions_brief, sessions_summary, setup_cli, status_data, status_text, take_card
 from .lane import Lane
 from .notify import Notifier, inject_with
-from .ompvs import OmpVs
+from .ompsessions import OmpSessions
 from .settings import read_settings
 from .store import FileState, Store, lane_data_dir, profile_of
 from .tools import SCHEMAS, TOOLSET, Tools
@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 SKILL_FILE = Path(__file__).parent / "skills" / "omp-sessions" / "SKILL.md"
 SKILL_DESCRIPTION = (
     "Start, queue, schedule and supervise omp coding sessions that keep running in the background "
-    "(omp_session_* tools or the omp-vs CLI)."
+    "(omp_session_* tools or the omp-sessions CLI)."
 )
 
 
@@ -61,8 +61,8 @@ class Plugin:
     def settings(self):
         return read_settings(self.ctx)
 
-    def omp(self) -> OmpVs:
-        return OmpVs(self.settings().omp_vs)
+    def omp(self) -> OmpSessions:
+        return OmpSessions(self.settings().omp_sessions)
 
     def on_dispatch_tick(self, board: Any = None, dry_run: bool = False, **_: Any) -> None:
         if dry_run:

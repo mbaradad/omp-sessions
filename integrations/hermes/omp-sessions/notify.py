@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Any, Callable, Optional
 
-from .ompvs import OmpVs
+from .ompsessions import OmpSessions
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -56,12 +56,12 @@ def note_text(report: dict) -> str:
             lines += ["Last reply:", excerpt]
         if state == "stopped" and report.get("exitReason"):
             lines.append(f"Reason: {report['exitReason']}")
-    lines.append(f"Details: omp_session_status (id {sid}) or `omp-vs show {sid}`.")
+    lines.append(f"Details: omp_session_status (id {sid}) or `omp-sessions show {sid}`.")
     return "\n".join(lines)
 
 
 class Notifier:
-    def __init__(self, store: Store, omp: Callable[[], OmpVs], inject: Callable[..., bool], enabled: Callable[[], bool]) -> None:
+    def __init__(self, store: Store, omp: Callable[[], OmpSessions], inject: Callable[..., bool], enabled: Callable[[], bool]) -> None:
         self.store = store
         self.omp = omp
         self.inject = inject

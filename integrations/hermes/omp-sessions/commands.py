@@ -9,7 +9,7 @@ import time
 from typing import Any, Callable, Optional, Sequence
 
 from .lane import Lane, short
-from .ompvs import OmpVs, OmpVsError, find_omp_vs
+from .ompsessions import OmpSessions, OmpSessionsError, find_omp_sessions
 from .settings import MODES, Settings, board_lane, update_setting
 from .store import Store, profile_of
 
@@ -26,10 +26,10 @@ def _ago(ts: Any) -> str:
     return f"{s // 3600}h ago"
 
 
-def _session_map(omp: OmpVs) -> dict[str, dict]:
+def _session_map(omp: OmpSessions) -> dict[str, dict]:
     try:
         return {str(s["meta"]["id"]): s for s in omp.sessions(all=True) if isinstance(s.get("meta"), dict)}
-    except OmpVsError:
+    except OmpSessionsError:
         return {}
 
 
@@ -59,14 +59,14 @@ def dispatcher_notes(disp: Optional[dict], *, profile: str, lane_on: bool, now: 
     return notes
 
 
-def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: OmpVs) -> dict:
+def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: OmpSessions) -> dict:
     sessions = _session_map(omp)
     links = lane.links()
     try:
         sched: Optional[dict] = omp.scheduler()
-    except OmpVsError:
+    except OmpSessionsError:
         sched = None
-    cmd = find_omp_vs(settings.omp_vs)
+    cmd = find_omp_sessions(settings.omp_sessions)
     profile = profile_of(store)
     disp = lane.dispatcher()
     linked = []
@@ -87,7 +87,7 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
         )
     last_inject = store.get("last_inject")
     return {
-        "omp_vs": " ".join(cmd) if cmd else None,
+        "omp_sessions": " ".join(cmd) if cmd else None,
         "scheduler": sched,
         "notify": settings.notify,
         "last_notification": last_inject if isinstance(last_inject, dict) else None,
@@ -110,11 +110,11 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
 
 def status_text(d: dict) -> str:
     lane = d["lane"]
-    lines = [f"omp-vs: {d['omp_vs'] or 'NOT FOUND (install it from VS Code: omp: Install omp-vs Command)'}"]
+    lines = [f"omp-sessions: {d['omp_sessions'] or 'NOT FOUND (install it from VS Code: omp: Install omp-sessions Command)'}"]
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
-        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · omp-vs server not running'}")
+        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · omp-sessions server not running'}")
     last = d.get("last_notification") or {}
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
@@ -151,10 +151,10 @@ def status_text(d: dict) -> str:
     return "\n".join(lines)
 
 
-def sessions_summary(omp: OmpVs) -> str:
+def sessions_summary(omp: OmpSessions) -> str:
     try:
         infos = omp.sessions(all=False)
-    except OmpVsError as exc:
+    except OmpSessionsError as exc:
         return f"omp-sessions: {exc}"
     if not infos:
         return "No running omp sessions."
@@ -168,11 +168,11 @@ def sessions_summary(omp: OmpVs) -> str:
     return "\n".join(lines)
 
 
-def sessions_brief(omp: OmpVs) -> str:
+def sessions_brief(omp: OmpSessions) -> str:
     """`/omp` in a chat: short enough for a phone (Hermes Console shows slash output as a brief notice)."""
     try:
         infos = omp.sessions(all=False)
-    except OmpVsError as exc:
+    except OmpSessionsError as exc:
         return f"omp-sessions: {exc}"
     if not infos:
         return "No running omp sessions."
@@ -220,7 +220,7 @@ def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane
 
 def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="omp_cmd")
-    st = sub.add_parser("status", help="omp-vs, notifications, the kanban lane and linked cards")
+    st = sub.add_parser("status", help="omp-sessions, notifications, the kanban lane and linked cards")
     st.add_argument("--json", action="store_true")
     sub.add_parser("sessions", help="running omp sessions")
     lane = sub.add_parser("lane", help="the kanban lane: on, off, run")
@@ -340,7 +340,7 @@ def set_board_in_lane(slug: str, on: bool, all_slugs: Sequence[str]) -> None:
     update_setting("lane", change)
 
 
-def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings], store: Store, omp: Callable[[], OmpVs], lane: Lane) -> int:
+def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings], store: Store, omp: Callable[[], OmpSessions], lane: Lane) -> int:
     cmd = getattr(args, "omp_cmd", None) or "status"
     if cmd == "status":
         d = status_data(ctx, settings(), store, lane, omp())

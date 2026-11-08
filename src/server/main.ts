@@ -1,4 +1,4 @@
-// omp-vs server: a per-user daemon (one per state root) that
+// omp-sessions server: a per-user daemon (one per state root) that
 //  - answers the CLI / extension over `serverSocketPath()` (see server-protocol.ts),
 //  - launches stopped sessions whose queue has runnable work when a concurrency slot is free
 //    (priority + manual order; also recovers queued work after a reboot),
@@ -30,7 +30,7 @@ const LAUNCH_TIMEOUT_MS = 60_000;
 /** A launched session that stops again within this window (work still queued) counts as a failed launch. */
 const QUICK_EXIT_MS = 3 * 60_000;
 /** Done + idle this long before a scheduler-launched session is stopped. */
-const DONE_GRACE_MS = Number(process.env.OMP_VS_DONE_GRACE_MS) || 60_000;
+const DONE_GRACE_MS = Number(process.env.OMP_SESSIONS_DONE_GRACE_MS) || 60_000;
 /** No auto-stop while a person interacted with the session this recently. */
 const USER_GRACE_MS = 10 * 60_000;
 const MAX_LAUNCHES_PER_PASS = 4;
@@ -54,7 +54,7 @@ function log(...parts: unknown[]): void {
 	} catch {
 		/* state dir gone */
 	}
-	if (process.env.OMP_VS_SERVER_STDERR) process.stderr.write(line);
+	if (process.env.OMP_SESSIONS_SERVER_STDERR) process.stderr.write(line);
 }
 
 // ---------- single instance ----------
@@ -128,7 +128,7 @@ function launchFailed(id: string, why: string): void {
 const control = new Control({
 	launcher,
 	serverUp: () => true,
-	clientName: "omp-vs-server",
+	clientName: "omp-sessions-server",
 	blocked,
 	changed: () => scheduleTick(50),
 });
@@ -366,7 +366,7 @@ async function onRequest(c: Client, req: ServerRequest): Promise<void> {
 			if (args.topic === "events" && typeof args.id === "string") {
 				const meta = control.list({ all: true }).find(s => s.meta.id === args.id)?.meta;
 				if (!meta || meta.status === "stopped") throw new Error(`session ${String(args.id)} is not running`);
-				const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-vs-proxy");
+				const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-sessions-proxy");
 				c.eventSubs.set(id, conn);
 				sendLine(c, { id, ok: true, result: {} });
 				sendLine(c, { id, event: "host", msg: snapshot });

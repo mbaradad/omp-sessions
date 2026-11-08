@@ -40,9 +40,9 @@ export interface SessionMeta {
 	hostPath?: string;
 	/** Set while omp reports it cannot use any model (no provider logged in, missing API key). */
 	authProblem?: string;
-	/** Who started this host when not a person (e.g. "scheduler": the omp-vs server ran its queue). */
+	/** Who started this host when not a person (e.g. "scheduler": the omp-sessions server ran its queue). */
 	launchedBy?: string;
-	/** Clients attached right now that are people (chat panels, `omp-vs attach`), not the omp-vs server. */
+	/** Clients attached right now that are people (chat panels, `omp-sessions attach`), not the omp-sessions server. */
 	viewers?: number;
 	/** Last time a person prompted, steered, aborted or answered a dialog in this session (epoch ms). */
 	userActiveAt?: number;

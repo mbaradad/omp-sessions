@@ -1,4 +1,4 @@
-// Plain-terminal rendering of omp transcript messages and live events for `omp-vs attach/tail`.
+// Plain-terminal rendering of omp transcript messages and live events for `omp-sessions attach/tail`.
 import { c, oneLine, truncate } from "./term";
 
 function rec(v: unknown): Record<string, unknown> {

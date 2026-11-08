@@ -51,7 +51,7 @@ title: omp Sessions
 screenshots:${yamlList(shots, "  ")}
 platforms: [linux, macos]
 known_issues:
-  - Needs the omp Sessions VS Code extension's omp-vs CLI on PATH (VS Code, "omp: Install omp-vs Command").
+  - Needs the omp Sessions VS Code extension's omp-sessions CLI on PATH (VS Code, "omp: Install omp-sessions Command").
 capabilities:
   provides_tools:${yamlList(list("provides_tools"), "    ")}
   provides_hooks:${yamlList(list("provides_hooks"), "    ")}

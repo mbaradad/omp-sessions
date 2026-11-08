@@ -1,5 +1,5 @@
 // Recent project folders: where sessions ran (and their git roots), newest first. Feeds the phone's
-// new-session picker, `omp-vs projects` and agents choosing where to start a session. Node-only.
+// new-session picker, `omp-sessions projects` and agents choosing where to start a session. Node-only.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { findProject } from "../ext/worktree-git";

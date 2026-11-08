@@ -1,12 +1,12 @@
 """omp Sessions page backend for the Hermes dashboard and Hermes Desktop: /api/plugins/omp-sessions/.
 
 Hermes imports this file on its own (importlib, outside any package), so it loads the plugin folder
-above it as a package and reuses the plugin's modules: omp-vs calls (ompvs), settings, the kanban
+above it as a package and reuses the plugin's modules: omp-sessions calls (ompsessions), settings, the kanban
 lane's links and status (lane, store), and the place resolution of the omp_session_start tool.
 Settings are the requesting profile's (config.yaml `plugins.entries.omp-sessions.settings`); the
 lane's card links are machine-wide like the kanban boards.
 
-Every handler is async and moves its blocking work (omp-vs subprocesses, sqlite) to a thread.
+Every handler is async and moves its blocking work (omp-sessions subprocesses, sqlite) to a thread.
 Errors come back as JSON {"error": message} with a 4xx/5xx status.
 """
 
@@ -28,8 +28,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 INSTALL_HINT = (
-    "omp-vs is not installed. Install the omp Sessions extension in VS Code and run "
-    "“omp: Install omp-vs Command”, or set plugins.entries.omp-sessions.settings.omp_vs to its path."
+    "omp-sessions is not installed. Install the omp Sessions extension in VS Code and run "
+    "“omp: Install omp-sessions Command”, or set plugins.entries.omp-sessions.settings.omp_sessions to its path."
 )
 EXCERPT_MAX = 320
 VERSION_TTL_S = 30
@@ -71,12 +71,12 @@ def _plugin_package() -> str:
 _PKG = _plugin_package()
 commands = importlib.import_module(f"{_PKG}.commands")
 lane_mod = importlib.import_module(f"{_PKG}.lane")
-ompvs = importlib.import_module(f"{_PKG}.ompvs")
+ompsessions = importlib.import_module(f"{_PKG}.ompsessions")
 settings_mod = importlib.import_module(f"{_PKG}.settings")
 store_mod = importlib.import_module(f"{_PKG}.store")
 tools_mod = importlib.import_module(f"{_PKG}.tools")
 
-OmpVsError = ompvs.OmpVsError
+OmpSessionsError = ompsessions.OmpSessionsError
 
 
 class ApiError(Exception):
@@ -108,7 +108,7 @@ def settings() -> Any:
 
 
 def omp() -> Any:
-    return ompvs.OmpVs(settings().omp_vs)
+    return ompsessions.OmpSessions(settings().omp_sessions)
 
 
 def lane() -> Any:
@@ -122,16 +122,16 @@ def profile_name() -> str:
 
 
 def require_omp(s: Any) -> Any:
-    if not ompvs.find_omp_vs(s.omp_vs):
+    if not ompsessions.find_omp_sessions(s.omp_sessions):
         raise ApiError(503, INSTALL_HINT)
-    return ompvs.OmpVs(s.omp_vs)
+    return ompsessions.OmpSessions(s.omp_sessions)
 
 
 # ---------- caches (per process; keyed so a change is never served stale) ----------
 
 _LOCK = threading.Lock()
 _VERSION: dict[str, tuple[float, dict]] = {}
-# session id -> (updatedAt, question): `omp-vs show` only reruns when the session changed.
+# session id -> (updatedAt, question): `omp-sessions show` only reruns when the session changed.
 _QUESTIONS: dict[str, tuple[Any, Optional[dict]]] = {}
 
 
@@ -153,7 +153,7 @@ def questions_for(o: Any, infos: list[dict]) -> dict[str, Optional[dict]]:
     out: dict[str, Optional[dict]] = {}
     for info in infos:
         meta = info.get("meta") or {}
-        if ompvs.agent_state(info) != "needs_input":
+        if ompsessions.agent_state(info) != "needs_input":
             continue
         sid, stamp = str(meta.get("id")), meta.get("updatedAt")
         with _LOCK:
@@ -168,7 +168,7 @@ def questions_for(o: Any, infos: list[dict]) -> dict[str, Optional[dict]]:
             sid, stamp = item
             try:
                 report = o.show(sid)
-            except OmpVsError:
+            except OmpSessionsError:
                 return sid, None, None  # not cached: tried again next time
             q = (report or {}).get("question")
             return sid, stamp, q if isinstance(q, dict) else None
@@ -257,7 +257,7 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "cwd": cwd,
         "cwdLabel": tilde(cwd),
         "project": os.path.basename(cwd.rstrip("/\\")) or cwd,
-        "state": ompvs.agent_state(info),
+        "state": ompsessions.agent_state(info),
         "status": meta.get("status"),
         "mode": meta.get("permissionMode"),
         "model": meta.get("model"),
@@ -377,7 +377,7 @@ def session_action(sid: str, action: str, body: dict) -> dict:
 
 
 def open_in_vscode(sid: str, base_url: str) -> dict:
-    """Asks the VS Code window last used on omp's machine to open the session (`omp-vs vscode`).
+    """Asks the VS Code window last used on omp's machine to open the session (`omp-sessions vscode`).
 
     `url` is the vscode:// link (a browser opens it); `page` is a page of this dashboard that opens
     it, for hosts that only open web links (Hermes Desktop): it is served without sign-in and holds
@@ -386,7 +386,7 @@ def open_in_vscode(sid: str, base_url: str) -> dict:
     out = o.json(["vscode", sid, "--json"])
     url = out.get("url") if isinstance(out, dict) else None
     if not isinstance(url, str) or not url:
-        raise ApiError(502, "omp-vs vscode printed no link")
+        raise ApiError(502, "omp-sessions vscode printed no link")
     # The profile segment serves the requesting profile's copy (the page's own `?profile=`).
     profile = profile_name()
     scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
@@ -400,13 +400,13 @@ def open_in_vscode(sid: str, base_url: str) -> dict:
 def overview() -> dict:
     s = settings()
     ln = lane()
-    cmd = ompvs.find_omp_vs(s.omp_vs)
+    cmd = ompsessions.find_omp_sessions(s.omp_sessions)
     profile = profile_name()
     disp = ln.dispatcher()
     out: dict[str, Any] = {
         "profile": profile,
         "pluginVersion": PLUGIN_VERSION,
-        "ompVs": {"found": bool(cmd), "command": " ".join(cmd) if cmd else None, "hint": None if cmd else INSTALL_HINT},
+        "ompSessions": {"found": bool(cmd), "command": " ".join(cmd) if cmd else None, "hint": None if cmd else INSTALL_HINT},
         "scheduler": None,
         "notify": s.notify,
         "lane": {
@@ -420,15 +420,15 @@ def overview() -> dict:
         },
     }
     if cmd:
-        o = ompvs.OmpVs(s.omp_vs)
+        o = ompsessions.OmpSessions(s.omp_sessions)
         try:
-            out["ompVs"].update(omp_version(o))
-        except OmpVsError as exc:
-            out["ompVs"]["error"] = str(exc)
+            out["ompSessions"].update(omp_version(o))
+        except OmpSessionsError as exc:
+            out["ompSessions"]["error"] = str(exc)
         try:
             out["scheduler"] = o.scheduler()
-        except OmpVsError as exc:
-            out["ompVs"]["error"] = str(exc)
+        except OmpSessionsError as exc:
+            out["ompSessions"]["error"] = str(exc)
     return out
 
 
@@ -452,10 +452,10 @@ def boards_view() -> dict:
     links = ln.links()
     ticks = ln.store.get("lane_status", {}) or {}
     states: dict[str, str] = {}
-    if ompvs.find_omp_vs(s.omp_vs):
+    if ompsessions.find_omp_sessions(s.omp_sessions):
         try:
-            states = {str(i["meta"]["id"]): ompvs.agent_state(i) for i in ompvs.OmpVs(s.omp_vs).sessions(all=True) if isinstance(i.get("meta"), dict)}
-        except OmpVsError:
+            states = {str(i["meta"]["id"]): ompsessions.agent_state(i) for i in ompsessions.OmpSessions(s.omp_sessions).sessions(all=True) if isinstance(i.get("meta"), dict)}
+        except OmpSessionsError:
             states = {}
     out = []
     for b in board_slugs():
@@ -554,7 +554,7 @@ async def _run(fn: Callable[..., Any], *args: Any, write: bool = False) -> Any:
         return await asyncio.to_thread(fn, *args)
     except ApiError as exc:
         return JSONResponse({"error": str(exc)}, status_code=exc.status)
-    except OmpVsError as exc:
+    except OmpSessionsError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400 if write else 502)
     except PermissionError as exc:
         return JSONResponse({"error": str(exc)}, status_code=403)

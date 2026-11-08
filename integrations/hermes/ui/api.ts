@@ -118,7 +118,7 @@ export interface Lane {
 
 export interface Overview {
 	profile: string;
-	ompVs: { found: boolean; command?: string | null; hint?: string | null; cli?: string; server?: string | null; pid?: number | null; error?: string };
+	ompSessions: { found: boolean; command?: string | null; hint?: string | null; cli?: string; server?: string | null; pid?: number | null; error?: string };
 	scheduler: Scheduler | null;
 	notify: boolean;
 	lane: Lane;

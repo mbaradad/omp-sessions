@@ -7,7 +7,7 @@ import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, sta
 
 const POLL_MS = 3000;
 
-/** omp-vs answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts). */
+/** omp-sessions answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts). */
 function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) => void }): ReactElement {
 	const { q } = p;
 	const [text, setText] = useState("");
@@ -92,7 +92,7 @@ function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) =
 			single && !(others[0] ?? "").trim() ? null : h(Button, { kind: "primary", icon: "send", label: "Answer", busy: p.busy, disabled: !complete, onClick: () => p.onAnswer(answer) }),
 		);
 	} else {
-		body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with omp-vs attach.");
+		body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with omp-sessions attach.");
 	}
 	return h("section", { className: "omps-question", "aria-label": "omp is asking" }, head, body);
 }

@@ -40,7 +40,7 @@ interface HostArgs {
 	hostVersion?: string;
 	title?: string;
 	goal?: string;
-	/** Who started this host (e.g. "scheduler" for the omp-vs server), recorded in meta. */
+	/** Who started this host (e.g. "scheduler" for the omp-sessions server), recorded in meta. */
 	launchedBy?: string;
 	ompArgs: string[];
 }
@@ -801,9 +801,9 @@ function titleFromPrompt(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line;
 }
 
-/** Clients that are people looking at the session (chat panels, `omp-vs attach`), not the omp-vs server or a one-shot `omp-vs show`. */
+/** Clients that are people looking at the session (chat panels, `omp-sessions attach`), not the omp-sessions server or a one-shot `omp-sessions show`. */
 function updateViewers(): void {
-	const viewers = clients.filter(c => c.helloed && !c.name.startsWith("omp-vs-server") && c.name !== "omp-vs-show").length;
+	const viewers = clients.filter(c => c.helloed && !c.name.startsWith("omp-sessions-server") && c.name !== "omp-sessions-show").length;
 	if ((meta.viewers ?? 0) === viewers) return;
 	meta.viewers = viewers;
 	publishMeta(false);

@@ -6,7 +6,7 @@
 
 ![omp Sessions: a task server for your coding agents. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
 
-omp Sessions is a task server for [oh-my-pi](https://omp.sh) (`omp`) coding agents. A small `omp-vs` server on the machine with your code keeps every session in its own background process, works through each session's queue of tasks in order, starts scheduled work on time and caps how many tasks run at once, picking queued work up again after a reboot. That's the difference from omp in tmux: work keeps moving without you, not just the process. VS Code is the main way to drive it; the terminal, your phone, Hermes Agent and other agents reach the same sessions. Close VS Code, sleep the laptop or drop SSH, and come back to everything that happened meanwhile: answers, diffs, questions waiting for you.
+omp Sessions is a task server for [oh-my-pi](https://omp.sh) (`omp`) coding agents. A small `omp-sessions` server on the machine with your code keeps every session in its own background process, works through each session's queue of tasks in order, starts scheduled work on time and caps how many tasks run at once, picking queued work up again after a reboot. That's the difference from omp in tmux: work keeps moving without you, not just the process. VS Code is the main way to drive it; the terminal, your phone, Hermes Agent and other agents reach the same sessions. Close VS Code, sleep the laptop or drop SSH, and come back to everything that happened meanwhile: answers, diffs, questions waiting for you.
 
 **[Website](https://mbaradad.github.io/omp-vscode/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Setup guide: workstation, laptop, phone](docs/SETUP.md)** · **[Phone app & HTTP API](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
 
@@ -22,7 +22,7 @@ omp Sessions is a task server for [oh-my-pi](https://omp.sh) (`omp`) coding agen
 | **Careful work on code that matters** | **Ask** or **Plan** mode, every edit in VS Code's diff editor, and undo for any turn — files and conversation together. |
 | **Supervising from anywhere** | The phone app shows what's working, waiting or done; approve a command, steer a session or start a new one from the couch. |
 | **Fixing what's in front of you** | *Fix with omp* on a squiggle, on a failed terminal command, or on all of a file's problems; commit messages and PR descriptions from Source Control. |
-| **Scripts and automation** | `omp-vs new --task …`, `omp-vs wait … --json`, or the HTTP API from your own tools. |
+| **Scripts and automation** | `omp-sessions new --task …`, `omp-sessions wait … --json`, or the HTTP API from your own tools. |
 | **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `omp-sessions` skill; Hermes gets a plugin with native tools, notifications, a kanban lane that runs cards as omp sessions, and an omp Sessions page in its dashboard and Desktop app. [Setting it all up on one workstation](docs/SETUP.md). |
 | **Hands-free** | Talk to a session with omp's realtime voice and watch the transcript land in the chat. |
 
@@ -62,13 +62,13 @@ The Sessions view groups sessions by project with working and needs-input counts
 
 ![The Tasks view: a running task with subtasks and two pending tasks; the chat shows Queued task 1/3](docs/images/tasks.png)
 
-Queue tasks and subtasks per session; the session host feeds them to omp one by one. One limit across all sessions decides how many run at once, and the `omp-vs` server starts queued sessions when a slot frees up — also after a reboot.
+Queue tasks and subtasks per session; the session host feeds them to omp one by one. One limit across all sessions decides how many run at once, and the `omp-sessions` server starts queued sessions when a slot frees up — also after a reboot.
 
 ### Your phone
 
 ![Three phone screens: all sessions grouped by status, a bash approval, and the new-session form](docs/images/phone.png)
 
-*Connect Phone…* shows a QR code; the `omp-vs` server serves a small web app you can add to your home screen. Follow sessions live, prompt or steer them, answer approvals and questions, switch modes, stop or resume, and start new sessions in a recent folder. Use [Tailscale](https://tailscale.com) (free, encrypted) or your Wi-Fi. The same token-protected JSON + Server-Sent Events API is documented for your own apps: [`docs/REMOTE-API.md`](docs/REMOTE-API.md).
+*Connect Phone…* shows a QR code; the `omp-sessions` server serves a small web app you can add to your home screen. Follow sessions live, prompt or steer them, answer approvals and questions, switch modes, stop or resume, and start new sessions in a recent folder. Use [Tailscale](https://tailscale.com) (free, encrypted) or your Wi-Fi. The same token-protected JSON + Server-Sent Events API is documented for your own apps: [`docs/REMOTE-API.md`](docs/REMOTE-API.md).
 
 ### Know what it costs
 
@@ -81,16 +81,18 @@ Spend and tokens per day, project, model and session, today's spend in the statu
 1. **Install omp** on the machine where sessions will run (your computer, or the Remote-SSH host) and log in to a model provider: `curl -fsSL https://omp.sh/install | sh`
 2. **Install the extension** from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions) (`code --install-extension mbaradad.omp-sessions`). Over Remote-SSH, install it on the SSH host.
 3. **Start a session**: open a folder and press `+` in the omp **Sessions** view. `Cmd+Alt+O` focuses the chat; *Help → Get Started → omp: background coding agent* walks through the rest.
-4. Optional: *omp: Install omp-vs Command* for the terminal, then `omp-vs server install` so queued work resumes after a reboot; *omp: Connect Phone…* for the phone app.
+4. Optional: *omp: Install omp-sessions Command* for the terminal, then `omp-sessions server install` so queued work resumes after a reboot; *omp: Connect Phone…* for the phone app.
+
+   Upgrading from 0.5.0, where the command was `omp-vs`: the extension replaces the old launcher and service automatically (Windows: add `%LOCALAPPDATA%\omp-sessions` to PATH).
 
 ## How it works
 
-![How it works: VS Code windows, the omp-vs terminal and the phone connect to session hosts and the omp-vs server on your machine; each session host runs omp, which edits your repository](docs/images/how-it-works.png)
+![How it works: VS Code windows, the omp-sessions terminal and the phone connect to session hosts and the omp-sessions server on your machine; each session host runs omp, which edits your repository](docs/images/how-it-works.png)
 
 - **Session host** (`out/host.js`, one per session, double-forked so its parent is init) owns the `omp --mode rpc-ui` process, mirrors the transcript, tracks in-flight messages, tools and pending dialogs, answers omp's approval prompts according to the permission mode, and snapshots every file before and after `edit`/`write`/`ast_edit`/`notebook` tool calls into content-addressed blobs. It listens on a Unix socket (`~/.omp/vscode/sessions/<id>/s.sock`); any number of VS Code windows can attach, and late attachers get a full snapshot.
 - **Extension** lists sessions (tree view, board, status bar), opens chats (editor tabs or the side bar Chat view), renders diffs from the snapshots, and restores open chats after a reload or reconnect.
 - **Task queue** (`queue.json`) belongs to the host, which feeds pending tasks to omp one by one whenever the session is idle — VS Code doesn't need to be open.
-- **omp-vs server** (`out/server.js`, one per user, socket `~/.omp/vscode/server.sock`): starts *stopped* sessions whose queue has work when a concurrency slot frees up (by priority and manual order, also after a reboot), stops the sessions it started once their queue is done and nobody is watching, and backs off from sessions that die right after launch. It serves the `omp-vs` terminal command and, when remote access is on, the phone app and its HTTP API. Sessions never depend on it. The extension keeps it running at its own version (`omp.server.autoStart`).
+- **omp-sessions server** (`out/server.js`, one per user, socket `~/.omp/vscode/server.sock`): starts *stopped* sessions whose queue has work when a concurrency slot frees up (by priority and manual order, also after a reboot), stops the sessions it started once their queue is done and nobody is watching, and backs off from sessions that die right after launch. It serves the `omp-sessions` terminal command and, when remote access is on, the phone app and its HTTP API. Sessions never depend on it. The extension keeps it running at its own version (`omp.server.autoStart`).
 - State lives in `~/.omp/vscode/sessions/<id>/` (`meta.json`, `launch.json`, `queue.json`, `changes.jsonl`, `blobs/`, `attachments/`, `host.log`), plus top-level files under `~/.omp/vscode/`: `organize.json` (groups/colors/priority/pins/tags/lanes), `scheduler.json` (global concurrency) and `slots/` (per-task leases), `launcher.json` (last `omp.path`/`omp.extraArgs`, so terminal launches match VS Code's), `remote.json` (remote access: on/off, bind, port, token; mode `0600`), `runtime/` (host/server/CLI/phone-app copies that survive extension updates), and `server.log`. The omp transcript itself stays in `~/.omp/agent/sessions/`.
 - Robustness: one host per session (a second launch exits), stale sockets are replaced, a missing folder or omp binary stops the session with a readable reason, a crashed host shows as stopped and resumes cleanly, malformed client input is ignored.
 
@@ -110,7 +112,7 @@ Works on Linux and macOS, locally and over Remote-SSH (Windows: named pipes and 
 
 ### Control and safety
 
-- **Permission modes** — **Ask** (approve every edit and command), **Edits** (file edits apply, commands ask), **Plan** (read-only: edits are refused and prompts ask for a plan), **Auto** (approve everything). Switch live from the footer chip, **Shift+Tab** in the composer, `/mode`, `/plan`, *Set Permission Mode…* in the Sessions view, the phone app, or `omp-vs mode`. The session host answers omp's approval prompts according to the mode (omp runs with `--approval-mode always-ask`), so the mode also holds with VS Code closed, and switching resolves approvals already waiting. A new session starts in omp's `tools.approvalMode` setting, else Auto; the chosen mode is remembered across resumes. Subagents keep omp's own behavior.
+- **Permission modes** — **Ask** (approve every edit and command), **Edits** (file edits apply, commands ask), **Plan** (read-only: edits are refused and prompts ask for a plan), **Auto** (approve everything). Switch live from the footer chip, **Shift+Tab** in the composer, `/mode`, `/plan`, *Set Permission Mode…* in the Sessions view, the phone app, or `omp-sessions mode`. The session host answers omp's approval prompts according to the mode (omp runs with `--approval-mode always-ask`), so the mode also holds with VS Code closed, and switching resolves approvals already waiting. A new session starts in omp's `tools.approvalMode` setting, else Auto; the chosen mode is remembered across resumes. Subagents keep omp's own behavior.
 - **Checkpoints**: every prompt is a checkpoint. The undo button on a prompt (or *Undo last turn* / `/undo`) rewinds the conversation to before it and puts every file omp's edit tools changed since back the way it was; the prompt returns to the composer. *Redo* / `/redo` brings the conversation and the files back.
 - **Diffs**: edit/write cards show a line diff with old/new line numbers and word-level highlights (click a line to jump there); *Diff* opens VS Code's diff editor for that tool call and *Revert* restores the file to its content before that call; *N files changed* / `/changes` opens a multi-file review of everything the session changed.
 - **Change markers**: files changed by a running session (or a stopped one in this workspace) get a purple `π` badge in the Explorer; open editors mark lines that differ from the content before the session touched the file, with a CodeLens to diff, **Revert** (also on file nodes in the Sessions view), or open the chat.
@@ -134,16 +136,16 @@ Works on Linux and macOS, locally and over Remote-SSH (Windows: named pipes and 
 
 ### Agents and Hermes
 
-- **The `omp-sessions` skill** teaches other agents to use `omp-vs`: start a session, queue or schedule it (`--task`, `--at`), wait for it (`omp-vs wait --json` exits 0 idle, 3 needs input, 4 stopped), read its report (`omp-vs show --json`: state, waiting question, full last reply), answer its questions (`omp-vs answer`), and follow up. *Install omp Sessions Skill for Agents…* or `omp-vs skill install` puts it in `~/.agents/skills` (omp and other tools), `~/.claude/skills` and `~/.codex/skills`; copies it installed are refreshed when the extension updates.
-- **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-vs hermes install`, or `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable`): native `omp_session_*` tools, a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board), with results, questions and failures written back to the card and dependencies chaining as usual. Recurring work goes through Hermes cron. An **omp Sessions** page in the left sidebar of the Hermes dashboard and Hermes Desktop shows every session by state, answers questions, follows up, starts new sessions and sets up the lane per board. Details: [`docs/HERMES.md`](docs/HERMES.md).
+- **The `omp-sessions` skill** teaches other agents to use `omp-sessions`: start a session, queue or schedule it (`--task`, `--at`), wait for it (`omp-sessions wait --json` exits 0 idle, 3 needs input, 4 stopped), read its report (`omp-sessions show --json`: state, waiting question, full last reply), answer its questions (`omp-sessions answer`), and follow up. *Install omp Sessions Skill for Agents…* or `omp-sessions skill install` puts it in `~/.agents/skills` (omp and other tools), `~/.claude/skills` and `~/.codex/skills`; copies it installed are refreshed when the extension updates.
+- **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-sessions hermes install`, or `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions --enable`): native `omp_session_*` tools, a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board), with results, questions and failures written back to the card and dependencies chaining as usual. Recurring work goes through Hermes cron. An **omp Sessions** page in the left sidebar of the Hermes dashboard and Hermes Desktop shows every session by state, answers questions, follows up, starts new sessions and sets up the lane per board. Details: [`docs/HERMES.md`](docs/HERMES.md).
 
   ![The omp Sessions page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped.](docs/images/hermes-dashboard.png)
-- **Hermes in VS Code**: copies of the plugin that omp-vs installed are kept current when the extension updates (in every profile, reloaded in the running gateway without a restart). Sessions Hermes started carry a **Hermes** chip in the Sessions view and chat header; kanban-lane sessions show **Hermes · board · card**, with *Open Hermes Card* (the dashboard's Kanban page, `omp.hermes.dashboardUrl`) and *Show Hermes Card in Terminal*. **omp Doctor** checks the plugin per profile, notifications, where the kanban dispatcher runs against where the lane is on, and whether the plugin finds `omp-vs`, with one-click fixes.
-- Agent-friendly CLI: `omp-vs new … --json` (with `--mode`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `ls --json` and `sched --json`.
+- **Hermes in VS Code**: copies of the plugin that omp-sessions installed are kept current when the extension updates (in every profile, reloaded in the running gateway without a restart). Sessions Hermes started carry a **Hermes** chip in the Sessions view and chat header; kanban-lane sessions show **Hermes · board · card**, with *Open Hermes Card* (the dashboard's Kanban page, `omp.hermes.dashboardUrl`) and *Show Hermes Card in Terminal*. **omp Doctor** checks the plugin per profile, notifications, where the kanban dispatcher runs against where the lane is on, and whether the plugin finds `omp-sessions`, with one-click fixes.
+- Agent-friendly CLI: `omp-sessions new … --json` (with `--mode`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `ls --json` and `sched --json`.
 
 ### Phone and remote access
 
-- *Connect Phone…* turns remote access on (Tailscale, local network, or this computer only), makes sure the `omp-vs` server runs, and shows a QR code of the pairing link. The phone app lists every session by status, follows one live, prompts or steers it, answers approvals and questions, switches its permission mode, stops or resumes it, and starts new sessions in a recent folder (or queues them).
+- *Connect Phone…* turns remote access on (Tailscale, local network, or this computer only), makes sure the `omp-sessions` server runs, and shows a QR code of the pairing link. The phone app lists every session by status, follows one live, prompts or steers it, answers approvals and questions, switches its permission mode, stops or resumes it, and starts new sessions in a recent folder (or queues them).
 - [Tailscale](https://tailscale.com) (free) is recommended: it reaches the machine from anywhere and encrypts the traffic. The local-network option is plain HTTP, readable by anyone on that Wi-Fi. *Disable Remote Access* turns it off; *Rotate Remote Access Token* unpairs every phone.
 - The token-authenticated JSON + Server-Sent Events API behind the app is documented for your own apps and servers: [`docs/REMOTE-API.md`](docs/REMOTE-API.md).
 
@@ -162,33 +164,33 @@ Works on Linux and macOS, locally and over Remote-SSH (Windows: named pipes and 
 - **Doctor** (*Run Doctor*): a health report — missing omp, auth problems (no API key / not logged in), outdated session hosts, hosts that died mid-turn — each with one-click fixes (*mark stopped*, *resume*, *upgrade host*). *Copy Diagnostics*, *Upgrade Session Host(s)*, *Clean Up File Snapshots*; a crashed session offers *--restore* on resume.
 - **Get started**: *Help → Get Started → omp: background coding agent* walks through the features.
 
-## Terminal: `omp-vs`
+## Terminal: `omp-sessions`
 
-*omp: Install omp-vs Command* puts `omp-vs` in `~/.local/bin`. It runs on Node 22+ from PATH, else on VS Code's own runtime. The command reaches the same sessions without VS Code: over SSH, from scripts, or after a reboot.
+*omp: Install omp-sessions Command* puts `omp-sessions` in `~/.local/bin`. It runs on Node 22+ from PATH, else on VS Code's own runtime. The command reaches the same sessions without VS Code: over SSH, from scripts, or after a reboot.
 
 ```bash
-omp-vs ls                       # running sessions (stopped ones hidden: --all shows them)
-omp-vs new . -p "fix the flaky test"          # start a session with a prompt
-omp-vs new ~/repo --task "upgrade deps" --sub "bump" --sub "run tests" --priority high
-                                # queue-only: the server starts it when a slot is free
-omp-vs attach .                 # chat in the terminal; dialogs answer inline; Ctrl-D detaches
-omp-vs send fix "also update the docs" --wait  # prompt by title words; stream the reply
-omp-vs tail <id> -f             # follow output
-omp-vs queue <id> add "write the changelog" --run
-omp-vs board                    # waiting / working / needs input / idle
-omp-vs mode fix plan            # permission mode: ask | edits | plan | auto (no mode: show it)
-omp-vs sched set 2              # at most 2 queued tasks at once, across all sessions
-omp-vs server status|log -f|install   # install: systemd user unit / launchd agent
-omp-vs remote on|off|status|qr|rotate # phone app + HTTP API (on: --bind tailscale|lan|localhost|<ip> --port n)
-omp-vs new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id
-omp-vs wait <id> --timeout 2h --json   # until idle (0), needs input (3) or stopped (4); prints state + last reply
-omp-vs show <id> --json         # state, waiting question, last reply, cost
-omp-vs answer <id> 1            # answer the waiting question (option number/text, yes/no, text)
-omp-vs skill install            # teach Claude Code / Codex / omp to drive omp-vs (omp-sessions skill)
-omp-vs hermes install           # Hermes Agent plugin: tools, notifications, kanban lane
+omp-sessions ls                       # running sessions (stopped ones hidden: --all shows them)
+omp-sessions new . -p "fix the flaky test"          # start a session with a prompt
+omp-sessions new ~/repo --task "upgrade deps" --sub "bump" --sub "run tests" --priority high
+                                      # queue-only: the server starts it when a slot is free
+omp-sessions attach .                 # chat in the terminal; dialogs answer inline; Ctrl-D detaches
+omp-sessions send fix "also update the docs" --wait  # prompt by title words; stream the reply
+omp-sessions tail <id> -f             # follow output
+omp-sessions queue <id> add "write the changelog" --run
+omp-sessions board                    # waiting / working / needs input / idle
+omp-sessions mode fix plan            # permission mode: ask | edits | plan | auto (no mode: show it)
+omp-sessions sched set 2              # at most 2 queued tasks at once, across all sessions
+omp-sessions server status|log -f|install   # install: systemd user unit / launchd agent
+omp-sessions remote on|off|status|qr|rotate # phone app + HTTP API (on: --bind tailscale|lan|localhost|<ip> --port n)
+omp-sessions new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id
+omp-sessions wait <id> --timeout 2h --json   # until idle (0), needs input (3) or stopped (4); prints state + last reply
+omp-sessions show <id> --json         # state, waiting question, last reply, cost
+omp-sessions answer <id> 1            # answer the waiting question (option number/text, yes/no, text)
+omp-sessions skill install            # teach Claude Code / Codex / omp to drive omp-sessions (omp-sessions skill)
+omp-sessions hermes install           # Hermes Agent plugin: tools, notifications, kanban lane
 ```
 
-Sessions are named by id, id prefix, title words, or `.` (latest in this folder). Commands start the server on demand and restart it when it is older than the CLI. Without it (`OMP_VS_NO_SERVER=1`) they work in-process, but queued stopped sessions wait until someone resumes them. The server stops the sessions it launched once their queue is done (after a minute idle, with no chat or `attach` open, and 10 minutes after anyone last typed in them). `omp-vs sched stop-when-done off` keeps them running. Tasks interrupted by a host crash are never rerun unattended.
+Sessions are named by id, id prefix, title words, or `.` (latest in this folder). Commands start the server on demand and restart it when it is older than the CLI. Without it (`OMP_SESSIONS_NO_SERVER=1`) they work in-process, but queued stopped sessions wait until someone resumes them. The server stops the sessions it launched once their queue is done (after a minute idle, with no chat or `attach` open, and 10 minutes after anyone last typed in them). `omp-sessions sched stop-when-done off` keeps them running. Tasks interrupted by a host crash are never rerun unattended.
 
 ## Settings
 
@@ -210,7 +212,7 @@ Sessions are named by id, id prefix, title words, or `.` (latest in this folder)
 | `omp.snapshotRetentionDays` | `14` | Days a stopped session must be unused before *Clean Up File Snapshots* (and the Doctor) offer to delete its blobs |
 | `omp.chat.snippets` | `[]` | Prompt snippets offered in the chat composer: `/p:name`, with `{{selection}}` / `{{file}}` |
 | `omp.terminalHints` | `true` | After a command fails in a terminal in a running session's folder, offer *omp: fix failed command?* in the status bar (needs VS Code shell integration) |
-| `omp.server.autoStart` | `true` | Keep the `omp-vs` server running: it starts queued stopped sessions when slots free up and serves the `omp-vs` command |
+| `omp.server.autoStart` | `true` | Keep the `omp-sessions` server running: it starts queued stopped sessions when slots free up and serves the `omp-sessions` command |
 | `omp.voice.name` | omp's default | Voice for `/voice` sessions |
 | `omp.hermes.dashboardUrl` | empty | Hermes dashboard that *Open Hermes Card* opens; empty uses the dashboard Hermes reports running on the machine (any port), else `http://localhost:9119` (forwarded from remote windows) |
 
@@ -227,7 +229,7 @@ npm run install-local  # production build → dist/omp-sessions-<version>.vsix �
 
 - **F5** (*Run Extension*) opens an Extension Development Host with this checkout loaded; over Remote-SSH it runs on the remote like the installed copy. *Run Extension (isolated session state)* uses `.dev-state/` instead of `~/.omp/vscode`, so experiments don't touch your real sessions.
 - Session hosts already running keep the code they started with. After changing `src/host`, stop + resume a session to pick up the new host.
-- Layout: `src/host` (detached session host), `src/ext` (extension), `src/webview` (chat UI), `src/kanban` (Sessions Board), `src/server` (omp-vs server and its HTTP API), `src/mobile` (phone app), `src/cli` (`omp-vs`), `src/shared` (wire contracts). `media/icon.svg` is the source of `media/icon.png`.
+- Layout: `src/host` (detached session host), `src/ext` (extension), `src/webview` (chat UI), `src/kanban` (Sessions Board), `src/server` (omp-sessions server and its HTTP API), `src/mobile` (phone app), `src/cli` (`omp-sessions`), `src/shared` (wire contracts). `media/icon.svg` is the source of `media/icon.png`.
 - Tests: `npm test` bundles the session host and the TypeScript tests into `.test-out/` with esbuild and runs them with `node --test` (~10 s). Unit tests cover `src/shared` (diff, task queue) and pure webview helpers; host tests launch the real host (`--daemonize`) in a temp `OMP_VSCODE_HOME` against `test/fake-omp.mjs`, a scripted stand-in for `omp --mode rpc-ui` that never calls a model. Its prompts are commands — `echo <text>`, `write <path> <content>`, `edit <path> <old> => <new>`, `ask`, `slow <ms>`, `fail [msg]`, `/<cmd>` — documented at the top of the file. `test:e2e:desktop` drives a real desktop VS Code (local, Electron extension host) through the extension's commands and checks that sessions outlive VS Code.
 
 ## Publishing
@@ -242,4 +244,4 @@ One-time setup (publisher, Trusted Publishing policy, Open VSX namespace, screen
 - File changes made through `bash` (e.g. `sed -i`, codegen) are not snapshotted; only omp's file-editing tools are. Checkpoints and *Revert* therefore don't undo them.
 - Plan mode is enforced by the extension (edits refused, prompts ask for a plan); omp's terminal-only `/plan` workflow is not exposed over its RPC protocol. *New Session with Options… → Plan first* (`--plan-yolo`) still starts one.
 - Voice and the Terminal UI need omp on the same machine as your microphone / VS Code window's terminal.
-- A machine reboot stops sessions; their transcripts remain resumable. Queued work restarts once the `omp-vs` server runs again (`omp-vs server install` starts it at login).
+- A machine reboot stops sessions; their transcripts remain resumable. Queued work restarts once the `omp-sessions` server runs again (`omp-sessions server install` starts it at login).

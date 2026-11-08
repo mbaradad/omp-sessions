@@ -1,4 +1,4 @@
-// "Open in VS Code" from outside VS Code (the Hermes page, `omp-vs vscode`): a session opens in the
+// "Open in VS Code" from outside VS Code (the Hermes page, `omp-sessions vscode`): a session opens in the
 // VS Code window last used on this machine, which may be a Remote-SSH window on another computer.
 //
 // - Every window records itself in vscode-window.json when it gains focus: its remote authority

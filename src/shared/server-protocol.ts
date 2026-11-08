@@ -1,4 +1,4 @@
-// Wire contract of the per-user `omp-vs` server (`<root>/server.sock`, a named pipe on Windows):
+// Wire contract of the per-user `omp-sessions` server (`<root>/server.sock`, a named pipe on Windows):
 // newline-delimited JSON. A client sends `ServerRequest`s and gets one `ServerResponse` per id;
 // `subscribe` keeps the connection streaming `ServerEvent`s until the client disconnects.
 // The CLI runs the same operations in-process (src/shared/control.ts) when no server is running.
@@ -11,7 +11,7 @@ import { type QueueOp, type SessionMeta, type TaskQueue, stateRoot } from "./pro
 import type { RemoteStatus } from "./remote";
 import type { SchedulerConfig } from "./scheduler";
 
-/** Board column of a session (kanban + `omp-vs board`). */
+/** Board column of a session (kanban + `omp-sessions board`). */
 export type Column = "waiting" | "working" | "input" | "idle" | "stopped";
 
 export const COLUMNS: ReadonlyArray<{ id: Column; label: string }> = [
@@ -132,6 +132,8 @@ export type ServerEvent =
 
 export function serverSocketPath(): string {
 	const tag = crypto.createHash("sha256").update(stateRoot()).digest("hex").slice(0, 16);
+	// A fixed name, like server.sock: renamed, a running server would hide from the next version
+	// during an upgrade (its pid file still blocks a second one). Not the command name.
 	if (process.platform === "win32") return `\\\\.\\pipe\\omp-vs-${tag}`;
 	const preferred = path.join(stateRoot(), "server.sock");
 	// sun_path is ~104 bytes: deep state dirs fall back to a private tmp dir (like session hosts).

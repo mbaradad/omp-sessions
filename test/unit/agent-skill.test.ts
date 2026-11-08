@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { after, test } from "node:test";
 import { detectedPlatforms, installSkill, skillTargets, staleCopies, uninstallSkill } from "../../src/shared/agent-skill";
 
-const SKILL_V1 = "---\nname: omp-sessions\nmetadata:\n  omp-sessions:\n    managed-by: omp-vs\n---\nv1\n";
+const SKILL_V1 = "---\nname: omp-sessions\nmetadata:\n  omp-sessions:\n    managed-by: omp-sessions\n---\nv1\n";
 const SKILL_V2 = SKILL_V1.replace("v1", "v2");
 
 const temps: string[] = [];
@@ -49,4 +49,14 @@ test("install updates our own copy, never replaces someone else's skill unless f
 
 	assert.equal(uninstallSkill(target), true);
 	assert.equal(fs.existsSync(target.dir), false);
+});
+
+test("a copy 0.5.0 and earlier installed (the old managed-by mark) is still ours", () => {
+	const home = tempHome();
+	const [target] = skillTargets("agents", home);
+	fs.mkdirSync(target.dir, { recursive: true });
+	fs.writeFileSync(path.join(target.dir, "SKILL.md"), "---\nname: omp-sessions\nmetadata:\n  omp-sessions:\n    managed-by: omp-vs\n---\nv0\n");
+	assert.deepEqual(staleCopies(SKILL_V2, home).map(t => t.dir), [target.dir]);
+	assert.equal(installSkill(target, SKILL_V2), "updated");
+	assert.equal(fs.readFileSync(path.join(target.dir, "SKILL.md"), "utf8"), SKILL_V2);
 });

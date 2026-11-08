@@ -13,7 +13,7 @@ import {
 	dispatcherConfigured,
 	enablePlugin,
 	findHermes,
-	findOmpVs,
+	findOmpSessions,
 	gatewayPath,
 	hermesCommand,
 	hermesHome,
@@ -190,7 +190,7 @@ plugins:
     omp-sessions:
       allow_gateway_injection: true
       settings:
-        omp_vs: '~/bin/omp-vs'
+        omp_sessions: '~/bin/omp-sessions'
         lane:
           boards:
             lightscale:
@@ -210,7 +210,7 @@ test("configValue reads scalars, lists and nested keys of the block YAML Hermes 
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "allow_gateway_injection"]), "true");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "other", "allow_gateway_injection"]), "false");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "settings", "lane", "enabled"]), "true");
-	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "settings", "omp_vs"]), "~/bin/omp-vs");
+	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "settings", "omp_sessions"]), "~/bin/omp-sessions");
 	assert.equal(configValue(HERMES_CONFIG, ["url"]), "http://localhost:9119/x");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries"]), undefined, "a mapping");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "missing", "x"]), undefined);
@@ -223,7 +223,7 @@ test("configValue reads scalars, lists and nested keys of the block YAML Hermes 
 	assert.equal(configPluginStatus("plugins:\n  enabled: [a, b]\n"), "not enabled");
 });
 
-test("pluginReport reads status, lane, notifications and omp_vs from the profile's config.yaml", () => {
+test("pluginReport reads status, lane, notifications and omp_sessions from the profile's config.yaml", () => {
 	const root = temp();
 	const v1 = bundle(root, "1");
 	const home = path.join(root, "hermes");
@@ -232,10 +232,28 @@ test("pluginReport reads status, lane, notifications and omp_vs from the profile
 	installPlugin(v1, pluginTarget(home));
 	fs.writeFileSync(path.join(home, "config.yaml"), HERMES_CONFIG);
 	const r = pluginReport(v1, t);
-	assert.deepEqual([r.status, r.lane, r.injection, r.ompVs], ["enabled", true, true, "~/bin/omp-vs"]);
+	assert.deepEqual([r.status, r.lane, r.injection, r.ompSessions], ["enabled", true, true, "~/bin/omp-sessions"]);
 	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled: []\n");
 	const off = pluginReport(v1, t);
 	assert.deepEqual([off.status, off.lane, off.injection], ["not enabled", undefined, undefined]);
+});
+
+test("a copy 0.5.0 and earlier installed (the old marker file) stays ours: updated, uninstalled, re-marked", () => {
+	const root = temp();
+	const v1 = stamp(bundle(root, "1.0.0"), 1000);
+	const v2 = stamp(bundle(path.join(root, "next"), "1.2.0"), 1000);
+	const t = { label: "default", home: path.join(root, "hermes"), profile: "default" };
+	const dir = pluginTarget(t.home);
+	fs.cpSync(v1, dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, ".managed-by-omp-vs"), "Installed by omp-vs (omp-vs hermes install); replaced on update.\nversion: 1.0.0\nstamp: 1000000\n");
+	assert.deepEqual(pluginState(v1, dir), { installed: true, managed: true, current: true });
+	assert.deepEqual(staleCopies(v2, [t]).map(x => x.label), ["default"]);
+	assert.equal(installPlugin(v2, dir, { onlyIfNewer: true }), "updated");
+	assert.equal(fs.existsSync(path.join(dir, ".managed-by-omp-vs")), false);
+	assert.equal(fs.existsSync(path.join(dir, ".managed-by-omp-sessions")), true);
+	fs.renameSync(path.join(dir, ".managed-by-omp-sessions"), path.join(dir, ".managed-by-omp-vs"));
+	assert.equal(uninstallPlugin(dir), true);
+	assert.equal(fs.existsSync(dir), false);
 });
 
 /** Sets every file's mtime under `dir` (the build stamp). */
@@ -275,7 +293,7 @@ test("staleCopies: managed copies the bundle is newer than (version, then build 
 	assert.equal(installPlugin(sameNewer, pluginTarget(t("current").home), { onlyIfNewer: true }), "updated");
 	assert.equal(bundleNewer(sameOlder, pluginTarget(t("current").home)), false, "the marker now records the newer build");
 	assert.equal(bundleNewer(v2, pluginTarget(t("current").home)), false);
-	// A manual install may still replace it with whatever this omp-vs bundles.
+	// A manual install may still replace it with whatever this omp-sessions bundles.
 	assert.equal(installPlugin(v1, pluginTarget(t("current").home)), "updated");
 });
 
@@ -313,7 +331,7 @@ test("install lock: a live holder makes installs busy; a dead or old lock is tak
 	fs.writeFileSync(lockFile, `${process.pid} ${Date.now()} other-window\n`);
 	const busy = updatePlugin(bundle(path.join(root, "v2"), "2"), { label: "w", home: path.join(root, "hermes"), profile: "w" }, "/nonexistent/hermes");
 	assert.deepEqual([busy.outcome, busy.reload, busy.enable], ["busy", undefined, undefined]);
-	assert.deepEqual(updateLines("w", busy), ["w: skipped, another window or omp-vs is installing the plugin there right now"]);
+	assert.deepEqual(updateLines("w", busy), ["w: skipped, another window or omp-sessions is installing the plugin there right now"]);
 });
 
 test("install sweeps staging left by crashed runs and restores the old copy when the swap fails", { skip: process.platform === "win32" }, () => {
@@ -429,7 +447,7 @@ test("findHermes looks on PATH, then ~/.local/bin; hermes always runs with -p", 
 	]);
 });
 
-test("findOmpVs follows the plugin's order: setting, the gateway's PATH, ~/.local/bin", { skip: process.platform === "win32" }, () => {
+test("findOmpSessions follows the plugin's order: setting, the gateway's PATH, ~/.local/bin", { skip: process.platform === "win32" }, () => {
 	const root = temp();
 	const home = path.join(root, "home");
 	const exe = (p: string) => {
@@ -437,17 +455,17 @@ test("findOmpVs follows the plugin's order: setting, the gateway's PATH, ~/.loca
 		fs.writeFileSync(p, "#!/bin/sh\n", { mode: 0o755 });
 		return p;
 	};
-	assert.equal(findOmpVs(undefined, undefined, home), undefined);
-	const local = exe(path.join(home, ".local", "bin", "omp-vs"));
-	assert.deepEqual(findOmpVs(undefined, undefined, home), { path: local, via: "install" });
-	const onPath = exe(path.join(root, "bin", "omp-vs"));
-	assert.deepEqual(findOmpVs(undefined, path.join(root, "bin"), home), { path: onPath, via: "PATH" });
-	const set = exe(path.join(home, "tools", "omp-vs"));
-	assert.deepEqual(findOmpVs("~/tools/omp-vs", path.join(root, "bin"), home), { path: set, via: "setting" });
-	assert.deepEqual(findOmpVs(path.join(root, "missing"), undefined, home), { path: local, via: "install" }, "a bad setting falls through");
+	assert.equal(findOmpSessions(undefined, undefined, home), undefined);
+	const local = exe(path.join(home, ".local", "bin", "omp-sessions"));
+	assert.deepEqual(findOmpSessions(undefined, undefined, home), { path: local, via: "install" });
+	const onPath = exe(path.join(root, "bin", "omp-sessions"));
+	assert.deepEqual(findOmpSessions(undefined, path.join(root, "bin"), home), { path: onPath, via: "PATH" });
+	const set = exe(path.join(home, "tools", "omp-sessions"));
+	assert.deepEqual(findOmpSessions("~/tools/omp-sessions", path.join(root, "bin"), home), { path: set, via: "setting" });
+	assert.deepEqual(findOmpSessions(path.join(root, "missing"), undefined, home), { path: local, via: "install" }, "a bad setting falls through");
 });
 
-test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .cmd runs through a shell, findOmpVs finds the extension's shim", { skip: process.platform === "win32" }, () => {
+test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .cmd runs through a shell, findOmpSessions finds the extension's launcher", { skip: process.platform === "win32" }, () => {
 	const root = temp();
 	const la = path.join(root, "AppData", "Local");
 	const env = { LOCALAPPDATA: la, PATH: path.join(root, "empty") };
@@ -460,13 +478,13 @@ test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .
 	assert.deepEqual(hermesCommand("C:\\h\\hermes.exe", ["-p", "default"], "win32"), { file: "C:\\h\\hermes.exe", args: ["-p", "default"], shell: false });
 	assert.deepEqual(hermesCommand("/x/hermes.cmd", [], "linux").shell, false);
 	const bin = path.join(root, "bin");
-	const shim = path.join(la, "omp-vs", "omp-vs.cmd");
+	const shim = path.join(la, "omp-sessions", "omp-sessions.cmd");
 	fs.mkdirSync(path.dirname(shim), { recursive: true });
 	fs.writeFileSync(shim, "@echo off\r\n", { mode: 0o755 });
-	assert.deepEqual(findOmpVs(undefined, bin, root, env, "win32"), { path: shim, via: "install" });
+	assert.deepEqual(findOmpSessions(undefined, bin, root, env, "win32"), { path: shim, via: "install" });
 	fs.mkdirSync(bin);
-	fs.writeFileSync(path.join(bin, "omp-vs.cmd"), "@echo off\r\n", { mode: 0o755 });
-	assert.deepEqual(findOmpVs(undefined, `${path.join(root, "empty")};${bin}`, root, env, "win32"), { path: path.join(bin, "omp-vs.cmd"), via: "PATH" });
+	fs.writeFileSync(path.join(bin, "omp-sessions.cmd"), "@echo off\r\n", { mode: 0o755 });
+	assert.deepEqual(findOmpSessions(undefined, `${path.join(root, "empty")};${bin}`, root, env, "win32"), { path: path.join(bin, "omp-sessions.cmd"), via: "PATH" });
 });
 
 test("runningDashboardUrl: the live dashboard in Hermes's spawn ledger, at localhost for a wildcard bind", () => {
@@ -500,16 +518,16 @@ test("gatewayPath reads the PATH of the process in gateway.pid", { skip: process
 });
 
 test("parseLaneStatus: the dispatcher heartbeat, notes and last notification of `hermes omp status --json`", () => {
-	const json = JSON.stringify({ profile: "default", omp_vs: "/x/omp-vs", dispatcher: { at: 100, pid: 7, profile: "default", lane_on: true, board: "lightscale" }, dispatcher_notes: ["n1", 3], last_notification: { at: 90, ok: false, session: "abc" } });
+	const json = JSON.stringify({ profile: "default", omp_sessions: "/x/omp-sessions", dispatcher: { at: 100, pid: 7, profile: "default", lane_on: true, board: "lightscale" }, dispatcher_notes: ["n1", 3], last_notification: { at: 90, ok: false, session: "abc" } });
 	assert.deepEqual(parseLaneStatus(`warning: x\n${json}`), {
 		profile: "default",
-		ompVs: "/x/omp-vs",
+		ompSessions: "/x/omp-sessions",
 		dispatcher: { at: 100, pid: 7, profile: "default", laneOn: true, board: "lightscale" },
 		dispatcherNotes: ["n1"],
 		lastNotification: { at: 90, ok: false, session: "abc" },
 	});
 	assert.deepEqual(parseLaneStatus(JSON.stringify({ dispatcher: null, last_notification: null })), { dispatcherNotes: [], dispatcher: null, lastNotification: null });
-	assert.deepEqual(parseLaneStatus(JSON.stringify({ omp_vs: null })), { dispatcherNotes: [], ompVs: null }, "an older plugin: no dispatcher key");
+	assert.deepEqual(parseLaneStatus(JSON.stringify({ omp_sessions: null })), { dispatcherNotes: [], ompSessions: null }, "an older plugin: no dispatcher key");
 	assert.equal(parseLaneStatus("not json"), undefined);
 });
 

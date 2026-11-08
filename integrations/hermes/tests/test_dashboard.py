@@ -1,5 +1,5 @@
 """The dashboard/Desktop backend (omp-sessions/dashboard/plugin_api.py), imported the way Hermes imports
-it and mounted on a FastAPI app, against the real omp-vs CLI + server with the fake omp and a real
+it and mounted on a FastAPI app, against the real omp-sessions CLI + server with the fake omp and a real
 kanban board. Shares test_plugin's temp homes (it sets them up on import)."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import urllib.parse
 from unittest import mock
 
 import test_plugin as base
-from test_plugin import HERMES_HOME, WORK, omp_vs, until
+from test_plugin import HERMES_HOME, WORK, omp_sessions, until
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -38,7 +38,7 @@ def load_api():
 class DashboardApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        omp_vs("server", "start", check=False)
+        omp_sessions("server", "start", check=False)
         for slug in ("proj", "asking", "other"):  # test_plugin's boards (create_board is idempotent)
             kbb.create_board(slug, name=f"{slug.title()} board")
         kbb.create_board("dash", name="Dash board")
@@ -53,7 +53,7 @@ class DashboardApiTest(unittest.TestCase):
         CONFIG.write_text(cls.config_text)
         for s in base.sessions():
             if s["meta"]["status"] != "stopped":
-                omp_vs("stop", s["meta"]["id"], check=False)
+                omp_sessions("stop", s["meta"]["id"], check=False)
 
     def get(self, path: str, status: int = 200) -> dict:
         r = self.client.get(f"/api/plugins/omp-sessions{path}")
@@ -75,8 +75,8 @@ class DashboardApiTest(unittest.TestCase):
     def test_loads_its_own_package_and_reports_status(self) -> None:
         self.assertIn("omp_sessions_dashboard_plugin", sys.modules, "plugin_api imports the plugin folder as a package")
         o = self.get("/overview")
-        self.assertTrue(o["ompVs"]["found"])
-        self.assertRegex(o["ompVs"]["cli"], r"^\d+\.\d+\.\d+")
+        self.assertTrue(o["ompSessions"]["found"])
+        self.assertRegex(o["ompSessions"]["cli"], r"^\d+\.\d+\.\d+")
         self.assertTrue(o["scheduler"]["server"])
         self.assertTrue(o["lane"]["enabled"])
         self.assertEqual(o["lane"]["boards"], ["asking", "proj"])
@@ -88,7 +88,7 @@ class DashboardApiTest(unittest.TestCase):
         asking = self.post("/sessions", {"prompt": "write dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
         later = self.post("/sessions", {"prompt": "echo later", "title": "later on", "where": {"kind": "folder", "value": str(WORK)}, "when": "at", "at": "+2h", "group": "Dash group"})
         self.assertIn("startAt", later)
-        linked = json.loads(omp_vs("new", str(WORK), "--detach", "--json", "-p", "echo linked", "--tag", "hermes:dash", "--tag", f"card:{card}").stdout)
+        linked = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo linked", "--tag", "hermes:dash", "--tag", f"card:{card}").stdout)
 
         a = until(lambda: self.state_is(asking["id"], "needs_input"), "needs_input")
         self.assertIn("Allow tool: write", a["question"]["title"])
@@ -189,18 +189,18 @@ class DashboardApiTest(unittest.TestCase):
             window.unlink(missing_ok=True)
             request.unlink(missing_ok=True)
 
-    def test_missing_omp_vs_is_explained(self) -> None:
-        with mock.patch.object(self.api.ompvs, "find_omp_vs", return_value=None):
+    def test_missing_omp_sessions_is_explained(self) -> None:
+        with mock.patch.object(self.api.ompsessions, "find_omp_sessions", return_value=None):
             err = self.get("/sessions", status=503)["error"]
-            self.assertIn("omp: Install omp-vs Command", err)
+            self.assertIn("omp: Install omp-sessions Command", err)
             o = self.get("/overview")
-            self.assertFalse(o["ompVs"]["found"])
-            self.assertIn("VS Code", o["ompVs"]["hint"])
+            self.assertFalse(o["ompSessions"]["found"])
+            self.assertIn("VS Code", o["ompSessions"]["hint"])
 
 
 class PureDashboardTest(unittest.TestCase):
-    def test_agent_state_matches_omp_vs(self) -> None:
-        from hermes_plugins.omp_sessions.ompvs import agent_state  # loaded by test_plugin's PluginManager or below
+    def test_agent_state_matches_omp_sessions(self) -> None:
+        from hermes_plugins.omp_sessions.ompsessions import agent_state  # loaded by test_plugin's PluginManager or below
 
         q = lambda **kw: {"pending": 0, "running": 0, "done": 0, "total": 0, "autoRun": False, **kw}  # noqa: E731
         cases = [

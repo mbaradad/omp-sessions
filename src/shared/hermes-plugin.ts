@@ -9,18 +9,22 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { COMMAND } from "./cli-launcher";
+import { LEGACY_PLUGIN_MARKER } from "./rename-migration";
 
 export const PLUGIN_NAME = "omp-sessions";
 /** The bundled plugin, relative to the folder cli.js / extension.js runs from. */
 export const PLUGIN_BUNDLE = path.join("hermes-plugin", PLUGIN_NAME);
-const MARKER = ".managed-by-omp-vs";
+const MARKER = ".managed-by-omp-sessions";
+/** A copy carrying either marker is ours (copies 0.5.0 and earlier installed carry the old one). */
+const MARKERS = [MARKER, LEGACY_PLUGIN_MARKER];
 /** Exclusive lock (a file, so Hermes's plugin scan ignores it) around installs into one plugins/ folder. */
 const INSTALL_LOCK = ".omp-sessions.install.lock";
 /** A lock older than this is from a crashed run, whatever its pid says (pids get reused). */
 const STALE_LOCK_MS = 10 * 60_000;
 /** Staging folders: dunder names, which Hermes's plugin discovery skips, so a leftover never loads. */
 const STAGING = /^__omp-sessions-(\d+)-(?:tmp|old)__$/;
-/** Staging folders older omp-vs versions used beside the plugin (they look like plugins to Hermes). */
+/** Staging folders older versions used beside the plugin (they look like plugins to Hermes). */
 const LEGACY_STAGING = /^omp-sessions\.(\d+)\.(?:tmp|old)$/;
 /** config.yaml key that lets the plugin message the Hermes session that started an omp session. */
 const INJECTION_KEY = `plugins.entries.${PLUGIN_NAME}.allow_gateway_injection`;
@@ -29,7 +33,7 @@ const ENTRY = ["plugins", "entries", PLUGIN_NAME];
 const PROFILE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const PROFILE_MARKERS = ["config.yaml", ".env", "SOUL.md", "profile.yaml", "auth.json", "state.db"];
 
-/** "busy": another window or omp-vs holds the install lock; nothing was touched. */
+/** "busy": another window or omp-sessions holds the install lock; nothing was touched. */
 export type PluginInstallOutcome = "installed" | "updated" | "unchanged" | "skipped" | "busy";
 
 /** Hermes's own default home (hermes_constants._platform_default_hermes_home): ~/.hermes, %LOCALAPPDATA%\hermes on Windows. */
@@ -271,7 +275,7 @@ export function hermesCommand(hermes: string, args: readonly string[], platform 
 function listFiles(dir: string, rel = ""): string[] {
 	const out: string[] = [];
 	for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
-		if (e.name === "__pycache__" || e.name === MARKER) continue;
+		if (e.name === "__pycache__" || MARKERS.includes(e.name)) continue;
 		const p = path.join(rel, e.name);
 		if (e.isDirectory()) out.push(...listFiles(dir, p));
 		else if (e.isFile()) out.push(p);
@@ -294,7 +298,7 @@ export function changedFiles(a: string, b: string): string[] | undefined {
 
 export interface PluginState {
 	installed: boolean;
-	/** Installed by omp-vs (the marker file), so install/uninstall may replace it. */
+	/** Installed by omp-sessions (the marker file), so install/uninstall may replace it. */
 	managed: boolean;
 	/** Same files as the bundled copy. */
 	current: boolean;
@@ -304,7 +308,7 @@ export function pluginState(source: string | undefined, target: string): PluginS
 	const installed = fs.existsSync(path.join(target, "plugin.yaml"));
 	return {
 		installed,
-		managed: fs.existsSync(path.join(target, MARKER)),
+		managed: MARKERS.some(m => fs.existsSync(path.join(target, m))),
 		current: installed && !!source && changedFiles(source, target)?.length === 0,
 	};
 }
@@ -339,12 +343,15 @@ export function buildStamp(dir: string): number {
 
 /** The build stamp a managed copy's marker recorded (0: an older marker without one). */
 function markerStamp(target: string): number {
-	try {
-		const m = /^stamp:\s*(\d+(?:\.\d+)?)\s*$/m.exec(fs.readFileSync(path.join(target, MARKER), "utf8"));
-		return m ? Number(m[1]) : 0;
-	} catch {
-		return 0;
+	for (const marker of MARKERS) {
+		try {
+			const m = /^stamp:\s*(\d+(?:\.\d+)?)\s*$/m.exec(fs.readFileSync(path.join(target, marker), "utf8"));
+			return m ? Number(m[1]) : 0;
+		} catch {
+			/* not this marker */
+		}
 	}
+	return 0;
 }
 
 /**
@@ -424,7 +431,7 @@ function sweepStaging(pluginsDir: string): void {
 
 /**
  * Copies the bundled plugin to `target`, under the plugins/ folder's install lock ("busy" when another
- * window or omp-vs holds it). A plugin folder we didn't write is left alone unless `force`;
+ * window or omp-sessions holds it). A plugin folder we didn't write is left alone unless `force`;
  * `onlyIfNewer` (automatic refreshes) replaces a managed copy only when the bundle is newer.
  */
 export function installPlugin(source: string, target: string, opts: { force?: boolean; onlyIfNewer?: boolean } = {}): PluginInstallOutcome {
@@ -442,7 +449,7 @@ export function installPlugin(source: string, target: string, opts: { force?: bo
 		if (state.current && state.managed) return "unchanged";
 		if (opts.onlyIfNewer && state.installed && !bundleNewer(source, target)) return "unchanged";
 		fs.cpSync(source, tmp, { recursive: true, filter: f => !f.includes("__pycache__") });
-		fs.writeFileSync(path.join(tmp, MARKER), `Installed by omp-vs (omp-vs hermes install); replaced on update.\nversion: ${pluginVersion(source) ?? "unknown"}\nstamp: ${buildStamp(source)}\n`);
+		fs.writeFileSync(path.join(tmp, MARKER), `Installed by omp-sessions (omp-sessions hermes install); replaced on update.\nversion: ${pluginVersion(source) ?? "unknown"}\nstamp: ${buildStamp(source)}\n`);
 		const existed = fs.existsSync(target);
 		if (existed) fs.renameSync(target, old);
 		fs.renameSync(tmp, target);
@@ -458,7 +465,7 @@ export function installPlugin(source: string, target: string, opts: { force?: bo
 
 /** Removes a copy we installed; true if something was removed. */
 export function uninstallPlugin(target: string): boolean {
-	if (!fs.existsSync(path.join(target, MARKER))) return false;
+	if (!MARKERS.some(m => fs.existsSync(path.join(target, m)))) return false;
 	fs.rmSync(target, { recursive: true, force: true });
 	return true;
 }
@@ -552,7 +559,7 @@ export function updatePlugin(
 
 /** Plain-text lines about one profile's update (CLI and VS Code). */
 export function updateLines(label: string, u: PluginUpdate): string[] {
-	if (u.outcome === "busy") return [`${label}: skipped, another window or omp-vs is installing the plugin there right now`];
+	if (u.outcome === "busy") return [`${label}: skipped, another window or omp-sessions is installing the plugin there right now`];
 	const lines = [`${label}: ${u.outcome}${u.reload?.ok ? ", reloaded in the running gateway" : ""}`];
 	if (u.leftDisabled) lines.push(`${label}: the plugin was left DISABLED in profile ${label} (enabling it again failed twice): run hermes -p ${label} plugins enable omp-sessions. ${u.reload?.output ?? ""}`.trim());
 	else if (u.reload && !u.reload.ok) lines.push(`${label}: reloading it failed (hermes -p ${label} plugins disable/enable omp-sessions): ${u.reload.output}`);
@@ -573,9 +580,9 @@ export interface PluginReport {
 	lane?: boolean;
 	/** `allow_gateway_injection`: notifications may reach Hermes sessions (only read where the plugin is enabled). */
 	injection?: boolean;
-	/** The plugin's `omp_vs` setting, when set. */
-	ompVs?: string;
-	/** A managed copy that differs because it is newer than the bundle (another editor's newer omp-vs wrote it). */
+	/** The plugin's `omp_sessions` setting, when set. */
+	ompSessions?: string;
+	/** A managed copy that differs because it is newer than the bundle (another editor's newer omp-sessions wrote it). */
 	ahead?: boolean;
 }
 
@@ -589,8 +596,8 @@ export function pluginReport(source: string | undefined, target: HermesTarget): 
 	if (state.managed && !state.current && source && !bundleNewer(source, dir)) report.ahead = true;
 	report.status = text === undefined ? "not enabled" : configPluginStatus(text);
 	if (text === undefined) return report;
-	const ompVs = configValue(text, [...ENTRY, "settings", "omp_vs"]);
-	if (typeof ompVs === "string" && ompVs) report.ompVs = ompVs;
+	const ompSessions = configValue(text, [...ENTRY, "settings", "omp_sessions"]);
+	if (typeof ompSessions === "string" && ompSessions) report.ompSessions = ompSessions;
 	if (report.status === "enabled") {
 		report.lane = truthy(configValue(text, [...ENTRY, "settings", "lane", "enabled"]));
 		report.injection = truthy(configValue(text, [...ENTRY, "allow_gateway_injection"]));
@@ -621,12 +628,12 @@ function isExecutable(p: string): boolean {
 }
 
 /**
- * The omp-vs the plugin runs, by its own rule (ompvs.py find_omp_vs): the `omp_vs` setting, then PATH,
- * then where *omp: Install omp-vs Command* puts it (~/.local/bin/omp-vs; %LOCALAPPDATA%\omp-vs\omp-vs.cmd).
- * `pathEnv` is the PATH of the process that runs the plugin (the gateway); undefined skips the PATH
- * lookup when it isn't known.
+ * The omp-sessions the plugin runs, by its own rule (ompsessions.py find_omp_sessions): the `omp_sessions`
+ * setting, then PATH, then where *omp: Install omp-sessions Command* puts it (~/.local/bin/omp-sessions;
+ * %LOCALAPPDATA%\omp-sessions\omp-sessions.cmd). `pathEnv` is the PATH of the process that runs the
+ * plugin (the gateway); undefined skips the PATH lookup when it isn't known.
  */
-export function findOmpVs(
+export function findOmpSessions(
 	setting: string | undefined,
 	pathEnv: string | undefined,
 	home = os.homedir(),
@@ -638,14 +645,14 @@ export function findOmpVs(
 		if (p.endsWith(".js") ? fs.existsSync(p) : isExecutable(p)) return { path: p, via: "setting" };
 	}
 	const win = platform === "win32";
-	const names = win ? ["omp-vs.exe", "omp-vs.cmd", "omp-vs.bat"] : ["omp-vs"];
+	const names = win ? [`${COMMAND}.exe`, `${COMMAND}.cmd`, `${COMMAND}.bat`] : [COMMAND];
 	for (const dir of (pathEnv ?? "").split(win ? ";" : ":").filter(Boolean)) {
 		for (const n of names) {
 			const p = path.join(dir, n);
 			if (isExecutable(p)) return { path: p, via: "PATH" };
 		}
 	}
-	const installed = [path.join(home, ".local", "bin", "omp-vs"), ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, "omp-vs", "omp-vs.cmd")] : [])];
+	const installed = [path.join(home, ".local", "bin", COMMAND), ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, COMMAND, `${COMMAND}.cmd`)] : [])];
 	const found = installed.find(isExecutable);
 	return found ? { path: found, via: "install" } : undefined;
 }
@@ -720,7 +727,7 @@ export interface LaneStatus {
 	dispatcherNotes: string[];
 	/** The last notification into a Hermes session; ok false: Hermes refused it. */
 	lastNotification?: { at: number; ok: boolean; session?: string } | null;
-	ompVs?: string | null;
+	ompSessions?: string | null;
 }
 
 function obj(v: unknown): Record<string, unknown> | undefined {
@@ -740,7 +747,7 @@ export function parseLaneStatus(text: string): LaneStatus | undefined {
 	if (!data) return undefined;
 	const out: LaneStatus = { dispatcherNotes: Array.isArray(data.dispatcher_notes) ? data.dispatcher_notes.filter((n): n is string => typeof n === "string") : [] };
 	if (typeof data.profile === "string") out.profile = data.profile;
-	if (typeof data.omp_vs === "string" || data.omp_vs === null) out.ompVs = data.omp_vs;
+	if (typeof data.omp_sessions === "string" || data.omp_sessions === null) out.ompSessions = data.omp_sessions;
 	if (data.dispatcher === null) out.dispatcher = null;
 	const d = obj(data.dispatcher);
 	if (d && typeof d.at === "number" && typeof d.profile === "string") {
@@ -758,7 +765,7 @@ export function parseLaneStatus(text: string): LaneStatus | undefined {
 /** One plain-text line per report (CLI and VS Code). */
 export function reportLine(r: PluginReport): string {
 	if (!r.state.installed) return `${r.label}: not installed (${r.target})`;
-	const freshness = r.state.current ? "current" : r.ahead ? "newer than this omp-vs (left as is)" : r.state.managed ? "outdated, run install to update" : "not installed by omp-vs";
+	const freshness = r.state.current ? "current" : r.ahead ? "newer than this omp-sessions (left as is)" : r.state.managed ? "outdated, run install to update" : "not installed by omp-sessions";
 	const lane = r.lane === undefined ? "" : ` · lane ${r.lane ? "on" : "off"}`;
 	const injection = r.injection === false ? " · notifications not allowed (allow_gateway_injection)" : "";
 	return `${r.label}: ${freshness}${r.status ? `, ${r.status}` : ""}${lane}${injection} (${r.target})`;

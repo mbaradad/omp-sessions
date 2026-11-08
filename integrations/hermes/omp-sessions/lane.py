@@ -3,7 +3,7 @@
 Hermes's dispatcher leaves cards whose assignee is not a Hermes profile in `ready`
 (`skipped_nonspawnable`). On every dispatch tick this lane claims them with Hermes's own kanban API,
 resolves the workspace the way a Hermes worker would (worktree on the card's branch, dir, scratch,
-or the board/project folder for scratch cards), queues an omp session there with `omp-vs new --task`
+or the board/project folder for scratch cards), queues an omp session there with `omp-sessions new --task`
 (so omp's global concurrency limit applies), and then mirrors the session onto the card: heartbeat
 while it works, `needs_input` block while it waits on a question, `complete` with its final reply,
 `transient` block when it fails, stops or is removed.
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompvs import OmpVs, OmpVsError
+from .ompsessions import OmpSessions, OmpSessionsError
 from .settings import BoardLane, Settings, board_lane
 from .store import Busy, Store
 
@@ -163,7 +163,7 @@ def question_text(q: dict) -> str:
 
 
 def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> list[tuple]:
-    """Actions that bring the card in line with its omp session. `report` is `omp-vs show --json`
+    """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
     ("block_input", text, question_id), ("comment_input", text, question_id), ("unblock",),
     ("complete",), ("block_transient", reason), ("retry",), ("recreate",)."""
@@ -236,7 +236,7 @@ def capacity(sched: dict) -> int:
 
 
 class Lane:
-    def __init__(self, store: Store, settings: Callable[[], Settings], omp: Callable[[], OmpVs]) -> None:
+    def __init__(self, store: Store, settings: Callable[[], Settings], omp: Callable[[], OmpSessions]) -> None:
         self.store = store
         self.settings = settings
         self.omp = omp
@@ -334,7 +334,7 @@ class Lane:
 
     # -- new cards --
 
-    def _start(self, conn: Any, slug: str, links: dict, task: Any, cfg: BoardLane, settings: Settings, omp: OmpVs) -> bool:
+    def _start(self, conn: Any, slug: str, links: dict, task: Any, cfg: BoardLane, settings: Settings, omp: OmpSessions) -> bool:
         from hermes_cli import kanban_db as kb
 
         key = link_key(slug, task.id)
@@ -359,7 +359,7 @@ class Lane:
         self._create(conn, slug, link, claimed, cfg, omp)
         return True
 
-    def _tagged_session(self, omp: OmpVs, slug: str, card_id: str) -> Optional[dict]:
+    def _tagged_session(self, omp: OmpSessions, slug: str, card_id: str) -> Optional[dict]:
         want = {f"card:{card_id}", f"hermes:{slug}"}
         for s in omp.sessions(all=True):
             tags = s.get("tags") if isinstance(s.get("tags"), list) else []
@@ -390,7 +390,7 @@ class Lane:
         kbw.set_workspace_path(conn, task.id, str(path))
         return str(path), None
 
-    def _create(self, conn: Any, slug: str, link: dict, task: Any, cfg: Optional[BoardLane], omp: OmpVs) -> None:
+    def _create(self, conn: Any, slug: str, link: dict, task: Any, cfg: Optional[BoardLane], omp: OmpSessions) -> None:
         from hermes_cli import kanban_db as kb
         from hermes_constants import get_hermes_home
 
@@ -411,7 +411,7 @@ class Lane:
                 tags=["hermes", f"hermes:{slug}", f"card:{task.id}"],
                 group=cfg.group if cfg else None,
             )
-        except OmpVsError as exc:
+        except OmpSessionsError as exc:
             link["state"] = "failed"
             link["error"] = str(exc)
             kb.block_task(conn, task.id, reason=f"omp lane could not start a session: {exc}", kind="transient")
@@ -426,7 +426,7 @@ class Lane:
             AUTHOR,
             f"Queued as omp session {short(sid)} in {link['cwd']}"
             + (f" (branch {link['branch']})" if link.get("branch") else "")
-            + f". It starts when omp has a free slot. Watch or steer it in VS Code (omp Sessions), with `omp-vs attach {short(sid)}`, "
+            + f". It starts when omp has a free slot. Watch or steer it in VS Code (omp Sessions), with `omp-sessions attach {short(sid)}`, "
             "or in the omp phone app, or comment here: comments reach the session. This card is updated when it finishes or needs input.",
         )
 
@@ -467,7 +467,7 @@ class Lane:
 
     # -- linked cards --
 
-    def _track(self, conn: Any, slug: str, links: dict, key: str, cfg: Optional[BoardLane], settings: Settings, omp: OmpVs) -> None:
+    def _track(self, conn: Any, slug: str, links: dict, key: str, cfg: Optional[BoardLane], settings: Settings, omp: OmpSessions) -> None:
         from hermes_cli import kanban_db as kb
 
         link = links[key]
@@ -499,7 +499,7 @@ class Lane:
             if key not in links:
                 return
 
-    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpVs) -> bool:
+    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpSessions) -> bool:
         """New comments on the card from anyone but the lane (Hermes Console, the dashboard, other
         agents) go to the omp session: the first answers omp's open question, the rest arrive as a
         message (a follow-up while omp works). Held until the card's queued task has started, so they
@@ -531,7 +531,7 @@ class Lane:
             first, theirs = theirs[0], theirs[1:]
             r = omp.run(["answer", sid, first.body.strip()])
             if r.code != 0:
-                err = one_line(r.stderr or r.stdout or f"omp-vs answer exited with {r.code}", 300)
+                err = one_line(r.stderr or r.stdout or f"omp-sessions answer exited with {r.code}", 300)
                 kb.add_comment(conn, card_id, AUTHOR, f"omp didn't take that as an answer ({err}). Reply with one of the options, or answer in VS Code or the omp phone app.")
                 return False
             done.append(f"answered omp's question with \"{one_line(first.body, 80)}\"")
@@ -545,7 +545,7 @@ class Lane:
         log.info("omp lane: %s/%s: %s", link["board"], card_id, "; ".join(done))
         return True
 
-    def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: OmpVs) -> None:
+    def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: OmpSessions) -> None:
         from hermes_cli import kanban_db as kb
         from hermes_cli import kanban_db_dispatch as kbd
 
@@ -564,11 +564,11 @@ class Lane:
                 if kbd.heartbeat_worker(conn, card_id, note=note):
                     link["heartbeat_at"] = time.time()
         elif kind == "block_input":
-            if kb.block_task(conn, card_id, reason=f"omp needs input (answer with a comment on this card, in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}", kind="needs_input"):
+            if kb.block_task(conn, card_id, reason=f"omp needs input (answer with a comment on this card, in VS Code, the omp phone app, or `omp-sessions answer {short(link['session'])} <choice>`):\n{act[1]}", kind="needs_input"):
                 link["input_blocked"] = True
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "comment_input":
-            kb.add_comment(conn, card_id, AUTHOR, f"omp needs input again (answer with a comment on this card, in VS Code, the omp phone app, or `omp-vs answer {short(link['session'])} <choice>`):\n{act[1]}")
+            kb.add_comment(conn, card_id, AUTHOR, f"omp needs input again (answer with a comment on this card, in VS Code, the omp phone app, or `omp-sessions answer {short(link['session'])} <choice>`):\n{act[1]}")
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "unblock":
             kb.unblock_task(conn, card_id)

@@ -7,20 +7,20 @@
 - **A kanban lane.** Kanban cards assigned to `omp` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`omp-sessions` skill**, plus `/omp` in chats and `hermes omp …` in a terminal.
 
-The plugin drives the `omp-vs` CLI, so every session it starts is an ordinary omp session. You can watch and steer it in VS Code (omp Sessions), with `omp-vs attach`, or in the omp phone app. Queued sessions respect omp's global concurrency limit (`omp-vs sched set <n>`).
+The plugin drives the `omp-sessions` CLI, so every session it starts is an ordinary omp session. You can watch and steer it in VS Code (omp Sessions), with `omp-sessions attach`, or in the omp phone app. Queued sessions respect omp's global concurrency limit (`omp-sessions sched set <n>`).
 
-For the whole arrangement (one workstation running omp, the `omp-vs` server and Hermes; VS Code and Hermes Desktop on a laptop; the phone over Tailscale), see [the setup guide](SETUP.md).
+For the whole arrangement (one workstation running omp, the `omp-sessions` server and Hermes; VS Code and Hermes Desktop on a laptop; the phone over Tailscale), see [the setup guide](SETUP.md).
 
 ## Install
 
-You need `omp-vs` (VS Code: **omp: Install omp-vs Command**) and Hermes Agent 0.23 or later. Install the plugin either from omp-vs or with Hermes's own plugin installer.
+You need `omp-sessions` (VS Code: **omp: Install omp-sessions Command**) and Hermes Agent 0.23 or later. Install the plugin either from omp-sessions or with Hermes's own plugin installer.
 
-**From omp-vs** (the copy that ships with the extension, always matching your `omp-vs`):
+**From omp-sessions** (the copy that ships with the extension, always matching your `omp-sessions`):
 
 ```sh
-omp-vs hermes install     # copy the plugin into $HERMES_HOME/plugins (default ~/.hermes) and enable it
-omp-vs hermes status      # per profile: installed, current or outdated, enabled, lane on or off
-omp-vs hermes uninstall
+omp-sessions hermes install     # copy the plugin into $HERMES_HOME/plugins (default ~/.hermes) and enable it
+omp-sessions hermes status      # per profile: installed, current or outdated, enabled, lane on or off
+omp-sessions hermes uninstall
 ```
 
 **From Git**, with Hermes (it fetches only the plugin folder of this repository):
@@ -38,19 +38,19 @@ Add `-p <profile>` (`hermes -p <profile> plugins install …`) for other profile
 - `hermes plugins enable omp-sessions`
 - `hermes config set plugins.entries.omp-sessions.allow_gateway_injection true` (this lets the plugin message Hermes sessions)
 
-A running gateway loads a plugin as soon as it is enabled. The tools then appear in new Hermes sessions. If `hermes plugins list` shows the plugin as enabled but the tools are missing, restart the gateway with `hermes gateway restart`. A plugin folder that omp-vs didn't install is only replaced with `--force`.
+A running gateway loads a plugin as soon as it is enabled. The tools then appear in new Hermes sessions. If `hermes plugins list` shows the plugin as enabled but the tools are missing, restart the gateway with `hermes gateway restart`. A plugin folder that omp-sessions didn't install is only replaced with `--force`.
 
-**Updates are automatic.** When the extension updates, it refreshes the copies omp-vs installed (the `.managed-by-omp-vs` marker) in every profile, and says once what changed. It only replaces a copy when its bundled plugin is newer: a higher `plugin.yaml` version, or the same version from a later build (the marker records the build). So editors with different extension versions (Stable, Insiders, a fork) never downgrade each other; the Doctor shows a newer copy as such. Copies installed from Git or the catalog are never touched; update those with `hermes plugins update omp-sessions`. `omp-vs hermes install` replaces the copy with the one it ships, whatever its version. Installs take a lock in the profile's `plugins/` folder (`.omp-sessions.install.lock`), so several windows don't race: a window that finds it held skips that profile. Where the plugin was enabled, the update disables and re-enables it, which makes the running gateway reload it in place: hooks and commands (notifications, the kanban lane) use the new code at once and tools from the next Hermes session, with no gateway restart and running chats untouched. If enabling it again fails twice, you're told plainly that it was left disabled in that profile (VS Code offers Enable). Only the dashboard's page backend (`dashboard/plugin_api.py`) waits for a dashboard restart; you're told when files under `dashboard/` changed. Nothing restarts the gateway or the dashboard for you.
+**Updates are automatic.** When the extension updates, it refreshes the copies omp-sessions installed (the `.managed-by-omp-sessions` marker; copies 0.5.0 and earlier installed carry an older marker and count too) in every profile, and says once what changed. It only replaces a copy when its bundled plugin is newer: a higher `plugin.yaml` version, or the same version from a later build (the marker records the build). So editors with different extension versions (Stable, Insiders, a fork) never downgrade each other; the Doctor shows a newer copy as such. Copies installed from Git or the catalog are never touched; update those with `hermes plugins update omp-sessions`. `omp-sessions hermes install` replaces the copy with the one it ships, whatever its version. Installs take a lock in the profile's `plugins/` folder (`.omp-sessions.install.lock`), so several windows don't race: a window that finds it held skips that profile. Where the plugin was enabled, the update disables and re-enables it, which makes the running gateway reload it in place: hooks and commands (notifications, the kanban lane) use the new code at once and tools from the next Hermes session, with no gateway restart and running chats untouched. If enabling it again fails twice, you're told plainly that it was left disabled in that profile (VS Code offers Enable). Only the dashboard's page backend (`dashboard/plugin_api.py`) waits for a dashboard restart; you're told when files under `dashboard/` changed. Nothing restarts the gateway or the dashboard for you.
 
 ### In VS Code
 
 Sessions started from Hermes show where they came from. Those started by the Hermes tools (`omp_session_start`) are tagged `hermes` and show a **Hermes** chip; those started by the kanban lane are tagged `hermes`, `hermes:<board>` and `card:<task id>` and show **Hermes · board · card** in the Sessions view and in the chat header. For a card, **Open Hermes Card** (chip, chat menu or right-click in the Sessions view) opens the Kanban page of the Hermes dashboard (`omp.hermes.dashboardUrl`; empty, the default, uses the dashboard Hermes reports running on the machine, at whatever port, else `http://localhost:9119`; in a Remote-SSH or WSL window a `localhost` address is forwarded to your machine; with no dashboard running it offers **Show Hermes Card in Terminal**). The Kanban page has no link to one card, so it opens on the board you picked last and the status bar names the card. **Show Hermes Card in Terminal** runs `hermes kanban --board <board> show <id>`.
 
-**omp Doctor** (*omp: Run Doctor*) has a Hermes section when Hermes is installed: the plugin in each profile (current, outdated, disabled, or installed from Git), notifications (`allow_gateway_injection`, and whether Hermes refused the last one), the kanban dispatcher's last tick and the profile it reaches, the lane being on in several profiles or in a profile the dispatcher doesn't tick, and whether the plugin finds `omp-vs` (its `omp_vs` setting, the running gateway's `PATH` (read on Linux), or where *omp: Install omp-vs Command* puts it). Problems come with one-click fixes: Update, Enable, Allow, Turn the lane on/off in a profile (it asks first), Install omp-vs.
+**omp Doctor** (*omp: Run Doctor*) has a Hermes section when Hermes is installed: the plugin in each profile (current, outdated, disabled, or installed from Git), notifications (`allow_gateway_injection`, and whether Hermes refused the last one), the kanban dispatcher's last tick and the profile it reaches, the lane being on in several profiles or in a profile the dispatcher doesn't tick, and whether the plugin finds `omp-sessions` (its `omp_sessions` setting, the running gateway's `PATH` (read on Linux), or where *omp: Install omp-sessions Command* puts it). Problems come with one-click fixes: Update, Enable, Allow, Turn the lane on/off in a profile (it asks first), Install omp-sessions.
 
 ### Profiles
 
-Hermes plugins are installed and enabled per profile. Each profile is a Hermes home with its own `config.yaml`, `plugins/` and plugin settings. Every `omp-vs hermes` command takes the same profile flags:
+Hermes plugins are installed and enabled per profile. Each profile is a Hermes home with its own `config.yaml`, `plugins/` and plugin settings. Every `omp-sessions hermes` command takes the same profile flags:
 
 | Flags | Homes |
 | --- | --- |
@@ -59,11 +59,11 @@ Hermes plugins are installed and enabled per profile. Each profile is a Hermes h
 | `--all-profiles` | the default profile and every named profile |
 
 ```sh
-omp-vs hermes install --profile lightscale --profile lightscale-zynq-prototyper
-omp-vs hermes status --all-profiles
+omp-sessions hermes install --profile lightscale --profile lightscale-zynq-prototyper
+omp-sessions hermes status --all-profiles
 ```
 
-Only real profiles are accepted. Like Hermes, omp-vs counts a folder under `profiles/` as a profile when it has one of `config.yaml`, `.env`, `SOUL.md`, `profile.yaml`, `auth.json` or `state.db`, and `hermes profile delete` hasn't removed it. Folders that only logs or cron created are skipped.
+Only real profiles are accepted. Like Hermes, omp-sessions counts a folder under `profiles/` as a profile when it has one of `config.yaml`, `.env`, `SOUL.md`, `profile.yaml`, `auth.json` or `state.db`, and `hermes profile delete` hasn't removed it. Folders that only logs or cron created are skipped.
 
 **omp: Install Hermes Plugin…** in VS Code first asks what to do (install or update, show status, uninstall), then which profiles to apply it to. For install, it pre-selects the default profile plus any profile whose `config.yaml` sets `kanban: dispatch_in_gateway: true`. It then shows each profile's status, and `hermes omp status` for profiles where the lane is on.
 
@@ -87,12 +87,12 @@ States: `queued` (waiting for a slot or its start time), `starting`, `working`, 
 
 ## Notifications
 
-`omp_session_start`, `omp_session_send` and `omp_session_answer` remember which Hermes session called them. Once that omp session settles (idle, needs input or stopped), the plugin queues a short message into the Hermes session. The message gives the title, the state, a reply excerpt or the question, and `omp-vs show <id>`. An idle Hermes session starts a turn on it; a busy one gets it after its current turn. If the agent already saw that state through `omp_session_status` or `omp_session_wait`, no message is sent.
+`omp_session_start`, `omp_session_send` and `omp_session_answer` remember which Hermes session called them. Once that omp session settles (idle, needs input or stopped), the plugin queues a short message into the Hermes session. The message gives the title, the state, a reply excerpt or the question, and `omp-sessions show <id>`. An idle Hermes session starts a turn on it; a busy one gets it after its current turn. If the agent already saw that state through `omp_session_status` or `omp_session_wait`, no message is sent.
 
 Notifications need:
 
 - a running Hermes gateway (Hermes 0.23 runs every session in it);
-- `plugins.entries.omp-sessions.allow_gateway_injection: true` (`omp-vs hermes install` sets it);
+- `plugins.entries.omp-sessions.allow_gateway_injection: true` (`omp-sessions hermes install` sets it);
 - the gateway's kanban dispatcher. The plugin checks sessions on its tick, every 60 s by default (`kanban.dispatch_interval_seconds`).
 
 Turn notifications off with `hermes omp notify off`.
@@ -101,7 +101,7 @@ Turn notifications off with `hermes omp notify off`.
 
 Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. A card assigned to anything else (here, `omp`) stays `ready`, and the dispatcher logs `skipped_nonspawnable`. On every dispatcher tick, the lane:
 
-1. **Claims** ready cards assigned to `omp`, using Hermes's kanban API with a claim lock `<host>:omp-sessions`. It only takes cards while omp has free concurrency slots (`omp-vs sched`), at most 4 per tick.
+1. **Claims** ready cards assigned to `omp`, using Hermes's kanban API with a claim lock `<host>:omp-sessions`. It only takes cards while omp has free concurrency slots (`omp-sessions sched`), at most 4 per tick.
 2. **Prepares the workspace** the way Hermes prepares one for its own workers:
    - `worktree`: a git worktree on the card's branch (default `wt/<card id>`), recorded on the card;
    - `dir`: that folder;
@@ -112,7 +112,7 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
    - the paths of the `SKILL.md` files the card asks for.
 
    The session gets the tags `hermes`, `hermes:<board>` and `card:<id>`, goes into the board's omp group, and starts in the board's permission mode, if one is set.
-4. **Comments** on the card with the session id and how to watch it: VS Code, `omp-vs attach <id>`, or the phone app.
+4. **Comments** on the card with the session id and how to watch it: VS Code, `omp-sessions attach <id>`, or the phone app.
 5. **Tracks** the session and mirrors it onto the card:
 
 | Session | Card |
@@ -136,7 +136,7 @@ The plugin may be enabled in several profiles, and their gateways may each tick 
 - **A card keeps the assignee it was claimed for.** If another profile's lane settings name a different assignee, that doesn't make the lane drop the card.
 - **New cards follow the settings of whichever profile has its lane on.** A profile whose lane is off claims nothing, but it still reports on cards that are already linked.
 
-The lane is off by default. Turn it on in one profile (`hermes -p <name> omp lane on`). `omp-vs hermes status --all-profiles` warns when it is on in more than one, and `hermes omp status` shows where the shared state lives.
+The lane is off by default. Turn it on in one profile (`hermes -p <name> omp lane on`). `omp-sessions hermes status --all-profiles` warns when it is on in more than one, and `hermes omp status` shows where the shared state lives.
 
 Hermes runs one kanban dispatcher per machine (a lock at `<kanban home>/kanban/.dispatcher.lock`), in the gateway that took it. With the default multiplexed gateway (one gateway serving every profile) that is the default profile, so turn the lane on there: `hermes -p default omp lane on`. Without `-p`, `hermes omp …` acts on the active profile (`hermes profile use`), which may not be the one you mean.
 
@@ -182,7 +182,7 @@ plugins:
     omp-sessions:
       allow_gateway_injection: true
       settings:
-        omp_vs: /path/to/omp-vs        # default: PATH, then ~/.local/bin/omp-vs (%LOCALAPPDATA%\omp-vs\omp-vs.cmd on Windows); point it at the installed command, not at cli.js
+        omp_sessions: /path/to/omp-sessions  # default: PATH, then ~/.local/bin/omp-sessions (%LOCALAPPDATA%\omp-sessions\omp-sessions.cmd on Windows); point it at the installed command, not at cli.js
         notify: true
         lane:
           enabled: true
@@ -203,7 +203,7 @@ When a card is blocked with `needs_input`, answer the omp session in any of thes
 
 - VS Code (the session's chat);
 - the omp phone app;
-- `omp-vs answer <id> <choice>`;
+- `omp-sessions answer <id> <choice>`;
 - from Hermes, with `omp_session_answer`.
 
 On its next tick the lane unblocks and reclaims the card.
@@ -246,7 +246,7 @@ The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web d
 
 ![omp Sessions in the Hermes dashboard](images/hermes-dashboard.png)
 
-- **Status strip:** `omp-vs` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
+- **Status strip:** `omp-sessions` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
 - **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply. Filter by board, group or project, or search (`/`).
 - **Detail panel** (click a card): the question with one button per answer, the full last reply, a follow-up box (it steers a working session, or queues the text after the turn), the permission mode switch, Stop, and **VS Code** (below).
 - **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
@@ -256,12 +256,12 @@ The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web d
 
 The page refreshes every few seconds while it is visible. Lane settings it changes are the active profile's, like `hermes omp lane` and `hermes omp board`.
 
-**Open in VS Code.** The detail panel's **VS Code** button opens the session's chat in the VS Code window you last used on omp's machine, including a Remote-SSH window on your laptop. Every window of the extension records itself (`vscode-window.json` in the `omp-vs` state folder, `~/.omp/vscode`) when it gains focus; the button records the request there (`vscode-open.json`, valid for two minutes) and opens a link that brings that window up: `vscode://vscode-remote/<authority><session folder>` for a remote window (VS Code focuses the window holding that folder, or opens one), or `vscode://mbaradad.omp-sessions/open?session=<id>` for a local one. The window takes the request when it gains focus and opens the chat. In the dashboard the browser asks before opening VS Code. Hermes Desktop opens only web links, so it opens a small page of the dashboard (`/dashboard-plugins/omp-sessions/open-vscode.html`, served without sign-in; it holds nothing but the link) in your browser, which then asks to open VS Code. The same works from a terminal: `omp-vs vscode <session>` records the request and prints the link.
+**Open in VS Code.** The detail panel's **VS Code** button opens the session's chat in the VS Code window you last used on omp's machine, including a Remote-SSH window on your laptop. Every window of the extension records itself (`vscode-window.json` in the `omp-sessions` state folder, `~/.omp/vscode`) when it gains focus; the button records the request there (`vscode-open.json`, valid for two minutes) and opens a link that brings that window up: `vscode://vscode-remote/<authority><session folder>` for a remote window (VS Code focuses the window holding that folder, or opens one), or `vscode://mbaradad.omp-sessions/open?session=<id>` for a local one. The window takes the request when it gains focus and opens the chat. In the dashboard the browser asks before opening VS Code. Hermes Desktop opens only web links, so it opens a small page of the dashboard (`/dashboard-plugins/omp-sessions/open-vscode.html`, served without sign-in; it holds nothing but the link) in your browser, which then asks to open VS Code. The same works from a terminal: `omp-sessions vscode <session>` records the request and prints the link.
 
 What it takes:
 
-- **Dashboard:** the plugin must be enabled (`hermes plugins enable omp-sessions`; `omp-vs hermes install` does it). Hermes mounts the page's backend (`dashboard/plugin_api.py`, under `/api/plugins/omp-sessions/`) when the dashboard or gateway starts, so restart it after enabling (`hermes gateway restart`, or restart `hermes dashboard`).
-- **Desktop with Hermes on the same computer:** Desktop copies the desktop half (`desktop/plugin.js`) from the installed plugin, from the first profile that has it (default first), so keep every profile's copy current (`omp-vs hermes install --all-profiles`; the extension does it on update). It ships off: turn on **omp Sessions** in **Capabilities → Plugins** (use **Rescan** there if it isn't listed or after an update; once the desktop half is in, the row is titled *omp Sessions*, so search for that rather than `omp-sessions`). It uses the same backend, so the plugin must also be enabled in that profile.
+- **Dashboard:** the plugin must be enabled (`hermes plugins enable omp-sessions`; `omp-sessions hermes install` does it). Hermes mounts the page's backend (`dashboard/plugin_api.py`, under `/api/plugins/omp-sessions/`) when the dashboard or gateway starts, so restart it after enabling (`hermes gateway restart`, or restart `hermes dashboard`).
+- **Desktop with Hermes on the same computer:** Desktop copies the desktop half (`desktop/plugin.js`) from the installed plugin, from the first profile that has it (default first), so keep every profile's copy current (`omp-sessions hermes install --all-profiles`; the extension does it on update). It ships off: turn on **omp Sessions** in **Capabilities → Plugins** (use **Rescan** there if it isn't listed or after an update; once the desktop half is in, the row is titled *omp Sessions*, so search for that rather than `omp-sessions`). It uses the same backend, so the plugin must also be enabled in that profile.
 - **Desktop against a remote backend** (Desktop on a laptop, Hermes on another machine): the desktop half has to be on the laptop, because Desktop loads plugins from its own `~/.hermes/desktop-plugins/`. Until it is, the plugin's row says *Desktop: unavailable (remote backend)*. In **Capabilities → Plugins → Install from Git**, enter `mbaradad/omp-vscode/integrations/hermes/omp-sessions`, review, and Install. Desktop clones the desktop half into `~/.hermes/desktop-plugins/omp-sessions/` with a `.hermes-package.json` marker that pairs it with the agent half on the backend. If the agent half is already installed there, the dialog reports *Plugin 'omp-sessions' already exists*, which is harmless: the desktop half is still installed. Then turn on its **Desktop** switch. To update it later, run Install from Git again with **Force reinstall** on. Desktop doesn't refresh a Git-installed desktop half by itself, and Force reinstall also replaces the agent half on the backend. The install link `hermes://plugin/install?repo=mbaradad/omp-vscode/integrations/hermes/omp-sessions` opens the same dialog.
 
 The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashboard/dist/` and `desktop/plugin.js`; those files are committed because Hermes installs the plugin folder without a build step.
@@ -278,15 +278,15 @@ For the omp sessions themselves on Android (every session, not only cards), pair
 
 ## Troubleshooting
 
-- **Start with omp Doctor** in VS Code (*omp: Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-vs`, with fixes (see [In VS Code](#in-vs-code)).
-- **`hermes omp status` says `omp-vs: NOT FOUND`.** Install the command from VS Code (**omp: Install omp-vs Command**), or set `plugins.entries.omp-sessions.settings.omp_vs` to its path. The gateway may run with a smaller `PATH` than your shell.
+- **Start with omp Doctor** in VS Code (*omp: Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-sessions`, with fixes (see [In VS Code](#in-vs-code)).
+- **`hermes omp status` says `omp-sessions: NOT FOUND`.** Install the command from VS Code (**omp: Install omp-sessions Command**), or set `plugins.entries.omp-sessions.settings.omp_sessions` to its path. The gateway may run with a smaller `PATH` than your shell.
 - **The tools are missing in Hermes.** Check `hermes plugins list`. A user plugin loads only once it is enabled. Start a new Hermes session after enabling, or run `hermes gateway restart`.
 - **No notifications arrive.** `hermes omp status` shows whether the last note was delivered or refused. A refused note usually means `plugins.entries.omp-sessions.allow_gateway_injection` is not `true`. Notes are sent on the dispatcher's tick, so the gateway and its kanban dispatcher must be running.
 - **Cards stay `ready`.**
   - `hermes omp status` shows the kanban dispatcher's last tick and which profile's plugin it reached, and warns when the lane is on in a different profile, when the dispatcher's profile has the lane off, or when no tick has arrived for 3 minutes. The omp Sessions page shows the same warnings on its Lane item.
   - Is the board in the lane's list? Is the card assigned exactly to the lane's assignee?
-  - Is omp's concurrency limit full (`omp-vs sched`)?
+  - Is omp's concurrency limit full (`omp-sessions sched`)?
   - `hermes omp lane run` forces a pass from the terminal.
-  - Just updated the plugin files? The running gateway keeps the old code until it reloads the plugin: the extension's automatic refresh and `omp-vs hermes install` do that for you; by hand, `hermes -p <profile> plugins disable omp-sessions` then `enable`, or `hermes gateway restart`.
+  - Just updated the plugin files? The running gateway keeps the old code until it reloads the plugin: the extension's automatic refresh and `omp-sessions hermes install` do that for you; by hand, `hermes -p <profile> plugins disable omp-sessions` then `enable`, or `hermes gateway restart`.
 - **A card was blocked with "could not prepare the workspace".** A `worktree` card needs a path inside a git repository, or a board `default_workdir`. A `dir` path must be absolute.
-- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. omp's own logs: `omp-vs server log` and `omp-vs tail <id>`.
+- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. omp's own logs: `omp-sessions server log` and `omp-sessions tail <id>`.

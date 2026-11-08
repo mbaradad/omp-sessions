@@ -1,4 +1,4 @@
-// Terminal output helpers for `omp-vs`: ANSI colors (off for NO_COLOR, non-TTY, TERM=dumb or
+// Terminal output helpers for `omp-sessions`: ANSI colors (off for NO_COLOR, non-TTY, TERM=dumb or
 // --no-color), width-aware truncation, relative times, prompts. Node built-ins only.
 import * as readline from "node:readline";
 
@@ -109,9 +109,9 @@ export async function confirm(question: string, assumeYes = false): Promise<bool
 	return /^y(es)?$/i.test((await ask(`${question} ${c.dim("[y/N]")} `)).trim());
 }
 
-/** Error to stderr with the omp-vs prefix. */
+/** Error to stderr with the omp-sessions prefix. */
 export function errorLine(message: string): void {
-	process.stderr.write(`${c.red("omp-vs:")} ${message}\n`);
+	process.stderr.write(`${c.red("omp-sessions:")} ${message}\n`);
 }
 
 export const STATUS_COLOR: Record<string, (s: string) => string> = {

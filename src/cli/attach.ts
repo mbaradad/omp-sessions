@@ -1,5 +1,5 @@
-// `omp-vs attach`: a terminal chat on a running session (straight to its host socket), and the
-// read-only follower behind `omp-vs tail -f`.
+// `omp-sessions attach`: a terminal chat on a running session (straight to its host socket), and the
+// read-only follower behind `omp-sessions tail -f`.
 import * as readline from "node:readline";
 import { type Snapshot, HostConnection, isBusy } from "../shared/host-conn";
 import { DIALOG_METHODS, type HostToClient, type SessionMeta, type UiRequest } from "../shared/protocol";
@@ -32,9 +32,9 @@ function header(meta: SessionMeta): string {
 export async function attach(meta: SessionMeta, opts: AttachOptions): Promise<number> {
 	let opened: { conn: HostConnection; snapshot: Snapshot };
 	try {
-		opened = await HostConnection.open(meta.socket, opts.readOnly ? "omp-vs-tail" : "omp-vs");
+		opened = await HostConnection.open(meta.socket, opts.readOnly ? "omp-sessions-tail" : "omp-sessions");
 	} catch (err) {
-		process.stderr.write(`${c.red("omp-vs:")} ${err instanceof Error ? err.message : String(err)}\n`);
+		process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
 		return 1;
 	}
 	const { conn, snapshot } = opened;
@@ -246,7 +246,7 @@ export async function attach(meta: SessionMeta, opts: AttachOptions): Promise<nu
 	if (opts.prompt !== undefined) {
 		const res = await conn.rpc({ type: "prompt", message: opts.prompt, ...(isBusy(current, state) ? { streamingBehavior: "followUp" } : {}) });
 		if (!res.success) {
-			process.stderr.write(`${c.red("omp-vs:")} ${String(res.error ?? "omp rejected the prompt")}\n`);
+			process.stderr.write(`${c.red("omp-sessions:")} ${String(res.error ?? "omp rejected the prompt")}\n`);
 			conn.close();
 			return 1;
 		}

@@ -68,7 +68,7 @@ if (watch) {
 } else {
 	await Promise.all(hermesUiBuilds.map(b => esbuild.build(b)));
 }
-// `omp-vs hermes install` copies the plugin from the runtime folder into Hermes.
+// `omp-sessions hermes install` copies the plugin from the runtime folder into Hermes.
 fs.cpSync(PLUGIN, "out/hermes-plugin/omp-sessions", { recursive: true, filter: f => !f.includes("__pycache__") });
 if (watch) {
 	for (const b of builds) await (await esbuild.context(b)).watch();

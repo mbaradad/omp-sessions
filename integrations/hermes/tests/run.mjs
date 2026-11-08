@@ -1,5 +1,5 @@
 // `npm run test:hermes`: the omp-sessions Hermes plugin tests (integrations/hermes/tests) with
-// Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built omp-vs
+// Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built omp-sessions
 // (out/cli.js) with the fake omp. Skips when Hermes isn't installed. Not part of `npm test`.
 // HERMES_PYTHON=<python> picks the interpreter (default: the venv of the installed Hermes).
 import { spawnSync } from "node:child_process";

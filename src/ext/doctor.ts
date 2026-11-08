@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { HOST_CRASHED, isOutdated, settleDeadHost } from "../shared/health";
-import { PLUGIN_BUNDLE, findHermes, findOmpVs, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
+import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { canConnect, pidAlive, sendToHost } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
@@ -177,10 +177,10 @@ async function gatherHermes(extensionPath: string): Promise<HermesFacts | undefi
 	const lane = hermes && ask ? await laneStatus(hermes, ask.label) : undefined;
 	// The plugin runs in a gateway: search the PATH of the first enabled profile's gateway with a readable
 	// record (a per-profile gateway has its own), else the default home's (the multiplexed gateway).
-	const homes = [...enabled.map(r => ({ setting: r.ompVs, home: targets[profiles.indexOf(r)]?.home })), { setting: undefined, home: hermesRoot() }];
+	const homes = [...enabled.map(r => ({ setting: r.ompSessions, home: targets[profiles.indexOf(r)]?.home })), { setting: undefined, home: hermesRoot() }];
 	const gateway = homes.map(h => ({ setting: h.setting, path: h.home ? gatewayPath(h.home) : undefined })).find(g => g.path !== undefined);
-	const ompVs = findOmpVs(gateway?.setting ?? enabled.find(r => r.ompVs)?.ompVs, gateway?.path);
-	return { hermes, lookup: hermesLookup(), profiles, lane, ompVs, gatewayPath: gateway !== undefined, now: Date.now() };
+	const ompSessions = findOmpSessions(gateway?.setting ?? enabled.find(r => r.ompSessions)?.ompSessions, gateway?.path);
+	return { hermes, lookup: hermesLookup(), profiles, lane, ompSessions, gatewayPath: gateway !== undefined, now: Date.now() };
 }
 
 function retentionDays(): number {

@@ -1,5 +1,5 @@
 // Hermes Agent in VS Code: "Install Hermes Plugin…" (src/shared/hermes-plugin.ts, the same logic as
-// `omp-vs hermes install`), keeping the copies omp-vs installed current when the extension updates,
+// `omp-sessions hermes install`), keeping the copies omp-sessions installed current when the extension updates,
 // the Doctor's one-click fixes, and the Hermes origin of sessions the plugin started (open its card).
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -125,7 +125,7 @@ function announceRefresh(lines: string[], dashboardChanged: boolean, reloaded: b
 }
 
 /**
- * Refreshes the copies omp-vs installed when this extension's bundled plugin is newer (never a
+ * Refreshes the copies omp-sessions installed when this extension's bundled plugin is newer (never a
  * downgrade, so editors with different versions don't fight). Never touches other copies; a profile
  * another window is installing into right now is skipped quietly.
  */
@@ -191,7 +191,7 @@ export function registerHermesPlugin(api: OmpApi): void {
 					if (pick.action === "install") {
 						let u = await update(source, t, hermes, { enable: true });
 						if (u.outcome === "skipped") {
-							const replace = await vscode.window.showWarningMessage(`${dir} holds a plugin omp-vs didn't install. Replace it?`, { modal: true }, "Replace");
+							const replace = await vscode.window.showWarningMessage(`${dir} holds a plugin omp-sessions didn't install. Replace it?`, { modal: true }, "Replace");
 							if (replace !== "Replace") continue;
 							u = await update(source, t, hermes, { force: true, enable: true });
 						}
@@ -199,7 +199,7 @@ export function registerHermesPlugin(api: OmpApi): void {
 						if (u.leftDisabled) disabled.push(t.label);
 					} else if (pick.action === "uninstall") {
 						if (hermes) disablePlugin(hermes, t);
-						lines.push(uninstallPlugin(dir) ? `${t.label}: removed ${dir}` : `${t.label}: nothing omp-vs installed at ${dir}`);
+						lines.push(uninstallPlugin(dir) ? `${t.label}: removed ${dir}` : `${t.label}: nothing omp-sessions installed at ${dir}`);
 					}
 				} catch (err) {
 					lines.push(`${t.label}: ${err instanceof Error ? err.message : String(err)}`);

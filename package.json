@@ -886,19 +886,19 @@
 			},
 			{
 				"command": "omp.installCli",
-				"title": "Install omp-vs Command (Terminal CLI)",
+				"title": "Install omp-sessions Command (Terminal CLI)",
 				"category": "omp",
 				"icon": "$(terminal)"
 			},
 			{
 				"command": "omp.server.restart",
-				"title": "Restart omp-vs Server",
+				"title": "Restart omp-sessions Server",
 				"category": "omp",
 				"icon": "$(debug-restart)"
 			},
 			{
 				"command": "omp.server.showLog",
-				"title": "Show omp-vs Server Log",
+				"title": "Show omp-sessions Server Log",
 				"category": "omp",
 				"icon": "$(output)"
 			},
@@ -2000,7 +2000,7 @@
 				"omp.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Keep the per-user `omp-vs` server running: it starts stopped sessions whose task queue has work when a concurrency slot is free (also after a reboot), stops the sessions it started once their queue is done, and serves the `omp-vs` terminal command (`omp: Install omp-vs Command`)."
+					"markdownDescription": "Keep the per-user `omp-sessions` server running: it starts stopped sessions whose task queue has work when a concurrency slot is free (also after a reboot), stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command (`omp: Install omp-sessions Command`)."
 				},
 				"omp.showAllSessions": {
 					"type": "boolean",

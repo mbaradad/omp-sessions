@@ -16,7 +16,7 @@ const AT_PRESETS: ReadonlyArray<{ label: string; at: () => string }> = [
 	{ label: "Tomorrow 09:00", at: () => localIso(9) },
 ];
 
-/** Tomorrow at `hour`:00 local time, as omp-vs --at takes it (2026-01-31T09:00). */
+/** Tomorrow at `hour`:00 local time, as omp-sessions --at takes it (2026-01-31T09:00). */
 function localIso(hour: number): string {
 	const d = new Date();
 	d.setDate(d.getDate() + 1);

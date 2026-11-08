@@ -1,4 +1,4 @@
-// What other agents and scripts see of a session (`omp-vs show|wait --json`, the omp-sessions
+// What other agents and scripts see of a session (`omp-sessions show|wait --json`, the omp-sessions
 // skill): one settled-or-not state, the pending question with its choices, and the full last reply.
 import { isRecord } from "./bridge";
 import type { PermissionMode } from "./permissions";
@@ -12,7 +12,7 @@ import type { SessionInfo } from "./server-protocol";
  */
 export type AgentState = "queued" | "starting" | "working" | "needs_input" | "idle" | "stopped";
 
-/** States in which nothing happens until someone acts: what `omp-vs wait` waits for. */
+/** States in which nothing happens until someone acts: what `omp-sessions wait` waits for. */
 export const SETTLED_STATES: Readonly<Record<AgentState, boolean>> = { queued: false, starting: false, working: false, needs_input: true, idle: true, stopped: true };
 
 export interface SessionQuestion {
@@ -37,7 +37,7 @@ export interface SessionReport {
 	cost?: number;
 	changedFiles: number;
 	queue: SessionInfo["queue"];
-	/** The first dialog waiting for an answer (`omp-vs answer` replies to it). */
+	/** The first dialog waiting for an answer (`omp-sessions answer` replies to it). */
 	question?: SessionQuestion;
 	/** The last assistant text in full (clipped at REPLY_MAX characters). */
 	reply?: string;
@@ -174,6 +174,6 @@ export function dialogAnswer(req: UiRequest, answer: string): { res: Record<stri
 			return { res: { answers } };
 		}
 		default:
-			return { error: `"${req.method}" dialogs can only be answered in VS Code or omp-vs attach` };
+			return { error: `"${req.method}" dialogs can only be answered in VS Code or omp-sessions attach` };
 	}
 }

@@ -66,7 +66,7 @@ Capture guidelines: 1600×1000 (16:10; the website crops with `object-fit: cover
 | 6 | `checkpoints.png` | The *Restore the checkpoint before this prompt?* confirmation listing the files that go back |
 | 7 | `dashboard.png` | The usage dashboard: spend cards, per-day chart, projects and models |
 
-Phone screenshots (`docs/images/phone/*.png`, copied to `site/assets/shots/phone-*.png`) are 390×844 at 3× from the phone app against the same demo state (`omp-vs remote on --bind localhost`, then open the pairing URL in a mobile browser viewport). The README graphics (`hero.png`, `a-day.png`, `how-it-works.png`, `phone.png`) are rendered from HTML in `docs/images/src/`, which embeds these screenshots: re-render them after a retake (commands in `docs/images/src/README.md`).
+Phone screenshots (`docs/images/phone/*.png`, copied to `site/assets/shots/phone-*.png`) are 390×844 at 3× from the phone app against the same demo state (`omp-sessions remote on --bind localhost`, then open the pairing URL in a mobile browser viewport). The README graphics (`hero.png`, `a-day.png`, `how-it-works.png`, `phone.png`) are rendered from HTML in `docs/images/src/`, which embeds these screenshots: re-render them after a retake (commands in `docs/images/src/README.md`).
 
 Optional: a 10–20 s GIF of starting a session, closing VS Code, reopening and finding the finished work (keep it under about 5 MB).
 
@@ -96,7 +96,7 @@ Manual fallback without CI: upload the VSIX from `npx vsce package` at <https://
 
 The plugin in `integrations/hermes/omp-sessions/` ships three ways. Its `plugin.yaml` `version` must equal `package.json`'s (`node build.mjs` fails otherwise), so bump both together.
 
-1. **Inside the extension.** `build.mjs` copies the folder into `out/hermes-plugin/`; `omp-vs hermes install` and *omp: Install Hermes Plugin…* install it from there. Nothing to do beyond the extension release.
+1. **Inside the extension.** `build.mjs` copies the folder into `out/hermes-plugin/`; `omp-sessions hermes install` and *omp: Install Hermes Plugin…* install it from there. Nothing to do beyond the extension release.
 2. **From Git.** `hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/omp-sessions/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update omp-sessions`.
 3. **The Hermes plugin catalog** (`hermes plugins install omp-sessions`, listed on <https://hermes-agent.nousresearch.com/docs/plugins>). Entries are YAML files in [`NousResearch/hermes-agent/plugin-catalog/`](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog), added by a reviewed pull request that pins an exact commit. To submit, or to move it to a new release:
    1. Validate the plugin at the commit you'll pin (the same check catalog CI runs):

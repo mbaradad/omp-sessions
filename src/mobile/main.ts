@@ -1,4 +1,4 @@
-// omp Sessions phone app (served by the omp-vs server, see docs/REMOTE-API.md): the sessions list,
+// omp Sessions phone app (served by the omp-sessions server, see docs/REMOTE-API.md): the sessions list,
 // one session's live transcript with composer, dialogs and controls, and a new-session form.
 // Hash routes: #/ (list), #/s/<id> (session), #/new. `#pair=<token>` pairs this browser once.
 import { plainExcerpt } from "../shared/excerpt";
@@ -156,7 +156,7 @@ function showPair(problem?: string): void {
 			{ class: "pair" },
 			problem ? h("p", { class: "note warning" }, problem) : null,
 			h("p", {}, "Scan the pairing QR code with this phone's camera:"),
-			h("ul", {}, h("li", {}, "VS Code: ", h("b", {}, "omp: Connect Phone…")), h("li", {}, "Terminal: ", h("code", {}, "omp-vs remote qr"))),
+			h("ul", {}, h("li", {}, "VS Code: ", h("b", {}, "omp: Connect Phone…")), h("li", {}, "Terminal: ", h("code", {}, "omp-sessions remote qr"))),
 			h("p", { class: "dim" }, "Or paste the token from ~/.omp/vscode/remote.json:"),
 			h("form", { class: "row", onsubmit: (e: Event) => (e.preventDefault(), void submit()) }, field, h("button", { class: "primary", type: "submit" }, "Pair")),
 		),

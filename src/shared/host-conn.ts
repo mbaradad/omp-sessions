@@ -1,4 +1,4 @@
-// One socket connection to a session host, without reconnects: used by the omp-vs server and
+// One socket connection to a session host, without reconnects: used by the omp-sessions server and
 // CLI (the extension has its own reconnecting HostClient). Node-only; no vscode import.
 import * as net from "node:net";
 import * as readline from "node:readline";
@@ -46,7 +46,7 @@ export class HostConnection {
 
 	/**
 	 * Connects, says hello as `client` and resolves with the host's snapshot. Clients named
-	 * `omp-vs-server…` don't count as people viewing the session (`meta.viewers`).
+	 * `omp-sessions-server…` don't count as people viewing the session (`meta.viewers`).
 	 */
 	static open(socket: string, client: string, timeoutMs = 5000): Promise<{ conn: HostConnection; snapshot: Snapshot }> {
 		const { promise, resolve, reject } = Promise.withResolvers<{ conn: HostConnection; snapshot: Snapshot }>();

@@ -1,4 +1,4 @@
-// HTTP side of the omp-vs server: the remote API (docs/REMOTE-API.md) and the phone app it serves.
+// HTTP side of the omp-sessions server: the remote API (docs/REMOTE-API.md) and the phone app it serves.
 // Off unless remote.json says `enabled`; the server re-reads the file on every scheduling pass and
 // on the `remote` op, and starts, stops or rebinds the listener to match.
 // Security: every /api/* route except health and pair needs the token (Bearer header or the
@@ -481,7 +481,7 @@ export class RemoteServer {
 	private async snapshot(meta: SessionMeta, limit: number): Promise<RemoteSnapshot> {
 		if (meta.status === "stopped" || !meta.socket) return stoppedSnapshot(meta, limit);
 		try {
-			const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-vs-server/remote");
+			const { conn, snapshot } = await HostConnection.open(meta.socket, "omp-sessions-server/remote");
 			conn.close();
 			return slimSnapshot(snapshot, limit);
 		} catch {
@@ -529,8 +529,8 @@ export class RemoteServer {
 		if (meta.status === "stopped" || !meta.socket) return ended("stopped", stoppedSnapshot(meta, limit));
 		let opened: { conn: HostConnection; snapshot: Snapshot };
 		try {
-			// Not `omp-vs-server…`: a phone following the session counts as a viewer (no auto-stop).
-			opened = await HostConnection.open(meta.socket, "omp-vs-remote");
+			// Not `omp-sessions-server…`: a phone following the session counts as a viewer (no auto-stop).
+			opened = await HostConnection.open(meta.socket, "omp-sessions-remote");
 		} catch {
 			return ended("stopped", stoppedSnapshot(readMeta(meta.id) ?? meta, limit));
 		}

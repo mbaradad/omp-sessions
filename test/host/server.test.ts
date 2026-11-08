@@ -1,4 +1,4 @@
-// The omp-vs server against real hosts and the fake omp: launching queued stopped sessions by
+// The omp-sessions server against real hosts and the fake omp: launching queued stopped sessions by
 // priority within the concurrency limit, stopping them when their queue is done unless someone
 // watches, never rerunning a task a crash interrupted; and the host's viewer/activity fields it
 // relies on.
@@ -25,7 +25,7 @@ function readJson<T>(file: string): T | undefined {
 	}
 }
 
-/** A stopped session that has never run, with one task queued (as `omp-vs new --task` creates it). */
+/** A stopped session that has never run, with one task queued (as `omp-sessions new --task` creates it). */
 function queuedSession(home: string, id: string, cwd: string, title: string, status: QueueTask["status"] = "pending"): void {
 	const dir = path.join(home, "sessions", id);
 	fs.mkdirSync(dir, { recursive: true });
@@ -38,7 +38,7 @@ function queuedSession(home: string, id: string, cwd: string, title: string, sta
 }
 
 test("server: queued sessions start by priority within the limit; done ones stop unless watched; crash leftovers stay", async t => {
-	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vs-server-"));
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-server-"));
 	const cwd = path.join(home, "work");
 	const fake = path.join(home, "fake-sessions");
 	for (const d of [cwd, fake, path.join(home, "sessions")]) fs.mkdirSync(d, { recursive: true });
@@ -63,7 +63,7 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	};
 
 	const server: ChildProcess = spawn(process.execPath, [SERVER_JS], {
-		env: { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_VS_DONE_GRACE_MS: "300" },
+		env: { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" },
 		stdio: "ignore",
 	});
 	let viewer: HostConnection | undefined;
@@ -117,14 +117,14 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	]);
 });
 
-test("host: meta.viewers counts people, not the omp-vs server or omp-vs show; prompts stamp userActiveAt", async t => {
+test("host: meta.viewers counts people, not the omp-sessions server or omp-sessions show; prompts stamp userActiveAt", async t => {
 	const h = await launch(t);
 	await sleep(300);
 	const idleSince = h.meta().updatedAt;
 	const { client } = await h.connect("panel");
 	await until(() => h.meta().viewers === 1, "viewer counted");
-	await h.connect("omp-vs-server");
-	await h.connect("omp-vs-show");
+	await h.connect("omp-sessions-server");
+	await h.connect("omp-sessions-show");
 	await sleep(300);
 	assert.equal(h.meta().viewers, 1);
 	assert.equal(h.meta().userActiveAt, undefined);

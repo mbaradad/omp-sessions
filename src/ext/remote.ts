@@ -1,4 +1,4 @@
-// Remote access from VS Code: *Connect Phone…* turns on the omp-vs server's HTTP API + phone app
+// Remote access from VS Code: *Connect Phone…* turns on the omp-sessions server's HTTP API + phone app
 // (asking Tailscale / local network / this computer), makes sure the server runs and shows the
 // pairing QR code; *Disable Remote Access* and *Rotate Remote Access Token* manage it afterwards.
 // The server does the serving (src/server/remote.ts); this module only edits remote.json.
@@ -209,7 +209,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 				updateRemoteConfig({ enabled: true, bind: picked.bind, publicUrl: picked.publicUrl });
 				await server.ensureRunning();
 				const status = await applyInServer();
-				if (!status) throw new Error("the omp-vs server is not reachable");
+				if (!status) throw new Error("the omp-sessions server is not reachable");
 				if (!status.url) throw new Error(status.error ?? "remote access is not listening");
 				showPanel(status);
 			} catch (err) {
