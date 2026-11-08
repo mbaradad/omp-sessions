@@ -81,6 +81,7 @@
       <a href="#queue">Queue</a>
       <a href="#phone">Phone</a>
       <a href="#hermes">Hermes</a>
+      <a href="#setup">Setup</a>
       <a href="#cli">CLI</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -99,7 +100,7 @@
   <div class="wrap hero__in">
     <a class="pill" href="#new">
       <span class="pill__tag">New in 0.6</span>
-      <span class="pill__text">Permission modes, checkpoints, voice, a TUI switch and a phone app</span>
+      <span class="pill__text">Permission modes, checkpoints, voice, a phone app and a Hermes plugin</span>
       <svg class="i i--sm" aria-hidden="true"><use href="#i-arrow"/></svg>
     </a>
     <h1 id="hero-title" class="hero__title">Coding agents that keep working <span class="grad">when you leave.</span></h1>
@@ -115,7 +116,7 @@
     <ul class="facts" aria-label="At a glance">
       <li>Free &amp; MIT</li>
       <li>No telemetry</li>
-      <li>Linux &amp; macOS</li>
+      <li>Linux, macOS &amp; WSL</li>
       <li>Local or Remote-SSH</li>
     </ul>
   </div>
@@ -197,16 +198,16 @@
     </header>
 
     <figure class="arch reveal">
-      <figcaption class="sr-only">Architecture: VS Code on your laptop connects over Remote-SSH to the extension host on the server. Each session has a detached session host process that talks to omp over stdio. When the SSH link drops, the host and omp keep running.</figcaption>
+      <figcaption class="sr-only">Architecture: VS Code, in a local window or connected over Remote-SSH, talks to the machine with your code. Each session has a detached session host process that talks to omp over stdio. When VS Code closes or the connection drops, the host and omp keep running.</figcaption>
       <div class="arch__row" aria-hidden="true">
         <div class="node">
           <span class="node__ic"><svg class="i"><use href="#i-laptop"/></svg></span>
           <span class="node__t">VS Code</span>
-          <span class="node__s">your laptop</span>
+          <span class="node__s">here or on a laptop</span>
         </div>
         <div class="link link--flaky">
           <span class="link__line"><i></i><i></i><i></i></span>
-          <span class="link__label"><span class="on">Remote-SSH</span><span class="off">lid closed · still running</span></span>
+          <span class="link__label"><span class="on">local or Remote-SSH</span><span class="off">window closed · still running</span></span>
         </div>
         <div class="node node--host">
           <span class="node__ic"><svg class="i"><use href="#i-server"/></svg></span>
@@ -495,7 +496,7 @@
         <li>Approve or deny tool calls and switch the permission mode</li>
         <li>Start a session in a recent folder, or queue it for later</li>
       </ul>
-      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted) or your Wi-Fi, protected by a token. The same JSON + Server-Sent Events API is <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/REMOTE-API.md">documented</a> for your own apps and servers.</p>
+      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted), behind Tailscale Serve or your own HTTPS proxy (handy in WSL), or your Wi-Fi, protected by a token. The same JSON + Server-Sent Events API is <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/REMOTE-API.md">documented</a> for your own apps and servers.</p>
     </div>
     <div class="phones reveal">
       <figure class="phone"><img src="assets/shots/phone-list.png" width="1170" height="2532" loading="lazy" decoding="async" alt="The phone app's session list, grouped into needs input, working, idle and stopped, with project, cost and last reply."><figcaption>All sessions</figcaption></figure>
@@ -522,6 +523,7 @@
           <li>The chat that started a session gets a message when it finishes or needs you</li>
           <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board; the reply becomes the card's result</li>
           <li>Each session runs in a folder, a known project or the board's folder, in the permission mode you pick</li>
+          <li>In VS&nbsp;Code, those sessions carry a <em>Hermes · board · card</em> chip, with <em>Open Hermes Card</em></li>
         </ul>
       </div>
       <div class="shot">
@@ -593,7 +595,7 @@
       <div class="mini reveal">
         <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
         <h3>Hermes plugin</h3>
-        <p>Tools, notifications, a kanban lane and a sidebar page. <a href="#hermes">See above</a>.</p>
+        <p>Tools, notifications, a kanban lane, a sidebar page, and <code>/omp</code> in any chat, Hermes Console included. <a href="#hermes">See above</a>.</p>
       </div>
       <div class="mini reveal">
         <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
@@ -606,6 +608,35 @@
         <p><code>omp-vs new --json</code>, <code>wait</code>, <code>show</code> and <code>answer</code>: start a session, block until it's done or needs you, read the reply.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Setup ───────────────────────── -->
+<section class="section" id="setup" aria-labelledby="setup-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Your setup</p>
+      <h2 id="setup-title">Your computer or a server. <span class="grad">Same steps.</span></h2>
+      <p class="sub">omp, the <code>omp-vs</code> server, every session and Hermes run on the machine with your code. Only where you open the windows from changes.</p>
+    </header>
+    <div class="tools">
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-laptop"/></svg>
+        <h3>All on one computer</h3>
+        <p>A local VS&nbsp;Code window, with omp, the server and Hermes on the same Mac or Linux machine. Hermes Desktop in local mode picks up the omp Sessions page from the plugin; your phone joins over Tailscale.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-server"/></svg>
+        <h3>A workstation or server</h3>
+        <p>VS&nbsp;Code connects with Remote-SSH and the extension runs there, next to your code and Hermes. Close the laptop: sessions, queues and the kanban lane keep going. Hermes Desktop connects in remote mode; add the page once with <em>Install from Git</em>.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-windows"/></svg>
+        <h3>Windows with WSL&nbsp;2</h3>
+        <p>Run omp and Hermes in WSL and open VS&nbsp;Code in a WSL window. Tailscale usually runs on Windows, so the phone connects through <code>tailscale serve</code>; <em>Connect Phone</em> walks you through it.</p>
+      </article>
+    </div>
+    <p class="fine setup__more reveal"><code>omp-vs server install</code> keeps the server running as a systemd or launchd service; Hermes and the plugin work without VS&nbsp;Code open. Check it all with <em>omp: Run Doctor</em> and <code>hermes omp status</code>. <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide, step by step</a>.</p>
   </div>
 </section>
 
@@ -667,7 +698,7 @@
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-pulse"/></svg>
         <h3>Doctor</h3>
-        <p>A health report with one-click fixes: missing omp, auth problems, outdated session hosts, hosts that died mid-turn.</p>
+        <p>A health report with one-click fixes: missing omp, auth problems, outdated session hosts, hosts that died mid-turn, and Hermes: the plugin in each profile, notifications and the kanban lane.</p>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-command"/></svg>
@@ -732,7 +763,7 @@
         <span class="step__n" aria-hidden="true">3</span>
         <h3>Start a session</h3>
         <p>Open a folder and press <strong>+</strong> in the omp Sessions view. <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> focuses the chat, and <em>Help → Get Started</em> walks you through the rest.</p>
-        <p class="step__more">Want the terminal too? Run <em>omp: Install omp-vs Command</em>, then <code>omp-vs server install</code> so queued work resumes after a reboot.</p>
+        <p class="step__more">Want the terminal too? Run <em>omp: Install omp-vs Command</em>, then <code>omp-vs server install</code> so queued work resumes after a reboot. On a server, in WSL or with Hermes? See <a href="#setup">your setup</a>.</p>
       </li>
     </ol>
   </div>
@@ -760,8 +791,12 @@
         <p>No telemetry. Session state lives in <code>~/.omp/vscode/</code> on the machine that runs the sessions, and transcripts stay in omp's own <code>~/.omp/agent/sessions/</code>. VS Code talks to each session over a local Unix socket; omp talks to the model provider you configured.</p>
       </details>
       <details>
+        <summary>Do I need Remote-SSH?</summary>
+        <p>No. A local window works the same way: sessions run in detached processes on your computer and survive closing VS&nbsp;Code. Remote-SSH, WSL or a dev container only put them on another machine. The <a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">setup guide</a> covers both.</p>
+      </details>
+      <details>
         <summary>Which platforms are supported?</summary>
-        <p>Linux and macOS, as your local machine or as the Remote-SSH server. On Windows, named pipes and <code>.cmd</code> shims are handled, but it's untested.</p>
+        <p>Linux and macOS, as your local machine or as the Remote-SSH server, and Windows through WSL&nbsp;2 (open VS&nbsp;Code in a WSL window). On native Windows, named pipes and <code>.cmd</code> shims are handled, but it's untested.</p>
       </details>
       <details>
         <summary>What happens when my machine reboots?</summary>
@@ -774,6 +809,10 @@
       <details>
         <summary>Can I use the Hermes plugin without VS Code?</summary>
         <p>Hermes installs the plugin from GitHub (<code>hermes plugins install mbaradad/omp-vscode/integrations/hermes/omp-sessions</code>), but the plugin drives <code>omp-vs</code>, which ships with the extension. Install the extension once on the machine that runs Hermes and run <em>omp: Install omp-vs Command</em>; after that, VS Code doesn't need to stay open.</p>
+      </details>
+      <details>
+        <summary>Does it work with Hermes Console on Android?</summary>
+        <p>Through Hermes itself, yes: chats call the omp tools and get the "finished" and "needs you" notes, cards the lane runs show as <code>@omp</code> and notify you when they block, and <code>/omp take &lt;card&gt;</code> hands a card to omp. Console doesn't show plugin pages, so for the sessions themselves use the omp phone app.</p>
       </details>
       <details>
         <summary>Are all file changes tracked for diffs and revert?</summary>
@@ -818,6 +857,8 @@
           <li><a href="https://github.com/mbaradad/omp-vscode">GitHub</a></li>
           <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/CHANGELOG.md">Changelog</a></li>
           <li><a href="https://github.com/mbaradad/omp-vscode/issues">Issues</a></li>
+          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/SETUP.md">Setup guide</a></li>
+          <li><a href="https://github.com/mbaradad/omp-vscode/blob/main/docs/HERMES.md">Hermes guide</a></li>
         </ul>
       </div>
       <div>

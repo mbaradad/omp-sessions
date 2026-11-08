@@ -2412,6 +2412,14 @@ h2 .grad {
 	}
 }
 
+/* Your setup */
+
+.setup__more {
+	max-width: 760px;
+	margin-inline: auto;
+	line-height: 1.6;
+}
+
 /* Toolbox */
 
 .tools {
