@@ -252,6 +252,7 @@ async function cmdNew(args: Args): Promise<number> {
 	const atArg = value(args, "at");
 	if (atArg !== undefined && !task) throw new UsageError("--at schedules a queued task: add --task");
 	const startAt = atArg === undefined ? undefined : parseWhen(atArg);
+	if (args.multi.has("after") && !task) throw new UsageError("--after makes a queued task wait for other sessions: add --task");
 	if (task && prompt) throw new UsageError("--prompt starts the session now, --task queues it: pick one");
 	const json = flag(args, "json");
 	const dir = path.resolve(args._[0] ?? process.cwd());
@@ -267,6 +268,9 @@ async function cmdNew(args: Args): Promise<number> {
 	const project = await client.projectForFolder(dir);
 	// A queued task gets its session now (idle, no prompt), so its id is the session id like before; the planner prompts it.
 	const lane = task ? await planner() : undefined;
+	// Sessions this one waits for, checked before anything is created.
+	const after: string[] = [];
+	for (const ref of args.multi.get("after") ?? []) after.push((await findSession(ref)).id);
 	const res = await client.spawnSession({
 		harness: "omp",
 		mode: "chat",
@@ -281,13 +285,15 @@ async function cmdNew(args: Args): Promise<number> {
 	organizeNew(id, { tags: args.multi.get("tag"), group: value(args, "group") });
 	if (effectiveMode === "plan") await setOmpMode(client, id, "plan").catch(() => undefined);
 	if (lane && task) {
-		await lane.call("queue", {
-			id,
-			ops: [
-				{ op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), approvalMode } },
-				startAt ? { op: "schedule", at: startAt } : { op: "autoRun", value: true },
-			],
-		});
+		const add: QueueOp = { op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), approvalMode } };
+		const arm: QueueOp = startAt ? { op: "schedule", at: startAt } : { op: "autoRun", value: true };
+		if (after.length) {
+			// Dependencies go in before the queue is armed (the task must not start before them), and in a
+			// call of their own: the planner applies `after` to the tasks the lane has when the call starts.
+			await lane.call("queue", { id, ops: [add] });
+			await lane.call("queue", { id, ops: [{ op: "after", ids: after }] });
+			await lane.call("queue", { id, ops: [arm] });
+		} else await lane.call("queue", { id, ops: [add, arm] });
 		if (priority && isPriority(priority)) await lane.call("edit", { ops: [{ op: "lane.update", id, priority }] });
 	}
 	const cwd = (await client.workspacePath(id).catch(() => undefined)) || project?.path || dir;
@@ -904,8 +910,15 @@ async function cmdQueue(args: Args): Promise<void> {
 		case "at":
 			ops = [{ op: "schedule", at: rest[0] === "off" || rest[0] === "none" ? null : parseWhen(rest.join(" ")) }];
 			break;
+		case "after": {
+			// Sessions this queue waits for (replacing its dependencies); `off` or none clears them.
+			const ids: string[] = [];
+			if (!(rest.length === 0 || (rest.length === 1 && (rest[0] === "off" || rest[0] === "none")))) for (const ref of rest) ids.push((await findSession(ref)).id);
+			ops = [{ op: "after", ids }];
+			break;
+		}
 		default:
-			throw new UsageError(`unknown queue command "${sub}" (ls, add, run, start, pause, clear, retry, rm, done, skip, at)`);
+			throw new UsageError(`unknown queue command "${sub}" (ls, add, run, start, pause, clear, retry, rm, done, skip, at, after)`);
 	}
 	const next = await p.call("queue", { id: s.id, ops });
 	if (json) process.stdout.write(`${JSON.stringify(next, null, 2)}\n`);
@@ -1446,6 +1459,9 @@ ${c.bold("Queue")}  ${c.dim("(the planner runs a session's tasks one by one)")}
                                   auto-run on; pause: off
   queue <session> at <+30m|14:30|ISO time|off> [--json]
                                   start the queue at that time (off: cancel the schedule)
+  queue <session> after <session>…|off [--json]
+                                  the queue waits until those sessions finished (replaces its dependencies;
+                                  refused for itself, unknown sessions and cycles); new --task … --after <s>
 
 ${c.bold("Organize")}
   prio <session> <urgent|high|normal|low>
@@ -1528,7 +1544,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	version: { flags: ["json"], run: args => cmdVersion(flag(args, "json")) },
 	ls: { flags: ["all", "json", "project", "cwd", "group", "tag", "state"], run: async args => (await cmdList(args), 0) },
 	board: { flags: ["all", "json"], run: async args => (await cmdBoard(args), 0) },
-	new: { flags: ["prompt", "task", "sub", "notes", "at", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
+	new: { flags: ["prompt", "task", "sub", "notes", "at", "after", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
 	send: { flags: ["wait", "steer", "follow-up", "json"], run: cmdSend },
 	attach: { flags: ["lines"], run: cmdAttach },
 	tail: { flags: ["lines", "follow"], run: cmdTail },

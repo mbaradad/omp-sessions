@@ -8,6 +8,7 @@ import { type AoAgentState, type AoPlannedState, type AoReportQueue, type AoSess
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
 import type { LaneSummary } from "./plan";
+import { oneLine } from "./term";
 
 /** Board column of a session (`board`, `ls --json`); `interrupted` sessions sit under `stopped` here. */
 export type Column = "waiting" | "scheduled" | "working" | "input" | "idle" | "stopped";
@@ -279,6 +280,9 @@ export function infoJson(s: Session, order: number) {
 			createdAt: m.createdAt,
 			updatedAt: m.updatedAt,
 			changedFiles: report.changedFiles,
+			// Old SessionMeta fields scripts and the Hermes plugin read: the mode (AO's setting; omp's live plan mode shows in `show`) and the reply's first line.
+			...(report.mode && { permissionMode: report.mode }),
+			...(report.reply && { lastText: oneLine(report.reply).slice(0, 200) }),
 			...(m.model && { model: m.model }),
 			...(m.cost !== undefined && { cost: m.cost }),
 			...(report.exitReason && { exitReason: report.exitReason }),

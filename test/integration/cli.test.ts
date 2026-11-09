@@ -186,3 +186,25 @@ test("cli: new --task --at is scheduled (wait 5); the planner runs it once the s
 	assert.equal(w.data.queue.done, 1);
 	assert.match(w.data.reply, /queued work done/);
 });
+
+test("cli: new --task --after waits for the other session; queue after refuses itself and clears with off; ls --json keeps meta.permissionMode and lastText", { skip, timeout: 180_000 }, () => {
+	// A waits for its start time, so B's dependency can't finish by accident; the planner wraps task titles, so the fake echoes them whole.
+	const a = json("new", repo, "--task", "echo A ran", "--at", "+2h", "--mode", "auto", "--json");
+	assert.equal(a.status, 0, a.stderr);
+	const b = json("new", repo, "--task", "echo B ran", "--after", a.data.id, "--mode", "auto", "--json");
+	assert.equal(b.status, 0, b.stderr);
+	assert.equal(json("show", b.data.id, "--json").data.state, "queued", "blocked behind A");
+	assert.equal(cli("queue", b.data.id, "after", b.data.id).status, 1, "a queue can't wait for itself");
+	assert.equal(cli("wait", b.data.id, "--timeout", "3s").status, 124, "still waiting");
+	assert.equal(cli("queue", a.data.id, "at", "off").status, 0);
+	assert.equal(cli("queue", a.data.id, "start").status, 0);
+	const done = json("wait", b.data.id, "--timeout", "120s", "--json");
+	assert.equal(done.status, 0, JSON.stringify(done.data));
+	assert.match(done.data.reply, /echo B ran/);
+	assert.equal(json("show", a.data.id, "--json").data.queue.done, 1, "A ran first");
+	assert.equal(json("queue", b.data.id, "after", "off", "--json").status, 0);
+	type Meta = { meta: { id: string; permissionMode?: string; lastText?: string } };
+	const listed = json<Meta[]>("ls", "--all", "--json").data.find(i => i.meta.id === b.data.id);
+	assert.equal(listed?.meta.permissionMode, "auto");
+	assert.match(listed?.meta.lastText ?? "", /echo B ran/);
+});
