@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -277,4 +277,12 @@ test("parentBranches: the branches of the tasks another session's tasks build on
 	assert.deepEqual(parentBranches(plan, "C"), [{ title: "task tp", branch: "switchyard/tp" }]);
 	assert.deepEqual(parentBranches(plan, "P"), []);
 	assert.deepEqual(parentBranches(undefined, "C"), []);
+});
+
+test("ownFiles: a graph child keeps only the files its edit tools touched (the manifest also lists its parents' work); others keep all", () => {
+	const manifest = [{ path: "from-parent.ts" }, { path: "mine.ts" }, { path: "src/also-mine.ts" }];
+	const edit = (...paths: string[]) => ({ toolCallId: "c", toolName: "edit", timestamp: 1, files: paths.map(p => ({ path: p, op: "update" as const, before: null, after: null })) });
+	assert.deepEqual(ownFiles(manifest, "/wt", [edit("/wt/mine.ts"), edit("/wt/src/also-mine.ts", "/elsewhere/x.ts")]).map(f => f.path), ["mine.ts", "src/also-mine.ts"]);
+	assert.deepEqual(ownFiles(manifest, "/wt", []), []);
+	assert.equal(ownFiles(manifest, "/wt", undefined).length, 3);
 });

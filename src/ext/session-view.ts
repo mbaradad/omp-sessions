@@ -1,9 +1,11 @@
 // How the views see an AO session: the `SessionMeta` record the tree, board, status bar and notifications
 // read (built from src/ao's AoSessionModel), and the permission-mode and launch-flag mappings. Pure (no
 // vscode), so the CLI and tests can use it too.
+import * as path from "node:path";
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
 import type { AoAgentState, AoSessionModel } from "../ao/model";
 import type { PlanOp, PlanView, TaskState, TaskView } from "../planner/types";
+import type { FileChange } from "../shared/checkpoints";
 import type { Priority } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
 import type { SessionMeta, SessionStatus, SyncState } from "../shared/protocol";
@@ -232,6 +234,18 @@ export function parentBranches(plan: PlanView | undefined, sessionId: string): A
 		if (parent?.git?.branch && !own.includes(parent)) parents.set(parent.git.branch, { title: parent.title, branch: parent.git.branch });
 	}
 	return [...parents.values()];
+}
+
+/**
+ * The files a graph child changed itself. AO's workspace manifest diffs against the default branch, so for a task
+ * that started on its parents' branch it also lists their work (GAPS G43); the checkpoints store knows what the
+ * session's own edit tools touched. `changes` undefined: not a graph child, the manifest is right. Edits made by
+ * shell commands are not in the store, so a graph child can show fewer files than it changed.
+ */
+export function ownFiles<T extends { path: string }>(files: readonly T[], cwd: string, changes: readonly FileChange[] | undefined): T[] {
+	if (!changes) return [...files];
+	const touched = new Set(changes.flatMap(c => c.files.map(f => path.resolve(f.path))));
+	return files.filter(f => touched.has(path.resolve(cwd, f.path)));
 }
 
 /** A planner task whose state changed between two plans (the sounds listen to these). */

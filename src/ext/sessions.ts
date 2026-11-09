@@ -16,7 +16,7 @@ import { queueOf } from "../shared/plan-queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
 import type { SessionQueues } from "./session-queues";
-import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, parentBranches, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
+import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -145,9 +145,11 @@ export class SessionManager implements vscode.Disposable {
 			let changed = false;
 			for (const [id, meta] of this.sessions) {
 				const queue = laneQueue(source.plan, id);
-				if (JSON.stringify(queue) === JSON.stringify(meta.queue)) continue;
 				const model = this.models.get(id);
-				const next = withQueue(meta, queue, model ? statusOf(model.state) : meta.status);
+				// Becoming (or ceasing to be) a graph child changes which files count as the session's own.
+				const changedFiles = model ? this.ownFilesOf(id, model.changedFiles, meta.cwd).length : meta.changedFiles;
+				if (changedFiles === meta.changedFiles && JSON.stringify(queue) === JSON.stringify(meta.queue)) continue;
+				const next = { ...withQueue(meta, queue, model ? statusOf(model.state) : meta.status), changedFiles };
 				this.sessions.set(id, next);
 				if (next.status !== meta.status) transitions.push({ meta: next, from: meta.status });
 				changed = true;
@@ -207,6 +209,7 @@ export class SessionManager implements vscode.Disposable {
 			const queue = laneQueue(this.planSource?.plan, model.id);
 			const prev = next.get(model.id);
 			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
+			meta.changedFiles = this.ownFilesOf(model.id, model.changedFiles, meta.cwd).length;
 			this.models.set(model.id, model);
 			next.set(model.id, meta);
 			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title || prev.cwd !== meta.cwd || prev.cost !== meta.cost) dirty = true;
@@ -218,11 +221,21 @@ export class SessionManager implements vscode.Disposable {
 		if (dirty) this.emitter.fire();
 	}
 
-	/** Files the session changed in its workspace compared with its base branch (AO's workspace manifest), paths relative to its folder. */
+	/**
+	 * `files` (AO's manifest list) as the session's own work: a graph child's manifest also holds its parents' work
+	 * (GAPS G43), so only the files its edit tools touched count (`ownFiles`); other sessions keep the whole list.
+	 */
+	private ownFilesOf<T extends { path: string }>(id: string, files: readonly T[], cwd: string): T[] {
+		const graphChild = parentBranches(this.planSource?.plan, id).length > 0;
+		return ownFiles(files, cwd, graphChild ? this.changes(id) : undefined);
+	}
+
+	/** Files the session changed in its workspace compared with its base branch (AO's workspace manifest), paths relative to its folder; a graph child's own files only. */
 	async workspaceFiles(id: string): Promise<AoChangedFile[]> {
 		const client = await this.ao.client();
 		const manifest = await client.workspaceManifest(id);
-		return manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
+		const files = manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
+		return this.ownFilesOf(id, files, this.get(id)?.cwd ?? "");
 	}
 
 	/** Re-runs the session's tasks on top of their parents' current work (propagation states `upstream-changed` and `conflict`): the planner's `rerun` op (only the upstream note, in the task's own session; on a conflict edge it asks the agent to merge). Resolves with how many. */
