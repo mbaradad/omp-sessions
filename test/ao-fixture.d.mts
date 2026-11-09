@@ -44,6 +44,8 @@ export interface AoFixture {
 	/** clientEnv + ompEnv: for a planner, CLI or Hermes process that should use this stack. */
 	stackEnv: Record<string, string>;
 	root: string;
+	/** True when this fixture runs the real omp: its home/.omp/agent is the REAL agent dir (linked), so installs of omp extensions are pinned off in every environment it hands out. */
+	realOmp: boolean;
 	/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's client code (process.env is pointed at it while the fixture lives) and, by default, a planner. */
 	switchyardHome: string;
 	dataDir: string;

@@ -35,6 +35,8 @@ test("the daemon runs with HOME, XDG and state dirs under the fixture root, and 
 		}
 		assert.notEqual(path.resolve(env.HOME), realHome);
 		assert.equal(ao.home, env.HOME);
+		assert.equal(ao.realOmp, false);
+		assert.equal(env.SWITCHYARD_INSTALL_OMP_EXTENSIONS, undefined, "with the fake the install lands in the temp home: no pin needed");
 		// A planner on this stack inherits the isolation, and cannot be pointed at a real state dir.
 		const planner = await startPlannerFixture({ ao });
 		try {
@@ -108,6 +110,21 @@ test("real omp stays isolated: only the agent dir is shared, extensions come fro
 		fs.writeFileSync(ext, "export default function probe() {}\n");
 		const repo = ao.scratchRepo("ext", { extensions: { "probe.ts": ext } });
 		assert.equal(spawnSync("git", ["ls-files", ".omp/extensions/probe.ts"], { cwd: repo, encoding: "utf8" }).stdout.trim(), ".omp/extensions/probe.ts");
+		// The agent dir is the REAL one: nothing started on this stack may install Switchyard's omp gate or shim into it
+		// (G46: the planner and the extension install at start). The pin is in every env the fixture hands out.
+		assert.equal(ao.realOmp, true);
+		assert.equal(ao.stackEnv.SWITCHYARD_INSTALL_OMP_EXTENSIONS, "0");
+		assert.equal(process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS, "0");
+		if (process.platform === "linux") {
+			assert.equal(environOf(ao.pid).SWITCHYARD_INSTALL_OMP_EXTENSIONS, "0", "the daemon carries the pin");
+			const planner = await startPlannerFixture({ ao, usage: false });
+			try {
+				assert.equal(environOf(planner.pid).SWITCHYARD_INSTALL_OMP_EXTENSIONS, "0", "the planner process carries the pin");
+				assert.equal(planner.clientEnv.SWITCHYARD_INSTALL_OMP_EXTENSIONS, "0", "planner.clientEnv carries it for CLI/Hermes subprocesses");
+			} finally {
+				await planner.stop();
+			}
+		}
 	} finally {
 		await ao.stop();
 	}

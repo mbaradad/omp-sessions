@@ -296,6 +296,10 @@ export async function startAoFixture(opts = {}) {
 		XDG_CACHE_HOME: path.join(home, ".cache"),
 		SWITCHYARD_HOME: switchyardHome,
 		OMP_VSCODE_HOME: path.join(root, "omp-vscode"),
+		// With real omp the fixture's ~/.omp/agent is the REAL agent dir (linked, for the login): nothing may install
+		// Switchyard's omp gate or shim into it (CONTRACT.md; G46: the planner and the extension install at start).
+		// Part of the isolation, so the daemon, ao.stackEnv (planner, CLI…) and this process all carry it.
+		...(opts.realOmp ? { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0" } : {}),
 	};
 	/** The in-process values the isolation will replace (undefined = unset), to put back on stop(). */
 	const previousProcessEnv = Object.fromEntries(Object.keys(isolation).map(k => [k, process.env[k]]));
@@ -409,6 +413,8 @@ export async function startAoFixture(opts = {}) {
 		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack (isolated HOME included). */
 		stackEnv: { ...ompEnv, ...clientEnv },
 		root,
+		/** True when this fixture runs the real omp (its home/.omp/agent is the REAL agent dir, linked). */
+		realOmp: !!opts.realOmp,
 		/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's own client code and (by default) a planner. */
 		switchyardHome,
 		dataDir,
