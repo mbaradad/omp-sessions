@@ -136,11 +136,14 @@ class PluginTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        for s in sessions():
-            if s["meta"]["status"] != "stopped":
-                omp_sessions("stop", s["meta"]["id"], check=False)
-        # The fixture's daemon goes away with run.mjs; the planner the CLI started is ours to stop.
-        omp_sessions("server", "stop", check=False)
+        try:
+            for s in sessions():
+                if s["meta"]["status"] != "stopped":
+                    omp_sessions("stop", s["meta"]["id"], check=False)
+        finally:
+            # The fixture's daemon goes away with run.mjs; the planner the CLI started is ours to stop, whatever
+            # happened above (a planner left running outlives the run and its temp dir).
+            omp_sessions("server", "stop", check=False)
 
     # ---- helpers ----
 
