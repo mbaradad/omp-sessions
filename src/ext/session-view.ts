@@ -282,10 +282,11 @@ export interface TaskTransition {
 
 /**
  * The tasks of `plan` whose state differs from `previous` (task id → state; a task not in it is new and does not
- * count), and the map for the next call. No plan: nothing changed, `previous` stays.
+ * count), and the map for the next call. No plan (the planner is unreachable): nothing changed and the map is
+ * emptied, so the first plan after the reconnect is only a baseline: finishes that happened while disconnected are not replayed as cues.
  */
 export function taskTransitions(previous: ReadonlyMap<string, TaskState>, plan: PlanView | undefined): { next: Map<string, TaskState>; changes: TaskTransition[] } {
-	if (!plan) return { next: new Map(previous), changes: [] };
+	if (!plan) return { next: new Map(), changes: [] };
 	const sessionOf = taskSessionOf(plan);
 	const changes: TaskTransition[] = [];
 	for (const task of plan.tasks) {

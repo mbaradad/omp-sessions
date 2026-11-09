@@ -255,8 +255,11 @@ test("taskTransitions: only tasks that were known and changed state; the next ma
 	const second = taskTransitions(first.next, plan(task("a", "done", { session: "S1" }), task("b", "waiting", { lane: "l" }), task("c", "running")));
 	assert.deepEqual(second.changes.map(c => [c.task.id, c.from, c.sessionId]), [["a", "running", "S1"]]);
 	assert.deepEqual([...second.next], [["a", "done"], ["b", "waiting"], ["c", "running"]]);
-	// No plan (planner unreachable): nothing fires and what was known is kept.
-	assert.deepEqual(taskTransitions(second.next, undefined), { next: second.next, changes: [] });
+	// No plan (planner unreachable): nothing fires and the map is emptied, so the first plan after the reconnect is a baseline
+	// (a task that finished while disconnected does not replay as a cue).
+	const gone = taskTransitions(second.next, undefined);
+	assert.deepEqual(gone, { next: new Map(), changes: [] });
+	assert.deepEqual(taskTransitions(gone.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }))).changes, []);
 	// A task in a lane resolves its session through the lane.
 	const third = taskTransitions(second.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }), task("c", "running")));
 	assert.deepEqual(third.changes.map(c => [c.task.id, c.sessionId]), [["b", "S"]]);
