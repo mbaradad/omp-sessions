@@ -1,7 +1,8 @@
 // Regenerates src/ao/schema.ts from Agent Orchestrator's OpenAPI spec, the way AO's frontend does
 // (`openapi-typescript … -o src/api/schema.ts`), and records the AO commit it came from.
 //   npm run ao:schema [-- <ref>]
-// The spec is read from the committed tree of <ref> (default omp/fork, the AO build omp Sessions runs on)
+// The spec is read from the committed tree of <ref> (default main: stock AO, which Switchyard runs on; pass omp/fork
+// if a fork patch ever lands, see FORK.md)
 // in the AO clone at $AO_REPO (default ~/projects/agent-orchestrator), so uncommitted edits never leak in.
 // openapi-typescript 7 needs TypeScript 5 as a peer while this repo builds with TypeScript 7, so it runs
 // through npx with its own TypeScript instead of being a devDependency.
@@ -16,7 +17,7 @@ const SPEC = "backend/internal/httpd/apispec/openapi.yaml";
 const OUT = "src/ao/schema.ts";
 
 const repo = process.env.AO_REPO ?? path.join(os.homedir(), "projects", "agent-orchestrator");
-const ref = process.argv[2] ?? "omp/fork";
+const ref = process.argv[2] ?? "main";
 const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 64 << 20 });
 
 const sha = git("rev-parse", `${ref}^{commit}`).trim();

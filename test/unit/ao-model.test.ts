@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, pendingActivities, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -97,6 +97,19 @@ test("agentState: session lifecycle before and after the conversation", () => {
 	assert.equal(agentState(view({ status: "pr_open" })), "idle");
 });
 
+test("a pending approval whose turn has ended no longer waits for anyone", () => {
+	// As read live after a person's Stop during an approval: the row stays `pending`, the turn is `interrupted`, the agent is ready.
+	const owned = { ...approval, turnId: "t1" };
+	const stopped = conversation({ turns: [turn("t1", "interrupted")], activities: [owned] });
+	assert.equal(pendingActivities(stopped).length, 0);
+	assert.equal(agentState(view(), stopped), "idle");
+	assert.equal(sessionModel(view(), stopped).question, undefined);
+	// While its turn runs (or is queued) it waits; a request with no turn is kept.
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")], activities: [owned] })), "needs_input");
+	assert.equal(pendingActivities(conversation({ activities: [approval] })).length, 1);
+	for (const state of ["completed", "failed", "cancelled", "recovered"] as const) assert.equal(pendingActivities(conversation({ turns: [turn("t1", state)], activities: [owned] })).length, 0, state);
+});
+
 test("agentState: the conversation decides once there is one", () => {
 	const v = view();
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "completed")] })), "idle");
@@ -109,10 +122,24 @@ test("agentState: the conversation decides once there is one", () => {
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "hibernated" })), "queued");
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "connecting" })), "starting");
 	assert.equal(agentState(v, conversation({ controller: "recovering" })), "starting");
-	// The daemon lost a running turn (restart, agent died): someone has to look.
-	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "interrupted");
-	// A person stopping a turn is not an interruption.
+	// The agent died while a turn ran: AO fails the turn and reports the agent exited. Someone has to look.
+	const exited = view({ activity: { state: "exited", lastActivityAt: T } });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	assert.equal(agentState(exited, conversation({ turns: [lost] })), "interrupted");
+	assert.equal(sessionModel(exited, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A turn that failed on its own (provider error) leaves a live agent: idle, with the reason.
+	const failed = conversation({ turns: [turn("t1", "failed", { errorMessage: "rate limited" })] });
+	assert.equal(agentState(v, failed), "idle");
+	assert.equal(sessionModel(v, failed).exitReason, "rate limited");
+	// omp killed mid-turn, as observed live: the turn stays `running`, the controller stops, the agent exited.
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "running")], controller: "stopped" })), "interrupted");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "running")], activities: [approval], controller: "stopped" })), "interrupted");
+	// After `resume-agent` (observed live): the agent is back, the lost turn stays failed: idle, with the reason.
+	assert.equal(agentState(v, conversation({ turns: [lost] })), "idle");
+	assert.equal(sessionModel(v, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A person stopping a turn is not an interruption; nor is history replayed on resume or adoption.
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "interrupted")] })), "idle");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "idle");
 	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "completed")] })), "stopped");
 	// A stale activity signal does not override a settled conversation.
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" }), conversation({ turns: [turn("t1", "completed")] })), "idle");
@@ -148,6 +175,16 @@ test("questionOf: approvals carry their decisions", () => {
 	assert.equal(q.kind, "approval");
 	assert.equal(q.id, "req-1");
 	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject"]);
+});
+
+test("approvals as omp sends them: bare ACP option ids get labels and kinds", () => {
+	// VALIDATION.md §3: omp's pending approval, decisions without label or kind.
+	const q = questionOf(activity({ requestId: "acp-request:29848af1:1", summary: "date > stamp.txt && cat stamp.txt", detail: { decisions: [{ id: "allow_once" }, { id: "allow_always" }, { id: "reject_once" }, { id: "reject_always" }], input: { command: "date > stamp.txt && cat stamp.txt" }, protocol: "acp", subjectKind: "command", toolKind: "execute" } }));
+	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject", "Always reject"]);
+	assert.deepEqual(answerFor(q, "y"), { kind: "approval", decisionId: "allow_once" });
+	assert.deepEqual(answerFor(q, "no"), { kind: "approval", decisionId: "reject_once" });
+	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "allow_always" });
+	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
 });
 
 test("answerFor: approvals by number, label or yes/no", () => {
@@ -192,19 +229,25 @@ test("queueOf: queued turns in order with their prompts", () => {
 	assert.deepEqual(q.items.map(i => [i.turnId, i.text]), [["t4", "fourth"], ["t3", "third"]]);
 });
 
-test("changedFiles: per-turn diffs merged; rolled back turns and files left out", () => {
-	const c = conversation({
-		turns: [
-			turn("t1", "completed", { diff: { files: [{ path: "a.ts", status: "added", additions: 10, deletions: 0 }, { path: "b.ts", status: "modified", additions: 1, deletions: 1 }] } }),
-			turn("t2", "completed", { rolledBack: true, diff: { files: [{ path: "c.ts", status: "added", additions: 5, deletions: 0 }] } }),
-			turn("t3", "completed", { diff: { files: [{ path: "a.ts", status: "modified", additions: 2, deletions: 1 }, { path: "d.ts", status: "deleted", additions: 0, deletions: 3, rolledBack: true }] } }),
-			turn("t4", "completed", { diff: { files: [{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 0, deletions: 0 }] } }),
-		],
-	});
-	assert.deepEqual(changedFiles(c), [
-		// Created in this session, then edited: still new.
-		{ path: "a.ts", status: "added", additions: 12, deletions: 1 },
-		{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 1, deletions: 1 },
+test("changedFiles: the workspace manifest's changed files; unmodified entries and stray previous paths left out", () => {
+	const file = (path: string, status: "unmodified" | "modified" | "added" | "deleted" | "renamed", additions: number, deletions: number, previousPath?: string) => ({ path, status, additions, deletions, binary: false, editable: true, fileFingerprint: "", size: 0, ...(previousPath && { previousPath }) });
+	const manifest = {
+		degraded: false,
+		refreshing: false,
+		stale: false,
+		truncated: false,
+		sessionId: "repo-1",
+		workspaceVersion: "v1",
+		sections: {} as never,
+		summary: { files: 4, additions: 13, deletions: 4 },
+		// As AO lists them (shape checked live against /workspace/manifest).
+		files: [file("hello.txt", "added", 1, 0), file("a.ts", "modified", 12, 1), file("b.ts", "unmodified", 0, 0), file("e.ts", "renamed", 0, 0, "old.ts"), file("gone.ts", "deleted", 0, 3, "ignored.ts")],
+	};
+	assert.deepEqual(changedFiles(manifest), [
+		{ path: "hello.txt", status: "added", additions: 1, deletions: 0 },
+		{ path: "a.ts", status: "modified", additions: 12, deletions: 1 },
+		{ path: "e.ts", oldPath: "old.ts", status: "renamed", additions: 0, deletions: 0 },
+		{ path: "gone.ts", status: "deleted", additions: 0, deletions: 3 },
 	]);
 });
 
@@ -217,7 +260,7 @@ test("lastReply and sessionModel", () => {
 		activities: [ask],
 	});
 	assert.equal(lastReply(c), "PONG");
-	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc…");
+	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc\n… (clipped)");
 	const m = sessionModel(view({ displayName: "my task", model: "other" }), c);
 	assert.equal(m.title, "my task");
 	assert.equal(m.state, "needs_input");
