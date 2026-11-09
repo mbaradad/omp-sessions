@@ -232,7 +232,8 @@ export class Planner {
 	}
 
 	/** Old `queue` op: QueueOps on a lane (or on the session lane of an AO session id). */
-	async queue(lane: string, ops: QueueOp[]): Promise<QueueView> {
+	async queue(id: string, ops: QueueOp[]): Promise<QueueView> {
+		const lane = this.resolveLane(id);
 		if (!this.state.lanes.some(l => l.id === lane) && !/^l_[0-9a-f]{10}$/.test(lane)) {
 			// A new session lane must name a session AO knows.
 			if (this.ao && !(await this.ao.session(lane))) throw new PlanError(`unknown session ${lane}`);
@@ -241,8 +242,13 @@ export class Planner {
 		return this.getQueue(lane);
 	}
 
-	getQueue(lane: string): QueueView {
-		return queueView(this.state, this.evaluateNow().views, lane);
+	getQueue(id: string): QueueView {
+		return queueView(this.state, this.evaluateNow().views, this.resolveLane(id));
+	}
+
+	/** A lane by its id, else the lane whose AO session this is (set when its first task is dispatched). */
+	private resolveLane(id: string): string {
+		return this.state.lanes.find(l => l.id === id)?.id ?? this.state.lanes.find(l => l.session === id)?.id ?? id;
 	}
 
 	setConfig(set: Partial<PlannerConfig> | undefined): PlannerStatus {
@@ -275,14 +281,15 @@ export class Planner {
 		return evaluate(this.state, { now: this.now(), busySessions: this.busySessions(), usage: this.usageContext() });
 	}
 
-	view(lane?: string, all = false): PlanView {
+	view(laneOrSession?: string, all = false): PlanView {
+		const lane = laneOrSession && this.resolveLane(laneOrSession);
 		const now = this.now();
 		const { views } = this.evaluateNow();
 		const weekAgo = now - 7 * 86_400_000;
 		const tasks = views
 			.filter(t => (!lane || t.lane === lane) && (all || !((t.state === "done" || t.state === "skipped") && (t.finishedAt ?? now) < weekAgo)))
 			.map(t => (t.waitReason === "starting" && !this.ao ? { ...t, waitReason: `waiting for AO (${this.aoError ?? "not connected"})` } : t));
-		return { rev: this.state.rev, tasks, lanes: laneViews(this.state).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+		return { rev: this.state.rev, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
 	}
 
 	status(views: TaskView[] = this.evaluateNow().views): PlannerStatus {
@@ -552,10 +559,15 @@ export class Planner {
 		if (t.run.via === "spawn" && !t.run.session) {
 			const { session, branch } = await ao.spawn(t.run.spawn ?? {});
 			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
-			this.updateRun(id, x => {
+			// The lane learns its session now (not when the task ends): `show`/`wait` on the lane follow it.
+			this.commit(s => {
+				const x = s.tasks.find(y => y.id === id);
+				if (x?.status !== "running" || !x.run) return;
 				x.run.session = session;
 				x.session = session;
 				delete x.run.tries;
+				const l = laneOf(s, x);
+				if (l) l.session = session;
 			});
 			t = this.task(id);
 			if (!t?.run) return;

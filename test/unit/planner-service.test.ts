@@ -165,3 +165,27 @@ test("a chat host that dies mid-turn leaves the task interrupted; running it aga
 	assert.equal(ao.created, 1);
 	assert.equal(byTitle(p, "long").run?.session, s);
 });
+
+test("a lane is found by its id and by its AO session; its session is known from dispatch on; the lane reports its state", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	const at = Date.now() + 3_600_000;
+	const { refs } = p.edit([{ op: "lane.add", ref: "l" }, { op: "add", task: { title: "first", lane: "@l" } }, { op: "add", task: { title: "later", startAt: at, lane: "@l" } }, { op: "lane.add", ref: "m", autoRun: false }, { op: "add", task: { title: "parked", lane: "@m" } }]);
+	const session = await until("first sent", () => byTitle(p, "first").run?.phase === "sent" && byTitle(p, "first").run?.session);
+	// Running: the lane already names its session.
+	assert.equal(p.state.lanes.find(l => l.id === refs.l)?.session, session);
+	assert.equal(p.getQueue(session).id, refs.l);
+	assert.equal(p.getQueue(refs.l).state, "running");
+	assert.deepEqual(p.view(session).lanes.map(l => l.id), [refs.l]);
+	assert.equal(p.getQueue(refs.m).state, "paused");
+	ao.finishTurn(session, "completed", "done");
+	await until("later is next", () => byTitle(p, "first").status === "done");
+	const q = p.getQueue(session);
+	assert.equal(q.state, "scheduled");
+	assert.equal(q.waitUntil, at);
+	// Queue ops through the session id land on the same lane.
+	await p.queue(session, [{ op: "add", title: "third" }]);
+	assert.equal(p.getQueue(refs.l).tasks.length, 3);
+	assert.equal(p.state.lanes.length, 2);
+});
