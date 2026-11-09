@@ -203,7 +203,7 @@ describe("AO views", () => {
 			git(wt, "commit", "-q", "-m", "parent work");
 			const base = git(wt, "rev-parse", "HEAD");
 			fs.writeFileSync(path.join(wt, "own.txt"), "mine\n");
-			await waitFor("AO's manifest lists the parents' commits too", async () => (await api.sessions.workspaceFiles(child)).length === 3, 20_000);
+			await waitFor("AO's manifest lists the parents' commits too", async () => (await ao.workspaceManifest(child)).files.filter(f => f.status !== "unmodified").length === 3, 20_000);
 			const lane = { id: child, session: child, autoRun: true, createdAt: 1, pending: 0, running: 0, done: 1, failed: 0, total: 1 };
 			const task = (id: string, extra: object) => ({ id, title: id, subtasks: [], status: "done", createdAt: 1, state: "done", ...extra });
 			plan = { rev: 1, edges: [], keptBranches: [], lanes: [lane], recurring: [], status: {}, tasks: [task("child-task", { lane: child, after: ["parent-task"], git: { repo: REPO, branch: "switchyard/child-task", worktree: wt, base } }), task("parent-task", { git: { repo: REPO, branch: "switchyard/parent-task" } })] };

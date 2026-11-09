@@ -263,6 +263,10 @@ export class SessionManager implements vscode.Disposable {
 
 	/** Files the session changed in its workspace compared with its base branch (AO's workspace manifest), paths relative to its folder; a graph child's own files only. */
 	async workspaceFiles(id: string): Promise<AoChangedFile[]> {
+		// The watcher's own list: the same source and moment as the count (AO caches its manifest for 3 s unflagged, so a read of
+		// ours right after a turn settles could disagree with it). Our read is only for a session the watcher does not carry.
+		const model = this.models.get(id);
+		if (model) return this.ownFilesOf(id, model.changedFiles, this.get(id)?.cwd ?? model.cwd ?? "");
 		const client = await this.ao.client();
 		const manifest = await client.workspaceManifest(id);
 		const files = manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
