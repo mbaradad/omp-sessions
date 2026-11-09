@@ -252,6 +252,47 @@ test("an interrupt discards the queued prompts too, and interruptWithQueue hands
 	}
 });
 
+test("after a compaction every restart replays the last reply as a history turn: the model does not count it, and the compaction turn owes no reply (G33)", async () => {
+	const { session } = await ao.spawnSwitchyard({ dir: REPO, displayName: "src/ao compaction" });
+	const id = session.id;
+	const restart = async () => {
+		await ao.exitAgent(id);
+		await until(id, m => m.state === "stopped", "stopped");
+		await ao.resumeAgent(id);
+		await until(id, m => m.state === "idle", "idle after resume");
+	};
+	try {
+		await ao.sendMessage(id, { text: "Reply with exactly: ONE" });
+		await until(id, m => m.reply === "ONE", "answered ONE");
+		fs.writeFileSync(path.join((await ao.workspacePath(id)) ?? "", "big.txt"), `${Array.from({ length: 3000 }, (_, i) => `line ${i}: the quick brown fox jumps over the lazy dog ${i}`).join("\n")}\n`);
+		await ao.sendMessage(id, { text: "Run with bash: `cat big.txt` (full output). Then reply with the last line number only." });
+		await until(id, m => m.reply?.trim() === "2999", "answered 2999");
+		await ao.compact(id);
+		// POST /compact is a turn of its own: completed, with no messages, nothing asked and nothing owed.
+		await until(id, m => m.conversation?.turns.length === 3 && m.conversation.turns[2].state === "completed", "compaction turn completed");
+		const compacted = watcher.get(id);
+		assert.equal(compacted?.conversation?.messages.filter(x => x.turnId === compacted.conversation?.turns[2].id).length, 0);
+		assert.equal(compacted?.replyPending, undefined);
+		for (const restarts of [1, 2]) {
+			await restart();
+			// Every restart adds an assistant-only `recovered` copy of the last pre-compaction reply (acp-history-turn).
+			const m = await until(id, x => (x.conversation?.turns.filter(t => t.providerTurnId?.startsWith("acp-history-turn:")).length ?? 0) >= restarts, `history turn ${restarts}`);
+			assert.equal(m.state, "idle");
+			assert.equal(m.queue.pending, 0);
+			assert.equal(m.queue.done, 3, "ask, ask and the compaction turn; the replayed copies are not work");
+			assert.equal(m.reply?.trim(), "2999");
+			assert.equal(m.replyPending, undefined);
+		}
+		// A real turn afterwards is the last reply again, not shadowed by the replayed one.
+		await ao.sendMessage(id, { text: "Reply with exactly: THREE" });
+		const three = await until(id, m => m.reply?.trim() === "THREE", "answered THREE");
+		assert.equal(three.queue.done, 4);
+	} finally {
+		await ao.killSession(id).catch(() => undefined);
+		await ao.deleteSession(id).catch(() => undefined);
+	}
+});
+
 test("errors carry AO's code", async () => {
 	await assert.rejects(ao.getSession("no-such-session-1"), (e: unknown) => e instanceof AoError && e.status === 404 && e.code === "SESSION_NOT_FOUND");
 });
