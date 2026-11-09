@@ -216,24 +216,25 @@ test("queueOf: queued turns in order with their prompts", () => {
 	assert.deepEqual(q.items.map(i => [i.turnId, i.text]), [["t4", "fourth"], ["t3", "third"]]);
 });
 
-test("changedFiles: per-turn diffs merged; rolled back turns and files left out", () => {
-	const c = conversation({
-		turns: [
-			turn("t1", "completed", { diff: { files: [{ path: "a.ts", status: "added", additions: 10, deletions: 0 }, { path: "b.ts", status: "modified", additions: 1, deletions: 1 }] } }),
-			turn("t2", "completed", { rolledBack: true, diff: { files: [{ path: "c.ts", status: "added", additions: 5, deletions: 0 }] } }),
-			turn("t3", "completed", { diff: { files: [{ path: "a.ts", status: "modified", additions: 2, deletions: 1 }, { path: "d.ts", status: "deleted", additions: 0, deletions: 3, rolledBack: true }] } }),
-			turn("t4", "completed", { diff: { files: [{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 0, deletions: 0 }] } }),
-		],
-	});
-	assert.deepEqual(changedFiles(c), [
-		// Created in this session, then edited: still new.
-		{ path: "a.ts", status: "added", additions: 12, deletions: 1 },
-		{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 1, deletions: 1 },
-	]);
-	// Turns omp's /undo rewound (AO still has their diffs) drop out with their files.
-	assert.deepEqual(changedFiles(c, new Set(["t3", "t4"])), [
-		{ path: "a.ts", status: "added", additions: 10, deletions: 0 },
-		{ path: "b.ts", status: "modified", additions: 1, deletions: 1 },
+test("changedFiles: the workspace manifest's changed files; unmodified entries and stray previous paths left out", () => {
+	const file = (path: string, status: "unmodified" | "modified" | "added" | "deleted" | "renamed", additions: number, deletions: number, previousPath?: string) => ({ path, status, additions, deletions, binary: false, editable: true, fileFingerprint: "", size: 0, ...(previousPath && { previousPath }) });
+	const manifest = {
+		degraded: false,
+		refreshing: false,
+		stale: false,
+		truncated: false,
+		sessionId: "repo-1",
+		workspaceVersion: "v1",
+		sections: {} as never,
+		summary: { files: 4, additions: 13, deletions: 4 },
+		// As AO lists them (shape checked live against /workspace/manifest).
+		files: [file("hello.txt", "added", 1, 0), file("a.ts", "modified", 12, 1), file("b.ts", "unmodified", 0, 0), file("e.ts", "renamed", 0, 0, "old.ts"), file("gone.ts", "deleted", 0, 3, "ignored.ts")],
+	};
+	assert.deepEqual(changedFiles(manifest), [
+		{ path: "hello.txt", status: "added", additions: 1, deletions: 0 },
+		{ path: "a.ts", status: "modified", additions: 12, deletions: 1 },
+		{ path: "e.ts", oldPath: "old.ts", status: "renamed", additions: 0, deletions: 0 },
+		{ path: "gone.ts", status: "deleted", additions: 0, deletions: 3 },
 	]);
 });
 
