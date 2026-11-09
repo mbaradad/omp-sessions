@@ -288,6 +288,7 @@ export function infoJson(s: Session, order: number) {
 		},
 		column: columnOf(s.state),
 		state: s.state,
+		...(report.mode && { mode: report.mode }),
 		queue: report.queue,
 		priority: s.priority,
 		order,
