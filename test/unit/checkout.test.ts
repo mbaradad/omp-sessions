@@ -7,7 +7,8 @@ import { test } from "node:test";
 import { checkoutRoot, inCheckout } from "../../src/ext/checkout";
 
 function repo(): string {
-	const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "omp-checkout-")));
+	// .native: Windows's TEMP may be an 8.3 short path (C:\Users\RUNNER~1), which git spells out in full.
+	const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "omp-checkout-")));
 	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@l", "-c", "commit.gpgsign=false", ...args], { cwd: dir, stdio: "ignore" });
 	git("init", "-q", "-b", "main");
 	fs.mkdirSync(path.join(dir, "src"));
@@ -33,7 +34,7 @@ test("inCheckout: the prompt names the user's checkout (the repository root of t
 
 test("checkoutRoot: a linked worktree of the repository maps to the main checkout; a folder outside git is itself", () => {
 	const dir = repo();
-	const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "omp-nogit-")));
+	const outside = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "omp-nogit-")));
 	const wt = `${dir}-wt`;
 	try {
 		execFileSync("git", ["worktree", "add", "-q", "-b", "other", wt], { cwd: dir, stdio: "ignore" });

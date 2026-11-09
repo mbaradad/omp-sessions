@@ -9,7 +9,8 @@ import { gitRoot } from "../../src/ao/projects";
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "protocol.file.allow=always", ...args], { stdio: "ignore" });
 
 test("gitRoot: a linked worktree counts for its main checkout; submodules and plain folders do not", () => {
-	const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ao-projects-test-")));
+	// .native: Windows's TEMP may be an 8.3 short path (C:\Users\RUNNER~1), which git and gitRoot spell out in full.
+	const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ao-projects-test-")));
 	try {
 		const main = path.join(tmp, "main");
 		fs.mkdirSync(path.join(main, "src"), { recursive: true });
