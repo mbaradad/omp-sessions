@@ -166,6 +166,14 @@ test("approval: a select dialog naming the tool, Dismiss rejects, resolution clo
 	assert.equal(feed.request("acp-request:x:1"), undefined);
 });
 
+test("an approval AO leaves pending after its turn was interrupted closes, and none shows on reload", () => {
+	const feed = new ChatFeed();
+	const pending = act(2, { activityKind: "approval", status: "pending", turnId: "t1", requestId: "req-1", summary: "sleep 30", detail: { decisions: [{ id: "reject_once", label: "Reject", kind: "reject_once" }], toolKind: "execute" } });
+	assert.equal(feed.reset(conv({ turns: [turn("t1", "running")], activities: [pending], controller: "busy" })).pendingUi.length, 1);
+	assert.deepEqual(feed.apply(conv({ turns: [turn("t1", "interrupted", { startedAt: T })], activities: [pending] })).filter(p => p.type === "uiResolved"), [{ type: "uiResolved", id: "req-1" }]);
+	assert.equal(new ChatFeed().reset(conv({ turns: [turn("t1", "interrupted", { startedAt: T })], activities: [pending] })).pendingUi.length, 0);
+});
+
 test("omp's ask: an ask dialog whose answers become the elicitation's form content", () => {
 	const feed = new ChatFeed();
 	const schema = {

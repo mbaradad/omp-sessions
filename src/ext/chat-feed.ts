@@ -298,7 +298,7 @@ export class ChatFeed {
 		const open = new Set([...this.turns.values()].filter(t => OPEN_TURNS[t.state]).map(t => t.id));
 		for (const r of this.rows.values()) {
 			const unsettled =
-				(r.turnId && open.has(r.turnId)) || (r.kind === "message" ? r.streaming : r.status === "running" || r.status === "pending");
+				(r.turnId && open.has(r.turnId)) || (r.kind === "message" ? r.streaming : r.status === "running" || (r.status === "pending" && this.turnOpen(r.turnId)));
 			if (unsettled) floor = Math.min(floor, r.sequence - 1);
 		}
 		return Math.max(0, floor);
@@ -402,10 +402,17 @@ export class ChatFeed {
 		return undefined;
 	}
 
+	/** Whether the turn can still change (an unknown turn counts as open). */
+	private turnOpen(turnId: string | undefined): boolean {
+		const t = turnId ? this.turns.get(turnId) : undefined;
+		return !t || !!OPEN_TURNS[t.state];
+	}
+
 	private render(r: Row, live: boolean): Frame[] {
 		if (r.kind === "message") return this.renderMessage(r, live);
 		if (isTool(r)) return this.renderTool(r);
-		const sig = `${r.revision}|${r.status}`;
+		// A request also changes when its turn ends (see the approval case).
+		const sig = `${r.revision}|${r.status}|${this.turnOpen(r.turnId)}`;
 		if (this.shown.get(r.id)?.sig === sig) return [];
 		const first = !this.shown.has(r.id);
 		this.shown.set(r.id, { sig });
@@ -418,7 +425,8 @@ export class ChatFeed {
 			}
 			case "approval":
 			case "user_input": {
-				if (r.status === "pending" && r.requestId) {
+				// AO can leave a request pending after its turn was interrupted (GAPS G30): nobody can answer it.
+				if (r.status === "pending" && r.requestId && this.turnOpen(r.turnId)) {
 					const tool = this.toolFor(r);
 					const p = uiRequestOf(r, tool);
 					this.pending.set(p.question.id, p);
