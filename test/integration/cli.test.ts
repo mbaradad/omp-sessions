@@ -1,0 +1,188 @@
+// The `omp-sessions` command (the bundled cli.js, with planner.js beside it) against an isolated AO
+// daemon running the scripted ACP fake (test/ao-fixture.mjs): the skills/omp-sessions/SKILL.md
+// contract — `new --json`, `wait` exit codes 0/3/4/5/124, `show --json`, `answer [--question]`,
+// `send [--steer]`, `stop`/`resume`, `ls` filters, queued and scheduled tasks through the planner.
+import assert from "node:assert/strict";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { after, before, test } from "node:test";
+import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
+
+const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+const CLI_JS = process.env.OMP_TEST_CLI_JS ?? "";
+
+let ao: AoFixture;
+let repo: string;
+let home: string;
+let env: NodeJS.ProcessEnv;
+
+before(async () => {
+	if (skip) return;
+	ao = await startAoFixture();
+	repo = ao.scratchRepo("cli-repo");
+	home = fs.mkdtempSync(path.join(os.tmpdir(), "cli-it-"));
+	// Own planner and Switchyard state; never a user service; the fixture's AO through discovery.
+	env = { ...process.env, ...ao.stackEnv, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
+	assert.equal(cli("config", "set", "service", "off").status, 0);
+});
+
+after(async () => {
+	if (skip) return;
+	cli("server", "stop");
+	await ao?.stop();
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+function cli(...args: string[]): SpawnSyncReturns<string> {
+	return spawnSync(process.execPath, [CLI_JS, ...args], { cwd: repo, env, encoding: "utf8", input: "", timeout: 120_000 });
+}
+
+/** What the commands print with --json, as far as these tests read it (an absent field fails the test as it is read). */
+interface Printed {
+	id: string;
+	started: boolean;
+	title: string;
+	cwd: string;
+	startAt?: number;
+	state: string;
+	reply: string;
+	mode?: string;
+	tags: string[];
+	changedFiles: number;
+	queue: { pending: number; done: number };
+	question: { id: string; kind: string; options: string[]; questions: Array<{ options: string[] }> };
+	answered: boolean;
+	sent: boolean;
+	running: boolean;
+	ao: { running: boolean; url: string };
+	server: { running: boolean };
+	omp: { readiness: string };
+}
+
+type Listed = Array<{ meta: { id: string } }>;
+
+/** `cli(...args)` with its stdout parsed as JSON (a list for `ls`, `stop`, `resume`). */
+function json<T = Printed>(...args: string[]): { status: number | null; data: T; stderr: string } {
+	const r = cli(...args);
+	let data: T;
+	try {
+		// The test reads the fields it asserts; a wrong shape fails those assertions.
+		data = JSON.parse(r.stdout) as T;
+	} catch {
+		assert.fail(`${args.join(" ")} printed no JSON (exit ${r.status}): ${r.stdout}\n${r.stderr}`);
+	}
+	return { status: r.status, data, stderr: r.stderr };
+}
+
+/** A started session (the fake's script as its prompt). */
+function started(script: string, ...flags: string[]): string {
+	const r = json("new", repo, "-p", script, ...flags, "--json");
+	assert.equal(r.status, 0, r.stderr);
+	assert.equal(r.data.started, true);
+	assert.equal(typeof r.data.title, "string");
+	assert.ok(r.data.cwd.startsWith(ao.dataDir), `AO runs the session in its worktree: ${r.data.cwd}`);
+	return r.data.id;
+}
+
+test("cli: usage errors exit 2; status says what runs and never starts the planner", { skip }, () => {
+	assert.match(cli("--version").stdout, /^omp-sessions \S+/);
+	assert.equal(cli("ls", "--bogus").status, 2);
+	assert.equal(cli("new", repo, "--title", "--json").status, 2, "a value flag doesn't swallow the next flag");
+	assert.equal(cli("new", repo, "--task", "x", "--at", "2020-01-01T08:00:00Z").status, 2, "a past time");
+	assert.equal(cli("nope").status, 2);
+	const s = json("status", "--json");
+	assert.equal(s.status, 1, "the planner is down");
+	assert.equal(s.data.ao.running, true);
+	assert.equal(s.data.ao.url, ao.baseUrl);
+	assert.equal(s.data.server.running, false);
+	assert.equal(typeof s.data.omp.readiness, "string", "AO's readiness of the omp agent (unknown until AO probed it)");
+	assert.equal(json("server", "status", "--json").data.running, false, "status started no planner");
+});
+
+test("cli: new → wait 0 with the reply; show --json; ls finds it by project and state", { skip }, () => {
+	const id = started("echo Hello from the fake", "--title", "greeting", "--mode", "auto");
+	const w = json("wait", id, "--timeout", "60s", "--json");
+	assert.equal(w.status, 0, w.stderr);
+	assert.equal(w.data.state, "idle");
+	assert.equal(w.data.reply, "Hello from the fake");
+	assert.equal(w.data.title, "greeting");
+	assert.equal(w.data.mode, "auto");
+	for (const k of ["id", "title", "cwd", "tags", "changedFiles", "queue", "createdAt", "updatedAt"]) assert.ok(k in w.data, k);
+	const project = path.basename(repo);
+	const ids = (...f: string[]) => json<Listed>("ls", ...f, "--json").data.map(i => i.meta.id);
+	assert.ok(ids("--project", project).includes(id));
+	assert.ok(ids("--state", "idle").includes(id));
+	assert.ok(!ids("--state", "working").includes(id));
+	assert.ok(!ids("--project", "elsewhere").includes(id));
+});
+
+test("cli: an approval → wait 3 with the question; answer --question refuses another one; answer resumes", { skip }, () => {
+	// AO's default for omp asks before bash.
+	const id = started("bash touch approved.txt\nwrite note.txt hi\necho done after approval");
+	const w = json("wait", id, "--timeout", "60s", "--json");
+	assert.equal(w.status, 3, w.stderr);
+	assert.equal(w.data.state, "needs_input");
+	assert.equal(w.data.question.kind, "approval");
+	assert.ok(w.data.question.options.includes("Allow once"), JSON.stringify(w.data.question));
+	assert.equal(cli("answer", id, "--question", "not-this-one", "1").status, 1);
+	assert.equal(cli("answer", id, "maybe").status, 2, "not one of the decisions");
+	const a = json("answer", id, "--question", w.data.question.id, "Allow once", "--json");
+	assert.equal(a.status, 0, a.stderr);
+	assert.equal(a.data.answered, true);
+	const done = json("wait", id, "--timeout", "60s", "--json");
+	assert.equal(done.status, 0, done.stderr);
+	assert.equal(done.data.reply, "done after approval");
+	assert.equal(fs.readFileSync(path.join(done.data.cwd, "note.txt"), "utf8"), "hi", "omp worked in the session's worktree");
+	assert.equal(done.data.changedFiles, 1, "the workspace's changed files");
+});
+
+test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume → idle", { skip }, () => {
+	const id = started("echo ready", "--mode", "auto");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(json("send", id, "ask Ship it? | yes | no", "--json").data.sent, true);
+	const w = json("wait", id, "--timeout", "60s", "--json");
+	assert.equal(w.status, 3);
+	assert.deepEqual(w.data.question.kind, "ask");
+	assert.deepEqual(w.data.question.questions?.[0]?.options, ["yes", "no"]);
+	assert.equal(cli("answer", id, "2").status, 0);
+	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.reply, "chose no");
+	const streamed = cli("send", id, "echo streamed reply", "--wait");
+	assert.equal(streamed.status, 0, streamed.stderr);
+	assert.match(streamed.stdout, /streamed reply/);
+	const stop = json<Array<{ stopped: boolean }>>("stop", id, "--json");
+	assert.equal(stop.status, 0);
+	assert.equal(stop.data[0].stopped, true);
+	assert.equal(cli("stop", id).status, 1, "already stopped");
+	assert.equal(cli("wait", id, "--timeout", "30s").status, 4);
+	assert.equal(json<Array<{ started: boolean }>>("resume", id, "--json").data[0].started, true);
+	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.state, "idle");
+});
+
+test("cli: wait exits 124 while it works; abort ends the turn", { skip }, () => {
+	const id = started("slow 20000", "--mode", "auto");
+	assert.equal(cli("wait", id, "--timeout", "2s").status, 124);
+	assert.equal(cli("abort", id).status, 0);
+	assert.notEqual(cli("wait", id, "--timeout", "30s").status, 124);
+	assert.equal(cli("abort", id).status, 1, "nothing to abort");
+});
+
+test("cli: new --task --at is scheduled (wait 5); the planner runs it once the start is cleared", { skip, timeout: 180_000 }, () => {
+	const created = json("new", repo, "--task", "echo queued work done", "--at", "+2h", "--mode", "auto", "--tag", "it", "--json");
+	assert.equal(created.status, 0, created.stderr);
+	const id = created.data.id;
+	assert.equal(typeof created.data.startAt, "number");
+	const shown = json("show", id, "--json").data;
+	assert.equal(shown.state, "scheduled");
+	assert.deepEqual(shown.tags, ["it"]);
+	assert.equal(shown.queue.pending, 1);
+	assert.equal(cli("wait", id, "--timeout", "10s").status, 5);
+	assert.ok(json<Listed>("ls", "--tag", "it", "--json").data.some(i => i.meta.id === id));
+	assert.equal(cli("queue", id, "at", "off").status, 0);
+	assert.equal(cli("queue", id, "start").status, 0);
+	const w = json("wait", id, "--timeout", "120s", "--json");
+	assert.equal(w.status, 0, JSON.stringify(w.data));
+	assert.equal(w.data.queue.done, 1);
+	assert.match(w.data.reply, /queued work done/);
+});
