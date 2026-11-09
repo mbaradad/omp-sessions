@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Hermes: archive completed cards.** The Switchyard page has hover buttons on every card (*Mark completed*, *Archive* / *Unarchive*, with a *Completed* and an *Archived* chip), **Archive all** (with a confirm) on the Done column, **Show archived · N**, the same buttons in the detail panel, and in the Boards view an *Archive done cards* selector per board (the lane's default, on, or off) and **Archive done now**. A session is done when it is marked completed (`switchyard complete`, whatever its state) or idle with nothing queued. With `archive_completed` on (`hermes switchyard lane on --archive-completed on`, or `hermes switchyard board <slug> --archive-completed on|off|default`) the lane archives a card, and hides its session, right after it completes it; `hermes switchyard archive-done [--board <slug>]` and the Boards button do it for cards that are already done. Archiving a session is a Switchyard flag in `organize.json`: the AO session is never killed. Checked end to end on a temp `HERMES_HOME` with real Hermes, an isolated AO and planner, real omp and a headless browser.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
