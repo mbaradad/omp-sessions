@@ -2,7 +2,7 @@
 // (a systemd user unit where available, else a detached process) when `omp.server.autoStart` allows.
 // Every module that talks to AO asks `client()`; a failed attempt is retried on the next ask.
 import * as vscode from "vscode";
-import { AoClient } from "../ao/client";
+import { type AoEvent, type AoEventSubscription, AoClient } from "../ao/client";
 
 export class AoConnection implements vscode.Disposable {
 	readonly log = vscode.window.createOutputChannel("AO", { log: true });
@@ -11,6 +11,15 @@ export class AoConnection implements vscode.Disposable {
 	private readonly connectEmitter = new vscode.EventEmitter<AoClient>();
 	/** Fires once a client is connected (the first time, and again after a failed attempt succeeds). */
 	readonly onDidConnect = this.connectEmitter.event;
+
+	private readonly eventEmitter = new vscode.EventEmitter<AoEvent>();
+	private subscription: AoEventSubscription | undefined;
+	/**
+	 * AO's change stream (`GET /events`), one subscription for the whole window, shared by every consumer
+	 * (resumes after the last event and reconnects; follows the daemon to a new port). Starts when the first
+	 * client connects. Filter by `event.sessionId`; `session_updated` fires for any change of a session.
+	 */
+	readonly onEvent = this.eventEmitter.event;
 
 	/** The connected client, if any (no I/O). */
 	get connected(): AoClient | undefined {
@@ -38,6 +47,7 @@ export class AoConnection implements vscode.Disposable {
 				this.current = client;
 				this.connecting = undefined;
 				this.log.info(`connected to AO at ${client.baseUrl}`);
+				this.subscription ??= client.events({ after: "latest", onEvent: event => this.eventEmitter.fire(event) });
 				this.connectEmitter.fire(client);
 				return client;
 			},
@@ -52,6 +62,8 @@ export class AoConnection implements vscode.Disposable {
 	}
 
 	dispose(): void {
+		this.subscription?.close();
+		this.eventEmitter.dispose();
 		this.connectEmitter.dispose();
 		this.log.dispose();
 	}
