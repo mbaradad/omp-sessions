@@ -1,16 +1,23 @@
 // Switchyard's view of AO sessions: one agent state, the pending question with its choices, the
 // last reply, cost, the turn queue and the files the agent changed, derived from an AO session view
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
-// keeps those models current from the daemon's change stream.
+// keeps those models current from the daemon's change stream; the report (`show --json` shape) and the
+// conversation follower (attach, tail) live in ./report and ./follow and are exported from here.
 import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
 
+export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
+export { deltaCursor, followConversation, mergeConversation } from "./follow";
+export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
+export { permissionModeOf, reportQuestion, sessionReport } from "./report";
+
 /**
- * `queued`: turns wait while the agent is not connected (hibernated or stopped). `scheduled`: never
- * produced from AO data alone (AO has no start times). `starting`: the session is being provisioned
- * or its agent connects. `working`: a turn runs, or queued turns continue on their own.
- * `needs_input`: an approval or question waits for an answer. `interrupted`: the daemon lost a running
- * turn (it restarted or the agent died: AO marks the turn `recovered`). `idle`: done for now.
- * `stopped`: terminated, failed to start, or its agent exited.
+ * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
+ * work for the session. `scheduled`: the planner starts it later (AO has no start times).
+ * `starting`: the session is being provisioned or its agent connects. `working`: a turn runs, or
+ * queued turns continue on their own. `needs_input`: an approval or question waits for an answer.
+ * `interrupted`: the agent died while a turn ran (AO failed it with AO_LOST_TURN_ERROR), or the
+ * planner's task was cut short. `idle`: done for now. `stopped`: terminated, failed to start, or its
+ * agent exited.
  */
 export type AoAgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
@@ -86,6 +93,8 @@ export interface AoSessionModel {
 	id: string;
 	title: string;
 	projectId?: string;
+	/** The folder the agent works in: its worktree, or its standalone scratch dir. Set by AoSessionWatcher (AoClient.workspacePath). */
+	cwd?: string;
 	harness?: string;
 	model?: string;
 	mode: AoSessionView["mode"];
@@ -127,6 +136,9 @@ export function pendingActivities(conversation: AoConversation): AoActivity[] {
 	return conversation.activities.filter(a => a.status === "pending" && a.requestId && (a.activityKind === "approval" || a.activityKind === "user_input"));
 }
 
+/** Labels for ACP's permission option kinds, for decisions that come without one. */
+const ACP_DECISION_LABELS: Readonly<Record<string, string>> = { allow_once: "Allow once", allow_always: "Always allow", reject_once: "Reject", reject_always: "Always reject" };
+
 const OTHER_SUFFIX = "__other";
 
 /** The choices of a schema property: `enum`, or `oneOf`/`anyOf` of `{const, title}` (for arrays, of its `items`). */
@@ -156,9 +168,12 @@ export function questionOf(activity: AoActivity): AoQuestion {
 	const detail = isRecord(activity.detail) ? activity.detail : {};
 	const base = { id: activity.requestId ?? activity.id, title: activity.summary, createdAt: ms(activity.createdAt), ...(activity.turnId && { turnId: activity.turnId }) };
 	if (activity.activityKind === "approval") {
-		const decisions: AoDecision[] = (Array.isArray(detail.decisions) ? detail.decisions : []).flatMap(d =>
-			isRecord(d) && typeof d.id === "string" ? [{ id: d.id, label: str(d.label) ?? d.id, ...(str(d.kind) && { kind: str(d.kind) }) }] : [],
-		);
+		// omp sends its ACP permission options as bare ids (`{"id":"allow_once"}`, VALIDATION.md §3): the id is the kind.
+		const decisions: AoDecision[] = (Array.isArray(detail.decisions) ? detail.decisions : []).flatMap(d => {
+			if (!isRecord(d) || typeof d.id !== "string") return [];
+			const kind = str(d.kind) ?? (ACP_DECISION_LABELS[d.id] ? d.id : undefined);
+			return [{ id: d.id, label: str(d.label) ?? ACP_DECISION_LABELS[d.id] ?? d.id, ...(kind && { kind }) }];
+		});
 		const message = str(detail.message) ?? str(detail.title);
 		return { ...base, kind: "approval", decisions, options: decisions.map(d => d.label), ...(message && { message }) };
 	}
@@ -183,7 +198,7 @@ export function questionsOf(conversation: AoConversation): AoQuestion[] {
 export function lastReply(conversation: AoConversation, max = REPLY_MAX): string | undefined {
 	for (let i = conversation.messages.length - 1; i >= 0; i--) {
 		const m = conversation.messages[i];
-		if (m.role === "assistant" && m.text.trim()) return m.text.length > max ? `${m.text.slice(0, max)}…` : m.text;
+		if (m.role === "assistant" && m.text.trim()) return m.text.length > max ? `${m.text.slice(0, max)}\n… (clipped)` : m.text;
 	}
 	return undefined;
 }
@@ -250,8 +265,16 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	if (view.provisionState === "failed") return "stopped";
 	if (view.provisionState === "provisioning") return "starting";
 	if (conversation) {
-		if (pendingActivities(conversation).length > 0) return "needs_input";
-		if (conversation.turns.some(t => t.state === "running")) return "working";
+		const running = conversation.turns.some(t => t.state === "running");
+		const pending = pendingActivities(conversation).length > 0;
+		// The agent died mid-turn (omp crashed or was killed): AO stops the controller and reports it
+		// exited, and either keeps the turn (and any question) open for a replacement agent or fails it
+		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
+		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
+		const down = conversation.controller === "stopped" || view.activity.state === "exited";
+		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (pending) return "needs_input";
+		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
 		if (conversation.turns.some(t => t.state === "queued")) {
 			if (connecting) return "starting";
@@ -261,9 +284,8 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 		// Busy with no turn: compaction, a steer being applied.
 		if (conversation.controller === "busy") return "working";
 		if (view.activity.state === "exited") return "stopped";
-		// AO marks a turn `recovered` when it lost it while it ran (daemon restart, agent died);
-		// `interrupted` is a person's stop.
-		if (conversation.turns.at(-1)?.state === "recovered") return "interrupted";
+		// `interrupted` turns are a person's stop; `recovered` ones were replayed from omp's history
+		// (resume, adoption) without a known outcome. Neither needs anyone.
 		return "idle";
 	}
 	switch (view.activity.state) {
@@ -280,12 +302,18 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	}
 }
 
+/** AO's reason for turns its controller still owned when it ended (SettleOrphanedConversationTurns). */
+export const AO_LOST_TURN_ERROR = "controller ended before the turn completed";
+
+function lostTurn(turn: AoTurn | undefined): boolean {
+	return turn?.state === "failed" && turn.errorMessage === AO_LOST_TURN_ERROR;
+}
+
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
 	const last = conversation?.turns.at(-1);
-	if (last && (last.state === "failed" || last.state === "recovered")) return last.errorMessage || (last.state === "recovered" ? "The daemon lost this turn while it ran." : undefined);
-	return undefined;
+	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
 export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {
@@ -374,7 +402,7 @@ export function answerFor(question: AoQuestion, answer: string): AoAnswer {
 	if (question.kind === "approval") {
 		const decisions = question.decisions ?? [];
 		if (decisions.length === 0) return { error: "This approval offers no decisions." };
-		const i = pick(decisions.map(d => d.label), text);
+		const i = pick(decisions.map(d => d.label), text) ?? pick(decisions.map(d => d.id), text);
 		if (i !== undefined) return { kind: "approval", decisionId: decisions[i].id };
 		const kindMatch = YES.test(text) ? ["allow_once", "allow_always"] : NO.test(text) ? ["reject_once", "reject_always"] : undefined;
 		const byKind = kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
@@ -431,6 +459,7 @@ export class AoSessionWatcher {
 	private readonly listeners = new Set<(change: AoWatcherChange) => void>();
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly cwds = new Map<string, string>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -537,14 +566,25 @@ export class AoSessionWatcher {
 	}
 
 	private async build(view: AoSessionView): Promise<AoSessionModel> {
-		if (this.options.conversations === false || view.mode !== "chat") return sessionModel(view);
+		const cwd = await this.cwdOf(view.id);
+		const withCwd = (m: AoSessionModel): AoSessionModel => (cwd ? { ...m, cwd } : m);
+		if (this.options.conversations === false || view.mode !== "chat") return withCwd(sessionModel(view));
 		try {
 			const conversation = await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 });
-			return sessionModel(view, conversation);
+			return withCwd(sessionModel(view, conversation));
 		} catch {
 			// Not ready yet (409 while the controller starts), or gone with a terminated session.
-			return sessionModel(view);
+			return withCwd(sessionModel(view));
 		}
+	}
+
+	/** A session's workspace never moves: read it once (a failed read is retried on the next build). */
+	private async cwdOf(sessionId: string): Promise<string | undefined> {
+		const known = this.cwds.get(sessionId);
+		if (known) return known;
+		const cwd = await this.client.workspacePath(sessionId).catch(() => undefined);
+		if (cwd) this.cwds.set(sessionId, cwd);
+		return cwd;
 	}
 
 	private emit(change: AoWatcherChange): void {
