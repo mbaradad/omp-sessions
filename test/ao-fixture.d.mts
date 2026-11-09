@@ -3,13 +3,15 @@
 export interface AoFixtureOptions {
 	/** ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH). */
 	aoBin?: string;
-	/** Run the real omp from PATH with the real HOME instead of test/fake-omp-acp.mjs. */
+	/** Run the real omp (from PATH) instead of the fake. Still isolated: HOME is the fixture's, with home/.omp/agent linked to the real agent dir. */
 	realOmp?: boolean;
 	/** Extra daemon env (AO_* overrides). */
 	env?: Record<string, string>;
 	/** Extra env for the fake omp (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...). */
 	fakeOmpEnv?: Record<string, string>;
 	readyTimeoutMs?: number;
+	/** Dirs put first on the daemon's PATH, in front of the fake `omp`: where an `omp` shim (G34) goes. */
+	pathPrepend?: string[];
 	/** Leave the temp dir after stop() (default $SWITCHYARD_TEST_KEEP_AO=1). */
 	keep?: boolean;
 }
@@ -79,5 +81,7 @@ export function aoAvailable(): boolean;
 /** node:test `skip` value for tests that need the daemon: false, or why they skip. */
 export const skipWithoutAo: false | string;
 export function fakeOmpAcpPath(): string;
+/** Removes a temp tree, retrying while a just-stopped process still writes into it; never throws. */
+export function removeTree(dir: string): Promise<void>;
 export function startAoFixture(opts?: AoFixtureOptions): Promise<AoFixture>;
 export function useAoFixture(hooks: { before: (fn: () => Promise<void>) => void; after: (fn: () => Promise<void>) => void }, opts?: AoFixtureOptions): { current: AoFixture | undefined };

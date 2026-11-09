@@ -51,7 +51,9 @@
 // FAKE_OMP_RULES: the first rule whose regex matches the prompt runs its script instead.
 //
 // Flags (`omp acp ...`): --model <provider/id|id>, --thinking <level>, --approval-mode
-// default|write|yolo|always-ask, --yolo; others are accepted and ignored.
+// default|write|yolo|always-ask (also FAKE_OMP_APPROVAL_MODE, as a user's omp config would set it), --yolo;
+// others are accepted and ignored. With always-ask, write/append/edit first ask through elicitation/create
+// ("Allow tool: <name>", enum [Approve, Approve <name> for this session, Deny]), like real omp.
 //
 // Env:
 //   PI_CODING_AGENT_DIR   session store root, like omp: <dir>/sessions/<encodedCwd>/<ts>_<id>.jsonl
@@ -145,7 +147,9 @@ if (argv[0] !== "acp") {
 }
 debug({ dir: "argv", argv, cwd: process.cwd() });
 
-const approvalMode = argv.includes("--yolo") || argv.includes("--auto-approve") ? "yolo" : (flag("--approval-mode") ?? "default");
+const approvalMode = argv.includes("--yolo") || argv.includes("--auto-approve") ? "yolo" : (flag("--approval-mode") ?? process.env.FAKE_OMP_APPROVAL_MODE ?? "default");
+/** omp's `always-ask` modes: write/edit also ask (through elicitation), besides bash. AO never passes it; a user's omp config can. */
+const alwaysAsk = approvalMode === "always-ask" || approvalMode === "always-ask-cached";
 const startModel = findModel(flag("--model") ?? "") ?? MODELS[0];
 const THINKING = ["off", "auto", "minimal", "low", "medium", "high"];
 const startThinking = THINKING.includes(flag("--thinking") ?? "") ? flag("--thinking") : "off";
@@ -399,7 +403,7 @@ async function streamMessage(s, turn, text, kind = "agent_message_chunk") {
  * A tool call: `tool_call` (pending), optional permission, `in_progress`, then `run(progress)` →
  * {text, diff?} and a terminal `tool_call_update`. Returns false when the call failed.
  */
-async function toolCall(s, turn, { name, kind, title, rawInput, locations, gate, run }) {
+async function toolCall(s, turn, { name, kind, title, rawInput, locations, gate, uiApproval, run }) {
 	const toolCallId = `toolu_${crypto.randomBytes(8).toString("hex")}`;
 	const base = { toolCallId, title, kind, rawInput, ...(locations ? { locations } : {}) };
 	update(s.id, { sessionUpdate: "tool_call", ...base, status: "pending", ...(kind === "execute" ? { content: [textBlock(title)] } : {}) });
@@ -443,6 +447,34 @@ async function toolCall(s, turn, { name, kind, title, rawInput, locations, gate,
 			if (optionId === "reject_always") s.rejectAlways.add(key);
 			if (optionId.startsWith("reject")) return finish("failed", [textBlock(`Tool call rejected by user (${name})`)]);
 		}
+	}
+	// `--approval-mode always-ask`: tools above the read tier that omp doesn't gate through
+	// session/request_permission (write, edit…) ask through elicitation/create, as a single-value form
+	// "Allow tool: <name>" with enum [Approve, Approve <name> for this session, Deny] (AO: a `user_input` activity).
+	if (uiApproval && alwaysAsk && !s.allowAlways.has(`ui:${name}`)) {
+		const sessionLabel = `Approve ${name} for this session`;
+		let res;
+		try {
+			res = await request(
+				"elicitation/create",
+				{
+					mode: "form",
+					sessionId: s.id,
+					message: `Allow tool: ${name}\n${uiApproval}`,
+					requestedSchema: { type: "object", properties: { value: { type: "string", enum: ["Approve", sessionLabel, "Deny"] } }, required: ["value"] },
+				},
+				turn.signal,
+			);
+		} catch (err) {
+			if (err instanceof Cancelled) {
+				finish("failed", [textBlock("Approval request cancelled")]);
+				throw err;
+			}
+			res = { action: "cancel" };
+		}
+		const value = res?.action === "accept" ? res.content?.value : undefined;
+		if (typeof value !== "string" || !value.startsWith("Approve")) return finish("failed", [textBlock(`Tool call rejected by user (${name})`)]);
+		if (value === sessionLabel) s.allowAlways.add(`ui:${name}`);
 	}
 	update(s.id, { sessionUpdate: "tool_call_update", toolCallId, status: "in_progress" });
 	try {
@@ -514,6 +546,7 @@ function fileTool(s, turn, name, rel, rawInput, change) {
 		title: `${name}: ${shown}`,
 		rawInput,
 		locations: [{ path: abs }],
+		uiApproval: `Path: ${shown}`,
 		run: async () => {
 			const oldText = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
 			const newText = change(oldText);
