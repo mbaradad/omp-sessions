@@ -6,7 +6,9 @@
 //
 // Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_KEEP=1 keeps the temp dir,
 // OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log),
-// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI).
+// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI),
+// OMP_E2E_AO=1 also starts an isolated AO daemon with the fake `omp acp` (test/ao-fixture.mjs) and
+// hands the extension host its AO_PORT/AO_DATA_DIR/AO_RUN_FILE plus OMP_E2E_AO_URL.
 //
 // VS Code is downloaded once into .vscode-test/. Without a DISPLAY the run is re-executed
 // under `xvfb-run`. All state (user data, extensions, OMP_VSCODE_HOME, HOME, workspace) lives
@@ -134,7 +136,15 @@ const check = (name, ok, detail = "") => {
 	return ok;
 };
 
+// OMP_E2E_AO=1: an isolated AO daemon running the fake `omp acp` (test/ao-fixture.mjs) for the suite;
+// its AO_PORT/AO_DATA_DIR/AO_RUN_FILE reach the extension host, so src/ao discovery finds it.
+let ao;
 try {
+	if (process.env.OMP_E2E_AO === "1") {
+		const { startAoFixture } = await import("../ao-fixture.mjs");
+		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP });
+		console.log(`AO fixture: ${ao.baseUrl} (${ao.root})`);
+	}
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
 	const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(repo, ".vscode-test") });
 	try {
@@ -163,6 +173,7 @@ try {
 				FAKE_OMP_DELAY: "5",
 				// The omp-sessions server would outlive the test VS Code; the server has its own host tests.
 				OMP_SESSIONS_NO_SERVER: "1",
+				...(ao ? { ...ao.clientEnv, OMP_E2E_AO_URL: ao.baseUrl } : {}),
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),
@@ -178,6 +189,7 @@ try {
 } catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
+	await ao?.stop();
 	const leftovers = killLeftovers();
 	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");
 	console.log("\n── desktop e2e summary ──");
