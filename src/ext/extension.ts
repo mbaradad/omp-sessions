@@ -31,6 +31,7 @@ import { registerScheduler } from "./scheduler";
 import { registerRemote } from "./remote";
 import { registerServer } from "./server";
 import { registerTasks } from "./tasks";
+import { createTasksDeps } from "./tasks-deps";
 import { type Node, SessionTree } from "./tree";
 import { addChatSoundSink, registerSounds } from "./sounds";
 import { registerToolbox } from "./toolbox";
@@ -489,10 +490,11 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		sessionsView: treeView,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
-	registerTasks(api);
+	const tasksDeps = createTasksDeps(context);
+	registerTasks(api, tasksDeps);
 	// Feature modules: one `register*(api)` line each.
 	const server = registerServer(api);
-	registerScheduler(api);
+	registerScheduler(api, tasksDeps.planner);
 	registerOrganize(api);
 	registerWorktrees(api);
 	registerDependencies(api);

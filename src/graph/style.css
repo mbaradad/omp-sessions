@@ -1,0 +1,44 @@
+/* Task Graph webview (src/graph/main.ts). State colours follow the editor's chart colours. */
+:root {
+	--c-blue: var(--vscode-charts-blue, #3794ff);
+	--c-green: var(--vscode-charts-green, #89d185);
+	--c-yellow: var(--vscode-charts-yellow, #cca700);
+	--c-red: var(--vscode-charts-red, #f14c4c);
+	--c-gray: var(--vscode-disabledForeground, #8a8a8a);
+}
+body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+.notice { padding: 24px; color: var(--vscode-descriptionForeground); }
+.legend { display: flex; gap: 18px; padding: 8px 14px; font-size: 11px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
+.legend .key::before { content: ""; display: inline-block; width: 22px; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--vscode-descriptionForeground); }
+.legend .key.dashed::before { border-top-style: dashed; }
+.legend .key.pending::before { border-top-style: dashed; border-top-color: var(--c-yellow); }
+.legend .key.changed::before { border-top-color: var(--vscode-charts-orange, #d18616); border-top-width: 3px; }
+.legend .key.conflict::before { border-top-color: var(--c-red); border-top-width: 3px; }
+.graph { flex: 1; padding: 10px; overflow: auto; }
+.graph-svg { display: block; overflow: visible; }
+.gedge { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1.4; opacity: 0.7; }
+.gedge.lane { stroke-dasharray: 2 4; opacity: 0.55; }
+.gedge.pending { stroke: var(--c-yellow); opacity: 1; }
+.gedge.sync-pending { stroke: var(--vscode-charts-orange, #d18616); stroke-dasharray: 3 3; opacity: 1; }
+.gedge.sync-changed { stroke: var(--vscode-charts-orange, #d18616); stroke-width: 2.4; opacity: 1; }
+.gedge.sync-conflict { stroke: var(--c-red); stroke-width: 2.4; opacity: 1; }
+.gedge.hl { stroke: var(--vscode-focusBorder); stroke-width: 2; opacity: 1; }
+.graph-arrow path { fill: var(--vscode-descriptionForeground); }
+.graph-arrow-pending path { fill: var(--c-yellow); }
+.gnode { cursor: pointer; outline: none; --s: var(--vscode-panel-border); }
+.gnode-box { fill: var(--vscode-sideBar-background, var(--vscode-editor-background)); stroke: var(--s); stroke-width: 1.2; }
+.gnode-stripe { fill: var(--s); }
+.gnode:hover .gnode-box, .gnode:focus-visible .gnode-box { stroke: var(--vscode-focusBorder); stroke-width: 2; }
+.gnode.selected .gnode-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+.gnode.s-running { --s: var(--c-blue); }
+.gnode.s-waiting { --s: var(--c-yellow); }
+.gnode.s-done { --s: var(--c-green); }
+.gnode.s-failed { --s: var(--c-red); }
+.gnode.s-skipped { --s: var(--c-gray); }
+.gnode-title { fill: var(--vscode-foreground); font-size: 12px; font-weight: 600; }
+.gnode-state { fill: var(--vscode-descriptionForeground); font-size: 11px; }
+.actions { position: sticky; bottom: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); border-top: 1px solid var(--vscode-panel-border); }
+.actions-title { font-weight: 600; margin-right: 6px; }
+.action { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: none; border-radius: 2px; padding: 4px 10px; cursor: pointer; font-family: inherit; }
+.action:hover { background: var(--vscode-button-secondaryHoverBackground); }

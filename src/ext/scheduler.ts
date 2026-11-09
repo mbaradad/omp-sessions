@@ -1,85 +1,53 @@
-// Global concurrency for queued tasks (see src/shared/scheduler.ts): the limit setting, a pause
-// switch, and a status bar counter "2/3 running · 5 waiting". The limit lives in scheduler.json
-// so hosts honour it with VS Code closed.
-import * as fs from "node:fs";
-import * as path from "node:path";
+// Global concurrency for queued tasks, now held by the planner (PLANNER-API.md `scheduler`): the limit,
+// a pause switch, and a status bar counter "2/3 running · 5 waiting". The planner enforces them with
+// VS Code closed; this only shows them and sends changes.
 import * as vscode from "vscode";
-import { stateRoot } from "../shared/protocol";
-import { MAX_CONCURRENT, listLeases, listWaiting, readScheduler, slotsDir, writeScheduler } from "../shared/scheduler";
+import { holdLines, parseBudget } from "../shared/plan-tree";
+import type { PlannerConfig } from "../planner/types";
 import type { OmpApi } from "./api";
+import type { PlannerStore } from "./planner-store";
+
+/** The planner's own cap (src/planner/engine.ts MAX_CONCURRENT). */
+const MAX_CONCURRENT = 64;
 
 export interface SchedulerSnapshot {
 	maxConcurrent: number;
 	paused: boolean;
-	/** Queued tasks currently holding a slot (all sessions on this machine). */
+	/** Planner tasks running now. */
 	running: number;
-	/** Sessions whose next queued task waits for a slot. */
+	/** Ready tasks waiting for a slot. */
 	waiting: number;
+	/** Ready tasks held by a provider limit, a spend cap or a retry backoff. */
+	held: number;
 }
 
+let source: PlannerStore | undefined;
+
+/** The planner's last word on the limit and the counts (all zero while it is unreachable). */
 export function schedulerSnapshot(): SchedulerSnapshot {
-	const cfg = readScheduler();
-	return { maxConcurrent: cfg.maxConcurrent, paused: cfg.paused === true, running: listLeases().length, waiting: listWaiting().length };
+	const s = source?.plan?.status;
+	return { maxConcurrent: s?.maxConcurrent ?? 0, paused: s?.paused === true, running: s?.running ?? 0, waiting: s?.waiting ?? 0, held: s?.held ?? 0 };
 }
 
 /** "2/3 running · 5 waiting"; empty when there's nothing to say (no limit, nothing running). */
 export function describeScheduler(s: SchedulerSnapshot): string {
-	if (!s.maxConcurrent && !s.running && !s.waiting && !s.paused) return "";
-	const parts = [s.maxConcurrent ? `${s.running}/${s.maxConcurrent} running` : `${s.running} running`, s.waiting ? `${s.waiting} waiting` : "", s.paused ? "paused" : ""];
+	if (!s.maxConcurrent && !s.running && !s.waiting && !s.held && !s.paused) return "";
+	const parts = [s.maxConcurrent ? `${s.running}/${s.maxConcurrent} running` : `${s.running} running`, s.waiting ? `${s.waiting} waiting` : "", s.held ? `${s.held} held` : "", s.paused ? "paused" : ""];
 	return parts.filter(Boolean).join(" · ");
 }
 
-/**
- * Calls `listener` whenever the limit, the pause switch, or the running/waiting counts change
- * (fs.watch on scheduler.json and the slot dirs, with a 2 s poll as fallback).
- */
+/** Calls `listener` whenever the limit, the pause switch, or the running/waiting counts change. */
 export function watchScheduler(listener: (s: SchedulerSnapshot) => void): vscode.Disposable {
 	let last = "";
-	let timer: NodeJS.Timeout | undefined;
 	const check = () => {
-		timer = undefined;
-		let snap: SchedulerSnapshot;
-		try {
-			snap = schedulerSnapshot();
-		} catch {
-			return;
-		}
+		const snap = schedulerSnapshot();
 		const key = JSON.stringify(snap);
 		if (key === last) return;
 		last = key;
 		listener(snap);
 	};
-	const poke = () => {
-		timer ??= setTimeout(check, 100);
-	};
-	const watchers: fs.FSWatcher[] = [];
-	try {
-		fs.mkdirSync(path.join(slotsDir(), "waiting"), { recursive: true, mode: 0o700 });
-	} catch {
-		/* polling still works once something creates it */
-	}
-	for (const [dir, wanted] of [
-		[stateRoot(), (name: string) => name === "scheduler.json"],
-		[slotsDir(), () => true],
-		[path.join(slotsDir(), "waiting"), () => true],
-	] as const) {
-		try {
-			const w = fs.watch(dir, (_e, name) => {
-				if (name === null || wanted(String(name))) poke();
-			});
-			w.on("error", () => w.close());
-			watchers.push(w);
-		} catch {
-			/* covered by the poll */
-		}
-	}
-	const poll = setInterval(check, 2000);
 	check();
-	return new vscode.Disposable(() => {
-		clearInterval(poll);
-		clearTimeout(timer);
-		for (const w of watchers) w.close();
-	});
+	return source ? source.onDidChange(check) : new vscode.Disposable(() => undefined);
 }
 
 function parseLimit(text: string): number | undefined {
@@ -90,8 +58,9 @@ function parseLimit(text: string): number | undefined {
 	return n <= MAX_CONCURRENT ? n : undefined;
 }
 
-export function registerScheduler(api: OmpApi): void {
+export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 	const { context } = api;
+	source = planner;
 	const status = vscode.window.createStatusBarItem("omp.scheduler", vscode.StatusBarAlignment.Left, 49);
 	status.name = "omp: queued task slots";
 	status.command = "omp.scheduler.setConcurrency";
@@ -104,42 +73,64 @@ export function registerScheduler(api: OmpApi): void {
 			return;
 		}
 		status.text = `${s.paused ? "$(debug-pause)" : "$(layers)"} ${text}`;
-		status.tooltip = `Queued tasks across all omp sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to change.\nPrompts typed in a chat are never held back.`;
+		const holds = source?.plan ? holdLines(source.plan.status) : [];
+		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to change.\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}`;
 		status.show();
 	};
 	context.subscriptions.push(watchScheduler(render));
 
-	const setLimit = (n: number) => {
-		writeScheduler({ ...readScheduler(), maxConcurrent: n });
+	const set = async (change: Partial<Pick<PlannerConfig, "maxConcurrent" | "paused" | "budget">>): Promise<boolean> => {
+		try {
+			await planner.scheduler(change);
+			return true;
+		} catch (err) {
+			void vscode.window.showWarningMessage(`Switchyard planner: ${err instanceof Error ? err.message : String(err)}`);
+			return false;
+		}
 	};
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("omp.scheduler.setConcurrency", async (arg?: unknown) => {
 			if (typeof arg === "number" && Number.isFinite(arg)) {
-				setLimit(Math.max(0, Math.min(MAX_CONCURRENT, Math.trunc(arg))));
+				await set({ maxConcurrent: Math.max(0, Math.min(MAX_CONCURRENT, Math.trunc(arg))) });
 				return;
 			}
-			const cfg = readScheduler();
 			const text = await vscode.window.showInputBox({
-				title: "Concurrently running queued tasks",
-				prompt: "How many sessions may run a queued task at the same time (all sessions on this machine). 0 or empty = unlimited. The rest wait in board order.",
-				value: String(cfg.maxConcurrent),
+				title: "Concurrently running tasks",
+				prompt: "How many planner tasks may run at the same time (all sessions). 0 or empty = unlimited. The rest wait by priority, then queue order.",
+				value: String(schedulerSnapshot().maxConcurrent),
 				validateInput: v => (parseLimit(v) === undefined ? `A number from 0 to ${MAX_CONCURRENT}` : undefined),
 				ignoreFocusOut: true,
 			});
 			const n = text === undefined ? undefined : parseLimit(text);
-			if (n !== undefined) setLimit(n);
+			if (n !== undefined) await set({ maxConcurrent: n });
 		}),
-		vscode.commands.registerCommand("omp.scheduler.increase", () => setLimit(Math.min(MAX_CONCURRENT, readScheduler().maxConcurrent + 1))),
-		vscode.commands.registerCommand("omp.scheduler.decrease", () => {
+		vscode.commands.registerCommand("omp.scheduler.increase", () => set({ maxConcurrent: Math.min(MAX_CONCURRENT, schedulerSnapshot().maxConcurrent + 1) })),
+		vscode.commands.registerCommand("omp.scheduler.decrease", async () => {
 			// Going below 1 would mean "unlimited" (0): stop at 1.
-			const n = readScheduler().maxConcurrent;
-			if (n > 1) setLimit(n - 1);
+			const n = schedulerSnapshot().maxConcurrent;
+			if (n > 1) await set({ maxConcurrent: n - 1 });
 		}),
-		vscode.commands.registerCommand("omp.scheduler.togglePause", () => {
-			const cfg = readScheduler();
-			writeScheduler({ ...cfg, paused: !cfg.paused });
-			void vscode.window.showInformationMessage(cfg.paused ? "Queued tasks may start again." : "No new queued task will start (running ones finish). Run the command again to resume.");
+		vscode.commands.registerCommand("omp.scheduler.togglePause", async () => {
+			const paused = schedulerSnapshot().paused;
+			if (await set({ paused: !paused })) void vscode.window.showInformationMessage(paused ? "Queued tasks may start again." : "No new queued task will start (running ones finish). Run the command again to resume.");
+		}),
+		vscode.commands.registerCommand("switchyard.scheduler.setBudget", async () => {
+			const current = source?.plan?.status.budget ?? {};
+			const value = Object.entries(current).map(([w, usd]) => `${w} ${usd}`).join(" ");
+			const text = await vscode.window.showInputBox({
+				title: "Spend budget for planner tasks (USD)",
+				prompt: 'No new task starts while the spend of planner tasks in a rolling hour/day/week reaches its cap. E.g. "day 20" or "hour 2 day 20 week 100"; empty removes it.',
+				value,
+				validateInput: v => {
+					const parsed = parseBudget(v);
+					return "error" in parsed ? parsed.error : undefined;
+				},
+				ignoreFocusOut: true,
+			});
+			if (text === undefined) return;
+			const parsed = parseBudget(text);
+			if ("caps" in parsed) await set({ budget: parsed.caps });
 		}),
 	);
 }
