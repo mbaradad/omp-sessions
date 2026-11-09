@@ -259,6 +259,10 @@ async function cmdNew(args: Args): Promise<number> {
 	if (task && prompt) throw new UsageError("--prompt starts the session now, --task queues it: pick one");
 	const json = flag(args, "json");
 	const dir = path.resolve(args._[0] ?? process.cwd());
+	const worktreeArg = value(args, "worktree");
+	if (worktreeArg !== undefined && worktreeArg !== "auto" && worktreeArg !== "always" && worktreeArg !== "never") throw new UsageError("--worktree must be auto, always or never");
+	if (worktreeArg !== undefined && flag(args, "no-worktree")) throw new UsageError("--worktree and --no-worktree contradict each other");
+	const worktree = flag(args, "no-worktree") ? "never" : worktreeArg;
 	if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`not a folder: ${dir}`);
 	const defaults = readSwitchyardConfig();
 	const effectiveMode = mode ?? defaults.mode;
@@ -269,6 +273,10 @@ async function cmdNew(args: Args): Promise<number> {
 	const client = await ao();
 	// A git folder runs in its AO project (AO gives the session its own worktree); any other folder runs standalone (MAPPING D2, Q1).
 	const project = await client.projectForFolder(dir);
+	// Worktrees (PARKED §8): AO gives every session of a git project its own worktree and branch, which is `auto` and `always`
+	// here. A session in the checkout itself (`never`) is not something AO does (MAPPING Q1): refuse it rather than ignore it.
+	if (!project && worktree === "always") throw new Error(`--worktree=always needs a git repository: ${dir} is not in one`);
+	if (worktree === "never") throw new Error("--worktree=never / --no-worktree: AO runs every session of a git project in its own worktree; running in the checkout itself is not available (MAPPING Q1). Start the session in a folder outside git, or leave the flag out");
 	// A queued task gets its session now (idle, no prompt), so its id is the session id like before; the planner prompts it.
 	const lane = task ? await planner() : undefined;
 	// Sessions this one waits for, checked before anything is created.
@@ -303,7 +311,7 @@ async function cmdNew(args: Args): Promise<number> {
 	}
 	const cwd = (await client.workspacePath(id).catch(() => undefined)) || project?.path || dir;
 	if (json) {
-		process.stdout.write(`${JSON.stringify({ id, started: !task || !startAt, title, cwd, ...(startAt ? { startAt } : {}) })}\n`);
+		process.stdout.write(`${JSON.stringify({ id, started: !task || !startAt, title, cwd, ...(project ? { worktree: { path: cwd, ...(res.session.branch && { branch: res.session.branch }), repo: project.path } } : {}), ...(startAt ? { startAt } : {}) })}\n`);
 		return 0;
 	}
 	const label = `${id} ${title}`;
@@ -994,7 +1002,8 @@ async function cmdOrganize(cmd: string, args: Args): Promise<void> {
 			throw new UsageError(`unknown command ${cmd}`);
 	}
 	changed ||= JSON.stringify(store.session(s.id)) !== before;
-	process.stdout.write(changed ? `${c.green("updated")} ${s.id} ${s.title}\n` : c.dim("no change\n"));
+	if (flag(args, "json")) process.stdout.write(`${JSON.stringify({ id: s.id, archived: store.session(s.id)?.archived === true, changed })}\n`);
+	else process.stdout.write(changed ? `${c.green("updated")} ${s.id} ${s.title}\n` : c.dim("no change\n"));
 }
 
 // ---------- plan: graph propagation (the planner's edge state) ----------
@@ -1558,7 +1567,7 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
   board [--all] [--json]          sessions by column: waiting, scheduled, working, needs input, idle,
                                   interrupted (--all: also stopped)
   new [dir] [-p prompt|-] [--task t [--sub s]… [--notes n|-] [--at when]] [--title t] [--mode m]
-      [--tag t]… [--group g] [--model m] [--priority p] [--usage spare] [--detach] [--json]
+      [--tag t]… [--group g] [--model m] [--priority p] [--usage spare] [--worktree auto|always] [--detach] [--json]
                                   start a session in dir's git project (AO gives it its own worktree; a
                                   folder outside git runs in an AO scratch folder); no prompt: attach to
                                   it; --task queues it, --at schedules it (+30m, 14:30, ISO time)
@@ -1613,7 +1622,7 @@ ${c.bold("Organize")}
   color <session> <${ORG_COLORS.join("|")}|none>
   group <session> <name|none>
   move <session> <up|down|top|bottom>
-  archive|unarchive <session>
+  archive|unarchive <session> [--json]
   complete|uncomplete <session> [--json]
                                   mark it completed (a ✓ in ls and show; queued work still runs)
 
@@ -1706,7 +1715,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	version: { flags: ["json"], run: args => cmdVersion(flag(args, "json")) },
 	ls: { flags: ["all", "json", "project", "cwd", "group", "tag", "state"], run: async args => (await cmdList(args), 0) },
 	board: { flags: ["all", "json"], run: async args => (await cmdBoard(args), 0) },
-	new: { flags: ["prompt", "task", "sub", "notes", "at", "after", "usage", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
+	new: { flags: ["prompt", "task", "sub", "notes", "at", "after", "usage", "worktree", "no-worktree", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
 	send: { flags: ["wait", "steer", "follow-up", "json"], run: cmdSend },
 	attach: { flags: ["lines"], run: cmdAttach },
 	tail: { flags: ["lines", "follow"], run: cmdTail },
@@ -1719,8 +1728,8 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	prio: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	color: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	group: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
-	archive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
-	unarchive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
+	archive: { flags: ["json"], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
+	unarchive: { flags: ["json"], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	plan: { flags: ["json", "rerun"], run: cmdPlan },
 	complete: { flags: ["json"], run: cmdComplete },
 	uncomplete: { flags: ["json"], run: cmdComplete },

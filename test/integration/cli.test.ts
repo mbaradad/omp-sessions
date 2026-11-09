@@ -296,3 +296,26 @@ test("cli: the error texts and exit codes the Hermes plugin matches; tags are on
 	assert.equal(cli("answer", asking, `--question=${w.data.question.id}`, "--", "maybe").status, 2);
 	assert.equal(cli("answer", asking, `--question=${w.data.question.id}`, "--", "reject").status, 0);
 });
+
+test("cli: new --worktree auto|always reports the worktree; never/--no-worktree is refused before a session exists; archive/unarchive --json", { skip, timeout: 120_000 }, () => {
+	const before = json<Array<{ meta: { id: string } }>>("ls", "--all", "--json").data.length;
+	type Worktree = { id: string; worktree?: { path: string; repo: string; branch?: string } };
+	const made = json<Worktree>("new", repo, "-p", "echo wt", "--worktree=always", "--mode", "auto", "--json");
+	assert.equal(made.status, 0, made.stderr);
+	assert.equal(made.data.worktree?.repo, fs.realpathSync(repo));
+	assert.ok(made.data.worktree?.path.startsWith(ao.dataDir), "AO's worktree, not the checkout");
+	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=auto").status, 0);
+	for (const refused of [["--no-worktree"], ["--worktree=never"]]) {
+		const r = cli("new", repo, "-p", "echo x", ...refused);
+		assert.equal(r.status, 1, refused.join(" "));
+		assert.match(r.stderr, /its own worktree/);
+	}
+	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=sometimes").status, 2);
+	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=auto", "--no-worktree").status, 2);
+	assert.equal(json<unknown[]>("ls", "--all", "--json").data.length, before + 2, "a refused start creates nothing");
+	type Archived = { id: string; archived: boolean; changed: boolean };
+	const id = made.data.id;
+	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: true });
+	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: false });
+	assert.deepEqual(json<Archived>("unarchive", id, "--json").data, { id, archived: false, changed: true });
+});
