@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import { test } from "node:test";
 import { migrationPending } from "../../src/ext/migration-offer";
 
-const has = (...files: string[]) => (p: string) => files.includes(p);
+/** The files that exist, written POSIX-style; migrationPending asks with native separators (path.join). */
+const has = (...files: string[]) => (p: string) => files.map(f => path.normalize(f)).includes(p);
 const marker = (content: string) => () => content;
 
 test("migrationPending: old data and no completedAt marker; the runtime copy alone is not data", () => {

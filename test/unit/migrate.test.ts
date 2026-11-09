@@ -94,7 +94,7 @@ test("dry run writes nothing, anywhere, and reports every old session", async ()
 	assert.equal(report.sessions.length, 2);
 	assert.ok(lines.some(l => l.includes('s1 "Alpha" (/work/a): omp --resume omp-1')));
 	assert.ok(lines.some(l => l.includes('s2 "Beta" (/work/b): no omp transcript')));
-	assert.ok(lines.some(l => l.includes("unfinished (pending): later") && l.includes("sessions/s1/queue.json") && l.includes('switchyard new /work/a --task "…"')));
+	assert.ok(lines.some(l => l.includes("unfinished (pending): later") && l.includes(path.join("sessions", "s1", "queue.json")) && l.includes('switchyard new /work/a --task "…"')));
 	assert.ok(lines.some(l => l.includes("unfinished (failed): broken")));
 	assert.ok(!lines.some(l => l.includes("skipped") && l.includes("unfinished")));
 });
