@@ -160,7 +160,7 @@ test("client-side Switchyard code in the test process writes under the fixture's
 		const repo = ao.scratchRepo();
 		// src/ao/spawn.ts writes sessions/<id>/mode under switchyardHome(); with SWITCHYARD_HOME unset it would
 		// have been the real ~/.switchyard (locked: EACCES).
-		const spawned = await spawnSwitchyardSession(client, { dir: repo, mode: "ask", prompt: "echo isolated" });
+		const spawned = await spawnSwitchyardSession(client, { dir: repo, mode: "ask", gate: ao.standInGate(), prompt: "echo isolated" });
 		const modeFile = path.join(ao.switchyardHome, "sessions", spawned.session.id, "mode");
 		assert.ok(fs.existsSync(modeFile), `${modeFile} written under the fixture's Switchyard home`);
 		assert.equal(listingOf(realSwitchyard), before, "the real ~/.switchyard is unchanged");
