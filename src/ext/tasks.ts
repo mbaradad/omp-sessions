@@ -6,7 +6,7 @@
 import * as vscode from "vscode";
 import type { KeptBranch, LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { keptBranchText, laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
+import { failureHint, keptBranchText, laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -226,6 +226,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		item.description = [
 			t.state === "waiting" && !t.position ? "" : taskStateText(t, titleOf),
 			t.undone ? "↶ undone: its work is gone" : "",
+			failureHint(t),
 			syncText(syncAttention(t)),
 			t.priority && t.priority !== "normal" ? t.priority : "",
 			retrying,

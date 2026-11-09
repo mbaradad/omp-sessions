@@ -223,3 +223,10 @@ export function keptBranchText(b: Pick<KeptBranch, "task" | "why">): string {
 export function modeGateNote(mode: string, gateInstalled: boolean): string {
 	return mode !== "auto" && !gateInstalled ? "the Switchyard permission gate is not installed on this machine: a session started with this mode is refused (use auto, or install the gate)" : "";
 }
+
+/** A short, recognisable label for failures a person can fix in one step (read from the planner's failure summary), or "". */
+export function failureHint(task: Pick<TaskView, "status" | "summary">): string {
+	if (task.status !== "failed" || !task.summary) return "";
+	if (/needs the Switchyard permission gate/i.test(task.summary)) return "⚠ permission gate not installed";
+	return "";
+}

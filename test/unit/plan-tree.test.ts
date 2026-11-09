@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, modeGateNote, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, failureHint, keptBranchText, modeGateNote, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -217,5 +217,15 @@ describe("modeGateNote", () => {
 			assert.equal(modeGateNote(m, true), "");
 			assert.match(modeGateNote(m, false), /gate is not installed/);
 		}
+	});
+});
+
+describe("failureHint", () => {
+	test("recognises the missing-gate refusal on a failed task only", () => {
+		const summary = 'Permission mode "plan" needs the Switchyard permission gate, which is not installed (looked in /x). Run `switchyard install`.';
+		assert.equal(failureHint({ status: "failed", summary }), "⚠ permission gate not installed");
+		assert.equal(failureHint({ status: "pending", summary }), "", "a requeued task is not failed any more");
+		assert.equal(failureHint({ status: "failed", summary: "The model request failed." }), "");
+		assert.equal(failureHint({ status: "failed" }), "");
 	});
 });
