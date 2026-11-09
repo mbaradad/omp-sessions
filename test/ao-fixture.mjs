@@ -296,6 +296,10 @@ export async function startAoFixture(opts = {}) {
 		XDG_CACHE_HOME: path.join(home, ".cache"),
 		SWITCHYARD_HOME: switchyardHome,
 		OMP_VSCODE_HOME: path.join(root, "omp-vscode"),
+		// With real omp the fixture's ~/.omp/agent is the REAL agent dir (linked, for the login): nothing may install
+		// Switchyard's omp gate or shim into it (CONTRACT.md; G46: the planner and the extension install at start).
+		// Part of the isolation, so the daemon, ao.stackEnv (planner, CLI…) and this process all carry it.
+		...(opts.realOmp ? { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0" } : {}),
 	};
 	/** The in-process values the isolation will replace (undefined = unset), to put back on stop(). */
 	const previousProcessEnv = Object.fromEntries(Object.keys(isolation).map(k => [k, process.env[k]]));
@@ -409,6 +413,8 @@ export async function startAoFixture(opts = {}) {
 		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack (isolated HOME included). */
 		stackEnv: { ...ompEnv, ...clientEnv },
 		root,
+		/** True when this fixture runs the real omp (its home/.omp/agent is the REAL agent dir, linked). */
+		realOmp: !!opts.realOmp,
 		/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's own client code and (by default) a planner. */
 		switchyardHome,
 		dataDir,
@@ -437,6 +443,20 @@ export async function startAoFixture(opts = {}) {
 			const tmp = `${rulesFile}.${process.pid}.tmp`;
 			fs.writeFileSync(tmp, JSON.stringify(rules));
 			fs.renameSync(tmp, rulesFile);
+		},
+		/**
+		 * Installs a stand-in Switchyard permission gate (a package listing and shipping `mode.js`, what gateStatus()
+		 * looks for) into the fixture's OWN omp agent dir, and returns the `gate` option for src/ao's
+		 * spawnSwitchyard / spawnSwitchyardSession, which refuse a mode other than `auto` without it (G46). Fake omp
+		 * only: with realOmp the agent dir is the real one, which nothing of ours may write into.
+		 */
+		standInGate() {
+			if (opts.realOmp) throw new Error("standInGate needs the fake omp: with realOmp the agent dir is the real one");
+			const dir = path.join(agentDir, "extensions", "switchyard");
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } }));
+			fs.writeFileSync(path.join(dir, "mode.js"), "export default () => {};\n");
+			return { omp: { home, env: { PI_CODING_AGENT_DIR: agentDir } } };
 		},
 		/** JSON request against the daemon; throws on non-2xx with the response body. */
 		async api(method, urlPath, body) {

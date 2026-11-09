@@ -267,7 +267,8 @@ test("a child in a session a client spawned earlier gets its parent's work merge
 	const prompt = ao.sessions.get(session)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
 	assert.match(prompt, /Upstream task "A" changed/);
 	assert.match(prompt, /### A\nA edited x\.txt/);
-	assert.equal(merges(repo, c.git?.branch as string), 1);
+	assert.equal(merges(repo, c.git?.branch as string), 0, "a child with no work of its own fast-forwards: its branch starts at the parent head");
+	assert.equal(git(ao.worktreeOf(session), "rev-parse", "HEAD"), byTitle(p, "A").git?.head);
 	ao.finishTurn(session, "completed", "C done");
 	await until("C done", () => byTitle(p, "C").status === "done");
 	// Later changes to A reach C as for any child; `sync` takes the session id too.
