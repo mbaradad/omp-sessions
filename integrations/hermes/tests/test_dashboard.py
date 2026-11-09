@@ -255,6 +255,30 @@ class DashboardApiTest(unittest.TestCase):
             old = {c["id"]: (sorted(c["parents"]), sorted(c["children"])) for c in graph_board()["cards"]}
         self.assertEqual(old, links)
 
+    def test_graph_cards_carry_the_planners_state_of_their_session(self) -> None:
+        # A real planner: the child card's task is queued after the parent card's session (what the lane does), so
+        # the planner holds it as blocked until the parent finishes; a third card's task is scheduled.
+        kbb.create_board("planned", name="Planned board")
+        with kbc.connect_closing(board="planned") as conn:
+            up = kb.create_task(conn, title="Upstream work", assignee="someone", board="planned")
+            down = kb.create_task(conn, title="Downstream work", assignee="someone", parents=[up], board="planned")
+            later = kb.create_task(conn, title="Later work", assignee="someone", parents=[up], board="planned")
+        tags = lambda card: ("--tag", "hermes:planned", "--tag", f"card:{card}")  # noqa: E731
+        up_sid = json.loads(switchyard("new", str(WORK), "--detach", "--json", "--task", "Upstream work", "--notes", "slow 60000", *tags(up)).stdout)["id"]
+        until(lambda: self.state_is(up_sid, "working"), "parent session working")
+        down_sid = json.loads(switchyard("new", str(WORK), "--detach", "--json", "--task", "Downstream work", "--after", up_sid, *tags(down)).stdout)["id"]
+        later_sid = json.loads(switchyard("new", str(WORK), "--detach", "--json", "--task", "Later work", "--at", "+2h", *tags(later)).stdout)["id"]
+
+        def cards() -> dict:
+            b = next(b for b in self.get("/boards")["boards"] if b["slug"] == "planned")
+            return {c["id"]: c for c in b["cards"]}
+
+        c = until(lambda: (lambda cs: cs if (cs[down]["plan"] or {}).get("state") == "blocked" else None)(cards()), "the child's task blocked in the planner")
+        self.assertEqual((c[down]["session"], c[down]["plan"]["after"], c[down]["plan"]["blockedBy"]), (down_sid, [up], [up]), "the planner's `after` is the card's parent")
+        self.assertEqual(sorted(c[down]["parents"]), [up], "the Hermes link and the planner's edge agree")
+        self.assertEqual((c[later]["session"], c[later]["plan"]["state"], c[later]["plan"]["after"], isinstance(c[later]["plan"].get("until"), (int, float))), (later_sid, "scheduled", [], True))
+        self.assertEqual(c[up]["plan"]["state"], "running")
+
     def test_card_links_degrade_without_task_links(self) -> None:
         import sqlite3
         import types

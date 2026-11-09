@@ -127,6 +127,16 @@ test("laneSummaries: the lane's next task says waiting (with its slot position),
 	assert.ok(laneSummaries(plan([{}], { id: "l_1", session: "repo-9" })).has("repo-9"), "a lane continuing a session is keyed by that session");
 });
 
+test("laneSummaries: the next task's planner state and the sessions it waits for (the Hermes card graph shows them)", () => {
+	const p = plan([{ state: "blocked", lane: "child", after: ["up"], blockedBy: ["up"] }], { id: "child", session: "child-1" });
+	p.tasks.push({ id: "up", title: "up", subtasks: [], status: "running", createdAt: 0, lane: "parent-lane", session: "parent-1", state: "running" } as PlanView["tasks"][number]);
+	p.lanes.push({ id: "parent-lane", session: "parent-1", autoRun: true, createdAt: 0, pending: 0, running: 1, done: 0, failed: 0, total: 1 } as PlanView["lanes"][number]);
+	const child = laneSummaries(p).get("child-1");
+	assert.deepEqual([child?.planState, child?.after, child?.blockedBy], ["blocked", ["parent-1"], ["parent-1"]]);
+	assert.equal(laneSummaries(p).get("parent-1")?.planState, "running");
+	assert.equal(laneSummaries(plan([{ state: "held", waitReason: "rate-limit x" }])).get("repo-1")?.after, undefined, "no dependencies: no after");
+});
+
 test("plannedState: the planner's word goes on top of an idle or stopped session only (MAPPING D3)", () => {
 	const lane = { pending: 1, running: 0, done: 0, total: 1, autoRun: false };
 	assert.equal(plannedState({ ...lane, scheduled: true, startAt: 1 }), "scheduled");
