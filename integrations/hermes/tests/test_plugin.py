@@ -184,7 +184,7 @@ class PluginTest(unittest.TestCase):
     def test_registers_tools_hook_commands_and_skill(self) -> None:
         from tools.registry import registry
 
-        for name in ("omp_sessions_list", "omp_projects_list", "omp_session_start", "omp_session_status", "omp_session_wait", "omp_session_send", "omp_session_answer", "omp_session_mode", "omp_session_stop", "omp_queue_add", "omp_queue_schedule", "omp_server_status"):
+        for name in ("omp_sessions_list", "omp_projects_list", "omp_session_start", "omp_session_status", "omp_session_wait", "omp_session_send", "omp_session_answer", "omp_session_mode", "omp_session_stop", "omp_queue_add", "omp_queue_schedule", "omp_server_status", "switchyard_plan_status", "switchyard_plan_sync"):
             self.assertIsNotNone(registry.get_entry(name, scope=self.manager.scope_key), name)
         self.assertIn("omp", self.manager._plugin_commands)
         self.assertIn("omp", self.manager._cli_commands)

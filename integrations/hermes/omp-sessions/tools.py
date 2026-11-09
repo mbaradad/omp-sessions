@@ -160,6 +160,15 @@ SCHEMAS: dict[str, dict] = {
         "description": "Show an omp session's model, or switch it (live while it runs, else from its next resume).",
         "parameters": {"type": "object", "properties": {"id": SESSION_ID, "model": {"type": "string", "description": "provider/id from omp_models_list; omit to show the current one."}}, "required": ["id"]},
     },
+    "switchyard_plan_status": {
+        "name": "switchyard_plan_status",
+        "description": (
+            "Show how far parent tasks' changes reached their children in the plan's graph: one edge per parent -> child with its sync state "
+            "(in-sync, pending, merged, resolving, conflict, upstream-changed) and the conflicting files. id (a session) limits it to that session's edges; "
+            "without it, every edge of every plan. Use switchyard_plan_sync to bring changes in or re-run a session."
+        ),
+        "parameters": {"type": "object", "properties": {"id": {**SESSION_ID, "description": "Session (id, prefix or title words); omit for every edge."}}},
+    },
     "switchyard_plan_sync": {
         "name": "switchyard_plan_sync",
         "description": (
@@ -281,6 +290,7 @@ class Tools:
             "omp_server_status": self.server_status,
             "omp_models_list": self.models_list,
             "omp_session_model": self.session_model,
+            "switchyard_plan_status": self.plan_status,
             "switchyard_plan_sync": self.plan_sync,
         }
 
@@ -511,6 +521,9 @@ class Tools:
 
     def session_model(self, args: dict, **_: Any) -> str:
         return self._run(lambda: self.omp().model(self._id(args), _str(args, "model")))
+
+    def plan_status(self, args: dict, **_: Any) -> str:
+        return self._run(lambda: {"edges": self.omp().plan_status(_str(args, "id"))})
 
     def plan_sync(self, args: dict, **_: Any) -> str:
         def go() -> dict:

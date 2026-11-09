@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to omp. The `omp-sessions` Hermes plugin gives it:
 
-- **Tools** (toolset `omp_sessions`, 15 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
+- **Tools** (toolset `omp_sessions`, 16 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
 - **Notifications.** When an omp session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
 - **A kanban lane.** Kanban cards assigned to `omp` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`omp-sessions` skill**, plus `/omp` in chats and `hermes omp …` in a terminal.
@@ -87,6 +87,7 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | `omp_queue_schedule` | Sets or changes when a session's queue starts (`at`), cancels it (`at: "off"`), and/or sets its `priority`. |
 | `omp_models_list` | Lists the models omp can use (`provider/id`), with the omp Sessions default and omp's own. |
 | `omp_server_status` | The `omp-sessions status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. |
+| `switchyard_plan_status` | Lists the graph's edges (parent → child) with their sync state and conflicting files, for one session or every plan. |
 | `switchyard_plan_sync` | Brings a session's parents' changes into its worktree now and returns each edge's sync state; `rerun: true` also runs its task again with them. |
 
 States: `queued` (waiting for a slot), `scheduled` (waiting for its start time), `starting`, `working`, `needs_input`, `idle` (done for now), `interrupted` (a crash or reboot cut a queued task short; it waits for a person), `stopped`.
