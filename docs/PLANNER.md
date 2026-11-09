@@ -233,9 +233,12 @@ A lane is addressed by its id **or by its AO session id** (`getQueue`, `queue`, 
 `session` is set when its first task is *dispatched* (the spawn answers), not when it ends. `QueueView`
 and `LaneView` carry `state` / `waitReason` / `waitUntil` of the lane's next open task (first pending or
 running): `running`, `waiting`, `scheduled` (start time in the future, `waitUntil`), `paused`, `held`,
-`blocked`, `interrupted`; absent when nothing is left. `new --task` = `lane.add` + `add` (returns the lane
-id); until `session` is set the lane's `state` is what a client reports for it. `stopWhenQueueDone` is
-dropped (AO hibernates idle chats, G28); `PlannerStatus` has no such field.
+`blocked`, `interrupted`; absent when nothing is left. `new --task` has two forms: **lane-first** (`lane.add` + `add`: returns the lane id; until
+`session` is set the lane's `state` is what a client reports for it) and **session-first** (the client spawns the
+AO session idle, then `queue {id: <session>, ops:[add, after […], autoRun]}`: the id stays a session id; the planner
+tracks the session in git, so graphs get edges and parent merges either way). `stopWhenQueueDone` is dropped: an
+idle chat is only stopped by AO's hibernation, which is OFF by default and resets on every daemon restart (G28; the
+planner re-applies `hibernation` from config.json on every reconnect); `PlannerStatus` has no such field.
 
 `queue {id, ops}` accepts the old `QueueOp`s on lane `id` and maps them: `add/update/remove/move/
 subtask ops/setOptions/duplicate` → task ops; `run {id?}` → `run` (or `lane.resume`); `autoRun {value}`
