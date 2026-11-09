@@ -192,3 +192,13 @@ export function afterUndoOps(undone: readonly TaskView[]): PlanOp[] {
 	for (const lane of lanes) ops.push({ op: "lane.pause", id: lane });
 	return ops;
 }
+
+/**
+ * Queues that would put the next task into the session being undone, and are running by themselves (armed):
+ * the queues of the tasks the undo takes with it and the queue that continues `session`. They are held while
+ * the undo is decided and done.
+ */
+export function armedLanes(plan: PlanView, tasks: readonly TaskView[], session: string): string[] {
+	const ids = new Set(tasks.flatMap(t => (t.lane ? [t.lane] : [])));
+	return plan.lanes.filter(l => l.autoRun && (ids.has(l.id) || l.session === session)).map(l => l.id);
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, checkTaskOption, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -176,5 +176,12 @@ describe("undoing a task", () => {
 		assert.deepEqual(ops, [{ op: "requeue", id: "a" }, { op: "requeue", id: "b" }, { op: "requeue", id: "f" }, { op: "pause", id: "f" }, { op: "lane.pause", id: "q" }]);
 		const requeueIndex = ops.findIndex(o => o.op === "requeue" && o.id === "b");
 		assert.ok(ops.findIndex(o => o.op === "lane.pause") > requeueIndex, "the pause comes after the requeue that re-arms the queue");
+	});
+
+	test("only armed queues (running by themselves) are held during an undo: those of the undone tasks and the one continuing the session; paused or scheduled ones stay as they are", () => {
+		const p = plan([lane("run", { autoRun: true }), lane("paused"), lane("timed", { startAt: 99 }), lane("other", { autoRun: true }), lane("cont", { autoRun: true, session: "s" })], []);
+		const tasks = [task("a", { lane: "run" }), task("b", { lane: "run" }), task("c", { lane: "paused" }), task("d", { lane: "timed" }), task("free")];
+		assert.deepEqual(armedLanes(p, tasks, "s"), ["run", "cont"], "the queue continuing the session counts even without an undone task in it");
+		assert.deepEqual(armedLanes(p, [], "nothing"), []);
 	});
 });

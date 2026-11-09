@@ -4,7 +4,7 @@
 import * as vscode from "vscode";
 import type { PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { afterUndoOps, checkTaskOption, isUndoable, undoneWith } from "../shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, isUndoable, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
@@ -157,15 +157,24 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 			void vscode.window.showInformationMessage("This task has no recorded run to undo.");
 			return;
 		}
+		// Hold the queues of everything the undo takes with it first: while the confirmation is open, and while omp
+		// is interrupted and rewinds, the planner must not dispatch the next task into this session.
+		const undone = undoneWith(plan, task);
+		const held = armedLanes(plan, undone, task.session);
+		const release = () => (held.length ? edit(held.map((id): PlanOp => ({ op: "lane.resume", id }))) : Promise.resolve(true));
+		if (held.length && !(await edit(held.map((id): PlanOp => ({ op: "lane.pause", id }))))) return;
 		let result: { ok?: boolean; message?: string } | undefined;
 		try {
 			result = (await vscode.commands.executeCommand("switchyard.undo", task.session, task.turn)) as typeof result;
 		} catch (err) {
 			void vscode.window.showWarningMessage(`Switchyard: could not undo “${task.title}”: ${err instanceof Error ? err.message : String(err)}`);
+			await release();
 			return;
 		}
-		if (!result?.ok) return; // cancelled, nothing to undo, or refused: that command said why
-		const undone = undoneWith(plan, task);
+		if (!result?.ok) {
+			await release(); // cancelled, nothing to undo, or refused: that command said why; the queues go on as before
+			return;
+		}
 		if (await edit(afterUndoOps(undone))) {
 			void vscode.window.showInformationMessage(`Switchyard: undid ${undone.length === 1 ? `“${task.title}”` : `${undone.length} tasks (“${task.title}” and the later ones in that session)`}. They are pending again and held; run them when you want.`);
 		}
