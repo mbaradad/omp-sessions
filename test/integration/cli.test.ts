@@ -235,6 +235,12 @@ test("cli: new --task --after waits for the other session; queue after refuses i
 	assert.equal(b.status, 0, b.stderr);
 	assert.equal(json("show", b.data.id, "--json").data.state, "queued", "blocked behind A");
 	assert.equal(cli("queue", b.data.id, "after", b.data.id).status, 1, "a queue can't wait for itself");
+	// Hermes reads the dependency from `queue <s> --json`: tasks[].after and blockedBy are task ids (not session ids).
+	type Q = { tasks: Array<{ id: string; after?: string[]; blockedBy?: string[] }> };
+	const aTask = json<Q>("queue", a.data.id, "--json").data.tasks[0];
+	const bTask = json<Q>("queue", b.data.id, "--json").data.tasks[0];
+	assert.deepEqual(bTask.after, [aTask.id]);
+	assert.deepEqual(bTask.blockedBy, [aTask.id]);
 	assert.equal(cli("wait", b.data.id, "--timeout", "3s").status, 124, "still waiting");
 	assert.equal(cli("queue", a.data.id, "at", "off").status, 0);
 	assert.equal(cli("queue", a.data.id, "start").status, 0);
