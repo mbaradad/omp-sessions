@@ -2,6 +2,7 @@
 import { MODE_INFO, type Session, type State } from "./api";
 import { Empty } from "./components";
 import { h, type ReactElement, useState } from "./react";
+import { QueueControls, type RunQueueAction } from "./queue";
 import { ago, clock, cx, type IconName, icon, money, plain, stateText } from "./util";
 
 export interface Column {
@@ -40,7 +41,7 @@ function questionLine(s: Session): string {
 	return q.title.split("\n")[0];
 }
 
-function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void }): ReactElement {
+function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; onQueueAction?: RunQueueAction }): ReactElement {
 	const { s } = p;
 	const open = (): void => p.onOpen(s.id);
 	const cost = money(s.cost);
@@ -132,17 +133,18 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 			"div",
 			{ className: "omps-card-foot" },
 			h("span", { className: "omps-card-state" }, s.state === "working" ? h("span", { className: "omps-pulse", "aria-hidden": true }) : null, stateText(s, p.now)),
-			progress !== null ? h("span", { className: "omps-progress", title: `${s.queue.done} of ${s.queue.total} tasks done` }, h("span", { style: { width: `${progress}%` } })) : null,
+			progress !== null ? h("span", { className: cx("omps-progress", (s.queue.failed ?? 0) > 0 && "has-failed"), title: `${s.queue.done} of ${s.queue.total} tasks done${s.queue.failed ? `, ${s.queue.failed} failed` : ""}` }, h("span", { style: { width: `${progress}%` } })) : null,
 			h("span", { className: "omps-grow" }),
 			cost ? h("span", { className: "omps-cost" }, cost) : null,
-			s.state === "scheduled" && s.startAt
-				? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt))
+			typeof s.startAt === "number"
+				? h("span", { className: "omps-when is-scheduled", title: `Queue starts ${new Date(s.startAt).toLocaleString()}` }, icon("clock", 11), clock(s.startAt))
 				: h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : undefined }, ago(s.updatedAt, p.now)),
 		),
+		p.onQueueAction ? h(QueueControls, { s, onAction: p.onQueueAction, compact: true }) : null,
 	);
 }
 
-export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; filtered: boolean }): ReactElement {
+export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; onQueueAction?: RunQueueAction; filtered: boolean }): ReactElement {
 	const [expanded, setExpanded] = useState<Partial<Record<Column["id"], boolean>>>({});
 	return h(
 		"div",
@@ -169,7 +171,7 @@ export function SessionBoard(p: { sessions: Session[]; selected: string | null; 
 					"div",
 					{ className: "omps-col-body" },
 					shown.length
-						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject }))
+						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject, onQueueAction: p.onQueueAction }))
 						: h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
 					list.length > shown.length
 						? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`)

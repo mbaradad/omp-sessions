@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote
@@ -276,6 +277,14 @@ def excerpt(text: Any) -> Optional[str]:
     return flat if len(flat) <= EXCERPT_MAX else f"{flat[: EXCERPT_MAX - 1]}…"
 
 
+def queue_counts(q: dict) -> dict:
+    """The queue's task counts for the page. `show`/`ls` count pending, running and done; the rest of
+    `total` (not interrupted) is failed or skipped tasks, the ones Retry brings back."""
+    out = {k: int(q.get(k) or 0) for k in ("pending", "running", "done", "total", "interrupted")}
+    out["failed"] = int(q["failed"]) if q.get("failed") is not None else max(0, out["total"] - out["done"] - out["pending"] - out["running"] - out["interrupted"])
+    return out
+
+
 def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]], question: Optional[dict]) -> dict:
     meta = info.get("meta") or {}
     q = info.get("queue") or {}
@@ -300,7 +309,8 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "priority": info.get("priority"),
         "tags": [t for t in (info.get("tags") or []) if isinstance(t, str)],
         "archived": info.get("archived") is True,
-        "queue": {k: int(q.get(k) or 0) for k in ("pending", "running", "done", "total")},
+        "queue": queue_counts(q),
+        "autoRun": q.get("autoRun") is True,
         "startAt": q.get("startAt"),
         "waiting": info.get("waiting"),
         "excerpt": excerpt(meta.get("lastText")),
@@ -430,6 +440,22 @@ def session_action(sid: str, action: str, body: dict) -> dict:
         if not model:
             raise ApiError(400, "pick a model")
         return {"ok": True, **o.model(sid, model)}
+    if action == "run":
+        queue = o.queue_get(sid)
+        if not any(isinstance(t, dict) and t.get("status") == "pending" for t in (queue or {}).get("tasks") or []):
+            raise ApiError(409, "no pending task to run (retry requeues failed or finished tasks)")
+        return {"ok": True, "queue": o.queue_run(sid)}
+    if action == "retry":
+        return {"ok": True, "queue": o.queue_retry(sid)}
+    if action == "schedule":
+        at = body.get("at")
+        if at is None:
+            return {"ok": True, "queue": o.queue_at(sid, "off")}
+        if isinstance(at, (int, float)) and not isinstance(at, bool):
+            at = datetime.fromtimestamp(at / 1000, tz=timezone.utc).isoformat()
+        if not isinstance(at, str) or not at.strip() or at.strip() in ("off", "none"):
+            raise ApiError(400, "at: when the queue starts (+30m, 14:30, an ISO time), or null to unschedule")
+        return {"ok": True, "queue": o.queue_at(sid, at.strip())}
     if action == "sync":
         # Bring the parents' changes in now; rerun: also run its task again with them (upstream-changed).
         return {"ok": True, **o.plan_sync(sid, rerun=body.get("rerun") is True)}

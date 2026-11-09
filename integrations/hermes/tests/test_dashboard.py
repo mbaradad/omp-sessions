@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -128,6 +129,38 @@ class DashboardApiTest(unittest.TestCase):
         until(lambda: self.state_is(asking["id"], "stopped"), "stopped")
         self.assertEqual(self.post(f"/sessions/{asking['id']}/mode", {"mode": "bogus"}, status=400)["error"], "mode must be one of ask, edits, plan, auto")
         self.assertIn("no session matches", self.get("/sessions/nope-nope", status=404)["error"])
+
+    def test_queue_actions_run_retry_schedule(self) -> None:
+        sid = self.post("/sessions", {"prompt": "error boom", "title": "dash queue", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})["id"]
+        failed = until(lambda: (v := self.view(sid)) and v["queue"]["failed"] == 1 and v, "the queued task fails")
+        self.assertEqual((failed["queue"]["pending"], failed["autoRun"], failed["startAt"]), (0, False, None))
+
+        # Nothing pending to run; a missing or unreadable time is refused.
+        self.assertIn("no pending task", self.post(f"/sessions/{sid}/run", {}, status=409)["error"])
+        self.assertIn("at:", self.post(f"/sessions/{sid}/schedule", {}, status=400)["error"])
+        self.assertIn("error", self.post(f"/sessions/{sid}/schedule", {"at": "soonish"}, status=400))
+
+        # Schedule, then Retry: the failed task waits for the start, which Retry keeps.
+        at = self.post(f"/sessions/{sid}/schedule", {"at": "+2h"})["queue"]["startAt"]
+        self.assertAlmostEqual(at / 1000, time.time() + 7200, delta=60)
+        q = self.post(f"/sessions/{sid}/retry", {})["queue"]
+        self.assertEqual((q["tasks"][0]["status"], q["startAt"], q["autoRun"]), ("pending", at, False))
+        v = self.view(sid)
+        self.assertEqual((v["state"], v["startAt"], v["queue"]["failed"], v["queue"]["pending"]), ("scheduled", at, 0, 1))
+
+        # Reschedule (epoch ms, as the page may send), then unschedule: the task stays, the queue paused.
+        later = int((time.time() + 3 * 3600) * 1000)
+        self.assertAlmostEqual(self.post(f"/sessions/{sid}/schedule", {"at": later})["queue"]["startAt"], later, delta=60_000)
+        q = self.post(f"/sessions/{sid}/schedule", {"at": None})["queue"]
+        self.assertEqual((q.get("startAt"), q["autoRun"], q["tasks"][0]["status"]), (None, False, "pending"))
+
+        # Run now: the task runs (and fails again); Retry then runs it again at once.
+        self.assertTrue(self.post(f"/sessions/{sid}/run", {})["queue"]["autoRun"])
+        until(lambda: base.queue_of(sid)["tasks"][0].get("status") == "failed", "run now ran it")
+        first = base.queue_of(sid)["tasks"][0]["finishedAt"]
+        self.post(f"/sessions/{sid}/retry", {})
+        until(lambda: (t := base.queue_of(sid)["tasks"][0]).get("status") == "failed" and t.get("finishedAt", 0) > first, "retry reran it")
+        self.assertIn("unknown action", self.post(f"/sessions/{sid}/requeue", {}, status=404)["error"])
 
     def test_start_validates_and_resolves_places(self) -> None:
         self.assertEqual(self.post("/sessions", {"where": {"kind": "folder", "value": str(WORK)}}, status=400)["error"], "write what omp should do")

@@ -1,10 +1,12 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
-// the permission mode and model switches, Stop, and Open in VS Code (the chat, or the project folder).
+// queue controls (run now, retry, schedule), the permission mode and model switches, Stop, and Open in
+// VS Code (the chat, or the project folder).
 import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type SyncState, type UpstreamEdge } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
 import { ModelPicker, ModelsError, useModels } from "./models";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, stateText } from "./util";
+import { QueueControls, type RunQueueAction } from "./queue";
 import { openInVscode } from "./vscode";
 
 const POLL_MS = 3000;
@@ -209,6 +211,12 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 		}
 	};
 
+	const queueAction: RunQueueAction = async (id, action, body) => {
+		await p.host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+		await load();
+		p.onChanged();
+	};
+
 	const view = s ?? p.summary;
 	const questionId = view?.question?.id;
 	const working = view?.state === "working" || view?.state === "starting";
@@ -246,8 +254,8 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Meta, { label: "Status", children: stateText(view, p.now) }),
 						view.group ? h(Meta, { label: "Group", children: view.group }) : null,
 						view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-						view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
-						view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
+						typeof view.startAt === "number" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+						view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}${view.queue.failed ? ` · ${view.queue.failed} failed` : ""}` }) : null,
 						view.model ? h(Meta, { label: "Model", children: view.model }) : null,
 						h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
 						h(Meta, { label: "Files changed", children: String(view.changedFiles) }),
@@ -255,6 +263,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map(t => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
 					)
 				: null,
+			view ? h(QueueControls, { s: view, onAction: queueAction }) : null,
 			view
 				? h(
 						"div",

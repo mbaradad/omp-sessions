@@ -103,7 +103,9 @@ export interface Session {
 	priority?: string | null;
 	tags: string[];
 	archived: boolean;
-	queue: { pending: number; running: number; done: number; total: number };
+	queue: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number };
+	/** The queue runs its pending tasks by itself (off: paused, or waiting for `startAt`). */
+	autoRun?: boolean;
 	startAt?: number | null;
 	waiting?: { position: number; since?: number; launch?: boolean } | null;
 	excerpt?: string | null;

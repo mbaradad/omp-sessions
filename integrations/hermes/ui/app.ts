@@ -7,6 +7,7 @@ import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
 import { DetailPanel } from "./detail";
 import { GraphPanel } from "./graph";
 import { NewSessionDialog } from "./newSession";
+import type { RunQueueAction } from "./queue";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
 import { ago, cx, icon, logo } from "./util";
 import { openInVscode } from "./vscode";
@@ -216,6 +217,12 @@ export function createPage(host: Host): () => ReactElement {
 			}
 		};
 
+		// Run now / Retry / Schedule from a card or the detail panel; the board refreshes after it.
+		const queueAction: RunQueueAction = async (id, action, body) => {
+			await host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+			await loadSessions();
+		};
+
 		const notInstalled = overview && !overview.ompSessions.found;
 		let main: Child;
 		if (view === "boards") {
@@ -256,7 +263,7 @@ export function createPage(host: Host): () => ReactElement {
 				),
 				error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 				notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-				h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: id => void openProject(id), filtered }),
+				h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: id => void openProject(id), onQueueAction: queueAction, filtered }),
 			);
 		}
 

@@ -250,6 +250,19 @@ class OmpSessions:
         """Schedules the session's queue (+30m, 14:30, an ISO time) or cancels the schedule (off); returns the queue."""
         return self.json(["queue", free_text_ok(session), "at", "--json", "--", free_text_ok(when)])
 
+    def queue_run(self, session: str) -> Any:
+        """Runs the session's queue now (its first pending task goes ahead, a scheduled start is dropped); returns the queue."""
+        return self.json(["queue", free_text_ok(session), "run", "--json"])
+
+    def queue_retry(self, session: str) -> Any:
+        """`queue retry`: failed tasks, else a paused or interrupted queue, else the last finished task back
+        to pending, and the queue on (a scheduled start is kept); returns the queue. Fails when nothing is to requeue."""
+        return self.json(["queue", free_text_ok(session), "retry", "--json"])
+
+    def queue_get(self, session: str) -> Any:
+        """The session's queue (queue.json: tasks, autoRun, startAt)."""
+        return self.json(["queue", free_text_ok(session), "--json"])
+
     def queue_after(self, session: str, after: Sequence[str]) -> Any:
         """Pending tasks of the session wait until these sessions finished (empty: no waiting); returns
         the queue. Refused for the session itself, unknown sessions and cycles."""
