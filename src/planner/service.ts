@@ -1,4 +1,4 @@
-// The planner as a per-user service, like the old server's (src/shared/server-client.ts): a systemd user
+// The planner as a per-user service: a systemd user
 // unit on Linux, a launchd agent on macOS, so plans keep running with no client open and after
 // reboots. Windows has none: clients start the planner detached. Node-only.
 import { spawnSync } from "node:child_process";

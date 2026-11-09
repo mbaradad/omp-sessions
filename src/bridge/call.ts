@@ -2,7 +2,7 @@
 // extension (module `bridge.js` of the Switchyard package): picks the VS Code window that has `cwd` open, validates the
 // arguments, forwards the call over that window's socket and formats the result as text.
 import { isToolName, pickWindows, readRegistry, type ToolArgs, validateArgs } from "../shared/bridge";
-import { pidAlive } from "../shared/launch";
+import { pidAlive } from "../shared/process-lock";
 import { BridgeConnection } from "./client";
 import { formatResult } from "./format";
 

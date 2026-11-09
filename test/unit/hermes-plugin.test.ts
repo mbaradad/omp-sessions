@@ -239,24 +239,6 @@ test("pluginReport reads status, lane, notifications and omp_sessions from the p
 	assert.deepEqual([off.status, off.lane, off.injection], ["not enabled", undefined, undefined]);
 });
 
-test("a copy 0.5.0 and earlier installed (the old marker file) stays ours: updated, uninstalled, re-marked", () => {
-	const root = temp();
-	const v1 = stamp(bundle(root, "1.0.0"), 1000);
-	const v2 = stamp(bundle(path.join(root, "next"), "1.2.0"), 1000);
-	const t = { label: "default", home: path.join(root, "hermes"), profile: "default" };
-	const dir = pluginTarget(t.home);
-	fs.cpSync(v1, dir, { recursive: true });
-	fs.writeFileSync(path.join(dir, ".managed-by-omp-vs"), "Installed by omp-vs (omp-vs hermes install); replaced on update.\nversion: 1.0.0\nstamp: 1000000\n");
-	assert.deepEqual(pluginState(v1, dir), { installed: true, managed: true, current: true });
-	assert.deepEqual(staleCopies(v2, [t]).map(x => x.label), ["default"]);
-	assert.equal(installPlugin(v2, dir, { onlyIfNewer: true }), "updated");
-	assert.equal(fs.existsSync(path.join(dir, ".managed-by-omp-vs")), false);
-	assert.equal(fs.existsSync(path.join(dir, ".managed-by-omp-sessions")), true);
-	fs.renameSync(path.join(dir, ".managed-by-omp-sessions"), path.join(dir, ".managed-by-omp-vs"));
-	assert.equal(uninstallPlugin(dir), true);
-	assert.equal(fs.existsSync(dir), false);
-});
-
 /** Sets every file's mtime under `dir` (the build stamp). */
 function stamp(dir: string, seconds: number): string {
 	for (const f of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) if (f.isFile()) fs.utimesSync(path.join(f.parentPath, f.name), seconds, seconds);

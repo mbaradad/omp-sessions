@@ -221,3 +221,28 @@ export function prepareResume(file: string): ResumeTarget {
 		return { kind: "missing", file, reason: `restoring it from ${found} failed: ${err instanceof Error ? err.message : String(err)}` };
 	}
 }
+
+/** PATH plus the common install locations of omp and bun: where {@link findOmp} looks, and the PATH to run omp with so its `#!/usr/bin/env bun` resolves. */
+export function ompSearchDirs(): string[] {
+	const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+	dirs.push(path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), "/opt/homebrew/bin", "/usr/local/bin");
+	if (process.platform === "win32" && process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+	return dirs;
+}
+
+/** Finds the omp executable on PATH or in the common install locations. */
+export function findOmp(): string | undefined {
+	const names = process.platform === "win32" ? ["omp.exe", "omp.cmd", "omp.bat", "omp"] : ["omp"];
+	for (const d of ompSearchDirs()) {
+		for (const name of names) {
+			const candidate = path.join(d, name);
+			try {
+				fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+				return candidate;
+			} catch {
+				/* keep looking */
+			}
+		}
+	}
+	return undefined;
+}

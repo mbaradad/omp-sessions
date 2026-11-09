@@ -6,7 +6,6 @@ const watch = process.argv.includes("--watch");
 const production = process.argv.includes("--production");
 const common = { bundle: true, sourcemap: !production, minify: production, logLevel: "info", target: "es2022" };
 const builds = [
-	{ ...common, entryPoints: ["src/host/main.ts"], outfile: "out/host.js", platform: "node", format: "cjs" },
 	{ ...common, entryPoints: ["src/ext/extension.ts"], outfile: "out/extension.js", platform: "node", format: "cjs", external: ["vscode"] },
 	{ ...common, entryPoints: ["src/graph/main.ts"], outfile: "out/graph.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/graph/style.css"], outfile: "out/graph.css" },
@@ -17,18 +16,11 @@ const builds = [
 	{ ...common, sourcemap: false, entryPoints: fs.readdirSync("src/omp-extension").filter(f => f.endsWith(".ts")).map(f => `src/omp-extension/${f}`), outdir: "out/omp-extension", platform: "node", format: "esm" },
 	{ ...common, entryPoints: ["src/kanban/main.ts"], outfile: "out/kanban.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/kanban/style.css"], outfile: "out/kanban.css" },
-	{ ...common, entryPoints: ["src/server/main.ts"], outfile: "out/server.js", platform: "node", format: "cjs" },
 	{ ...common, entryPoints: ["src/planner/main.ts"], outfile: "out/planner.js", platform: "node", format: "cjs", define: { PLANNER_VERSION: JSON.stringify(JSON.parse(fs.readFileSync("package.json", "utf8")).version) } },
 	{ ...common, entryPoints: ["src/cli/main.ts"], outfile: "out/cli.js", platform: "node", format: "cjs", banner: { js: "#!/usr/bin/env node" } },
-	{ ...common, entryPoints: ["src/mobile/main.ts"], outfile: "out/mobile.js", platform: "browser", format: "iife" },
-	{ ...common, entryPoints: ["src/mobile/style.css"], outfile: "out/mobile.css" },
 ];
-/** Files used next to the bundles as they are: the phone app the server serves, the agent skill. */
+/** Files used next to the bundles as they are: the agent skill, the omp shim. */
 const copies = [
-	["src/mobile/index.html", "out/mobile.html"],
-	["src/mobile/manifest.webmanifest", "out/manifest.webmanifest"],
-	["media/icon.png", "out/mobile-icon.png"],
-	["media/icon.svg", "out/mobile-icon.svg"],
 	["skills/omp-sessions/SKILL.md", "out/omp-sessions.SKILL.md"],
 	// Switchyard's `omp` shim (extra omp flags for AO sessions, G34); src/shared/omp-extension-install.ts installs it.
 	["src/omp-shim/omp", "out/omp-shim/omp"],

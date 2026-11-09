@@ -17,7 +17,6 @@ import {
 	reportToMarkdown,
 	summary,
 } from "../../src/ext/doctor-report";
-import { HOST_CRASHED, HOST_DIED, isAuthError, isOutdated, settleDeadHost } from "../../src/shared/health";
 import type { SessionMeta } from "../../src/shared/protocol";
 
 const DAY = 86_400_000;
@@ -35,13 +34,12 @@ function meta(over: Partial<SessionMeta> = {}): SessionMeta {
 		updatedAt: NOW - DAY,
 		ompSessionFile: "/home/u/.omp/agent/sessions/x.jsonl",
 		changedFiles: 0,
-		hostVersion: "0.4.0",
 		...over,
 	};
 }
 
 function facts(over: Partial<SessionFacts> = {}): SessionFacts {
-	return { meta: meta(), hostAlive: false, blobBytes: 0, ...over };
+	return { meta: meta(), blobBytes: 0, ...over };
 }
 
 const AO_OK: AoFacts = { url: "http://127.0.0.1:3001", pid: 7, unit: "ao-daemon", sessions: 1, serviceAvailable: true, omp: { installation: "installed", authentication: "authorized" } };
@@ -68,51 +66,6 @@ function doctorFacts(over: Partial<DoctorFacts> = {}): DoctorFacts {
 		...over,
 	};
 }
-
-// ---------- stale / crash detection ----------
-
-test("settleDeadHost: dead host mid-turn → stopped with HOST_CRASHED; idle → HOST_DIED; alive or stopped untouched", () => {
-	for (const status of ["working", "waiting"] as const) {
-		const m = meta({ status });
-		const settled = settleDeadHost(m, false);
-		assert.equal(settled.status, "stopped");
-		assert.equal(settled.exitReason, HOST_CRASHED);
-		assert.equal(m.status, status, "input not mutated");
-	}
-	assert.equal(settleDeadHost(meta({ status: "idle" }), false).exitReason, HOST_DIED);
-	assert.equal(settleDeadHost(meta({ status: "starting" }), false).exitReason, HOST_DIED);
-	const alive = meta({ status: "working" });
-	assert.equal(settleDeadHost(alive, true), alive);
-	const stopped = meta({ status: "stopped", exitReason: "stopped" });
-	assert.equal(settleDeadHost(stopped, false), stopped);
-});
-
-test("isOutdated: running sessions on another (or unknown) host version", () => {
-	assert.equal(isOutdated(meta({ hostVersion: "0.3.0" }), "0.4.0"), true);
-	assert.equal(isOutdated(meta({ hostVersion: undefined }), "0.4.0"), true);
-	assert.equal(isOutdated(meta({ hostVersion: "0.4.0" }), "0.4.0"), false);
-	assert.equal(isOutdated(meta({ hostVersion: "0.3.0", status: "stopped" }), "0.4.0"), false);
-});
-
-test("isAuthError: recognizes omp's login/API-key failures, not ordinary errors", () => {
-	for (const msg of [
-		"No API key found for anthropic",
-		"No API key available",
-		"OpenAI API key was rejected (401)",
-		"Google Cloud Code Assist requires OAuth authentication. Use /login to authenticate.",
-		"No credentials found. Run `omp` and use /login to add accounts.",
-		"No model selected",
-		"No model is currently selected.",
-		"no model is available",
-		"401 Unauthorized",
-		"Authentication failed",
-	]) {
-		assert.equal(isAuthError(msg), true, msg);
-	}
-	for (const msg of ["fake provider error", "Request was aborted", "Rate limit exceeded (429)", "context window exceeded", undefined, ""]) {
-		assert.equal(isAuthError(msg), false, String(msg));
-	}
-});
 
 // ---------- redaction ----------
 
@@ -198,21 +151,21 @@ test("plannerChecks: a planner that doesn't answer warns with Start", () => {
 
 // ---------- cleanup / misc ----------
 
-test("cleanupCandidates: stopped (or dead) sessions older than N days that have snapshots", () => {
+test("cleanupCandidates: sessions untouched for N days that have snapshots (a folder claiming to run counts as stopped)", () => {
 	const all = [
-		facts({ meta: meta({ id: "old", status: "stopped", updatedAt: NOW - 30 * DAY }), hostAlive: false, blobBytes: 100 }),
-		facts({ meta: meta({ id: "recent", status: "stopped", updatedAt: NOW - 2 * DAY }), hostAlive: false, blobBytes: 100 }),
-		facts({ meta: meta({ id: "running", updatedAt: NOW - 30 * DAY }), hostAlive: true, blobBytes: 100 }),
-		facts({ meta: meta({ id: "dead", status: "working", updatedAt: NOW - 30 * DAY }), hostAlive: false, blobBytes: 100 }),
-		facts({ meta: meta({ id: "empty", status: "stopped", updatedAt: NOW - 30 * DAY }), hostAlive: false, blobBytes: 0 }),
+		facts({ meta: meta({ id: "old", status: "stopped", updatedAt: NOW - 30 * DAY }), blobBytes: 100 }),
+		facts({ meta: meta({ id: "recent", status: "stopped", updatedAt: NOW - 2 * DAY }), blobBytes: 100 }),
+		facts({ meta: meta({ id: "running", updatedAt: NOW - 30 * DAY }), blobBytes: 100 }),
+		facts({ meta: meta({ id: "dead", status: "working", updatedAt: NOW - 30 * DAY }), blobBytes: 100 }),
+		facts({ meta: meta({ id: "empty", status: "stopped", updatedAt: NOW - 30 * DAY }), blobBytes: 0 }),
 	];
 	assert.deepEqual(
 		cleanupCandidates(all, 14, NOW).map(s => s.meta.id),
-		["old", "dead"],
+		["old", "running", "dead"],
 	);
 	assert.deepEqual(
 		cleanupCandidates(all, 0, NOW).map(s => s.meta.id),
-		["old", "recent", "dead"],
+		["old", "recent", "running", "dead"],
 	);
 });
 
@@ -278,7 +231,7 @@ test("buildReport: healthy setup has no errors; problems are counted and sorted 
 });
 
 test("buildReport: disk section offers cleanup of the old session host's snapshots", () => {
-	const report = buildReport(doctorFacts({ snapshots: [facts({ meta: meta({ status: "stopped", exitReason: "stopped", updatedAt: NOW - 40 * DAY }), hostAlive: false, blobBytes: 2048 })] }));
+	const report = buildReport(doctorFacts({ snapshots: [facts({ meta: meta({ status: "stopped", exitReason: "stopped", updatedAt: NOW - 40 * DAY }), blobBytes: 2048 })] }));
 	const disk = report.sections.find(s => s.title === "Disk");
 	assert.ok(disk);
 	assert.match(disk.checks[1].title, /2\.0 KB in 1 session\(s\) stopped for over 14 days/);

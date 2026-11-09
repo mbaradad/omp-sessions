@@ -171,7 +171,8 @@ test("cli: an approval → wait 3 with the question; answer --question refuses a
 	assert.equal(done.status, 0, done.stderr);
 	assert.equal(done.data.reply, "done after approval");
 	assert.equal(fs.readFileSync(path.join(done.data.cwd, "note.txt"), "utf8"), "hi", "omp worked in the session's worktree");
-	assert.equal(done.data.changedFiles, 1, "the workspace's changed files");
+	assert.ok(fs.existsSync(path.join(done.data.cwd, "approved.txt")), "the approved bash command ran");
+	assert.equal(done.data.changedFiles, 2, "the workspace's changed files: approved.txt (bash) and note.txt (write)");
 });
 
 test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume → idle", { skip }, () => {

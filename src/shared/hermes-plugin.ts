@@ -10,14 +10,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { COMMAND } from "./cli-launcher";
-import { LEGACY_PLUGIN_MARKER } from "./rename-migration";
 
 export const PLUGIN_NAME = "omp-sessions";
 /** The bundled plugin, relative to the folder cli.js / extension.js runs from. */
 export const PLUGIN_BUNDLE = path.join("hermes-plugin", PLUGIN_NAME);
 const MARKER = ".managed-by-omp-sessions";
-/** A copy carrying either marker is ours (copies 0.5.0 and earlier installed carry the old one). */
-const MARKERS = [MARKER, LEGACY_PLUGIN_MARKER];
 /** Exclusive lock (a file, so Hermes's plugin scan ignores it) around installs into one plugins/ folder. */
 const INSTALL_LOCK = ".omp-sessions.install.lock";
 /** A lock older than this is from a crashed run, whatever its pid says (pids get reused). */
@@ -275,7 +272,7 @@ export function hermesCommand(hermes: string, args: readonly string[], platform 
 function listFiles(dir: string, rel = ""): string[] {
 	const out: string[] = [];
 	for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
-		if (e.name === "__pycache__" || MARKERS.includes(e.name)) continue;
+		if (e.name === "__pycache__" || e.name === MARKER) continue;
 		const p = path.join(rel, e.name);
 		if (e.isDirectory()) out.push(...listFiles(dir, p));
 		else if (e.isFile()) out.push(p);
@@ -308,7 +305,7 @@ export function pluginState(source: string | undefined, target: string): PluginS
 	const installed = fs.existsSync(path.join(target, "plugin.yaml"));
 	return {
 		installed,
-		managed: MARKERS.some(m => fs.existsSync(path.join(target, m))),
+		managed: fs.existsSync(path.join(target, MARKER)),
 		current: installed && !!source && changedFiles(source, target)?.length === 0,
 	};
 }
@@ -343,15 +340,12 @@ export function buildStamp(dir: string): number {
 
 /** The build stamp a managed copy's marker recorded (0: an older marker without one). */
 function markerStamp(target: string): number {
-	for (const marker of MARKERS) {
-		try {
-			const m = /^stamp:\s*(\d+(?:\.\d+)?)\s*$/m.exec(fs.readFileSync(path.join(target, marker), "utf8"));
-			return m ? Number(m[1]) : 0;
-		} catch {
-			/* not this marker */
-		}
+	try {
+		const m = /^stamp:\s*(\d+(?:\.\d+)?)\s*$/m.exec(fs.readFileSync(path.join(target, MARKER), "utf8"));
+		return m ? Number(m[1]) : 0;
+	} catch {
+		return 0;
 	}
-	return 0;
 }
 
 /**
@@ -465,7 +459,7 @@ export function installPlugin(source: string, target: string, opts: { force?: bo
 
 /** Removes a copy we installed; true if something was removed. */
 export function uninstallPlugin(target: string): boolean {
-	if (!MARKERS.some(m => fs.existsSync(path.join(target, m)))) return false;
+	if (!fs.existsSync(path.join(target, MARKER))) return false;
 	fs.rmSync(target, { recursive: true, force: true });
 	return true;
 }

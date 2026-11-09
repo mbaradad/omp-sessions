@@ -1,6 +1,5 @@
-// Wire contracts shared by the session host, the VS Code extension, and the webview.
-// Host <-> extension: newline-delimited JSON over a per-session Unix socket.
-// Extension <-> webview: VS Code postMessage.
+// Session and task-queue shapes shared by the VS Code extension, the CLI and the webview (the extension's
+// view of a session is a SessionMeta built from AO's session), plus the state folder paths.
 
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,7 +16,6 @@ export interface SessionMeta {
 	title: string;
 	status: SessionStatus;
 	pid: number;
-	ompPid?: number;
 	socket: string;
 	createdAt: number;
 	updatedAt: number;
@@ -40,18 +38,8 @@ export interface SessionMeta {
 	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number }; /** Failed tasks (requeue). */ failed?: number; /** What the lane's next open task is doing (planner TaskState: running, waiting, scheduled, held, blocked, interrupted, paused) and why it waits. */ state?: string; waitReason?: string; /** Marked completed (the planner's lane.complete, every lane of the session); `completedAt` when (0 = unknown). */ completed?: boolean; completedAt?: number; /** Sessions whose queues must finish first (dependencies); `blockedBy`: the unfinished ones. */ after?: string[]; blockedBy?: string[]; /** Worst sync state over the incoming graph edges, and the parent sessions in that state (propagation). */ sync?: { state: SyncState; parents: string[]; /** Worst state of each parent session's edges that are not in sync (the board graph colours its arrows with it). */ edges?: Record<string, SyncState>; /** Files of the merge conflicts behind `state`. */ files?: string[] } };
 	/** omp's own todo plan (phases → tasks), mirrored for the Tasks view. */
 	plan?: Array<{ name: string; tasks: Array<{ content: string; status: string; blocker?: string }> }>;
-	/** Extension version whose host.js runs this session (absent: hosts that predate the field). */
-	hostVersion?: string;
-	/** host.js running this session. */
-	hostPath?: string;
 	/** Set while omp reports it cannot use any model (no provider logged in, missing API key). */
 	authProblem?: string;
-	/** Who started this host when not a person (e.g. "scheduler": the omp-sessions server ran its queue). */
-	launchedBy?: string;
-	/** Clients attached right now that are people (chat panels, `omp-sessions attach`), not the omp-sessions server. */
-	viewers?: number;
-	/** Last time a person prompted, steered, aborted or answered a dialog in this session (epoch ms). */
-	userActiveAt?: number;
 	/** How the host answers omp's tool-approval prompts (absent: hosts that predate permission modes). */
 	permissionMode?: PermissionMode;
 }
@@ -73,10 +61,10 @@ export interface FileChange {
 
 export const EMPTY_BLOB = "empty";
 
-// ---- task queue (owned by the host, so it keeps running while VS Code is away) ----
+// ---- task queue (legacy queue.json files are normalized by queue.ts; the planner owns queues now) ----
 export type QueueTaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
 
-export interface QueueSubtask {
+interface QueueSubtask {
 	id: string;
 	title: string;
 	done: boolean;
@@ -151,29 +139,7 @@ export type QueueOp =
 	/** Start the queue at this time (epoch ms); null cancels. */
 	| { op: "schedule"; at: number | null };
 
-// ---- host -> client ----
-export type HostToClient =
-	| {
-			t: "snapshot";
-			meta: SessionMeta;
-			messages: unknown[];
-			inflight: { messageId: string; message: unknown } | null;
-			runningTools: RunningTool[];
-			pendingUi: UiRequest[];
-			state: unknown;
-			commands: unknown[];
-			changes: FileChange[];
-			queue?: TaskQueue;
-	  }
-	| { t: "event"; ev: OmpFrame }
-	| { t: "response"; res: OmpFrame }
-	| { t: "meta"; meta: SessionMeta }
-	| { t: "change"; change: FileChange }
-	| { t: "ui_resolved"; id: string }
-	| { t: "reset"; messages: unknown[]; state: unknown }
-	| { t: "state"; state: unknown }
-	| { t: "queue"; queue: TaskQueue };
-
+/** A tool call running in the chat transcript (shown in the webview). */
 export interface RunningTool {
 	toolCallId: string;
 	toolName: string;
@@ -188,22 +154,6 @@ export interface UiRequest {
 	method: string;
 	[key: string]: unknown;
 }
-
-// ---- client -> host ----
-export type ClientToHost =
-	| { t: "hello"; client: string }
-	| { t: "rpc"; cmd: { id?: string; type: string; [k: string]: unknown } }
-	| { t: "ui_response"; res: { id: string; [k: string]: unknown } }
-	| { t: "rename"; title: string }
-	/** Persist an extension-generated notice into the session timeline (shown again after reloads). */
-	| { t: "note"; level: "info" | "warning" | "error"; message: string; markdown?: boolean }
-	| { t: "queue"; ops: QueueOp[] }
-	/** Switch the permission mode; applies to pending approval prompts too. */
-	| { t: "mode"; mode: PermissionMode }
-	| { t: "stop" };
-
-/** UI request methods that need an answer from the user. */
-export const DIALOG_METHODS: Record<string, true> = { select: true, confirm: true, input: true, editor: true, ask: true };
 
 /** One JSONL frame written by `omp --mode rpc-ui`; shape varies by `type`. */
 export interface OmpFrame {
@@ -221,8 +171,4 @@ export function sessionsRoot(): string {
 
 export function sessionDir(id: string): string {
 	return path.join(sessionsRoot(), id);
-}
-
-export function blobPath(sessionId: string, hash: string): string {
-	return path.join(sessionDir(sessionId), "blobs", hash);
 }

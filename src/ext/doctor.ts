@@ -11,7 +11,6 @@ import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
 import { aoCheckpointDir } from "../shared/checkpoints";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
-import { hostAlive as hostIsAlive } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import type { AoFacts, PlannerFacts } from "./doctor-ao";
@@ -116,7 +115,7 @@ async function gatherSnapshots(): Promise<SessionFacts[]> {
 		ids.map(async (id): Promise<SessionFacts | undefined> => {
 			const meta = readMetaFile(id);
 			if (!meta) return undefined;
-			return { meta, hostAlive: meta.status !== "stopped" && hostIsAlive(meta), blobBytes: await dirBytes(path.join(aoCheckpointDir(id), "blobs")) };
+			return { meta, blobBytes: await dirBytes(path.join(aoCheckpointDir(id), "blobs")) };
 		}),
 	);
 	return facts.filter((f): f is SessionFacts => !!f);
@@ -396,9 +395,8 @@ export function registerDoctor(api: OmpApi): void {
 		if (ok !== "Delete Snapshots") return;
 		let freed = 0;
 		for (const s of candidates) {
-			// Never pull blobs from under a session that was resumed meanwhile.
-			const now = readMetaFile(s.meta.id);
-			if (!now || (now.status !== "stopped" && hostIsAlive(now))) continue;
+			// The folder may have been removed since the scan.
+			if (!readMetaFile(s.meta.id)) continue;
 			try {
 				fs.rmSync(path.join(aoCheckpointDir(s.meta.id), "blobs"), { recursive: true, force: true });
 				freed += s.blobBytes;

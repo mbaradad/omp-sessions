@@ -4,9 +4,8 @@ import * as vscode from "vscode";
 import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView, TaskState } from "../planner/types";
-import { findOmp } from "../shared/launch";
 import { readSwitchyardConfig } from "../ao/config";
-import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
+import { type OmpPaths, findOmp, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
 import { readMode } from "../shared/session-mode";
 import { setSessionMode } from "../shared/session-mode-ops";
@@ -53,7 +52,7 @@ function realPath(p: string): string {
 
 /** Finds the omp executable on PATH or in the usual install folders (AO runs the one on the daemon's PATH). */
 export function resolveOmpPath(): string | undefined {
-	return findOmp(undefined);
+	return findOmp();
 }
 
 /** Thrown when no omp executable is found (see `onOmpMissing`). */

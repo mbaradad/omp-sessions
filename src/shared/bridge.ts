@@ -10,7 +10,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { stateRoot } from "./protocol";
-import { privateSocketDir } from "./server-protocol";
 
 export const BRIDGE_VERSION = 1;
 /** MCP server name; omp exposes the tools as `mcp__vscode_<tool>` (the omp extension keeps those names). */
@@ -29,6 +28,25 @@ export function ensureBridgeRoot(): string {
 	const dir = bridgeRoot();
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	if (process.platform !== "win32") fs.chmodSync(dir, 0o700);
+	return dir;
+}
+
+/**
+ * `<tmp>/ompv-<uid>`: where Unix sockets go when their normal path exceeds sun_path (~104 bytes).
+ * Created 0700; an existing one must be a real folder (no symlink) owned by this user with no
+ * group/other access, else this throws: another local user who made it first could swap our sockets.
+ */
+function privateSocketDir(): string {
+	const dir = path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`);
+	try {
+		fs.mkdirSync(dir, { mode: 0o700 });
+	} catch (err) {
+		if (!(err instanceof Error && "code" in err && err.code === "EEXIST")) throw err;
+	}
+	const st = fs.lstatSync(dir);
+	const uid = process.getuid?.();
+	const problem = !st.isDirectory() ? "is not a folder (or is a symlink)" : uid !== undefined && st.uid !== uid ? `belongs to another user (uid ${st.uid})` : (st.mode & 0o077) !== 0 ? `is accessible to other users (mode ${(st.mode & 0o777).toString(8)})` : undefined;
+	if (problem) throw new Error(`unsafe socket folder: ${dir} ${problem}; remove it, or set OMP_VSCODE_HOME or TMPDIR to a shorter path`);
 	return dir;
 }
 

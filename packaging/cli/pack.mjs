@@ -1,5 +1,5 @@
 // Packs the standalone `omp-sessions` command: the CLI with everything it runs or installs next to it
-// (server, session host, phone app, agent skill, Hermes plugin), the same layout as the extension's
+// (the planner, agent skill, omp extensions and shim, Hermes plugin), the same layout as the extension's
 // runtime folder, as an npm tarball. Install it without VS Code:
 //   npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/omp-sessions-<version>.tgz
 // Usage: node build.mjs [--production] && node packaging/cli/pack.mjs [out dir] [--dest <dir>]
@@ -18,7 +18,7 @@ const positional = argv.filter((a, i) => !a.startsWith("--") && !(destAt >= 0 &&
 const out = path.resolve(positional[0] ?? path.join(root, "out"));
 
 /** What cli.js uses next to itself; the same files the extension copies into its runtime folder (RUNTIME_FILES in src/ext/server.ts). */
-const FILES = ["cli.js", "server.js", "host.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg", "omp-sessions.SKILL.md"];
+const FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
 /** Folders `omp-sessions omp-extension install` copies from next to cli.js (G38): the omp extension modules and the `omp` shim. */
 const BUNDLE_DIRS = ["omp-extension", "omp-shim"];
 /** The Hermes plugin `omp-sessions hermes install` copies (PLUGIN_BUNDLE). */
@@ -35,11 +35,11 @@ try {
 	fs.cpSync(path.join(out, PLUGIN), path.join(stage, PLUGIN), { recursive: true, filter: f => !f.includes("__pycache__") });
 	for (const dir of BUNDLE_DIRS) fs.cpSync(path.join(out, dir), path.join(stage, dir), { recursive: true });
 	fs.copyFileSync(path.join(root, "LICENSE"), path.join(stage, "LICENSE"));
-	// readHostVersion (src/shared/launch.ts) reads the version from the package.json next to host.js.
+	// cli.js reads its version from the package.json next to it (src/cli/main.ts).
 	const manifest = {
 		name: "omp-sessions",
 		version: pkg.version,
-		description: "omp Sessions without VS Code: the omp-sessions command, its server (task queues, scheduled starts, a concurrency limit, the phone app and HTTP API), the agent skill and the Hermes Agent plugin.",
+		description: "omp Sessions without VS Code: the omp-sessions command, its planner (task queues and scheduled starts), the agent skill and the Hermes Agent plugin.",
 		license: pkg.license,
 		repository: pkg.repository,
 		homepage: pkg.homepage,

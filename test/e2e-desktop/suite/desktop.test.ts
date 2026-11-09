@@ -1,5 +1,5 @@
 // The AO-backed non-chat surfaces in a real VS Code, against an isolated AO daemon running real omp
-// (test/e2e-desktop/views.mjs). Reads the views' state through the API `activate` returns, drives them
+// (test/e2e-desktop/run.mjs). Reads the views' state through the API `activate` returns, drives them
 // through their commands, and checks AO's side through its HTTP API. Screenshots go to SWITCHYARD_E2E_SHOTS.
 import * as assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

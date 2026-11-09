@@ -36,7 +36,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      # Unit + session-host suites against test/fake-omp.mjs (no omp, no model calls).
+      # Unit suite (no AO, no omp, no model calls). The integration suite (npm run test:integration) needs an `ao` binary,
+      # and the desktop e2e (npm run test:e2e:desktop) needs AO, VS Code and a logged-in omp: both run on a developer machine.
       - run: npm test
       # `hermes plugins install …/integrations/hermes/omp-sessions` installs the folder as committed.
       - name: Hermes plugin folder matches the build
@@ -44,37 +45,6 @@ jobs:
         run: |
           node build.mjs
           git status --porcelain --ignored -- integrations/hermes/omp-sessions | grep . && { git diff -- integrations/hermes/omp-sessions; exit 1; } || true
-
-  e2e-desktop:
-    name: desktop e2e (ubuntu, xvfb)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Install xvfb
-        run: command -v xvfb-run >/dev/null || (sudo apt-get update && sudo apt-get install -y xvfb)
-      # VS Code stable is downloaded into .vscode-test/; a newer stable replaces the cached one.
-      - uses: actions/cache@v4
-        with:
-          path: .vscode-test
-          key: vscode-test-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: vscode-test-${{ runner.os }}-
-      - name: Desktop e2e
-        run: xvfb-run -a npm run test:e2e:desktop
-        env:
-          OMP_E2E_ARTIFACTS: ${{ runner.temp }}/e2e-logs
-      - name: Upload e2e logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-logs
-          path: ${{ runner.temp }}/e2e-logs
-          if-no-files-found: ignore
 
   package:
     name: package vsix

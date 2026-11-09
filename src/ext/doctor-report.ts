@@ -1,7 +1,6 @@
 // omp Doctor: checks → report (markdown for clipboard/issues, HTML with fix links for the panel).
 // Pure: facts are gathered by doctor.ts; everything here is unit-tested without VS Code.
 
-import { settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
 import { type AoFacts, type GateFacts, type PlannerFacts, aoChecks, gateChecks, plannerChecks } from "./doctor-ao";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
@@ -38,7 +37,6 @@ export interface Report {
 export interface SessionFacts {
 	/** meta.json as written (not settled). */
 	meta: SessionMeta;
-	hostAlive: boolean;
 	blobBytes: number;
 }
 
@@ -126,10 +124,10 @@ export function tail(text: string, lines = 20): string {
 	return text.split(/\r?\n/).filter(l => l.trim()).slice(-lines).join("\n");
 }
 
-/** Sessions whose snapshots can go: stopped and untouched for `days` days. */
+/** Sessions whose snapshots can go: untouched for `days` days (a legacy folder that still claims to run is treated as stopped: no session host exists any more). */
 export function cleanupCandidates(sessions: readonly SessionFacts[], days: number, now: number): SessionFacts[] {
 	const cutoff = now - days * 86_400_000;
-	return sessions.filter(s => settleDeadHost(s.meta, s.hostAlive).status === "stopped" && s.meta.updatedAt < cutoff && s.blobBytes > 0);
+	return sessions.filter(s => s.meta.updatedAt < cutoff && s.blobBytes > 0);
 }
 
 /** One line per AO session: what it's doing, and what to do about a problem. */

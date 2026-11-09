@@ -16,7 +16,6 @@ import { migrationPending } from "./migration-offer";
 import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../ao/config";
 import { switchyardHome } from "../ao/native";
 import { stateRoot } from "../shared/protocol";
-import { migrateLegacyLauncher } from "../shared/rename-migration";
 import { ensurePlanner, stopPlanner } from "../planner/client";
 import { logPath as plannerLogPath } from "../planner/paths";
 import { installService as installPlannerService, serviceKind, serviceUnitPath } from "../planner/service";
@@ -249,7 +248,6 @@ export function registerServer(api: OmpApi): ServerControl {
 	// Off the activation path: finding node and starting the planner take a moment.
 	setTimeout(() => {
 		try {
-			migrateLegacyLauncher();
 			refreshShim();
 		} catch (err) {
 			ao.log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
@@ -270,7 +268,6 @@ export function registerServer(api: OmpApi): ServerControl {
 			}
 			const file = launcherPath();
 			try {
-				migrateLegacyLauncher();
 				writeLauncher(file, launcherText(getNode(), path.join(runtime, "cli.js")));
 			} catch (err) {
 				void vscode.window.showErrorMessage(plain(`Could not install ${COMMAND}: ${String(err)}`));

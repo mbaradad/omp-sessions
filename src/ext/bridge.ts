@@ -32,7 +32,7 @@ import {
 	type ToolResult,
 	validateArgs,
 } from "../shared/bridge";
-import { pidAlive } from "../shared/launch";
+import { pidAlive } from "../shared/process-lock";
 import { ompExtensionDir } from "../shared/omp-extension-install";
 import type { OmpApi } from "./api";
 import { openFile } from "./diff";

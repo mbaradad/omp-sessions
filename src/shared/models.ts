@@ -1,15 +1,11 @@
-// Models for every omp Sessions client (`omp-sessions models|model`, GET /api/models, the phone app): the
-// list is omp's own (`omp models --json`), switching a session is omp's `set_model` RPC, and the default
-// model for new sessions is `model` in ~/.switchyard/config.json (omp's own default, `modelRoles.default`, applies
-// when that is unset). Node-only.
+// The chat models omp offers (`omp models --json`), for the new-session picker: the list is omp's own and the
+// default is `model` in ~/.switchyard/config.json (omp's own default, `modelRoles.default`, applies when that
+// is unset). Node-only.
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 import { isRecord } from "./bridge";
-import { HostConnection } from "./host-conn";
-import { findOmp, ompSearchDirs } from "./launch";
-import type { SessionMeta } from "./protocol";
-import { parseConfigValue, readFlags, readLaunchArgs, setLaunchModel } from "./session-config";
 import { readSwitchyardConfig } from "../ao/config";
+import { findOmp, ompSearchDirs } from "./omp-paths";
 import { spawnTarget } from "./win-spawn";
 
 export interface ModelEntry {
@@ -57,6 +53,16 @@ export function parseModels(json: string, defaultModel?: string): ModelEntry[] {
 	return out;
 }
 
+/** Parses `omp config get <key> --json` output (`{ value }`). */
+function parseConfigValue(stdout: string): unknown {
+	try {
+		const parsed: unknown = JSON.parse(stdout);
+		return isRecord(parsed) ? parsed.value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function runOmp(omp: string, args: string[], cwd: string): Promise<string> {
 	const { promise, resolve, reject } = Promise.withResolvers<string>();
 	// `.cmd` shims go through cmd.exe with every argument escaped: `search` comes from remote clients.
@@ -85,36 +91,4 @@ export async function listModels(cwd: string, search?: string): Promise<ModelLis
 	]);
 	const ompDefault = isRecord(roles) && typeof roles.default === "string" && roles.default ? roles.default : null;
 	return { models: parseModels(listing, settings.model), default: settings.model ?? null, ompDefault };
-}
-
-/** A session's model: the running omp's, else the one its next resume starts with. */
-export function sessionModel(meta: SessionMeta): string | null {
-	if (meta.status !== "stopped" && meta.model) return meta.model;
-	return readFlags(readLaunchArgs(meta.id) ?? []).model ?? meta.model ?? null;
-}
-
-export function splitSelector(selector: string): { provider: string; modelId: string } {
-	const slash = selector.indexOf("/");
-	if (slash <= 0 || slash === selector.length - 1) throw new Error(`a model is provider/id (omp-sessions models lists them), not "${selector}"`);
-	return { provider: selector.slice(0, slash), modelId: selector.slice(slash + 1) };
-}
-
-/**
- * Switches a session's model: a running omp now (its host keeps it for the next resume), a stopped
- * session from its next resume on. Throws when omp refuses the model.
- */
-export async function setSessionModel(meta: SessionMeta, selector: string): Promise<"live" | "next-resume"> {
-	const target = splitSelector(selector);
-	if (meta.status === "stopped" || !meta.socket) {
-		setLaunchModel(meta.id, selector);
-		return "next-resume";
-	}
-	const { conn } = await HostConnection.open(meta.socket, "omp-sessions-model");
-	try {
-		const res = await conn.rpc({ type: "set_model", ...target });
-		if (!res.success) throw new Error(String(res.error ?? `omp refused the model ${selector}`));
-	} finally {
-		conn.close();
-	}
-	return "live";
 }

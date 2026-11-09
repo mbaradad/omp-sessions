@@ -1,26 +1,20 @@
 #!/usr/bin/env node
-// Desktop e2e: runs the extension in a real local VS Code (Electron extension host) against
-// test/fake-omp.mjs, then checks that the session host outlived VS Code and stops it.
+// Desktop e2e of the AO-backed views (Sessions tree, board, status bar, notifications, session commands,
+// organize, Connect Phone): a real local VS Code against an isolated AO daemon that runs the real omp.
 //
 //   npm run test:e2e:desktop
 //
-// Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_KEEP=1 keeps the temp dir,
-// OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log),
-// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI),
-// SWITCHYARD_E2E_AO=1 also starts an isolated AO daemon with the fake `omp acp` (test/ao-fixture.mjs)
-// and hands the extension host its AO_PORT/AO_DATA_DIR/AO_RUN_FILE plus SWITCHYARD_E2E_AO_URL;
-// SWITCHYARD_E2E_PLANNER=1 also runs the planner service (test/planner-fixture.mjs) on the suite's state dir.
-//
-// VS Code is downloaded once into .vscode-test/. Without a DISPLAY the run is re-executed
-// under `xvfb-run`. All state (user data, extensions, OMP_VSCODE_HOME, HOME, workspace) lives
-// in a fresh temp dir.
+// Needs `ao` (AO_BIN, else PATH / ~/.local/bin) and a logged-in `omp`. Scratch state lives in
+// /tmp/ao-smoke-views (SWITCHYARD_E2E_SCRATCH): `repo/` (the git project), `ao/` (the daemon's data dir and
+// run file), `home/` (the isolated HOME and XDG_*; only .omp/agent links to the real one), `vscode/` (user data, extensions, OMP_VSCODE_HOME) and `shots/` (screenshots the
+// suite takes). Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_VERBOSE=1 echoes VS Code's log.
+// The shared dev daemon is never touched: discovery goes through AO_RUN_FILE.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as readline from "node:readline";
 import { Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -30,7 +24,7 @@ const here = path.dirname(self);
 const repo = path.resolve(here, "..", "..");
 
 if (process.platform === "linux" && !process.env.DISPLAY && !process.env.OMP_E2E_XVFB) {
-	const r = spawnSync("xvfb-run", ["-a", "-s", "-screen 0 1280x1024x24", process.execPath, self, ...process.argv.slice(2)], {
+	const r = spawnSync("xvfb-run", ["-a", "-s", "-screen 0 1600x1000x24", process.execPath, self, ...process.argv.slice(2)], {
 		stdio: "inherit",
 		env: { ...process.env, OMP_E2E_XVFB: "1" },
 	});
@@ -41,19 +35,13 @@ if (process.platform === "linux" && !process.env.DISPLAY && !process.env.OMP_E2E
 const { downloadAndUnzipVSCode, runTests } = await import("@vscode/test-electron");
 const esbuild = await import("esbuild");
 
-const fakeOmp = path.join(repo, "test", "fake-omp.mjs");
-if (!fs.existsSync(fakeOmp)) {
-	console.error(`missing ${fakeOmp}`);
-	process.exit(1);
-}
-
 // ---------- build extension + suite ----------
 const build = spawnSync(process.execPath, ["build.mjs"], { cwd: repo, stdio: "inherit" });
 if (build.status !== 0) process.exit(build.status ?? 1);
-const outDir = path.join(here, "out");
+const outDir = path.join(here, "out-views");
 fs.rmSync(outDir, { recursive: true, force: true });
 await esbuild.build({
-	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "session.test.ts")],
+	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts")],
 	outdir: outDir,
 	bundle: true,
 	platform: "node",
@@ -64,60 +52,70 @@ await esbuild.build({
 	logLevel: "warning",
 });
 
-// ---------- isolated state ----------
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omp-e2e-"));
+// ---------- scratch state ----------
+const scratch = path.resolve(process.env.SWITCHYARD_E2E_SCRATCH || "/tmp/ao-smoke-views");
 const dirs = {
-	userData: path.join(tmp, "user-data"),
-	extensions: path.join(tmp, "extensions"),
-	ompHome: path.join(tmp, "omp-home"),
-	home: path.join(tmp, "home"),
-	workspace: path.join(tmp, "workspace"),
-	fakeSessions: path.join(tmp, "fake-omp-sessions"),
+	repo: path.join(scratch, "repo"),
+	ao: path.join(scratch, "ao"),
+	vscode: path.join(scratch, "vscode"),
+	shots: path.join(scratch, "shots"),
 };
+fs.rmSync(scratch, { recursive: true, force: true });
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
-const stateFile = path.join(tmp, "e2e-state.json");
-// One Switchyard home for the test VS Code, the AO daemon and the planner (as in a real install), and for this
-// runner's own process: the real ~/.switchyard is locked, anything that reaches it fails with EACCES.
-const switchyardHome = path.join(tmp, "switchyard");
-fs.mkdirSync(switchyardHome, { recursive: true });
-process.env.SWITCHYARD_HOME = switchyardHome;
-const fakeLog = path.join(tmp, "fake-omp.log");
-fs.writeFileSync(path.join(dirs.workspace, "existing.txt"), "original line\n");
-// A git repository (one commit) for the Source Control commands.
-for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]]) {
-	const r = spawnSync("git", args, { cwd: dirs.workspace, stdio: "inherit", env: { ...process.env, HOME: dirs.home, GIT_CONFIG_NOSYSTEM: "1" } });
-	if (r.status !== 0) {
-		console.error(`git ${args.join(" ")} failed in ${dirs.workspace}`);
-		process.exit(1);
-	}
+const userData = path.join(dirs.vscode, "user-data");
+const extensions = path.join(dirs.vscode, "extensions");
+// Isolated HOME (CONTRACT.md "Isolated HOME"): nothing of this run reaches the real home (launcher, skill, services,
+// AO's and VS Code's dot-folders). Real omp needs its login and transcripts: only ~/.omp/agent is linked in.
+const home = path.join(scratch, "home");
+const xdg = { XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"), XDG_STATE_HOME: path.join(home, ".local", "state"), XDG_CACHE_HOME: path.join(home, ".cache") };
+const isolatedEnv = { HOME: home, ...xdg };
+const ompHome = path.join(dirs.vscode, "omp-home");
+const switchyardHome = path.join(dirs.vscode, "switchyard");
+for (const d of [userData, extensions, home, ompHome, switchyardHome, ...Object.values(xdg)]) fs.mkdirSync(d, { recursive: true });
+fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
+fs.symlinkSync(path.join(os.homedir(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
+
+// The project: a git repository with one commit (AO gives each session its own worktree of it).
+fs.writeFileSync(path.join(dirs.repo, "README.md"), "# ao-smoke-views\n");
+// Switchyard's omp extensions (gate, checkpoints) load from the project, committed so each session's worktree has them:
+// nothing may be installed into the shared ~/.omp/agent/extensions (CONTRACT.md, Isolated HOME).
+const ompExtensions = path.join(dirs.repo, ".omp", "extensions", "switchyard");
+fs.mkdirSync(ompExtensions, { recursive: true });
+const modules = fs.readdirSync(path.join(repo, "out", "omp-extension")).filter(f => f.endsWith(".js")).sort();
+for (const f of modules) fs.copyFileSync(path.join(repo, "out", "omp-extension", f), path.join(ompExtensions, f));
+fs.writeFileSync(path.join(ompExtensions, "package.json"), `${JSON.stringify({ name: "switchyard", private: true, type: "module", omp: { extensions: modules.map(f => `./${f}`) } }, null, "\t")}\n`);
+// The spawn helper refuses a mode other than auto unless the gate is installed where `gateStatus()` looks (omp's agent folder,
+// G46). The real agent folder is shared and must not get an install, so the extension host (only it: not the daemon, not omp)
+// gets PI_CODING_AGENT_DIR pointing at a scratch agent folder holding the same package; omp itself loads the gate from the project.
+const hostAgentDir = path.join(scratch, "host-agent");
+const hostGate = path.join(hostAgentDir, "extensions", "switchyard");
+fs.cpSync(ompExtensions, hostGate, { recursive: true });
+for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]]) {
+	const r = spawnSync("git", args, { cwd: dirs.repo, encoding: "utf8" });
+	if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
 }
-fs.mkdirSync(path.join(dirs.userData, "User"), { recursive: true });
+
+fs.mkdirSync(path.join(userData, "User"), { recursive: true });
 fs.writeFileSync(
-	path.join(dirs.userData, "User", "settings.json"),
+	path.join(userData, "User", "settings.json"),
 	JSON.stringify(
 		{
-			// omp.path is machine-scoped: a workspace can't set it.
-			"omp.path": fakeOmp,
 			"security.workspace.trust.enabled": false,
 			"workbench.startupEditor": "none",
 			"telemetry.telemetryLevel": "off",
 			"extensions.autoCheckUpdates": false,
 			"extensions.autoUpdate": false,
 			"update.mode": "none",
-			"files.simpleDialog.enable": true,
 			"window.restoreWindows": "none",
 			"chat.disableAIFeatures": true,
+			"window.zoomLevel": 0,
 		},
 		null,
 		1,
 	),
 );
 
-const sessionsRoot = path.join(dirs.ompHome, "sessions");
-
-// VS Code's own chatter (workbench logs, its internal stack traces) goes only to vscode.log
-// unless OMP_E2E_VERBOSE is set; mocha output and anything unrecognised is echoed.
-const vscodeLogPath = path.join(tmp, "vscode.log");
+const vscodeLogPath = path.join(scratch, "vscode.log");
 const vscodeLog = fs.createWriteStream(vscodeLogPath);
 const NOISE =
 	/^(\s+at .*(vscode-file:|\.vscode-test\/)|\[(main|AgentHost|CloudSandboxApi|AccountPolicyGate|ChatModelSelection|shared storage)\b|NativeExtensionHostFactory|filterEnabledExtensions|Via 'product\.json|Settings Sync:|workbench#open|Started local extension host|IExtensionHostStarter|(Started|Completed) initializing default profile)/;
@@ -134,45 +132,70 @@ function echo(out) {
 	});
 }
 
-// Canary for CONTRACT.md "Isolated HOME": an e2e run must leave the launchers every slice relies on, the
-// real ~/.switchyard and the shared omp extensions dir as they were (an earlier run overwrote
-// ~/.local/bin/omp-sessions). Compared in `finally`. Only paths no concurrent session legitimately writes.
-const REAL_HOME = fs.realpathSync(os.userInfo().homedir);
-const watchedPaths = [".local/bin/omp-sessions", ".local/bin/switchyard", ".switchyard", ".omp/agent/extensions"].map(p => path.join(REAL_HOME, p));
-function fingerprint(p) {
-	try {
-		const st = fs.lstatSync(p);
-		if (!st.isDirectory()) return `${st.isSymbolicLink() ? `-> ${fs.readlinkSync(p)} ` : ""}${st.size}:${st.mtimeMs}`;
-		return fs.readdirSync(p).sort().map(n => `${n}:${fs.lstatSync(path.join(p, n)).mtimeMs}`).join(",");
-	} catch {
-		return "absent";
-	}
+function freePort() {
+	const { promise, resolve, reject } = Promise.withResolvers();
+	const srv = net.createServer();
+	srv.on("error", reject);
+	srv.listen(0, "127.0.0.1", () => {
+		const { port } = srv.address();
+		srv.close(() => resolve(port));
+	});
+	return promise;
 }
-const realStateBefore = new Map(watchedPaths.map(p => [p, fingerprint(p)]));
+
+function findAo() {
+	if (process.env.AO_BIN) return process.env.AO_BIN;
+	for (const dir of [...(process.env.PATH ?? "").split(path.delimiter), path.join(os.homedir(), ".local", "bin")]) {
+		const f = path.join(dir, "ao");
+		if (dir && fs.existsSync(f)) return f;
+	}
+	throw new Error("no `ao` binary (set AO_BIN)");
+}
+
 let failed = false;
 const results = [];
 const check = (name, ok, detail = "") => {
-	results.push(`${ok ? "✔" : "✘"} ${name}${detail ? ` — ${detail}` : ""}`);
+	results.push(`${ok ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`);
 	if (!ok) failed = true;
 	return ok;
 };
 
-// SWITCHYARD_E2E_AO=1: an isolated AO daemon running the fake `omp acp` (test/ao-fixture.mjs) for the
-// suite; its AO_PORT/AO_DATA_DIR/AO_RUN_FILE reach the extension host, so src/ao discovery finds it.
-// SWITCHYARD_E2E_PLANNER=1 (implies the AO fixture): the planner service too, on the suite's state dir.
-let ao;
-let planner;
+// ---------- isolated AO daemon (RUNTIME.md: all three variables, so nothing hijacks ~/.ao/running.json) ----------
+const port = await freePort();
+const aoEnv = {
+	AO_PORT: String(port),
+	AO_DATA_DIR: path.join(dirs.ao, "data"),
+	AO_RUN_FILE: path.join(dirs.ao, "running.json"),
+};
+// The Switchyard omp shim goes first, as the unit `ao-daemon` of the extension would have it (G34).
+const daemonPath = [path.join(repo, "src", "omp-shim"), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
+const ao = findAo();
+const daemonLog = fs.openSync(path.join(dirs.ao, "daemon.log"), "a");
+const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
+const baseUrl = `http://127.0.0.1:${port}`;
+
+// Canary for CONTRACT.md "Isolated HOME": the real ~/.switchyard and the shared omp extensions dir must come out as they went in.
+const realHome = fs.realpathSync(os.userInfo().homedir);
+const watched = [".switchyard", ".omp/agent/extensions", ".local/bin/omp-sessions", ".local/bin/switchyard"].map(p => path.join(realHome, p));
+const fingerprint = p => {
+	try {
+		const st = fs.lstatSync(p);
+		return st.isDirectory() ? fs.readdirSync(p).sort().join(",") : `${st.size}:${st.mtimeMs}`;
+	} catch {
+		return "absent";
+	}
+};
+const realBefore = new Map(watched.map(p => [p, fingerprint(p)]));
+
 try {
-	if (process.env.SWITCHYARD_E2E_AO === "1" || process.env.SWITCHYARD_E2E_PLANNER === "1") {
-		const { startAoFixture } = await import("../ao-fixture.mjs");
-		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP, switchyardHome });
-		console.log(`AO fixture: ${ao.baseUrl} (${ao.root})`);
+	const deadline = Date.now() + 60_000;
+	let ready = false;
+	while (!ready && Date.now() < deadline) {
+		ready = await fetch(`${baseUrl}/readyz`).then(r => r.ok, () => false);
+		if (!ready) await sleep(250);
 	}
-	if (process.env.SWITCHYARD_E2E_PLANNER === "1") {
-		const { startPlannerFixture } = await import("../planner-fixture.mjs");
-		planner = await startPlannerFixture({ ao });
-		console.log(`planner fixture: pid ${planner.pid}, socket ${planner.socket}`);
-	}
+	if (!check(`isolated AO daemon ready on :${port}`, ready)) throw new Error("AO daemon did not start");
+
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
 	const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(repo, ".vscode-test") });
 	try {
@@ -181,218 +204,54 @@ try {
 			extensionDevelopmentPath: repo,
 			extensionTestsPath: path.join(outDir, "index.js"),
 			launchArgs: [
-				dirs.workspace,
-				`--user-data-dir=${dirs.userData}`,
-				`--extensions-dir=${dirs.extensions}`,
+				dirs.repo,
+				`--user-data-dir=${userData}`,
+				`--extensions-dir=${extensions}`,
 				"--disable-extensions",
 				"--disable-gpu",
 				"--new-window",
-				// Keep the test VS Code out of the OS keychain: on macOS it shares the "Code Safe Storage"
-				// item (same bundle id) with the user's VS Code and would make it ask for access again.
 				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 			],
 			extensionTestsEnv: {
-				// CONTRACT.md "Isolated HOME": nothing of the run may touch the user's real home.
-				HOME: dirs.home,
-				USERPROFILE: dirs.home,
-				XDG_CONFIG_HOME: path.join(dirs.home, ".config"),
-				XDG_DATA_HOME: path.join(dirs.home, ".local", "share"),
-				XDG_STATE_HOME: path.join(dirs.home, ".local", "state"),
-				XDG_CACHE_HOME: path.join(dirs.home, ".cache"),
-				OMP_VSCODE_HOME: dirs.ompHome,
-				SWITCHYARD_HOME: switchyardHome,
-				// CONTRACT.md: a test VS Code must not install Switchyard's omp extensions into the shared ~/.omp/agent
-				// (checkpoints' guard honours this; a value inherited from the shell must not turn installs on).
+				PI_CODING_AGENT_DIR: hostAgentDir,
+				// The host never installs omp extensions or the shim, whatever its extension mode (CONTRACT.md, Isolated HOME).
 				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
-				FAKE_OMP_SESSIONS: dirs.fakeSessions,
-				FAKE_OMP_LOG: fakeLog,
-				OMP_E2E_WORKSPACE: dirs.workspace,
-				OMP_E2E_STATE: stateFile,
-				FAKE_OMP_DELAY: "5",
-				// The omp-sessions server would outlive the test VS Code; the server has its own host tests.
+				...aoEnv,
+				...isolatedEnv,
+				OMP_VSCODE_HOME: ompHome,
+				SWITCHYARD_HOME: switchyardHome,
+				// Never start (or find) the user's own daemon: the run file above is the only one.
 				OMP_SESSIONS_NO_SERVER: "1",
-				...(ao ? { ...ao.clientEnv, SWITCHYARD_E2E_AO_URL: ao.baseUrl } : {}),
+				SWITCHYARD_E2E_REPO: dirs.repo,
+				SWITCHYARD_E2E_SHOTS: dirs.shots,
+				SWITCHYARD_E2E_AO_URL: baseUrl,
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),
 		});
-		check("extension-host suite passed (VS Code exited 0)", true);
+		check("extension-host views suite passed (VS Code exited 0)", true);
 	} catch (err) {
-		check("extension-host suite passed", false, String(err?.message ?? err));
+		check("extension-host views suite passed", false, String(err?.message ?? err));
 	}
-
-	// ---------- host outlives VS Code ----------
-	const state = readJson(stateFile);
-	if (check("suite recorded the surviving session", !!state, stateFile)) await checkSurvivor(state);
 } catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
-	await planner?.stop();
-	await ao?.stop();
-	const leftovers = killLeftovers();
-	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");
-	const touched = watchedPaths.filter(p => fingerprint(p) !== realStateBefore.get(p));
-	check("the real home is untouched (launchers, ~/.switchyard, omp extensions)", touched.length === 0, touched.length ? `CHANGED: ${touched.join(", ")}: restore the launcher as a copy of the pinned one (CONTRACT.md) and tell the coordinator` : "");
-	console.log("\n── desktop e2e summary ──");
+	// `ao stop` with the instance's env (POST /shutdown answers DAEMON_OWNER_CHANGED to a client that did not start it).
+	const stop = spawnSync(ao, ["stop"], { env: { ...process.env, ...aoEnv, ...isolatedEnv }, encoding: "utf8", timeout: 30_000 });
+	for (const p of watched) check(`real ${path.relative(realHome, p)} untouched`, fingerprint(p) === realBefore.get(p), `${realBefore.get(p)} → ${fingerprint(p)}`);
+	check("isolated AO daemon stopped", stop.status === 0, (stop.stderr || stop.stdout || "").trim());
+	if (spawnSync("kill", ["-0", String(daemon.pid)]).status === 0) process.kill(daemon.pid, "SIGKILL");
+	// Chat hosts (and their omp) are detached by design and outlive the daemon: end this run's.
+	const hosts = spawnSync("pgrep", ["-f", aoEnv.AO_DATA_DIR], { encoding: "utf8" }).stdout.trim().split("\n").filter(Boolean);
+	for (const pid of hosts) spawnSync("kill", [pid]);
+	await sleep(1000);
+	const left = spawnSync("pgrep", ["-f", aoEnv.AO_DATA_DIR], { encoding: "utf8" }).stdout.trim();
+	check(`ended ${hosts.length} detached chat-host/omp process(es) of the scratch daemon`, !left, left);
+	console.log("\n── views e2e summary ──");
 	for (const r of results) console.log(r);
-	const logClosed = Promise.withResolvers();
-	vscodeLog.end(logClosed.resolve);
-	await logClosed.promise;
-	if (failed && process.env.OMP_E2E_ARTIFACTS) saveArtifacts(path.resolve(process.env.OMP_E2E_ARTIFACTS));
-	if (failed || process.env.OMP_E2E_KEEP) console.log(`state kept in ${tmp} (full VS Code output: ${vscodeLogPath})`);
-	else fs.rmSync(tmp, { recursive: true, force: true });
+	console.log(`screenshots: ${dirs.shots}\nVS Code output: ${vscodeLogPath}\nAO log: ${path.join(dirs.ao, "daemon.log")}`);
+	const closed = Promise.withResolvers();
+	vscodeLog.end(closed.resolve);
+	await closed.promise;
 }
 process.exit(failed ? 1 : 0);
-
-/** Copies the run's logs and session state (not the VS Code install or user-data caches) to `dest`. */
-function saveArtifacts(dest) {
-	const keep = /(\.log|\.json|\.jsonl)$/;
-	const sources = [vscodeLogPath, fakeLog, stateFile, path.join(dirs.userData, "logs"), sessionsRoot];
-	for (const src of sources) {
-		if (!fs.existsSync(src)) continue;
-		try {
-			fs.cpSync(src, path.join(dest, path.relative(tmp, src)), {
-				recursive: true,
-				filter: f => fs.lstatSync(f).isDirectory() || keep.test(f),
-			});
-		} catch (err) {
-			console.error(`could not copy ${src}: ${err?.message ?? err}`);
-		}
-	}
-	console.log(`logs copied to ${dest}`);
-}
-
-// ---------- helpers ----------
-async function checkSurvivor(state) {
-	const metaPath = path.join(sessionsRoot, state.id, "meta.json");
-	check("session host alive after VS Code exited", pidAlive(state.pid), `pid ${state.pid}`);
-	check("omp alive after VS Code exited", pidAlive(state.ompPid), `pid ${state.ompPid}`);
-	const meta = readJson(metaPath);
-	check("meta.json still running", !!meta && meta.status !== "stopped" && meta.pid === state.pid, meta ? `status ${meta.status}` : "missing");
-
-	const conn = await connect(state.socket).catch(err => {
-		check("socket accepts a new client", false, String(err.message));
-		return undefined;
-	});
-	if (!conn) return;
-	conn.send({ t: "hello", client: "e2e-runner" });
-	const snap = await conn.next(m => m.t === "snapshot", 5000);
-	check("snapshot after reattach", snap?.meta?.id === state.id && Array.isArray(snap.messages), snap ? `${snap.messages.length} messages` : "timeout");
-	const texts = JSON.stringify(snap?.messages ?? []);
-	check("transcript retained across VS Code exit", texts.includes("write hello.txt hi"));
-
-	conn.send({ t: "stop" });
-	const stoppedMeta = await conn.next(m => m.t === "meta" && m.meta.status === "stopped", 15000);
-	check("host reports stopped over socket", !!stoppedMeta);
-	conn.close();
-	check("host exited after stop", await waitUntil(() => !pidAlive(state.pid), 15000), `pid ${state.pid}`);
-	check("omp exited after stop", await waitUntil(() => !pidAlive(state.ompPid), 15000), `pid ${state.ompPid}`);
-	check("socket removed", await waitUntil(() => !fs.existsSync(state.socket), 5000), state.socket);
-	const finalMeta = readJson(metaPath);
-	check("meta.json stopped", finalMeta?.status === "stopped" && finalMeta?.exitReason === "stopped", JSON.stringify({ status: finalMeta?.status, exitReason: finalMeta?.exitReason }));
-}
-
-function killLeftovers() {
-	const killed = [];
-	let ids = [];
-	try {
-		ids = fs.readdirSync(sessionsRoot);
-	} catch {
-		return killed;
-	}
-	for (const id of ids) {
-		const meta = readJson(path.join(sessionsRoot, id, "meta.json"));
-		for (const pid of [meta?.pid, meta?.ompPid]) {
-			if (typeof pid === "number" && pidAlive(pid) && isOurs(pid)) {
-				try {
-					process.kill(pid, "SIGKILL");
-					killed.push(`${id}:${pid}`);
-				} catch {
-					/* raced */
-				}
-			}
-		}
-	}
-	return killed;
-}
-
-/** `ps` row (procps or BSD ps: macOS has no /proc); undefined once the process is gone. */
-function psRow(pid) {
-	const r = spawnSync("ps", ["-ww", "-o", "stat=,command=", "-p", String(pid)], { encoding: "utf8" });
-	const m = /^(\S+)\s+(.*)$/.exec((r.stdout ?? "").trim());
-	return r.status === 0 && m ? { stat: m[1], command: m[2] } : undefined;
-}
-
-/** Guards against pid reuse: only kill processes whose command line points into this run. */
-function isOurs(pid) {
-	const cmd = psRow(pid)?.command ?? "";
-	return cmd.includes(sessionsRoot) || cmd.includes(dirs.workspace) || cmd.includes(fakeOmp);
-}
-
-function pidAlive(pid) {
-	if (typeof pid !== "number") return false;
-	try {
-		process.kill(pid, 0);
-	} catch (err) {
-		return err.code === "EPERM";
-	}
-	// Zombies (exited, not yet reaped by init) count as dead.
-	const row = psRow(pid);
-	return !!row && !row.stat.startsWith("Z");
-}
-
-function readJson(file) {
-	try {
-		return JSON.parse(fs.readFileSync(file, "utf8"));
-	} catch {
-		return undefined;
-	}
-}
-
-async function waitUntil(fn, timeoutMs) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (fn()) return true;
-		await sleep(100);
-	}
-	return fn();
-}
-
-function connect(socket) {
-	return new Promise((resolve, reject) => {
-		const sock = net.createConnection(socket);
-		const backlog = [];
-		const waiters = [];
-		const rl = readline.createInterface({ input: sock, crlfDelay: Infinity });
-		rl.on("error", () => {}); // socket errors surface via the connect promise / timeouts
-		rl.on("line", line => {
-			if (!line.trim()) return;
-			const msg = JSON.parse(line);
-			const w = waiters.findIndex(x => x.pred(msg));
-			if (w >= 0) waiters.splice(w, 1)[0].resolve(msg);
-			else backlog.push(msg);
-		});
-		sock.once("error", reject);
-		sock.once("connect", () =>
-			resolve({
-				send: msg => sock.write(`${JSON.stringify(msg)}\n`),
-				close: () => sock.end(),
-				next: (pred, timeoutMs) => {
-					const i = backlog.findIndex(pred);
-					if (i >= 0) return Promise.resolve(backlog.splice(i, 1)[0]);
-					return new Promise(res => {
-						const waiter = { pred, resolve: res };
-						waiters.push(waiter);
-						setTimeout(() => {
-							const j = waiters.indexOf(waiter);
-							if (j >= 0) {
-								waiters.splice(j, 1);
-								res(undefined);
-							}
-						}, timeoutMs).unref();
-					});
-				},
-			}),
-		);
-	});
-}
