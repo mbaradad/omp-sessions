@@ -32,6 +32,26 @@ function scratchRepo(): void {
 	git("-c", "user.name=ao-smoke", "-c", "user.email=ao-smoke@localhost", "commit", "-qm", "init");
 }
 
+/**
+ * Removes a session this suite made, and its worktree. AO refuses to delete a session whose worktree has
+ * uncommitted changes ("a dirty worktree is never forced"), so a session that wrote files would leave its
+ * worktree behind for good: its own changes are discarded first (only this session's AO worktree, never the repo).
+ */
+async function dispose(id: string): Promise<void> {
+	await ao.killSession(id).catch(() => undefined);
+	const worktree = await ao.workspacePath(id).catch(() => undefined);
+	if (worktree?.includes(`${path.sep}worktrees${path.sep}`)) {
+		for (const args of [["checkout", "--", "."], ["clean", "-fdq"]]) {
+			try {
+				execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+			} catch {
+				/* nothing to discard, or no worktree any more */
+			}
+		}
+	}
+	await ao.deleteSession(id).catch(e => console.warn(`dispose ${id}: ${String(e)}`));
+}
+
 /** Resolves with the session's model once `done` holds for it; fails after TURN_TIMEOUT_MS. */
 function until(id: string, done: (m: AoSessionModel) => boolean, what: string): Promise<AoSessionModel> {
 	const now = watcher.get(id);
@@ -62,15 +82,14 @@ before(async () => {
 	watcher = new AoSessionWatcher(ao, { query: { active: true } });
 	await watcher.start();
 	stream = ao.events({ onEvent: e => events.push(e) });
+	// A run killed by the runner's file timeout never reaches its `finally`s: remove what earlier runs left (all are named "src/ao ...").
+	for (const s of (await ao.listSessions({})).sessions) if (/^src\/ao /.test(s.displayName ?? "") && !s.isTerminated) await dispose(s.id);
 });
 
 after(async () => {
 	stream?.close();
 	watcher?.close();
-	if (sessionId) {
-		await ao.killSession(sessionId).catch(() => undefined);
-		await ao.deleteSession(sessionId).catch(() => undefined);
-	}
+	if (sessionId) await dispose(sessionId);
 });
 
 test("a scratch repo maps to one AO project", async () => {
@@ -187,8 +206,7 @@ test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempote
 		await assert.rejects(ao.spawnSwitchyard({ dir: REPO, model: "nope/model" }), /not in AO's model catalog/);
 		assert.deepEqual((await ao.listSessions({ project: first.project?.id })).sessions.map(s => s.id), before);
 	} finally {
-		await ao.killSession(id).catch(() => undefined);
-		await ao.deleteSession(id).catch(() => undefined);
+		await dispose(id);
 	}
 });
 
@@ -227,10 +245,7 @@ test("a crash reads interrupted, a person's Stop stopped: both exit the agent, o
 		await until(crashed, m => m.state === "idle", "idle after resuming the crash");
 		await until(stopped, m => m.state === "idle", "idle after resuming the Stop");
 	} finally {
-		for (const id of [crashed, stopped]) {
-			await ao.killSession(id).catch(() => undefined);
-			await ao.deleteSession(id).catch(() => undefined);
-		}
+		for (const id of [crashed, stopped]) await dispose(id);
 	}
 });
 
@@ -249,8 +264,7 @@ test("an interrupt discards the queued prompts too, and interruptWithQueue hands
 		assert.equal(settled.queue.pending, 0);
 		assert.ok(settled.conversation?.turns.every(t => t.state === "interrupted"), "the running turn and both queued ones ended interrupted");
 	} finally {
-		await ao.killSession(id).catch(() => undefined);
-		await ao.deleteSession(id).catch(() => undefined);
+		await dispose(id);
 	}
 });
 
@@ -290,8 +304,7 @@ test("after a compaction every restart replays the last reply as a history turn:
 		const three = await until(id, m => m.reply?.trim() === "THREE", "answered THREE");
 		assert.equal(three.queue.done, 4);
 	} finally {
-		await ao.killSession(id).catch(() => undefined);
-		await ao.deleteSession(id).catch(() => undefined);
+		await dispose(id);
 	}
 });
 
