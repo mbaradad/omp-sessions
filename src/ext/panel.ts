@@ -1197,7 +1197,7 @@ export class ChatPanel implements vscode.Disposable {
 		const nonce = crypto.randomBytes(16).toString("base64");
 		const js = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.js"));
 		const css = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "out", "webview.css"));
-		const logo = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "omp-color.svg"));
+		const logo = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "switchyard-color.svg"));
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>

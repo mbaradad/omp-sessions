@@ -152,7 +152,7 @@ export function registerDashboard(api: OmpApi): void {
 		}
 		const created = vscode.window.createWebviewPanel("switchyard.dashboard", "Switchyard Usage", vscode.ViewColumn.Active, { enableScripts: true, enableFindWidget: true });
 		panel = created;
-		created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
+		created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "switchyard-color.svg");
 		created.webview.html = messageHtml(created.webview, "Reading omp transcripts…");
 		created.onDidDispose(() => {
 			if (panel === created) panel = undefined;

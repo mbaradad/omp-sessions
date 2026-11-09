@@ -177,7 +177,7 @@
         </div>
         <div class="win__status">
           <span class="sb sb--remote">SSH: build-box</span>
-          <span class="sb"><span class="pi">π</span> 1 working · 1 needs input</span>
+          <span class="sb">Switchyard · 1 working · 1 needs input</span>
           <span class="sb sb--hide-sm">2/3 running · 4 waiting</span>
           <span class="sb sb--right">$2.84 today</span>
         </div>
@@ -260,7 +260,7 @@
     <div class="queue">
       <div class="shot shot--big reveal">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">2/3 running · 5 waiting</span></div>
-        <img src="assets/shots/tasks.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp Tasks view: queued tasks with subtasks across sessions, with progress and checkboxes.">
+        <img src="assets/shots/tasks.png" width="1440" height="900" loading="lazy" decoding="async" alt="The Tasks view: a running queue with subtasks and two pending tasks, a scheduled task in another project, and the chat showing Queued task 1/3.">
       </div>
       <div class="qgrid">
         <div class="mini reveal">
@@ -359,7 +359,7 @@
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Chat</span></div>
-        <img src="assets/shots/chat.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp chat in VS Code: an inline diff, a bash tool call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context, cost and tokens per second.">
+        <img src="assets/shots/chat.png" width="1440" height="900" loading="lazy" decoding="async" alt="The chat in VS Code: an inline diff, a bash tool call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context and cost.">
       </div>
     </div>
 
@@ -377,7 +377,7 @@
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Review</span></div>
-        <img src="assets/shots/review.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Review Changes: every file an omp session changed in VS Code's multi-file diff editor.">
+        <img src="assets/shots/review.png" width="1440" height="900" loading="lazy" decoding="async" alt="Review Changes: every file a session changed in VS Code's multi-file diff editor.">
       </div>
     </div>
 
@@ -389,14 +389,14 @@
       <figure class="duo__item reveal">
         <div class="shot">
           <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions</span></div>
-          <img src="assets/shots/sessions.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Switchyard view with sessions across two projects, and a chat waiting on a bash approval in Ask mode.">
+          <img src="assets/shots/sessions.png" width="1440" height="900" loading="lazy" decoding="async" alt="The Switchyard view with sessions across two projects, and a chat waiting on a bash approval in Ask mode.">
         </div>
         <figcaption><strong>Sessions view.</strong> Grouped by project with working and needs-input counts, or by your own nested groups, by status, or flat. Filter with free text, <code>#tag</code> and <code>project:name</code>; hide finished sessions with one click.</figcaption>
       </figure>
       <figure class="duo__item reveal">
         <div class="shot">
           <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Sessions Board</span></div>
-          <img src="assets/shots/board.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Sessions Board: a kanban of omp sessions in columns, with priorities, colors, queue progress and cost on each card.">
+          <img src="assets/shots/board.png" width="1440" height="900" loading="lazy" decoding="async" alt="The Sessions Board: a kanban of sessions in columns by status, with queue progress, the last reply and cost on each card.">
         </div>
         <figcaption><strong>Sessions Board.</strong> A kanban of every session, by status, your own lanes, group or priority, with a swimlane per project. Drag cards; set priority, color, pins and tags; see queue progress, cost and unread at a glance.</figcaption>
       </figure>
@@ -438,7 +438,7 @@
         </div>
         <div class="shot shot--card">
           <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span></div>
-          <img src="assets/shots/checkpoints.png" width="1600" height="1000" loading="lazy" decoding="async" alt="Restoring a checkpoint in the omp chat: a confirmation lists the two files that go back and explains that the conversation rewinds to before the prompt, with redo to bring everything back.">
+          <img src="assets/shots/checkpoints.png" width="1440" height="900" loading="lazy" decoding="async" alt="Undoing the last prompt in the chat: a confirmation lists the two files that go back and explains that the conversation rewinds to before the prompt, with redo to bring everything back.">
         </div>
       </article>
 
@@ -511,20 +511,19 @@
     <div class="phonesec__text reveal">
       <p class="eyebrow">AO's phone app</p>
       <h2 id="phone-title">Your sessions, <span class="grad">in your pocket.</span></h2>
-      <p class="sub sub--left">Run <em>Switchyard: Connect Phone…</em> (or <code>switchyard remote on</code>) and scan the QR code in AO's phone app. The app lists every session, follows one live, prompts or steers it, answers approvals and questions, and starts new sessions. It doesn't show Switchyard's queues and schedules yet; a Switchyard phone app is planned.</p>
+      <p class="sub sub--left">Install AO's phone app (<a href="https://apps.apple.com/app/ao-mobile/id6792552173">iPhone and iPad</a>, <a href="https://play.google.com/store/apps/details?id=aoagents.dev">Android</a>), run <em>Switchyard: Connect Phone…</em> (or <code>switchyard remote qr</code>) and scan the code in the app. The phone keeps the pairing. It doesn't show Switchyard's queues and schedules yet; a Switchyard phone app is planned.</p>
       <ul class="ticks">
         <li>See what's working, waiting for you or done</li>
-        <li>Follow a session live; prompt or steer</li>
+        <li>Follow a session live and prompt it</li>
         <li>Approve a command or answer a question</li>
-        <li>Start a new session</li>
+        <li>Start a new session; get push notifications</li>
       </ul>
-      <p class="fine fine--left">Over <a href="https://tailscale.com">Tailscale</a> (free, encrypted), your Wi-Fi or AO's tunnel. The API behind the app is AO's, <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/REMOTE-API.md">described here</a>.</p>
+      <p class="fine fine--left">Over your Wi-Fi, <a href="https://tailscale.com">Tailscale</a> (free, encrypted) or AO's tunnel. The API behind the app is AO's, <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/REMOTE-API.md">described here</a>.</p>
     </div>
-    <div class="phones reveal">
-      <figure class="phone"><img src="assets/shots/phone-list.png" width="1170" height="2532" loading="lazy" decoding="async" alt="AO's phone app: the session list, grouped into needs input, working, idle and stopped, with project, cost and last reply."><figcaption>All sessions</figcaption></figure>
-      <figure class="phone phone--up"><img src="assets/shots/phone-approval.png" width="1170" height="2532" loading="lazy" decoding="async" alt="A session on the phone in Ask mode, asking to approve a bash command, with Approve, Approve for this session and Deny buttons."><figcaption>Approve from anywhere</figcaption></figure>
-      <figure class="phone"><img src="assets/shots/phone-new.png" width="1170" height="2532" loading="lazy" decoding="async" alt="The new-session form on the phone: recent folders, a prompt, the permission mode and a queue-only option."><figcaption>Start new work</figcaption></figure>
-    </div>
+    <figure class="shot shot--pair reveal">
+      <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Connect Phone</span></div>
+      <img src="assets/shots/connect-phone.png" width="590" height="665" loading="lazy" decoding="async" alt="Switchyard's Connect Phone panel in VS Code: a QR code (blurred here) with the steps to install the Orchestrator app and scan it, a note that the code carries the machine's AO password, and buttons to copy the pairing link, allow access from anywhere, rotate the password or turn remote access off.">
+    </figure>
   </div>
 </section>
 
@@ -561,7 +560,7 @@
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
-        <img src="assets/shots/hermes-detail.png" width="1600" height="1000" loading="lazy" decoding="async" alt="A session's detail panel in the Hermes dashboard: omp asks which Redis client to use, with three answer buttons, the session's status, model, cost and tags, the permission mode, its last reply and a follow-up box.">
+        <img src="assets/shots/hermes-detail.png" width="1600" height="1000" loading="lazy" decoding="async" alt="A session's detail panel in the Hermes dashboard: a bash command waiting for approval with Approve, Approve bash for this session and Deny, the session's status, organize actions, permission mode, model and last reply.">
       </div>
     </div>
     <div class="row reveal">
@@ -628,7 +627,7 @@
       </div>
       <div class="shot">
         <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Usage Dashboard</span></div>
-        <img src="assets/shots/dashboard.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The omp usage dashboard with cost, token and session trends over a date range.">
+        <img src="assets/shots/dashboard.png" width="1440" height="900" loading="lazy" decoding="async" alt="The usage dashboard: spend today, in the last 7 and 30 days and all time, cost per day, and cost by project, model and session.">
       </div>
     </div>
   </div>

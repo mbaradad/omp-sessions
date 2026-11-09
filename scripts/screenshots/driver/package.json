@@ -1,0 +1,12 @@
+{
+	"name": "switchyard-shots-driver",
+	"displayName": "Switchyard screenshot driver",
+	"description": "Drives the demo for scripts/screenshots/run.mjs; does nothing without SWITCHYARD_SHOTS.",
+	"version": "0.0.1",
+	"publisher": "switchyard-shots",
+	"private": true,
+	"engines": { "vscode": "^1.100.0" },
+	"main": "./extension.js",
+	"activationEvents": ["onStartupFinished"],
+	"extensionDependencies": ["mbaradad.switchyard"]
+}

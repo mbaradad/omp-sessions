@@ -14,7 +14,7 @@ import { type ContainerNode, type Node, isNode } from "./tree";
 
 type SessionNode = Extract<Node, { kind: "session" }>;
 
-/** Hex of the colored π used as chat tab icon (theme colors can't be used in an SVG file). */
+/** Hex of the colored Switchyard mark used as chat tab icon (theme colors can't be used in an SVG file). */
 const COLOR_HEX: Record<OrgColor, string> = {
 	red: "#e5484d",
 	orange: "#f76b15",
@@ -96,8 +96,9 @@ const SORT_MODE_INFO: Record<SortMode, { label: string; detail: string }> = {
 	completed: { label: "$(pass) Completed", detail: "Marked completed first (latest first), then the most recently finished" },
 };
 
-function piSvg(hex: string): string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 8 48 48"><path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" fill="${hex}"/></svg>`;
+/** media/switchyard.svg in one color. */
+function markSvg(hex: string): string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2.5 12H8M8 12C11 12 12 5 16 5H21.5M8 12H21.5M8 12C11 12 12 19 16 19H21.5" fill="none" stroke="${hex}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 /** Groups as an indented, depth-first list (for pickers). */
@@ -217,13 +218,13 @@ export function registerOrganize(api: OmpApi): void {
 	const chatDecoration = (id: string) => {
 		const color = effectiveColor(store.data, id);
 		if (!color) return undefined;
-		return { icon: iconsReady ? vscode.Uri.joinPath(iconDir, `pi-${color}.svg`) : undefined, mark: COLOR_EMOJI[color] };
+		return { icon: iconsReady ? vscode.Uri.joinPath(iconDir, `mark-${color}.svg`) : undefined, mark: COLOR_EMOJI[color] };
 	};
 	setChatDecorator(chatDecoration);
 	void (async () => {
 		try {
 			await vscode.workspace.fs.createDirectory(iconDir);
-			for (const c of ORG_COLORS) await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(iconDir, `pi-${c}.svg`), new TextEncoder().encode(piSvg(COLOR_HEX[c])));
+			for (const c of ORG_COLORS) await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(iconDir, `mark-${c}.svg`), new TextEncoder().encode(markSvg(COLOR_HEX[c])));
 			iconsReady = true;
 			setChatDecorator(chatDecoration);
 		} catch {

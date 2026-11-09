@@ -325,7 +325,7 @@ export function registerDoctor(api: OmpApi): void {
 		const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Switchyard: running Doctor…" }, makeReport);
 		if (!doctorPanel) {
 			doctorPanel = vscode.window.createWebviewPanel("switchyard.doctor", "Switchyard Doctor", vscode.ViewColumn.Active, { enableCommandUris: reportCommands(report), enableFindWidget: true });
-			doctorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
+			doctorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "switchyard-color.svg");
 			doctorPanel.onDidDispose(() => {
 				doctorPanel = undefined;
 			});
