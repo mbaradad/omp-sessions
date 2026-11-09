@@ -19,7 +19,35 @@ const env = {
 	XDG_STATE_HOME: path.join(home, ".local/state"),
 	OMP_VSCODE_HOME: path.join(home, "omp-vscode"),
 	SWITCHYARD_HOME: path.join(home, "switchyard"),
+	USERPROFILE: home,
 };
 if (!env.AO_RUN_FILE && !env.AO_PORT) env.AO_RUN_FILE = path.join(realHome, ".ao", "running.json");
+
+// Canary (as test-infra's e2e-desktop): what the real global state looked like before, and after. The run
+// fails if any of it changed. Read-only stat of names, sizes and mtimes; nothing here writes to them.
+const guarded = [".switchyard", ".local/bin/omp-sessions", ".local/bin/switchyard", ".omp/agent/extensions"].map(p => path.join(realHome, p));
+const snapshot = target => {
+	const walk = p => {
+		let stat;
+		try {
+			stat = fs.lstatSync(p);
+		} catch {
+			return "absent";
+		}
+		if (!stat.isDirectory()) return `${stat.size}:${stat.mtimeMs}`;
+		return `dir[${fs
+			.readdirSync(p)
+			.sort()
+			.map(name => `${name}=${walk(path.join(p, name))}`)
+			.join(",")}]`;
+	};
+	return walk(target);
+};
+const before = guarded.map(snapshot);
 const result = spawnSync(process.execPath, ["test/run.mjs", "ao", ...process.argv.slice(2)], { stdio: "inherit", env });
+const touched = guarded.filter((target, i) => snapshot(target) !== before[i]);
+if (touched.length) {
+	console.error(`test:ao FAILED: the run changed real global state: ${touched.join(", ")}`);
+	process.exit(1);
+}
 process.exit(result.status ?? 1);
