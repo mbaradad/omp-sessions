@@ -8,7 +8,7 @@ import { hermesOrigin } from "../shared/hermes-origin";
 import type { OrganizeStore } from "../shared/organize";
 import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
 import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
-import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
+import { sessionDir } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import { readTranscriptText } from "../shared/transcript-files";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
@@ -176,7 +176,6 @@ export class ChatPanel implements vscode.Disposable {
 	private lastStatus: SessionMeta["status"] | undefined;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
-	private readonly checkpoints: Checkpoints;
 
 	constructor(
 		readonly sessionId: string,
@@ -186,29 +185,9 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly extensionUri: vscode.Uri,
 		private readonly globalState: vscode.Memento,
 		private readonly organize: OrganizeStore,
+		private readonly checkpoints: Checkpoints,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
-		const panel = this;
-		this.checkpoints = new Checkpoints({
-			sessionId,
-			get client() {
-				return panel.client;
-			},
-			get meta() {
-				return panel.meta;
-			},
-			get state() {
-				return panel.state;
-			},
-			get changes() {
-				return panel.changes;
-			},
-			transcript: () => this.transcriptMessages(),
-			findUserEntry: text => this.findUserEntry(text),
-			insertText: text => this.insertText(text),
-			post: msg => this.post(msg),
-			postAfterReset: msg => this.afterReset.push(msg),
-		});
 		surface.webview.html = this.html();
 		this.subs.push(
 			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
@@ -216,6 +195,9 @@ export class ChatPanel implements vscode.Disposable {
 			sessions.onDidChange(() => this.onSessionsChanged()),
 			decorationEmitter.event(() => this.updateTitle()),
 			organize.onDidChange(() => this.postOrigin()),
+			checkpoints.onDidChange(e => {
+				if (e.sessionId === sessionId) this.post({ type: "checkpoints", redo: e.state?.redo.length ?? 0 });
+			}),
 			vscode.workspace.onDidChangeConfiguration(e => {
 				if (e.affectsConfiguration("omp.chat.snippets")) this.reloadSnippets();
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
@@ -374,28 +356,8 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	// ---------- diffs ----------
-	private readBlob(hash: string | null): string | undefined {
-		if (hash === null || hash === EMPTY_BLOB) return "";
-		try {
-			const file = blobPath(this.sessionId, hash);
-			if (fs.statSync(file).size > MAX_INLINE_DIFF_BYTES) return undefined;
-			return fs.readFileSync(file, "utf8");
-		} catch {
-			return undefined;
-		}
-	}
-
 	private diffsForChange(change: FileChange): DiffsByPath {
-		const cached = this.diffCache.get(change.toolCallId);
-		if (cached) return cached;
-		const out: DiffsByPath = {};
-		for (const f of change.files) {
-			const before = this.readBlob(f.before);
-			const after = this.readBlob(f.after);
-			if (before !== undefined && after !== undefined) out[f.path] = diffTexts(before, after);
-		}
-		this.diffCache.set(change.toolCallId, out);
-		return out;
+		return this.checkpoints.toolDiffs(this.sessionId, change);
 	}
 
 	private diffsForEditTexts(toolCallId: string): DiffsByPath | undefined {
@@ -509,7 +471,7 @@ export class ChatPanel implements vscode.Disposable {
 		if (snap) messages = snap.messages;
 		else {
 			messages = readTranscript(meta.ompSessionFile);
-			this.changes = this.sessions.changes(this.sessionId);
+			this.changes = this.checkpoints.changes(this.sessionId);
 			this.indexEdits(messages);
 		}
 		this.outbox = [];
@@ -530,7 +492,7 @@ export class ChatPanel implements vscode.Disposable {
 			home: os.homedir(),
 			queue: snap?.queue ?? this.sessions.queue(this.sessionId),
 		});
-		this.post({ type: "checkpoints", redo: this.checkpoints.redoCount });
+		this.post({ type: "checkpoints", redo: this.checkpoints.redoCount(this.sessionId) });
 		this.postOrigin(true);
 	}
 
@@ -635,7 +597,6 @@ export class ChatPanel implements vscode.Disposable {
 				}
 				if (!message.trim() && images.length) message = images.length === 1 ? "(see attached image)" : "(see attached images)";
 				const busy = !!this.state?.isStreaming;
-				this.checkpoints.clearRedo();
 				const behavior = vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer";
 				const res = await client.rpc({
 					type: "prompt",
@@ -763,9 +724,11 @@ export class ChatPanel implements vscode.Disposable {
 			case "setMode":
 				if (this.meta && !(await setSessionPermissionMode(this.meta, m.mode))) this.post({ type: "notice", level: "warning", text: "Could not switch the permission mode: the session host is unreachable." });
 				return;
-			case "restoreCheckpoint":
-				await this.checkpoints.restore(m.text);
+			case "restoreCheckpoint": {
+				const done = await this.checkpoints.undo(this.sessionId, { text: m.text });
+				if (done?.prompt) this.insertText(done.prompt);
 				return;
+			}
 			case "starModel": {
 				const key = `${m.provider}/${m.id}`;
 				const starred = this.starredModels();
@@ -780,11 +743,13 @@ export class ChatPanel implements vscode.Disposable {
 		if (await runSessionAction(name, this.commandContext)) return;
 		const meta = this.meta;
 		switch (name) {
-			case "undoTurn":
-				await this.checkpoints.restore();
+			case "undoTurn": {
+				const done = await this.checkpoints.undo(this.sessionId);
+				if (done?.prompt) this.insertText(done.prompt);
 				return;
+			}
 			case "redoTurn":
-				await this.checkpoints.redo();
+				await this.checkpoints.redo(this.sessionId);
 				return;
 			case "voiceStart":
 				await this.startVoice();
@@ -882,7 +847,11 @@ export class ChatPanel implements vscode.Disposable {
 		const uri = vscode.Uri.file(file);
 		if (entry.before === null) await vscode.workspace.fs.delete(uri, { useTrash: true });
 		else {
-			const content = entry.before === EMPTY_BLOB ? new Uint8Array() : fs.readFileSync(blobPath(this.sessionId, entry.before));
+			const content = this.checkpoints.blob(this.sessionId, entry.before);
+			if (!content) {
+				this.commandContext.post({ type: "notice", level: "warning", text: `The snapshot of ${name} before that edit is gone; nothing reverted.` });
+				return;
+			}
 			await vscode.workspace.fs.writeFile(uri, content);
 		}
 		this.commandContext.post({ type: "notice", level: "info", markdown: true, text: `Reverted \`${name}\` to before that ${change.toolName}.` });

@@ -1,12 +1,11 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { EMPTY_BLOB, type FileChange, blobPath } from "../shared/protocol";
+import { type FileChange, aoCheckpointDir, readBlob } from "../shared/checkpoints";
 import { plain } from "./plain";
 
 export const SNAPSHOT_SCHEME = "omp-snapshot";
 
-/** Read-only documents for file snapshots captured by the session host, or in-memory text. */
+/** Read-only documents for file snapshots the omp extension recorded (src/shared/checkpoints.ts), or in-memory text. */
 export class SnapshotProvider implements vscode.TextDocumentContentProvider {
 	private readonly memory = new Map<string, string>();
 	private memSeq = 0;
@@ -17,9 +16,9 @@ export class SnapshotProvider implements vscode.TextDocumentContentProvider {
 		if (mem) return this.memory.get(mem) ?? "";
 		const session = q.get("s");
 		const hash = q.get("h");
-		if (!session || !hash || hash === EMPTY_BLOB || hash === "absent") return "";
+		if (!session || !hash || hash === "absent") return "";
 		try {
-			return fs.readFileSync(blobPath(session, hash), "utf8");
+			return readBlob(aoCheckpointDir(session), hash).toString("utf8");
 		} catch {
 			return "(snapshot unavailable)";
 		}
@@ -50,15 +49,6 @@ export async function openToolDiff(provider: SnapshotProvider, session: string, 
 	const right = provider.blobUri(entry.path, session, entry.after, "after");
 	const verb = entry.op === "create" ? "created" : entry.op === "delete" ? "deleted" : change.toolName;
 	await vscode.commands.executeCommand("vscode.diff", left, right, `${path.basename(entry.path)} (omp ${verb})`, { preview: true, viewColumn: targetColumn(chatColumn) });
-}
-
-/** Diff from the file's content before the session first touched it to the live file. */
-export async function openSessionDiff(provider: SnapshotProvider, session: string, changes: FileChange[], file: string, chatColumn?: vscode.ViewColumn): Promise<void> {
-	const first = changes.flatMap(c => c.files).find(f => f.path === file);
-	if (!first) return;
-	const left = provider.blobUri(file, session, first.before, "session start");
-	const right = fs.existsSync(file) ? vscode.Uri.file(file) : provider.blobUri(file, session, null, "deleted");
-	await vscode.commands.executeCommand("vscode.diff", left, right, `${path.basename(file)} (omp session changes)`, { preview: true, viewColumn: targetColumn(chatColumn) });
 }
 
 export async function openTextDiff(provider: SnapshotProvider, file: string, oldText: string, newText: string, title: string, chatColumn?: vscode.ViewColumn): Promise<void> {

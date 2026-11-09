@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { diffTexts } from "../shared/diff";
-import { EMPTY_BLOB, type SessionMeta, blobPath } from "../shared/protocol";
+import type { SessionMeta } from "../shared/protocol";
+import { EMPTY_BLOB, aoCheckpointDir, blobFile } from "../shared/checkpoints";
 import type { SnapshotProvider } from "./diff";
 import type { ChatPanel } from "./panel";
 import { plain } from "./plain";
@@ -42,7 +43,7 @@ function fence(text: string, lang = ""): string {
 function baselineText(sessionId: string, hash: string | null): string {
 	if (!hash || hash === EMPTY_BLOB) return "";
 	try {
-		return fs.readFileSync(blobPath(sessionId, hash), "utf8");
+		return fs.readFileSync(blobFile(aoCheckpointDir(sessionId), hash), "utf8");
 	} catch {
 		return "";
 	}
@@ -441,7 +442,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 				await vscode.workspace.fs.delete(uri, { useTrash: true });
 			} else {
 				const hash = firstBefore.before;
-				const content = hash && hash !== EMPTY_BLOB ? await vscode.workspace.fs.readFile(vscode.Uri.file(blobPath(sessionId, hash))) : new Uint8Array();
+				const content = hash && hash !== EMPTY_BLOB ? await vscode.workspace.fs.readFile(vscode.Uri.file(blobFile(aoCheckpointDir(sessionId), hash))) : new Uint8Array();
 				await vscode.workspace.fs.writeFile(uri, content);
 			}
 		} catch (err) {

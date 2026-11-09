@@ -2,16 +2,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { AoClient } from "../ao/client";
 import { type LaunchOptions, sendToHost } from "../shared/launch";
 import { OrganizeStore, organizeFile } from "../shared/organize";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { registerAgentSkill } from "./agent-skill";
+import { Checkpoints } from "./checkpoints";
 import { registerBoard } from "./board";
 import { registerBridge } from "./bridge";
 import { registerChatContext } from "./chat-context";
 import { registerDashboard } from "./dashboard";
-import { SNAPSHOT_SCHEME, SnapshotProvider, openSessionDiff } from "./diff";
+import { SNAPSHOT_SCHEME, SnapshotProvider } from "./diff";
 import { registerDoctor } from "./doctor";
 import { registerEditorPlus } from "./editor-plus";
 import { registerHermesPlugin } from "./hermes";
@@ -50,6 +52,14 @@ export function activate(context: vscode.ExtensionContext): void {
 	const hostScript = vscode.Uri.joinPath(context.extensionUri, "out", "host.js").fsPath;
 	const sessions = new SessionManager(hostScript);
 	const snapshots = new SnapshotProvider();
+	// Checkpoints talk to AO (`/undo`, `/redo` are sent as messages): connect, or start the daemon, on first use.
+	let ao: Promise<AoClient> | undefined;
+	const connectAo = () =>
+		(ao ??= AoClient.connect({ start: true }).catch(err => {
+			ao = undefined;
+			throw err;
+		}));
+	const checkpoints = new Checkpoints(connectAo);
 	// Sessions that finished or asked something while their chat was not in view.
 	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
 	const setUnread = (id: string, value: boolean) => {
@@ -66,12 +76,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push({ dispose: () => organizeWatch.dispose() });
 	const tree = new SessionTree(sessions, id => unread.has(id), organize);
 	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
-	context.subscriptions.push(sessions, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
+	context.subscriptions.push(sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, checkpoints);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -106,7 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, checkpoints);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;
@@ -360,8 +370,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		const id = idFrom(arg) ?? (await pickSession("Show changes of which session?"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta) return;
-		const changes = sessions.changes(meta.id);
-		const files = [...new Set(changes.flatMap(c => c.files.map(f => f.path)))];
+		const files = [...checkpoints.baselines(meta.id).keys()];
 		if (files.length === 0) {
 			void vscode.window.showInformationMessage("This session has not changed any files yet.");
 			return;
@@ -370,30 +379,19 @@ export function activate(context: vscode.ExtensionContext): void {
 			files.map(f => ({ label: path.basename(f), description: path.relative(meta.cwd, path.dirname(f)) || ".", file: f, iconPath: vscode.ThemeIcon.File, resourceUri: vscode.Uri.file(f) })),
 			{ placeHolder: `${files.length} file(s) changed by "${meta.title}"` },
 		);
-		if (pick) await openSessionDiff(snapshots, meta.id, changes, pick.file, panels.get(meta.id)?.surface.viewColumn);
+		if (pick) await checkpoints.openFileDiff(meta.id, pick.file, snapshots, panels.get(meta.id)?.surface.viewColumn);
 	});
 
 	reg("omp.openSessionFileDiff", async (sessionId: unknown, file: unknown) => {
 		if (typeof sessionId !== "string" || typeof file !== "string") return;
-		await openSessionDiff(snapshots, sessionId, sessions.changes(sessionId), file, panels.get(sessionId)?.surface.viewColumn);
+		await checkpoints.openFileDiff(sessionId, file, snapshots, panels.get(sessionId)?.surface.viewColumn);
 	});
 
 	reg("omp.reviewChanges", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Review changes of which session?"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta) return;
-		const firstBefore = new Map<string, string | null>();
-		for (const c of sessions.changes(meta.id)) for (const f of c.files) if (!firstBefore.has(f.path)) firstBefore.set(f.path, f.before);
-		if (firstBefore.size === 0) {
-			void vscode.window.showInformationMessage("This session has not changed any files yet.");
-			return;
-		}
-		const resources = [...firstBefore].map(([file, before]) => {
-			const left = snapshots.blobUri(file, meta.id, before, "session start");
-			const right = fs.existsSync(file) ? vscode.Uri.file(file) : snapshots.blobUri(file, meta.id, null, "deleted");
-			return [vscode.Uri.file(file), left, right];
-		});
-		await vscode.commands.executeCommand("vscode.changes", `omp: ${meta.title} — ${resources.length} file${resources.length === 1 ? "" : "s"} changed`, resources);
+		await checkpoints.review(meta.id, `omp: ${meta.title}`, snapshots);
 	});
 
 	reg("omp.resumeFromHistory", async (arg?: unknown) => {
