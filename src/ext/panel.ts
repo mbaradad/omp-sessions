@@ -9,7 +9,7 @@ import { hermesOrigin } from "../shared/hermes-origin";
 import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
 import { type PermissionMode, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
-import type { SessionMeta } from "../shared/protocol";
+import type { QueueOp, SessionMeta, TaskQueue } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import type { FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
@@ -171,6 +171,18 @@ function ompDefaultPermissionMode(): Promise<PermissionMode | undefined> {
 	return promise;
 }
 
+/**
+ * Where the chat's task strip, `/queue` and Alt+Enter go when the planner holds the queues: a lane whose
+ * id is an AO session id continues that session (PLANNER-API.md). The extension adapts its planner
+ * store (ext-tasks' `PlannerStore.queue(id, ops)`: `get` = no ops) to this.
+ */
+export interface ChatQueueSource {
+	get(sessionId: string): Promise<TaskQueue | null>;
+	edit(sessionId: string, ops: QueueOp[]): Promise<TaskQueue | null>;
+	/** The plan changed: the chat re-reads its queue. */
+	onDidChange: vscode.Event<unknown>;
+}
+
 export class ChatPanel implements vscode.Disposable {
 	private ao: AoClient | undefined;
 	private stream: AoEventSubscription | undefined;
@@ -213,6 +225,8 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly organize: OrganizeStore,
 		/** The extension's AO client (src/ao); rejects while no daemon answers. */
 		private readonly connect: () => Promise<AoClient>,
+		/** The planner's queue for this chat's session; absent: `sessions.queue/editQueue`. */
+		private readonly tasks?: ChatQueueSource,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
 		surface.webview.html = this.html();
@@ -227,6 +241,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
 			}),
 			{ dispose: () => this.stream?.close() },
+			...(tasks ? [tasks.onDidChange(() => void this.postQueue())] : []),
 		);
 		const cwd = this.meta?.cwd;
 		if (cwd) {
@@ -418,7 +433,7 @@ export class ChatPanel implements vscode.Disposable {
 			diffs: snap.diffs,
 			connected: this.streamOpen,
 			home: os.homedir(),
-			queue: this.sessions.queue(this.sessionId),
+			queue: await this.queueView(),
 		});
 		for (const m of snap.live) this.postFeed(m);
 		this.post({ type: "checkpoints", redo: 0 });
@@ -496,6 +511,31 @@ export class ChatPanel implements vscode.Disposable {
 		this.post({ type: "state", state: this.state });
 		const meta = this.meta;
 		if (meta) this.post({ type: "meta", meta });
+	}
+
+	/** The session's task queue in the old `TaskQueue` shape: the planner's lane when `tasks` is set, else the session manager's. */
+	private async queueView(): Promise<TaskQueue | null> {
+		if (!this.tasks) return this.sessions.queue(this.sessionId);
+		try {
+			return await this.tasks.get(this.sessionId);
+		} catch {
+			return null; // planner unreachable: no strip
+		}
+	}
+
+	private async postQueue(): Promise<void> {
+		const queue = await this.queueView();
+		if (queue) this.post({ type: "queue", queue });
+	}
+
+	private async editQueue(ops: QueueOp[]): Promise<void> {
+		if (!this.tasks) {
+			await this.sessions.editQueue(this.sessionId, ops);
+			if (this.meta?.status === "stopped") await this.postQueue();
+			return;
+		}
+		const queue = await this.tasks.edit(this.sessionId, ops);
+		if (queue) this.post({ type: "queue", queue });
 	}
 
 	private async postModels(): Promise<void> {
@@ -724,7 +764,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (queued) {
 					const [first, ...rest] = queued[2].trim().split("\n");
 					const { title, subtasks } = parseTaskInput(first);
-					await this.sessions.editQueue(this.sessionId, [{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
+					await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
 					this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
 					return;
 				}
@@ -863,8 +903,7 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			}
 			case "queueOp":
-				await this.sessions.editQueue(this.sessionId, m.ops);
-				if (this.meta?.status === "stopped") this.post({ type: "queue", queue: this.sessions.queue(this.sessionId) });
+				await this.editQueue(m.ops);
 				return;
 			case "focusTasks":
 				await vscode.commands.executeCommand("omp.tasks.focus");
