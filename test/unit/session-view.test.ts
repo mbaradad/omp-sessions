@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -240,4 +240,19 @@ test("completeOps / laneQueue: the marker is the planner's lane.complete; a sess
 	assert.deepEqual(completeOps(plan, ["B"], false), [{ op: "lane.complete", id: "b", completed: false }]);
 	assert.deepEqual([laneQueue(plan, "A")?.completed, laneQueue(plan, "A")?.completedAt], [true, 99]);
 	assert.equal(laneQueue(plan, "B")?.completed, undefined);
+});
+
+test("taskTransitions: only tasks that were known and changed state; the next map covers the whole plan", () => {
+	const task = (id: string, state: TaskView["state"], extra: Partial<TaskView> = {}): TaskView => ({ id, title: id, subtasks: [], status: "pending", createdAt: 0, state, ...extra });
+	const plan = (...tasks: TaskView[]): PlanView => ({ rev: 1, lanes: [{ id: "l", session: "S", autoRun: true, createdAt: 0, pending: 0, running: 0, done: 0, failed: 0, total: 0 }], tasks, recurring: [], status: {} as PlanView["status"] });
+	const first = taskTransitions(new Map(), plan(task("a", "running"), task("b", "waiting", { lane: "l" })));
+	assert.deepEqual(first.changes, []);
+	const second = taskTransitions(first.next, plan(task("a", "done", { session: "S1" }), task("b", "waiting", { lane: "l" }), task("c", "running")));
+	assert.deepEqual(second.changes.map(c => [c.task.id, c.from, c.sessionId]), [["a", "running", "S1"]]);
+	assert.deepEqual([...second.next], [["a", "done"], ["b", "waiting"], ["c", "running"]]);
+	// No plan (planner unreachable): nothing fires and what was known is kept.
+	assert.deepEqual(taskTransitions(second.next, undefined), { next: second.next, changes: [] });
+	// A task in a lane resolves its session through the lane.
+	const third = taskTransitions(second.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }), task("c", "running")));
+	assert.deepEqual(third.changes.map(c => [c.task.id, c.sessionId]), [["b", "S"]]);
 });

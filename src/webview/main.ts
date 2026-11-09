@@ -1,6 +1,7 @@
 // Chat UI for one omp session: transcript, tool cards with structured diffs, omp dialogs,
 // attachments, and a composer with slash-command / @file completion.
 import { Marked, type Tokens } from "marked";
+import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
 import { type HermesOrigin, originLabel } from "../shared/hermes-origin";
 import { CONTEXT_MENTIONS, findMentions, splitContext } from "../shared/mentions";
@@ -1746,9 +1747,13 @@ function applyDiffs(all: Record<string, DiffsByPath>): void {
 	for (const [id, d] of Object.entries(all)) diffsByTool.set(id, d);
 }
 
+unlockAudioOnGesture();
 window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 	const msg = event.data;
 	switch (msg.type) {
+		case "sound":
+			playSound(msg.variant, msg.volume);
+			return;
 		case "init": {
 			meta = msg.meta;
 			state = msg.state;

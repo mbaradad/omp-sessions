@@ -1,4 +1,5 @@
 // Extension <-> webview postMessage contract.
+import type { PlaySoundMessage } from "./completion-sound";
 import type { FileDiff } from "./diff";
 import type { HermesOrigin } from "./hermes-origin";
 import type { PermissionMode } from "./permissions";
@@ -93,7 +94,9 @@ export type ToWebview =
 	| { type: "origin"; hermes: HermesOrigin | null }
 	/** Empty the composer when it still holds exactly `text` (a redo makes the restored prompt stale). */
 	| { type: "clearComposerIf"; text: string }
-	| { type: "error"; message: string };
+	| { type: "error"; message: string }
+	/** Play a session cue (src/ext/sounds.ts picks one open omp webview). */
+	| PlaySoundMessage;
 
 export type PanelCommand =
 	| "compact"

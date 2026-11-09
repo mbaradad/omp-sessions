@@ -11,6 +11,7 @@ import { finishedAt, scheduledStart } from "../shared/session-sort";
 import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
+import { addSoundSink } from "./sounds";
 
 let panel: vscode.WebviewPanel | undefined;
 
@@ -184,9 +185,17 @@ function openBoard(api: OmpApi): void {
 			localResourceRoots: [vscode.Uri.joinPath(api.context.extensionUri, "out")],
 		},
 	);
-	panel.webview.html = html(api, panel.webview);
-	panel.webview.onDidReceiveMessage(m => void handle(api, m as FromBoard));
-	panel.onDidDispose(() => {
+	const board = panel;
+	board.webview.html = html(api, board.webview);
+	board.webview.onDidReceiveMessage(m => void handle(api, m as FromBoard));
+	const sound = addSoundSink({
+		get visible() {
+			return board.visible;
+		},
+		post: msg => board.webview.postMessage(msg),
+	});
+	board.onDidDispose(() => {
+		sound.dispose();
 		panel = undefined;
 	});
 	refresh(api);

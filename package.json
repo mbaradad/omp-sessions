@@ -129,6 +129,12 @@
 				"category": "omp"
 			},
 			{
+				"command": "omp.testSound",
+				"title": "Test Completion Sound",
+				"category": "omp",
+				"icon": "$(unmute)"
+			},
+			{
 				"command": "omp.reportIssue",
 				"title": "Report Issue…",
 				"category": "omp",
@@ -2138,6 +2144,57 @@
 					"type": "boolean",
 					"default": false,
 					"markdownDescription": "Notify about every omp session on this machine, including those started from `omp-sessions`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
+				},
+				"omp.sound.completion": {
+					"type": "string",
+					"enum": [
+						"None",
+						"Two-note comfort",
+						"Glass ping",
+						"Soft marimba",
+						"Tri-tone message",
+						"Airy whoosh",
+						"Discovery cluster",
+						"Systems online",
+						"IBM terminal",
+						"Modem chirp",
+						"Wind chimes",
+						"Singing bowl",
+						"Harp lift",
+						"Sonar ping",
+						"Music box"
+					],
+					"default": "Two-note comfort",
+					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open omp chat or the Sessions Board, on the computer you run VS Code on, for the sessions `omp.notifyAllSessions` covers; with several omp chats or windows open only one plays it. Listen to them all with **omp: Test Completion Sound**."
+				},
+				"omp.sound.input": {
+					"type": "string",
+					"enum": [
+						"None",
+						"Two-note comfort",
+						"Glass ping",
+						"Soft marimba",
+						"Tri-tone message",
+						"Airy whoosh",
+						"Discovery cluster",
+						"Systems online",
+						"IBM terminal",
+						"Modem chirp",
+						"Wind chimes",
+						"Singing bowl",
+						"Harp lift",
+						"Sonar ping",
+						"Music box"
+					],
+					"default": "Glass ping",
+					"markdownDescription": "Sound when a session needs input (a question or approval); **None**: silent. Same rules as `omp.sound.completion`."
+				},
+				"omp.sound.volume": {
+					"type": "number",
+					"default": 1,
+					"minimum": 0,
+					"maximum": 1,
+					"markdownDescription": "Volume of the session sounds, 0–1 (1: Hermes Desktop's level, 0: silent)."
 				},
 				"omp.showChangeDecorations": {
 					"type": "boolean",

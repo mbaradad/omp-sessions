@@ -32,6 +32,7 @@ import { registerRemote } from "./remote";
 import { registerServer } from "./server";
 import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
+import { addChatSoundSink, registerSounds } from "./sounds";
 import { registerToolbox } from "./toolbox";
 import { registerVscodeOpen } from "./vscode-open";
 import { registerWorktrees } from "./worktree";
@@ -81,6 +82,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
 		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, () => ao.client(), undefined, checkpoints, modes);
 		panels.set(id, panel);
+		addChatSoundSink(panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
 			if (e.webviewPanel.active) lastActive = panel;
@@ -120,6 +122,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 				if (lastActive === chat) lastActive = undefined;
 			});
 			sideChat = chat;
+			addChatSoundSink(chat);
 		}
 		setUnread(id, false);
 		lastActive = sideChat;
@@ -497,6 +500,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerEditorPlus(api);
 	registerToolbox(api);
 	registerDashboard(api);
+	registerSounds(api);
 	registerChatContext(api);
 	registerBoard(api);
 	registerBridge(api);

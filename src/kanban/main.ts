@@ -1,4 +1,5 @@
 // Sessions board webview: columns per mode, cards, drag & drop, keyboard moves, filters, swimlanes.
+import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
 import { plainExcerpt } from "../shared/excerpt";
 import type { SyncState } from "../shared/protocol";
 import {
@@ -1080,6 +1081,7 @@ boardEl.addEventListener("focusin", ev => {
 
 // ---------- extension messages ----------
 
+unlockAudioOnGesture();
 window.addEventListener("message", (ev: MessageEvent<ToBoard>) => {
 	const msg = ev.data;
 	if (msg.type === "data") {
@@ -1091,6 +1093,8 @@ window.addEventListener("message", (ev: MessageEvent<ToBoard>) => {
 	} else if (msg.type === "focusFilter") {
 		filterInput.focus();
 		filterInput.select();
+	} else if (msg.type === "sound") {
+		playSound(msg.variant, msg.volume);
 	}
 });
 

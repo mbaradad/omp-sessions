@@ -3,7 +3,7 @@
 // vscode), so the CLI and tests can use it too.
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
 import type { AoAgentState, AoSessionModel } from "../ao/model";
-import type { PlanOp, PlanView } from "../planner/types";
+import type { PlanOp, PlanView, TaskState, TaskView } from "../planner/types";
 import type { Priority } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
 import type { SessionMeta, SessionStatus, SyncState } from "../shared/protocol";
@@ -202,6 +202,29 @@ export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): str
 	const lanes = plan?.lanes.filter(l => l.id === sessionId || l.session === sessionId) ?? [];
 	const ids = new Set(lanes.map(l => l.id));
 	return (plan?.tasks ?? []).filter(t => (t.lane !== undefined && ids.has(t.lane) || t.session === sessionId) && Object.values(t.sync ?? {}).some(e => e.state === "upstream-changed" || e.state === "conflict")).map(t => t.id);
+}
+
+/** A planner task whose state changed between two plans (the sounds listen to these). */
+export interface TaskTransition {
+	task: TaskView;
+	/** The AO session it runs in, once it has one. */
+	sessionId?: string;
+	from: TaskState;
+}
+
+/**
+ * The tasks of `plan` whose state differs from `previous` (task id → state; a task not in it is new and does not
+ * count), and the map for the next call. No plan: nothing changed, `previous` stays.
+ */
+export function taskTransitions(previous: ReadonlyMap<string, TaskState>, plan: PlanView | undefined): { next: Map<string, TaskState>; changes: TaskTransition[] } {
+	if (!plan) return { next: new Map(previous), changes: [] };
+	const sessionOf = taskSessionOf(plan);
+	const changes: TaskTransition[] = [];
+	for (const task of plan.tasks) {
+		const from = previous.get(task.id);
+		if (from !== undefined && from !== task.state) changes.push({ task, sessionId: task.session ?? sessionOf(task.id), from });
+	}
+	return { next: new Map(plan.tasks.map(t => [t.id, t.state])), changes };
 }
 
 /** Plan edits that mark sessions completed (or reopen them): `lane.complete` on the lane that continues each one; a session without a lane gets one first. */

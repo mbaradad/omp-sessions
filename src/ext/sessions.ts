@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
-import type { PlanOp, PlanView } from "../planner/types";
+import type { PlanOp, PlanView, TaskState } from "../planner/types";
 import { findOmp, sendToHost } from "../shared/launch";
 import { readSwitchyardConfig } from "../shared/switchyard-config";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
@@ -15,7 +15,7 @@ import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpo
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -103,6 +103,10 @@ export class SessionManager implements vscode.Disposable {
 	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
 	/** Fires when a known session changes status (not on first observation). */
 	readonly onDidTransition = this.transitionEmitter.event;
+	private readonly taskTransitionEmitter = new vscode.EventEmitter<TaskTransition>();
+	/** A planner task changed state (running → done, failed, interrupted…); the sounds listen. */
+	readonly onDidTaskTransition = this.taskTransitionEmitter.event;
+	private taskStates = new Map<string, TaskState>();
 	private readonly missingEmitter = new vscode.EventEmitter<void>();
 	/** Fires when AO reports that it can't start omp. */
 	readonly onOmpMissing = this.missingEmitter.event;
@@ -130,6 +134,8 @@ export class SessionManager implements vscode.Disposable {
 	usePlan(source: PlanSource): vscode.Disposable {
 		this.planSource = source;
 		const apply = () => {
+			const tasks = taskTransitions(this.taskStates, source.plan);
+			this.taskStates = tasks.next;
 			const transitions: { meta: SessionMeta; from: SessionStatus }[] = [];
 			let changed = false;
 			for (const [id, meta] of this.sessions) {
@@ -142,6 +148,7 @@ export class SessionManager implements vscode.Disposable {
 				changed = true;
 			}
 			for (const t of transitions) this.transitionEmitter.fire(t);
+			for (const t of tasks.changes) this.taskTransitionEmitter.fire(t);
 			if (changed) this.emitter.fire();
 		};
 		apply();
@@ -459,6 +466,7 @@ export class SessionManager implements vscode.Disposable {
 		this.watcher?.close();
 		this.emitter.dispose();
 		this.transitionEmitter.dispose();
+		this.taskTransitionEmitter.dispose();
 		this.missingEmitter.dispose();
 	}
 }
