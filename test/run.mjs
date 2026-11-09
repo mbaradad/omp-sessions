@@ -5,11 +5,13 @@
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const switchyardHome = fs.mkdtempSync(path.join(os.tmpdir(), "switchyard-test-home-"));
 const outDir = process.env.TEST_OUT ? path.resolve(process.env.TEST_OUT) : path.join(root, ".test-out");
 const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : undefined;
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
@@ -68,6 +70,10 @@ const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--te
 		SWITCHYARD_TEST_FAKE_OMP_ACP: path.join(root, "test", "fake-omp-acp.mjs"),
 		// Prebuilt for test/planner-fixture.mjs (it builds its own when this file is absent).
 		...(fs.existsSync(plannerJs) ? { SWITCHYARD_TEST_PLANNER_JS: plannerJs } : {}),
+		// CONTRACT.md "Isolated HOME": nothing in a test run may reach the real ~/.switchyard (locked). Every suite
+		// gets a throwaway one; the AO fixture points its own, per fixture, at <fixture root>/switchyard.
+		SWITCHYARD_HOME: switchyardHome,
 	},
 });
+fs.rmSync(switchyardHome, { recursive: true, force: true });
 process.exit(res.status ?? 1);
