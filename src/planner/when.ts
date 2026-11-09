@@ -1,34 +1,49 @@
-// Times for plans: the start-time parser every client shares (ported from omp/requeue `when.ts`) and
-// the next occurrence of a recurring rule. Pure; no Node or DOM APIs.
+// Times for plans: the one start-time parser every client shares (the CLI, the VS Code board and Tasks view,
+// the Hermes plugin through the CLI) and the next occurrence of a recurring rule. Pure; no Node or DOM APIs.
 import type { RecurRule } from "./types";
 
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
 /** The forms parseStartTime reads, for prompts and error messages. */
-export const START_TIME_HELP = "+30m, +2h, 14:30 (next occurrence) or an ISO time like 2025-01-31T08:00";
+export const START_TIME_HELP = "+30m, in 2h, 14:30, 9pm, tomorrow 9:00 or an ISO time like 2025-01-31T08:00";
 
 /**
- * "+30m" / "30m", "+2h", "+1d", "14:30" (the next occurrence, local time), or an ISO date/time
- * ("2025-01-31T08:00", "2025-01-31 08:00", with or without a zone) → epoch ms. Throws an Error
- * that says what is wrong for anything else or a time in the past.
+ * Relative ("+30m", "30m", "in 2h", "1h30m", "in 90 minutes"), a time of day (the next occurrence, local
+ * time: "14:30", "9pm", "9:30 am", "at 14:30"; "today 18:00" and "tomorrow 9:00" name the day), or an
+ * ISO date/time ("2025-01-31T08:00", "2025-01-31 08:00", with or without a zone) → epoch ms. Throws an
+ * Error that says what is wrong for anything else or a time in the past.
  */
-export function parseStartTime(text: string, now = Date.now()): number {
-	const t = text.trim();
-	const rel = /^\+?(\d+)\s*([smhd])$/i.exec(t);
-	if (rel) return now + Number(rel[1]) * UNIT_MS[rel[2].toLowerCase()];
-	const hm = /^(\d{1,2}):(\d{2})$/.exec(t);
-	if (hm) {
-		const hours = Number(hm[1]);
-		const minutes = Number(hm[2]);
-		if (hours > 23 || minutes > 59) throw new Error(`${t} is not a time of day (00:00-23:59)`);
+export function parseStartTime(input: string, now = Date.now()): number {
+	const t = input.trim().toLowerCase().replace(/\s+/g, " ");
+	const rel = /^(?:in )?\+?((?:\d+(?:\.\d+)? ?(?:s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?) ?)+)$/.exec(t);
+	if (rel) {
+		let ms = 0;
+		for (const part of rel[1].matchAll(/(\d+(?:\.\d+)?) ?([a-z]+)/g)) ms += Number(part[1]) * UNIT_MS[part[2][0]];
+		if (ms <= 0) throw new Error(`${input.trim()} is not a time in the future`);
+		return now + ms;
+	}
+	const clock = /^(today |tomorrow |at )?(\d{1,2})(?::(\d{2}))? ?(am|pm)?$/.exec(t);
+	// A bare number ("22", "3") is too ambiguous: it needs minutes, am/pm or a day word.
+	if (clock && (clock[3] || clock[4] || clock[1])) {
+		let hours = Number(clock[2]);
+		const minutes = clock[3] ? Number(clock[3]) : 0;
+		if (clock[4]) {
+			if (hours < 1 || hours > 12) throw new Error(`${input.trim()} is not a time of day (1am-12pm)`);
+			hours = (hours % 12) + (clock[4] === "pm" ? 12 : 0);
+		}
+		if (hours > 23 || minutes > 59) throw new Error(`${input.trim()} is not a time of day (00:00-23:59)`);
 		const d = new Date(now);
 		d.setHours(hours, minutes, 0, 0);
-		if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+		const day = clock[1]?.trim();
+		if (day === "tomorrow") d.setDate(d.getDate() + 1);
+		else if (day === "today") {
+			if (d.getTime() <= now) throw new Error(`${input.trim()} is in the past`);
+		} else if (d.getTime() <= now) d.setDate(d.getDate() + 1);
 		return d.getTime();
 	}
-	const at = /^\d{4}-\d{2}-\d{2}/.test(t) ? Date.parse(t) : Number.NaN;
-	if (!Number.isFinite(at)) throw new Error(`can't read "${t}" as a time: use ${START_TIME_HELP}`);
-	if (at <= now) throw new Error(`${t} is in the past`);
+	const at = /^\d{4}-\d{2}-\d{2}/.test(t) ? Date.parse(input.trim()) : Number.NaN;
+	if (!Number.isFinite(at)) throw new Error(`can't read "${input.trim()}" as a time: use ${START_TIME_HELP}`);
+	if (at <= now) throw new Error(`${input.trim()} is in the past`);
 	return at;
 }
 

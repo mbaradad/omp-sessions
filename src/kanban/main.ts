@@ -2,6 +2,7 @@
 import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
 import { plainExcerpt } from "../shared/excerpt";
 import type { SyncState } from "../shared/protocol";
+import { parseStartTime } from "../planner/when";
 import {
 	BOARD_MODES,
 	BOARD_SORTS,
@@ -31,6 +32,8 @@ import {
 	findCard,
 	planDrop,
 	projectsOf,
+	queueActions,
+	requeueDrop,
 	statusKey,
 	stepTarget,
 } from "./board";
@@ -127,6 +130,8 @@ const ICONS: Record<string, string> = {
 	circle: '<circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
 	clock: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.2l2 1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
 	link: '<path d="M7 9a2.5 2.5 0 003.5 0l2.5-2.5a2.5 2.5 0 00-3.5-3.5L8.8 3.7M9 7a2.5 2.5 0 00-3.5 0L3 9.5A2.5 2.5 0 006.5 13l.7-.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+	run: '<path d="M3.5 3.5l6 4.5-6 4.5zM11 3.5v9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>',
+	retry: '<path d="M12.5 8a4.5 4.5 0 11-1.3-3.2M12.5 2.5v2.8H9.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
 	expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
 	folder: '<path d="M1.5 4h4.5l1.5 1.5h7v7h-13z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
 	"p-urgent": '<rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="currentColor"/><path d="M8 4.5v4.3" stroke="var(--vscode-editor-background)" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r="1.05" fill="var(--vscode-editor-background)"/>',
@@ -159,6 +164,15 @@ function relTime(ts: number): string {
 	if (s < 3600) return `${Math.floor(s / 60)}m`;
 	if (s < 86400) return `${Math.floor(s / 3600)}h`;
 	return `${Math.floor(s / 86400)}d`;
+}
+
+/** "in 25m" / "in 3h" / "in 2d" until a future time; "due" once it has passed. */
+function untilTime(ts: number): string {
+	const s = (ts - Date.now()) / 1000;
+	if (s <= 0) return "due";
+	if (s < 3600) return `in ${Math.max(1, Math.round(s / 60))}m`;
+	if (s < 86400) return `in ${Math.round(s / 3600)}h`;
+	return `in ${Math.round(s / 86400)}d`;
 }
 
 // ---------- menus ----------
@@ -236,12 +250,43 @@ function cardMenu(anchor: HTMLElement | SVGElement, id: string): void {
 	showMenu(anchor, [
 		{ label: "Open chat", run: () => post({ type: "open", id }) },
 		{ label: "Dependencies…", icon: icon("link"), run: () => post({ type: "setDeps", id }) },
+		...queueMenuItems(anchor, id),
 		{ label: "Priority…", run: () => priorityMenu(anchor, targets(id)) },
 		{ label: "Color…", run: () => colorMenu(anchor, targets(id)) },
 		...(card && canRerunWithParent(card) ? [{ label: "Re-run with parent changes", run: () => post({ type: "rerunWithParent", ids: targets(id) }) }] : []),
 		card?.archived ? { label: "Unarchive", run: () => setArchived(targets(id), false) } : { label: "Archive", run: () => setArchived(targets(id), true) },
 		card?.status === "stopped" ? { label: "Resume", run: () => post({ type: "resume", ids: targets(id) }) } : { label: "Stop", run: () => post({ type: "stop", ids: targets(id) }) },
 	]);
+}
+
+const SCHEDULE_PRESETS = [
+	{ label: "In 30 minutes", when: "+30m" },
+	{ label: "In 1 hour", when: "+1h" },
+	{ label: "In 2 hours", when: "+2h" },
+	{ label: "At 02:00", when: "02:00" },
+	{ label: "At 09:00", when: "09:00" },
+];
+/** Start-time presets, a typed time (the extension's input box) and, when set, Unschedule. */
+function scheduleMenu(anchor: HTMLElement | SVGElement, ids: string[]): void {
+	const scheduled = ids.some(id => data.cards.find(c => c.id === id)?.startAt !== undefined);
+	showMenu(anchor, [
+		...SCHEDULE_PRESETS.map(p => ({ label: p.label, icon: icon("clock"), run: () => post({ type: "schedule", ids, at: parseStartTime(p.when) }) })),
+		{ label: "Other time…", run: () => post({ type: "schedule", ids }) },
+		...(scheduled ? [{ label: "Unschedule", run: () => post({ type: "schedule", ids, at: null }) }] : []),
+	]);
+}
+/** Queue items of a card's menu: what queueActions allows for the card the action starts from. */
+function queueMenuItems(anchor: HTMLElement | SVGElement, id: string): MenuItem[] {
+	const card = data.cards.find(c => c.id === id);
+	if (!card) return [];
+	const can = queueActions(card);
+	const ids = targets(id);
+	return [
+		...(can.run ? [{ label: "Run now", icon: icon("run"), run: () => post({ type: "runNow", ids }) }] : []),
+		...(can.requeue ? [{ label: "Requeue", icon: icon("retry"), run: () => post({ type: "requeue", ids }) }] : []),
+		...(can.schedule ? [{ label: card.startAt ? "Reschedule…" : "Schedule…", icon: icon("clock"), run: () => scheduleMenu(anchor, ids) }] : []),
+		...(can.unschedule ? [{ label: "Unschedule", run: () => post({ type: "schedule", ids, at: null }) }] : []),
+	];
 }
 
 // ---------- actions (optimistic: patch locally, the extension pushes the authoritative data) ----------
@@ -485,6 +530,13 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		sync.title = [`${SYNC_LABEL[c.sync.state]}${from.length ? ` (from ${from.join(", ")})` : ""}`, ...(c.sync.files?.length ? [`Conflicts: ${c.sync.files.join(", ")}`] : [])].join("\n");
 		meta.append(sync);
 	}
+	if (c.startAt !== undefined) {
+		const at = new Date(c.startAt).toLocaleString();
+		const sched = el("span", "sched", icon("clock"), untilTime(c.startAt));
+		sched.title = `Queue starts ${at}`;
+		sched.setAttribute("aria-label", `Scheduled start ${at}`);
+		meta.append(sched);
+	}
 
 	const parts: Node[] = [top, meta];
 	const waits = waitsForLabel(c, data.cards);
@@ -501,7 +553,8 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		const bar = el("span", "progress", el("span", "progress-fill"));
 		bar.firstElementChild?.setAttribute("style", `width:${pct}%`);
 		const q = el("span", "queue", bar, `${c.queue.done}/${c.queue.total}`);
-		q.title = `Task queue: ${c.queue.done} done, ${c.queue.running} running, ${c.queue.pending} pending`;
+		q.title = `Task queue: ${c.queue.done} done, ${c.queue.running} running, ${c.queue.pending} pending${c.queue.failed ? `, ${c.queue.failed} failed` : ""}${c.queue.interrupted ? `, ${c.queue.interrupted} interrupted` : ""}`;
+		if (c.queue.failed) q.classList.add("failed");
 		foot.append(q);
 	}
 	for (const t of c.tags.slice(0, 4)) foot.append(el("span", "tag", `#${t}`));
@@ -514,13 +567,18 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 	parts.push(foot);
 
 	const stopped = c.status === "stopped";
+	const can = queueActions(c);
+	const anchorOf = (ev: MouseEvent) => (ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card);
 	const actions = el(
 		"div",
 		"actions",
 		button("icon-btn", "Open chat (Enter)", [icon("chat")], () => post({ type: "open", id: c.id })),
 		canRerunWithParent(c) ? button("icon-btn", "Re-run with parent changes", [icon("rerun")], () => post({ type: "rerunWithParent", ids: targets(c.id) })) : null,
+		can.run && button("icon-btn", "Run now", [icon("run")], () => post({ type: "runNow", ids: targets(c.id) })),
+		can.requeue && button("icon-btn", "Requeue: failed, interrupted or finished tasks run again", [icon("retry")], () => post({ type: "requeue", ids: targets(c.id) })),
+		can.schedule && button("icon-btn", c.startAt !== undefined ? "Reschedule…" : "Schedule…", [icon("clock")], ev => scheduleMenu(anchorOf(ev), targets(c.id))),
 		stopped ? button("icon-btn", "Resume", [icon("play")], () => post({ type: "resume", ids: targets(c.id) })) : button("icon-btn", "Stop", [icon("stop")], () => post({ type: "stop", ids: targets(c.id) })),
-		button("icon-btn", "Color…", [icon("palette")], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id))),
+		button("icon-btn", "Color…", [icon("palette")], ev => colorMenu(anchorOf(ev), targets(c.id))),
 		c.completed ? button("icon-btn done-btn on", "Completed — click to reopen", [icon("check")], () => setCompleted(targets(c.id), false)) : button("icon-btn done-btn", "Mark completed", [icon("check")], () => setCompleted(targets(c.id), true)),
 		c.archived ? button("icon-btn", "Unarchive", [icon("unarchive")], () => setArchived(targets(c.id), false)) : button("icon-btn", "Archive", [icon("archive")], () => setArchived(targets(c.id), true)),
 	);
@@ -928,7 +986,8 @@ boardEl.addEventListener("dragover", ev => {
 		}
 	}
 	const target: DropTarget = { columnId: zone.dataset.column ?? "", sectionId: zone.dataset.section ?? "", beforeId: beforeEl?.dataset.id };
-	const ok = !!planDrop(view.mode, row.columns, dragging.ids, target);
+	// Status board: dropping on Queued from another column requeues the cards (their queue runs again).
+	const ok = !!planDrop(view.mode, row.columns, dragging.ids, target) || !!requeueDrop(view.mode, row.columns, dragging.ids, target);
 	const colEl = zone.closest<HTMLElement>(".col");
 	if (!ok) {
 		clearIndicator();
@@ -959,6 +1018,8 @@ boardEl.addEventListener("drop", ev => {
 			applyUpdates(updates);
 			return;
 		}
+		const requeue = requeueDrop(view.mode, drop.columns, ids, drop.target);
+		if (requeue) post({ type: "requeue", ids: requeue });
 	}
 	render();
 });

@@ -98,6 +98,93 @@ describe("graph readiness", () => {
 	});
 });
 
+describe("requeue and reschedule from cards (lane.requeue, lane.startAt, run)", () => {
+	const MIN = 60_000;
+	const L = "l_00000000r1";
+	const q = (...titles: string[]) =>
+		plan([{ op: "lane.add", id: L, title: "Q", autoRun: false }, ...titles.map((title): PlanOp => ({ op: "add", task: { title, lane: L } }))]).s;
+	const fail = (s: PlanState, title: string) => {
+		const t = s.tasks.find(x => x.title === title);
+		assert.ok(t);
+		startRun(s, t.id, { key: `k-${t.id}`, via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
+		finishRun(s, t.id, { kind: "error", error: { message: "boom" } }, NOW + 1000);
+	};
+	const requeue = (s: PlanState) => applyOps(s, [{ op: "lane.requeue", id: L }], NOW).state;
+	const laneOf = (s: PlanState) => s.lanes.find(l => l.id === L);
+
+	test("failed tasks go back to pending clean and the lane is re-armed", () => {
+		const s = q("a", "b", "c");
+		complete(s, "a");
+		fail(s, "b");
+		assert.equal(laneOf(s)?.autoRun, false, "a failure stops the lane");
+		const next = requeue(s);
+		assert.deepEqual(next.tasks.map(t => t.status), ["done", "pending", "pending"]);
+		assert.deepEqual([next.tasks[1].summary, next.tasks[1].attempts, next.tasks[1].finishedAt], [undefined, undefined, undefined]);
+		assert.equal(laneOf(next)?.autoRun, true);
+		assert.deepEqual(dispatched(next), ["b"]);
+	});
+
+	test("a scheduled start is kept: the requeued task waits for it", () => {
+		const s = q("a");
+		fail(s, "a");
+		const scheduled = applyOps(s, [{ op: "lane.startAt", id: L, at: NOW + 60 * MIN }], NOW).state;
+		const next = requeue(scheduled);
+		assert.deepEqual([next.tasks[0].status, laneOf(next)?.autoRun, laneOf(next)?.startAt], ["pending", false, NOW + 60 * MIN]);
+		assert.equal(byTitle(evaluate(next, ctx()).views, "a").state, "scheduled");
+		assert.deepEqual(dispatched(next), []);
+		assert.equal(advance(next, NOW + 61 * MIN), true);
+		assert.deepEqual(dispatched(next, ctx(NOW + 61 * MIN)), ["a"]);
+	});
+
+	test("an interrupted or paused lane runs again; the interrupted mark is cleared", () => {
+		const s = q("a", "b");
+		s.tasks[0].interrupted = NOW;
+		s.tasks[0].summary = "Interrupted";
+		const next = requeue(s);
+		assert.deepEqual([next.tasks[0].interrupted, next.tasks[0].summary, laneOf(next)?.autoRun], [undefined, undefined, true]);
+	});
+
+	test("a finished lane runs its last task again; an empty or running one is left alone", () => {
+		const s = q("a", "b");
+		complete(s, "a");
+		complete(s, "b");
+		const next = requeue(s);
+		assert.deepEqual(next.tasks.map(t => t.status), ["done", "pending"]);
+		assert.equal(next.tasks[1].finishedAt, undefined);
+		assert.equal(laneOf(next)?.autoRun, true);
+		assert.equal(requeue(q()).tasks.length, 0);
+		const busy = q("a", "b");
+		complete(busy, "a");
+		startRun(busy, busy.tasks[1].id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
+		const same = requeue(busy);
+		assert.deepEqual(same.tasks.map(t => t.status), ["done", "running"]);
+	});
+
+	test("run now drops the lane's start time and arms it; scheduling again moves it; unscheduling keeps the lane paused", () => {
+		const s = applyOps(q("a", "b"), [{ op: "lane.startAt", id: L, at: NOW + 120 * MIN }], NOW).state;
+		assert.equal(laneOf(s)?.startAt, NOW + 120 * MIN);
+		const moved = applyOps(s, [{ op: "lane.startAt", id: L, at: NOW + 30 * MIN }], NOW).state;
+		assert.equal(laneOf(moved)?.startAt, NOW + 30 * MIN);
+		const cleared = applyOps(moved, [{ op: "lane.startAt", id: L, at: null }], NOW).state;
+		assert.deepEqual([laneOf(cleared)?.startAt, laneOf(cleared)?.autoRun], [undefined, false]);
+		assert.deepEqual(dispatched(cleared), [], "unscheduled work stays paused");
+		const ran = applyOps(s, [{ op: "run", id: s.tasks[1].id }], NOW).state;
+		assert.deepEqual([laneOf(ran)?.startAt, laneOf(ran)?.autoRun, ran.tasks[0].title], [undefined, true, "b"]);
+		assert.deepEqual(dispatched(ran), ["b"]);
+		assert.throws(() => applyOps(s, [{ op: "lane.startAt", id: L, at: Number.NaN }], NOW), /epoch ms or null/);
+	});
+
+	test("the old queue ops map: schedule → lane.startAt, requeue → lane.requeue, run without id → the first pending task", () => {
+		const s = q("a", "b");
+		assert.deepEqual(queueOpsToPlanOps(s, L, [{ op: "schedule", at: NOW + MIN }, { op: "schedule", at: null }, { op: "requeue" }, { op: "run" }]), [
+			{ op: "lane.startAt", id: L, at: NOW + MIN },
+			{ op: "lane.startAt", id: L, at: null },
+			{ op: "lane.requeue", id: L },
+			{ op: "run", id: s.tasks[0].id },
+		]);
+	});
+});
+
 describe("lanes (queues)", () => {
 	const lane = () =>
 		plan([

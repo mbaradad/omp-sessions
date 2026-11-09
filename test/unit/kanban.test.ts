@@ -13,7 +13,9 @@ import {
 	filterCards,
 	planDrop,
 	projectsOf,
+	queueActions,
 	rankInsert,
+	requeueDrop,
 	stepTarget,
 	worstSync,
 } from "../../src/kanban/board";
@@ -361,5 +363,30 @@ describe("edge sync states", () => {
 		assert.equal(canRerunWithParent(card("a", { sync: { state: "conflict", parents: [] } })), true);
 		for (const state of ["in-sync", "pending", "merged"] as const) assert.equal(canRerunWithParent(card("a", { sync: { state, parents: [] } })), false, state);
 		assert.equal(canRerunWithParent(card("a")), false);
+	});
+});
+
+describe("queue actions", () => {
+	const q = (extra: Partial<NonNullable<BoardCard["queue"]>>) => ({ pending: 0, running: 0, done: 0, total: 1, ...extra });
+	test("queueActions: run pending work, requeue failed/interrupted/finished, schedule, unschedule", () => {
+		assert.deepEqual(queueActions(card("a")), { run: false, requeue: false, schedule: false, unschedule: false }, "no queue");
+		assert.deepEqual(queueActions(card("a", { queue: q({ pending: 1 }) })), { run: true, requeue: false, schedule: true, unschedule: false }, "paused");
+		assert.equal(queueActions(card("a", { queue: q({ pending: 1, autoRun: true }) })).run, false, "already runs on its own");
+		assert.deepEqual(queueActions(card("a", { queue: q({ pending: 1, autoRun: false }), startAt: NOW })), { run: true, requeue: false, schedule: true, unschedule: true }, "scheduled");
+		assert.deepEqual(queueActions(card("a", { queue: q({ failed: 1 }) })), { run: false, requeue: true, schedule: true, unschedule: false }, "failed");
+		assert.equal(queueActions(card("a", { queue: q({ pending: 1, interrupted: 1 }) })).requeue, true, "interrupted");
+		assert.deepEqual(queueActions(card("a", { queue: q({ done: 1 }) })), { run: false, requeue: true, schedule: false, unschedule: false }, "finished");
+		assert.equal(queueActions(card("a", { queue: q({ running: 1 }) })).requeue, false, "running");
+	});
+	test("requeueDrop: status board, onto Queued from another column, every card with work to restart", () => {
+		const cards = [card("w", { waiting: { position: 1, since: NOW } }), card("f", { status: "stopped", queue: q({ failed: 1 }) }), card("p", { status: "stopped", queue: q({ pending: 1 }) }), card("n", { status: "stopped" })];
+		const cols = buildColumns("status", { lanes: [], groups: [] }, cards);
+		const onQueued = { columnId: "status:queued", sectionId: "status:queued" };
+		assert.deepEqual(requeueDrop("status", cols, ["f", "p"], onQueued), ["f", "p"]);
+		assert.equal(requeueDrop("status", cols, ["f", "n"], onQueued), undefined, "a card without queue work spoils the drop");
+		assert.equal(requeueDrop("status", cols, ["w"], onQueued), undefined, "already queued: a reorder");
+		assert.equal(requeueDrop("status", cols, ["f"], { columnId: "status:idle", sectionId: "status:idle" }), undefined);
+		assert.equal(requeueDrop("priority", buildColumns("priority", { lanes: [], groups: [] }, cards), ["f"], { columnId: "priority:normal", sectionId: "priority:normal" }), undefined);
+		assert.equal(planDrop("status", cols, ["f"], onQueued), undefined, "not a field move");
 	});
 });

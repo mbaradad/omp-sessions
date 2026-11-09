@@ -5,9 +5,11 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { effectiveColor, effectiveRank } from "../shared/organize";
-import type { BoardData, BoardCard, FromBoard, ToBoard } from "../kanban/board";
+import { type BoardData, type BoardCard, type FromBoard, type ToBoard, queueActions } from "../kanban/board";
+import type { QueueOp } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { finishedAt, scheduledStart } from "../shared/session-sort";
+import { askStartTime } from "./task-extras";
 import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
@@ -91,6 +93,29 @@ function apply(api: OmpApi, updates: FromBoard): void {
 	});
 }
 
+/**
+ * Run now (the planner's `run`: the queue's first pending task goes ahead and a scheduled start is dropped) or
+ * Requeue (`lane.requeue`: failed tasks back to pending, else a paused or interrupted queue restarts, else the
+ * last finished task runs again; a scheduled start is kept). Requeue falls back to run for a queue that only
+ * has pending work, so a card dropped on Queued always starts what it can. The planner resumes a stopped
+ * session itself when it dispatches.
+ */
+async function queueAction(api: OmpApi, id: string, action: "run" | "requeue"): Promise<void> {
+	const meta = api.sessions.get(id);
+	const q = api.sessions.queue(id);
+	const can = queueActions({ queue: meta?.queue, startAt: scheduledStart(meta?.queue) });
+	const ops: QueueOp[] = action === "requeue" && can.requeue ? [{ op: "requeue" }] : q.tasks.some(t => t.status === "pending") ? [{ op: "run" }] : [];
+	if (ops.length === 0) {
+		void vscode.window.showInformationMessage(`“${meta?.title ?? id}” has nothing to ${action === "requeue" ? "requeue" : "run"}.`);
+		return;
+	}
+	try {
+		await api.sessions.editQueue(id, ops);
+	} catch (err) {
+		void vscode.window.showWarningMessage(`Could not ${action === "requeue" ? "requeue" : "run"} “${meta?.title ?? id}”: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 	const store = api.organize;
 	switch (msg.type) {
@@ -109,6 +134,28 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 		case "resume":
 			for (const id of msg.ids) await vscode.commands.executeCommand("switchyard.resumeSession", id);
 			break;
+		case "runNow":
+			for (const id of msg.ids) await queueAction(api, id, "run");
+			break;
+		case "requeue":
+			for (const id of msg.ids) await queueAction(api, id, "requeue");
+			break;
+		case "schedule": {
+			// The board's menu offers the presets and Unschedule; "Other time…" arrives without `at`.
+			const first = api.sessions.get(msg.ids[0] ?? "");
+			if (!first) break;
+			const at = msg.at !== undefined ? msg.at : await askStartTime(msg.ids.length > 1 ? `Start ${msg.ids.length} queues at` : `Start the queue “${first.title}” at`);
+			if (at === undefined) break;
+			for (const id of msg.ids) {
+				try {
+					await api.sessions.editQueue(id, [{ op: "schedule", at }]);
+				} catch (err) {
+					void vscode.window.showWarningMessage(`Could not ${at === null ? "unschedule" : "schedule"} “${api.sessions.get(id)?.title ?? id}”: ${err instanceof Error ? err.message : String(err)}`);
+					break;
+				}
+			}
+			break;
+		}
 		case "rerunWithParent":
 			for (const id of msg.ids) {
 				try {

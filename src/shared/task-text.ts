@@ -122,42 +122,6 @@ export function findTodoComments(text: string): TodoComment[] {
 	return out;
 }
 
-const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-
-/** "22:00", "9pm", "9:30 am", "today 18:00", "tomorrow 9:00", "in 90m", "in 1h30m", "in 2 hours",
- * "2026-11-07 09:00". A bare time already past today means tomorrow. Undefined when unparseable. */
-export function parseStartTime(input: string, now = new Date()): number | undefined {
-	const text = input.trim().toLowerCase().replace(/\s+/g, " ");
-	if (!text) return undefined;
-	const rel = /^(?:in )?\+?((?:\d+(?:\.\d+)? ?(?:s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?) ?)+)$/.exec(text);
-	if (rel) {
-		let ms = 0;
-		for (const part of rel[1].matchAll(/(\d+(?:\.\d+)?) ?([a-z]+)/g)) ms += Number(part[1]) * UNIT_MS[part[2][0]];
-		return ms > 0 ? now.getTime() + ms : undefined;
-	}
-	const iso = /^(\d{4})-(\d{2})-(\d{2})[ t](\d{1,2}):(\d{2})$/.exec(text);
-	if (iso) {
-		const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), Number(iso[4]), Number(iso[5]));
-		return Number.isNaN(d.getTime()) || d.getMonth() !== Number(iso[2]) - 1 ? undefined : d.getTime();
-	}
-	const abs = /^(today |tomorrow |at )?(\d{1,2})(?::(\d{2}))? ?(am|pm)?$/.exec(text);
-	if (!abs) return undefined;
-	let hour = Number(abs[2]);
-	const minute = abs[3] ? Number(abs[3]) : 0;
-	// A bare number without minutes or am/pm ("in 5" typo, "22") is too ambiguous unless it's an hour with a day word.
-	if (!abs[3] && !abs[4] && !abs[1]) return undefined;
-	if (abs[4]) {
-		if (hour < 1 || hour > 12) return undefined;
-		hour = (hour % 12) + (abs[4] === "pm" ? 12 : 0);
-	}
-	if (hour > 23 || minute > 59) return undefined;
-	const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute);
-	const day = abs[1]?.trim();
-	if (day === "tomorrow") d.setDate(d.getDate() + 1);
-	else if (day !== "today" && d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
-	return d.getTime();
-}
-
 /** Compact local label: "22:00", "tomorrow 09:00", "Sat 7 Nov 09:00". */
 export function formatStartTime(at: number, now = new Date()): string {
 	const d = new Date(at);
