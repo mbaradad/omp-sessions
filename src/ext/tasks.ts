@@ -507,7 +507,12 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	reg("switchyard.tasks.cleanBranches", async () => {
 		const before = deps.planner.plan?.keptBranches?.length ?? 0;
 		if (!(await edit([{ op: "branch.clean" }]))) return;
-		const after = deps.planner.plan?.keptBranches?.length ?? 0;
+		// The planner answers before it has finished deleting: wait (a few seconds at most) for the list to shrink.
+		let after = deps.planner.plan?.keptBranches?.length ?? 0;
+		for (let i = 0; i < 8 && after >= before && before > 0; i++) {
+			await new Promise(resolve => setTimeout(resolve, 500));
+			after = deps.planner.plan?.keptBranches?.length ?? after;
+		}
 		void vscode.window.showInformationMessage(after === 0 ? "Switchyard: no kept branches left." : after < before ? `Switchyard: ${before - after} branch(es) cleaned; ${after} still hold work no other branch has.` : `Switchyard: ${after} branch(es) still hold work no other branch has: merge or delete them in git first.`);
 	});
 	reg("switchyard.tasks.copyBranch", async (arg?: unknown) => {
