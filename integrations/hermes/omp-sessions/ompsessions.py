@@ -380,7 +380,8 @@ class OmpSessions:
 
     def models(self, search: Optional[str] = None) -> dict:
         """`omp-sessions models --json`: {"models": [{selector, provider, id, name, default, …}],
-        "default": the omp Sessions default selector or None, "ompDefault": omp's own default or None}."""
+        "default": the omp Sessions default selector or None, "ompDefault": omp's own default or None,
+        "source": the running session whose omp's choices these are, else None with a "note" and no models}."""
         out = self.json(["models", "--json", *(["--", search] if search else [])], timeout=60)
         if not isinstance(out, dict) or not isinstance(out.get("models"), list):
             raise OmpSessionsError(f"omp-sessions models printed {str(out)[:100]!r}")

@@ -746,9 +746,11 @@ function defaultLabel(m) {
 }
 function ModelPicker(p) {
   const list = `${p.id}-list`;
+  const note = p.models && p.models.models.length === 0 ? p.models.note : void 0;
   return h(
     "span",
     { className: "omps-model-picker" },
+    note ? h("span", { className: "omps-field-hint", role: "note" }, note) : null,
     h("input", {
       id: p.id,
       className: "omps-input omps-mono",

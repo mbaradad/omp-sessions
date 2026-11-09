@@ -57,9 +57,12 @@ export function defaultLabel(m: Models | null): string {
 /** A text box with the models as suggestions (type to search); "" = the default. */
 export function ModelPicker(p: { id: string; models: Models | null; value: string; onChange: (value: string) => void; disabled?: boolean; label?: string; placeholder?: string }): ReactElement {
 	const list = `${p.id}-list`;
+	// Only a running session's omp knows the real list: with none running the CLI says so instead of listing models.
+	const note = p.models && p.models.models.length === 0 ? p.models.note : undefined;
 	return h(
 		"span",
 		{ className: "omps-model-picker" },
+		note ? h("span", { className: "omps-field-hint", role: "note" }, note) : null,
 		h("input", {
 			id: p.id,
 			className: "omps-input omps-mono",
