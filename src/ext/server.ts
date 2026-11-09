@@ -12,7 +12,7 @@ import { type AoClient, defaultRunFile, ensureDaemon, findDaemon, stopDaemon } f
 import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
-import { type SwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
 import { ensurePlanner, stopPlanner } from "../planner/client";
@@ -179,7 +179,10 @@ export function registerServer(api: OmpApi): ServerControl {
 	const startPlanner = async (): Promise<string> => {
 		const script = plannerScript();
 		const kind = serviceKind();
-		const wantService = vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) && !getNode().electron;
+		// Auto-install policy (the planner never installs itself): once per machine, only for the default SWITCHYARD_HOME (a
+		// test or scratch home must never create a user unit), and never when the person said `service off` (setting or CLI).
+		const wantService =
+			vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) && readSwitchyardConfig().service !== "off" && !process.env.SWITCHYARD_HOME && !getNode().electron;
 		if (wantService && kind && !fs.existsSync(serviceUnitPath(kind))) {
 			const r = installPlannerService(script, getNode().path);
 			if (r) ao.log.info(`installed the planner ${r.kind} user service ${r.file}${r.ok ? "" : " (it did not start)"}`);
