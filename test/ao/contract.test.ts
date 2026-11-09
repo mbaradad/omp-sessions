@@ -186,6 +186,48 @@ test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempote
 	}
 });
 
+test("a crash reads interrupted, a person's Stop stopped: both exit the agent, only a crash leaves work open (G39)", async () => {
+	const start = (displayName: string) => ao.spawnSwitchyard({ dir: REPO, displayName, prompt: "Run the bash command `sleep 40` and then reply DONE." }).then(r => r.session.id);
+	const crashed = await start("src/ao crash");
+	const stopped = await start("src/ao stop");
+	try {
+		// A running turn and a message queued behind it, in both.
+		for (const id of [crashed, stopped]) {
+			await until(id, m => m.conversation?.turns.some(t => t.state === "running") === true, "running a turn");
+			await ao.sendMessage(id, { text: "Reply with exactly: QUEUED" });
+			await until(id, m => m.queue.pending === 1, "one queued message");
+		}
+		// Kill the omp of one (the process in its worktree that runs `acp`); stop the other as a person would.
+		const cwd = watcher.get(crashed)?.cwd;
+		const omp = execFileSync("pgrep", ["-f", "omp"], { encoding: "utf8" }).trim().split("\n").find(pid => {
+			try {
+				return fs.readlinkSync(`/proc/${pid}/cwd`) === cwd && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("acp");
+			} catch {
+				return false;
+			}
+		});
+		assert.ok(omp, `the omp of ${crashed} in ${cwd}`);
+		process.kill(Number(omp), "SIGKILL");
+		await ao.exitAgent(stopped);
+		// Same `exited`; the crash left its turns open, the Stop settled them.
+		const crash = await until(crashed, m => m.state === "interrupted", "interrupted after a crash");
+		assert.deepEqual(crash.conversation?.turns.map(t => t.state), ["running", "queued"]);
+		const stop = await until(stopped, m => m.state === "stopped", "stopped after a person's Stop");
+		assert.ok(stop.conversation?.turns.every(t => t.state === "failed"));
+		assert.equal(stop.view.activity.state, "exited");
+		// Resumed, both are idle agents again (AO fails what was left open).
+		await ao.resumeAgent(crashed);
+		await ao.resumeAgent(stopped);
+		await until(crashed, m => m.state === "idle", "idle after resuming the crash");
+		await until(stopped, m => m.state === "idle", "idle after resuming the Stop");
+	} finally {
+		for (const id of [crashed, stopped]) {
+			await ao.killSession(id).catch(() => undefined);
+			await ao.deleteSession(id).catch(() => undefined);
+		}
+	}
+});
+
 test("errors carry AO's code", async () => {
 	await assert.rejects(ao.getSession("no-such-session-1"), (e: unknown) => e instanceof AoError && e.status === 404 && e.code === "SESSION_NOT_FOUND");
 });
