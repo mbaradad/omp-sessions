@@ -28,7 +28,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fakeOmpAcpPath, removeTree } from "./ao-fixture.mjs";
+import { PARENT_OMP_ENV, fakeOmpAcpPath, removeTree } from "./ao-fixture.mjs";
 
 /** The planner's socket for a state root (same rule as src/planner/paths.ts listenPath). */
 function plannerSocket(stateRoot) {
@@ -98,7 +98,7 @@ export async function startPlannerFixture(opts) {
 	const clientEnv = { ...ao.stackEnv, SWITCHYARD_HOME: stateRoot };
 	let clockOffset = 0;
 	const env = {
-		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("SWITCHYARD_PLANNER_"))),
+		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("SWITCHYARD_PLANNER_") && !PARENT_OMP_ENV.has(k))),
 		...clientEnv,
 		SWITCHYARD_PLANNER_STDERR: "1",
 		SWITCHYARD_PLANNER_CLOCK_FILE: clockFile,
