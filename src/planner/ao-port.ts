@@ -197,6 +197,8 @@ export function aoPort(ao: AoClient): AoPort {
 				onStatus: (s: AoStreamStatus) => {
 					if (s.state === "open") handlers.onOpen(s.reset);
 					else if (s.state === "retrying") handlers.onDown(s.error);
+					// Events were skipped (pruned or replaced log): the planner re-checks every running task, as after a reset.
+					else if (s.state === "gap") handlers.onOpen(true);
 				},
 			});
 		},
