@@ -4,7 +4,7 @@ Thanks for helping. Bug reports, fixes and features are welcome. For anything la
 
 ## Setup
 
-Requirements: Node.js 22+, npm, git, VS Code 1.100+. Linux or macOS for the full test suite; Windows works for unit tests (named pipes and `.cmd` shims are handled, but the platform is not yet fully tested). The integration tests start an isolated Agent Orchestrator daemon, so they need an `ao` binary (`AO_BIN`, or `ao` on `PATH`; see [docs/SETUP.md](docs/SETUP.md)). `omp` itself is only needed to try the extension by hand; the tests use a scripted stand-in.
+Requirements: Node.js 22+, npm, git, VS Code 1.100+. Linux or macOS for the full test suite; Windows works for unit tests (named pipes and `.cmd` shims are handled, but the platform is not yet fully tested). The integration tests start an isolated Agent Orchestrator daemon, so they need an `ao` binary (`SWITCHYARD_TEST_AO_BIN`, or `ao` on `PATH`; see [docs/SETUP.md](docs/SETUP.md)); they skip without one. `omp` itself is only needed to try the extension by hand; the tests use a scripted stand-in.
 
 ```sh
 git clone https://github.com/mbaradad/omp-sessions.git
@@ -30,7 +30,7 @@ Press **F5** in VS Code to start an Extension Development Host with this checkou
 ```sh
 npm run typecheck          # tsc --noEmit
 npm test                   # unit + integration suites; npm run test:unit / test:integration for one
-npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, xvfb-run if no DISPLAY; Linux and macOS, never touches the OS keychain)
+npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, xvfb-run if no DISPLAY; Linux and macOS, never touches the OS keychain); SWITCHYARD_E2E_AO=1 also starts an isolated AO daemon with the fake omp
 ```
 
 - Tests never call a model. `test/fake-omp-acp.mjs` is a scripted stand-in for `omp acp`: the prompt is the script, one step per line (`echo`, `prompt`, `bash` (asks for approval), `write`, `edit`, `append`, `delete`, `commit`, `ask`, `slow` (steerable), `plan`, `title`, `cost`, `limited`, `fail`, `error`, `crash`, …), documented at the top of the file. Only command lines run; prose around them (task titles, parents' results) is ignored. The files it writes and the commits it makes land in its working folder. `test/ao-fixture.mjs` (`startAoFixture()`) starts an isolated `ao daemon` (free port, temporary data dir and run file) with the fake as `omp`, and tears it down with its chat hosts (`await ao.stop()`); `test/planner-fixture.mjs` (`startPlannerFixture({ ao })`) runs the real planner on top of it. Integration tests skip when no `ao` binary is found.
