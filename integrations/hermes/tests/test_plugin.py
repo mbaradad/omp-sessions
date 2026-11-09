@@ -112,6 +112,21 @@ def until(fn, what: str, timeout: float = 30, every: float = 0.3):
         time.sleep(every)
 
 
+def as_approval(Base):
+    """OmpSessions whose `show` reports the session's open question as a tool approval (what the Switchyard
+    gate asks in a real session: "Allow tool: …"). The fake omp has no gate: AO starts sessions in bypass, so
+    nothing it runs ever asks for permission; its `ask` question stands in, shown the way the CLI shows an approval."""
+
+    class Approval(Base):
+        def show(self, session):
+            r = super().show(session)
+            if r and isinstance(r.get("question"), dict):
+                r["question"] = {"id": r["question"].get("id"), "kind": "select", "title": "Allow tool: bash ls", "options": ["Allow once", "Always allow", "Reject", "Always reject"], "approval": True}
+            return r
+
+    return Approval
+
+
 class PluginTest(unittest.TestCase):
     injected: list[dict] = []
 
@@ -300,7 +315,7 @@ class PluginTest(unittest.TestCase):
         self.assertIn("other: archived 0 done cards", commands.archive_done_text(["other"], self.plugin.lane))
 
     def test_needs_input_blocks_and_unblocks_then_completes(self) -> None:
-        card = self.create("asking", "bash ls\nwrite a.txt hi\necho wrote a.txt")
+        card = self.create("asking", "ask\nwrite a.txt hi\necho wrote a.txt")
         self.tick("asking")
         [s] = until(lambda: tagged(card), "session")
         sid = s["meta"]["id"]
@@ -308,7 +323,7 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(blocked.block_kind, "needs_input")
         with kbc.connect_closing(board="asking") as conn:
             runs = kb.list_runs(conn, card)
-        self.assertTrue(any("omp asks for approval" in (r.summary or "") and "$ ls" in (r.summary or "") for r in runs), [r.summary for r in runs])
+        self.assertTrue(any("omp needs input" in (r.summary or "") and "Pick one" in (r.summary or "") for r in runs), [r.summary for r in runs])
         # Ticking again while it still waits doesn't block twice.
         self.tick("asking")
         self.assertEqual(self.card("asking", card).status, "blocked")
@@ -347,20 +362,27 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(done.result, "chose --beta")
 
     def test_comments_never_answer_an_approval_and_wait_for_it(self) -> None:
-        card = self.create("asking", "bash ls\nwrite d.txt hi")
+        lane = self.plugin.lane
+        real = lane.omp
+        card = self.create("asking", "ask\nwrite d.txt hi")
         self.tick("asking")
         sid = self.session_of(card)
         self.tick_until("asking", card, lambda t: t.status == "blocked", "needs_input block")
-        self.comment("asking", card, "1")
-        self.tick("asking")
-        self.tick("asking")
-        self.assertEqual(self.report(sid)["state"], "needs_input", "still waiting on the approval")
-        written = Path(self.report(sid)["cwd"]) / "d.txt"
-        self.assertFalse(written.exists())
-        self.assertEqual(sum(c.author == "omp" and "can't give" in c.body for c in self.comments("asking", card)), 1, "said once")
+        # From here the lane sees the open question as a tool approval.
+        lane.omp = lambda: as_approval(type(real()))(real().configured)
+        try:
+            self.comment("asking", card, "1")
+            self.tick("asking")
+            self.tick("asking")
+            self.assertEqual(self.report(sid)["state"], "needs_input", "still waiting: a comment is not the approval")
+            written = Path(self.report(sid)["cwd"]) / "d.txt"
+            self.assertFalse(written.exists())
+            self.assertEqual(sum(c.author == "omp" and "can't give" in c.body for c in self.comments("asking", card)), 1, "said once")
+        finally:
+            lane.omp = real
+        # Given elsewhere, the held comment reaches the session as a message.
         omp_sessions("answer", sid, "1")
-        until(lambda: written.exists(), "d.txt written after the approval")
-        # Once the approval is given elsewhere, the held comment reaches the session as a message.
+        until(lambda: written.exists(), "d.txt written after the answer")
         self.tick_until("asking", card, lambda t: self.omp_said("asking", card, "passed the comment on"), "held comment delivered")
 
     def test_comments_from_untrusted_authors_are_ignored(self) -> None:
@@ -589,14 +611,14 @@ class PluginTest(unittest.TestCase):
 
     def test_tools_start_status_wait_answer_and_notify(self) -> None:
         key = "agent:main:local:test"
-        res = self.tool("omp_session_start", {"prompt": "bash ls\nwrite b.txt yo", "cwd": str(WORK), "mode": "ask", "title": "tool session", "tags": ["from-hermes"]}, session_key=key)
+        res = self.tool("omp_session_start", {"prompt": "ask\nwrite b.txt yo", "cwd": str(WORK), "mode": "ask", "title": "tool session", "tags": ["from-hermes"]}, session_key=key)
         self.assertNotIn("error", res, res)
         sid = res["id"]
         written = Path(res["cwd"]) / "b.txt"
         self.assertIn("notify", res)
         waited = self.tool("omp_session_wait", {"id": sid, "timeout_seconds": 30})
         self.assertEqual(waited["outcome"], "needs_input", waited)
-        self.assertEqual(waited["session"]["question"]["title"], "$ ls")
+        self.assertEqual(waited["session"]["question"]["title"], "Pick one")
         status = self.tool("omp_session_status", {"id": sid})
         self.assertEqual(status["state"], "needs_input")
         self.assertIn("from-hermes", status["tags"])
@@ -604,12 +626,21 @@ class PluginTest(unittest.TestCase):
         self.injected.clear()
         self.plugin.notifier.poll(force=True)
         self.assertEqual(self.injected, [])
-        # An approval is the user's: the agent can't answer it, or switch the mode to get past it.
-        refused = self.tool("omp_session_answer", {"id": sid, "answer": "1"}, session_key=key)
-        self.assertIn("approval", refused.get("error", ""), refused)
-        self.assertIn("error", self.tool("omp_session_mode", {"id": sid, "mode": "auto"}))
+        # An approval is the user's: the agent can't answer it, or switch the mode to get past it. The fake has
+        # no gate that asks, so the tools see the open question as an approval.
+        tools, real = self.plugin.tools, self.plugin.tools.omp
+        tools.omp = lambda: as_approval(type(real()))(real().configured)
+        try:
+            refused = self.tool("omp_session_answer", {"id": sid, "answer": "1"}, session_key=key)
+            self.assertIn("approval", refused.get("error", ""), refused)
+            self.assertIn("error", self.tool("omp_session_mode", {"id": sid, "mode": "auto"}))
+            self.assertIn("approval", self.tool("omp_session_mode", {"id": sid, "mode": "plan"}).get("error", ""), "switching would answer it")
+        finally:
+            tools.omp = real
         self.assertFalse(written.exists())
-        omp_sessions("answer", sid, "1")
+        # A plain question is the agent's to answer.
+        answered = self.tool("omp_session_answer", {"id": sid, "answer": "1"}, session_key=key)
+        self.assertNotIn("error", answered, answered)
         until(lambda: written.exists(), "b.txt written")
         until(lambda: report(sid)["state"] == "idle", "idle")
         self.plugin.notifier.poll(force=True)

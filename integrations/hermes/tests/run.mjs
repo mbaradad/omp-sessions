@@ -60,8 +60,10 @@ if (!aoAvailable()) {
 const ao = await startAoFixture();
 // Isolated HOME rule (CONTRACT.md): everything the suite spawns runs under the fixture's temp root, with
 // SWITCHYARD_HOME set (the CLI's spawn writes <SWITCHYARD_HOME>/sessions/<id>/mode client-side).
+// (The fixture sets HOME/XDG/SWITCHYARD_HOME of this process too, so read the env the subprocess gets.)
+const stack = { ...process.env, ...ao.stackEnv };
 for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
-	const value = ao.stackEnv[key];
+	const value = stack[key];
 	if (!value || !path.resolve(value).startsWith(path.resolve(os.tmpdir()) + path.sep)) {
 		await ao.stop();
 		throw new Error(`test:hermes refuses to run: ${key} is ${value ?? "unset"}, not under ${os.tmpdir()}`);
@@ -83,7 +85,7 @@ try {
 	const child = spawn(python, ["-I", "-B", "-m", "unittest", "discover", "-s", path.join(root, "integrations/hermes/tests"), "-p", "test_*.py", "-v", ...filter], {
 		cwd: root,
 		stdio: "inherit",
-		env: { ...process.env, ...ao.stackEnv, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath, OMP_TEST_REPO: ao.scratchRepo("work") },
+		env: { ...stack, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath, OMP_TEST_REPO: ao.scratchRepo("work") },
 	});
 	status = await new Promise(resolve => child.on("exit", code => resolve(code ?? 1)));
 } finally {

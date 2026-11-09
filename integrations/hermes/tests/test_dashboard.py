@@ -87,15 +87,15 @@ class DashboardApiTest(unittest.TestCase):
     def test_sessions_carry_state_question_schedule_and_card(self) -> None:
         with kbc.connect_closing(board="dash") as conn:
             card = kb.create_task(conn, title="Ship the dashboard tab", assignee="someone", board="dash")
-        asking = self.post("/sessions", {"prompt": "bash ls\nwrite dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
+        asking = self.post("/sessions", {"prompt": "ask\nwrite dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
         written = Path(asking["cwd"]) / "dash-q.txt"
         later = self.post("/sessions", {"prompt": "echo later", "title": "later on", "where": {"kind": "folder", "value": str(WORK)}, "when": "at", "at": "+2h", "group": "Dash group"})
         self.assertIn("startAt", later)
         linked = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo linked", "--tag", "hermes:dash", "--tag", f"card:{card}").stdout)
 
         a = until(lambda: self.state_is(asking["id"], "needs_input"), "needs_input")
-        self.assertEqual(a["question"]["title"], "$ ls")
-        self.assertEqual(a["question"]["kind"], "select", "an approval the page shows as a choice")
+        self.assertEqual(a["question"]["title"], "Pick one")
+        self.assertIn(a["question"]["kind"], ("ask", "select"), "a plain choice, not an approval")
         self.assertEqual(a["mode"], "ask")
         self.assertEqual(a["project"], WORK.name)
         self.assertIn("dash-test", a["tags"])
@@ -110,7 +110,8 @@ class DashboardApiTest(unittest.TestCase):
 
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
         d = self.get(f"/sessions/{asking['id']}")
-        self.assertEqual(d["question"]["options"][0], "Allow once")
+        choices = d["question"].get("options") or d["question"]["questions"][0]["options"]  # a `select`, or an `ask` with its questions
+        self.assertEqual(choices[0], "alpha")
         # An answer names its question: none, or another question's id, answers nothing.
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"}, status=400)
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": "not-this-one"}, status=400)
