@@ -164,6 +164,16 @@ test("questionOf: approvals carry their decisions", () => {
 	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject"]);
 });
 
+test("approvals as omp sends them: bare ACP option ids get labels and kinds", () => {
+	// VALIDATION.md §3: omp's pending approval, decisions without label or kind.
+	const q = questionOf(activity({ requestId: "acp-request:29848af1:1", summary: "date > stamp.txt && cat stamp.txt", detail: { decisions: [{ id: "allow_once" }, { id: "allow_always" }, { id: "reject_once" }, { id: "reject_always" }], input: { command: "date > stamp.txt && cat stamp.txt" }, protocol: "acp", subjectKind: "command", toolKind: "execute" } }));
+	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject", "Always reject"]);
+	assert.deepEqual(answerFor(q, "y"), { kind: "approval", decisionId: "allow_once" });
+	assert.deepEqual(answerFor(q, "no"), { kind: "approval", decisionId: "reject_once" });
+	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "allow_always" });
+	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
+});
+
 test("answerFor: approvals by number, label or yes/no", () => {
 	const q = questionOf(approval);
 	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "always" });

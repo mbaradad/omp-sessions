@@ -136,6 +136,9 @@ export function pendingActivities(conversation: AoConversation): AoActivity[] {
 	return conversation.activities.filter(a => a.status === "pending" && a.requestId && (a.activityKind === "approval" || a.activityKind === "user_input"));
 }
 
+/** Labels for ACP's permission option kinds, for decisions that come without one. */
+const ACP_DECISION_LABELS: Readonly<Record<string, string>> = { allow_once: "Allow once", allow_always: "Always allow", reject_once: "Reject", reject_always: "Always reject" };
+
 const OTHER_SUFFIX = "__other";
 
 /** The choices of a schema property: `enum`, or `oneOf`/`anyOf` of `{const, title}` (for arrays, of its `items`). */
@@ -165,9 +168,12 @@ export function questionOf(activity: AoActivity): AoQuestion {
 	const detail = isRecord(activity.detail) ? activity.detail : {};
 	const base = { id: activity.requestId ?? activity.id, title: activity.summary, createdAt: ms(activity.createdAt), ...(activity.turnId && { turnId: activity.turnId }) };
 	if (activity.activityKind === "approval") {
-		const decisions: AoDecision[] = (Array.isArray(detail.decisions) ? detail.decisions : []).flatMap(d =>
-			isRecord(d) && typeof d.id === "string" ? [{ id: d.id, label: str(d.label) ?? d.id, ...(str(d.kind) && { kind: str(d.kind) }) }] : [],
-		);
+		// omp sends its ACP permission options as bare ids (`{"id":"allow_once"}`, VALIDATION.md §3): the id is the kind.
+		const decisions: AoDecision[] = (Array.isArray(detail.decisions) ? detail.decisions : []).flatMap(d => {
+			if (!isRecord(d) || typeof d.id !== "string") return [];
+			const kind = str(d.kind) ?? (ACP_DECISION_LABELS[d.id] ? d.id : undefined);
+			return [{ id: d.id, label: str(d.label) ?? ACP_DECISION_LABELS[d.id] ?? d.id, ...(kind && { kind }) }];
+		});
 		const message = str(detail.message) ?? str(detail.title);
 		return { ...base, kind: "approval", decisions, options: decisions.map(d => d.label), ...(message && { message }) };
 	}
@@ -396,7 +402,7 @@ export function answerFor(question: AoQuestion, answer: string): AoAnswer {
 	if (question.kind === "approval") {
 		const decisions = question.decisions ?? [];
 		if (decisions.length === 0) return { error: "This approval offers no decisions." };
-		const i = pick(decisions.map(d => d.label), text);
+		const i = pick(decisions.map(d => d.label), text) ?? pick(decisions.map(d => d.id), text);
 		if (i !== undefined) return { kind: "approval", decisionId: decisions[i].id };
 		const kindMatch = YES.test(text) ? ["allow_once", "allow_always"] : NO.test(text) ? ["reject_once", "reject_always"] : undefined;
 		const byKind = kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
