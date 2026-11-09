@@ -8,7 +8,7 @@ import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResol
 export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
 export { deltaCursor, followConversation, mergeConversation } from "./follow";
 export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
-export { permissionModeOf, reportQuestion, sessionReport } from "./report";
+export { approvalModeFor, permissionModeOf, planModeOf, reportQuestion, sessionReport } from "./report";
 
 /**
  * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
