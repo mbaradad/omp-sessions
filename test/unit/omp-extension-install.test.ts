@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { installOmpExtensions, removeLegacyOmpExtensions } from "../../src/shared/omp-extension-install";
+import { globalInstallAllowed, installOmpExtensions, removeLegacyOmpExtensions } from "../../src/shared/omp-extension-install";
 
 test("installs the shipped modules as one omp package, refreshes them, and drops ones no longer shipped", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-ext-install-"));
@@ -62,4 +62,11 @@ test("the bridge's old stand-alone extension folder is removed (its tools now co
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("the global install is for an installed extension only; the env var overrides for a development or test host", () => {
+	assert.equal(globalInstallAllowed(true, {}), true);
+	assert.equal(globalInstallAllowed(false, {}), false);
+	assert.equal(globalInstallAllowed(false, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "1" }), true);
+	assert.equal(globalInstallAllowed(false, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0" }), false);
 });
