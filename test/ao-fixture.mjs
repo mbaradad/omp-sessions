@@ -16,12 +16,13 @@
 // if an override (opts.env) points any of them elsewhere. `ao.stackEnv` carries the same variables, so a
 // CLI, planner or Hermes process started with it stays isolated too. Never run `install CLI/skill/service`
 // outside such an env.
-// Options: { aoBin, realOmp, env, fakeOmpEnv, readyTimeoutMs, keep }
+// Options: { aoBin, realOmp, env, fakeOmpEnv, pathPrepend, readyTimeoutMs, keep }
 //   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
 //   realOmp      run the real omp (from PATH) instead of the fake, for smoke tests. Still isolated: HOME is
 //                the fixture's, with home/.omp/agent linked to the real agent dir (the login lives there)
 //   env          extra daemon env (e.g. AO_* overrides)
 //   fakeOmpEnv   extra env for the fake (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...)
+//   pathPrepend  dirs put first on the daemon's PATH (in front of the fake `omp`): an `omp` shim goes here
 //   keep         leave the temp dir after stop (default $SWITCHYARD_TEST_KEEP_AO=1), for post-mortems
 //
 // Env read here: SWITCHYARD_TEST_AO_BIN, SWITCHYARD_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs
@@ -244,6 +245,8 @@ export async function startAoFixture(opts = {}) {
 			...opts.fakeOmpEnv,
 		});
 	}
+	// Dirs first on the daemon's PATH, before the fake: how an `omp` shim (G34) is put in front of the omp it wraps.
+	if (opts.pathPrepend?.length) env.PATH = [...opts.pathPrepend, env.PATH ?? ""].join(path.delimiter);
 	Object.assign(env, {
 		AO_DATA_DIR: dataDir,
 		AO_RUN_FILE: runFile,
@@ -308,7 +311,7 @@ export async function startAoFixture(opts = {}) {
 	/** What a process needs to run the same omp AO runs: the isolated HOME/XDG/state dirs, and the fake with its store, log and usage file. */
 	const ompEnv = {
 		...isolation,
-		...(opts.realOmp ? {} : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
+		...(opts.realOmp ? (opts.pathPrepend?.length ? { PATH: env.PATH } : {}) : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
 	};
 
 	const fx = {
