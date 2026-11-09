@@ -37,10 +37,14 @@ export async function aoIfRunning(): Promise<AoClient | undefined> {
 
 export type AoApprovalMode = NonNullable<AoSchemas["ConversationTurnSettingsPayload"]["approvalMode"]>;
 
-/** How each Switchyard mode launches omp under AO (`ompacp/driver.go`: bypass → yolo, accept-edits → write, default → omp's own asks). */
+/**
+ * How each Switchyard mode launches omp under AO (`ompacp/driver.go`: bypass → `--approval-mode yolo`,
+ * accept-edits → `write`, default → no flag). AO has no `always-ask`: `ask` runs omp on its own
+ * `tools.approvalMode` (MAPPING G12), so it asks only where omp's config does.
+ */
 export const APPROVAL_OF: Record<PermissionMode, AoApprovalMode> = { auto: "bypass-permissions", edits: "accept-edits", ask: "default", plan: "default" };
 
-/** The Switchyard mode of AO turn settings; `plan` when omp's own `mode` config option says so. */
+/** The Switchyard mode of AO turn settings; `plan` when omp's own `mode` option says so; undefined for AO's `default` (omp's own setting decides). */
 export function modeOf(approval: AoApprovalMode | undefined, ompMode?: string): PermissionMode | undefined {
 	if (ompMode === "plan") return "plan";
 	switch (approval) {
@@ -49,8 +53,6 @@ export function modeOf(approval: AoApprovalMode | undefined, ompMode?: string): 
 		case "accept-edits":
 		case "auto":
 			return "edits";
-		case "default":
-			return "ask";
 		default:
 			return undefined;
 	}

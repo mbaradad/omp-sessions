@@ -257,6 +257,8 @@ async function cmdNew(args: Args): Promise<number> {
 	if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`not a folder: ${dir}`);
 	const defaults = readSwitchyardConfig();
 	const effectiveMode = mode ?? defaults.mode;
+	// No mode anywhere: omp's own `tools.approvalMode` (AO's `default`; leaving it out would launch omp in `write`).
+	const approvalMode = effectiveMode ? APPROVAL_OF[effectiveMode] : "default";
 	const model = value(args, "model") ?? defaults.model;
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
@@ -272,7 +274,7 @@ async function cmdNew(args: Args): Promise<number> {
 		...(project && { projectId: project.id }),
 		...(prompt && { prompt }),
 		...(model && { model }),
-		...(effectiveMode && { approvalMode: APPROVAL_OF[effectiveMode] }),
+		approvalMode,
 	});
 	const id = res.session.id;
 	organizeNew(id, { tags: args.multi.get("tag"), group: value(args, "group") });
@@ -281,7 +283,7 @@ async function cmdNew(args: Args): Promise<number> {
 		await lane.call("queue", {
 			id,
 			ops: [
-				{ op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), ...(effectiveMode && { approvalMode: APPROVAL_OF[effectiveMode] }) } },
+				{ op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), approvalMode } },
 				startAt ? { op: "schedule", at: startAt } : { op: "autoRun", value: true },
 			],
 		});
@@ -776,7 +778,7 @@ async function cmdMode(args: Args): Promise<void> {
 	const client = await ao();
 	if (!want) {
 		const current = modeOf(s.model.conversation?.settings.approvalMode, await ompModeOption(client, s.id));
-		process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("AO default")}\n`);
+		process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("omp's own approval setting (tools.approvalMode)")}\n`);
 		for (const m of PERMISSION_MODES) process.stdout.write(`  ${m === current ? c.green("●") : c.dim("·")} ${pad(m, 6)} ${c.dim(PERMISSION_MODE_INFO[m].detail)}\n`);
 		return;
 	}
@@ -784,6 +786,8 @@ async function cmdMode(args: Args): Promise<void> {
 	if (!mode) throw new UsageError(`unknown mode "${want}" (${PERMISSION_MODES.join(", ")})`);
 	const how = await switchMode(client, s, mode);
 	const note = how === "restarted" ? c.dim(" (omp restarted on the same transcript)") : how === "next-resume" ? c.dim(" (applies when resumed)") : "";
+	// AO can't launch omp in always-ask (MAPPING G12): ask leaves the decision to omp's own setting.
+	if (mode === "ask") process.stderr.write(c.dim("ask: omp asks as its own tools.approvalMode says (AO has no always-ask)\n"));
 	process.stdout.write(`${c.green(PERMISSION_MODE_INFO[mode].label)} ${s.id} ${s.title}${note}\n`);
 }
 
