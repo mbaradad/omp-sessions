@@ -170,12 +170,14 @@ test("organize merge: old ids become AO ids, adopted pins leave the file, existi
 		},
 		collapsed: { g1: true },
 	};
-	const existing: OrgData = { ...emptyOrgData(), groups: [{ id: "g1", name: "Renamed", order: 3 }], sessions: { "ao-b": { color: "blue" } }, collapsed: { g1: false } };
+	// A newer Switchyard may already store fields this version doesn't know; the merge keeps them.
+	const existing = { ...emptyOrgData(), groups: [{ id: "g1", name: "Renamed", order: 3 }], sessions: { "ao-b": { color: "blue", completed: true, futureField: 1 } }, collapsed: { g1: false }, sortBy: "completed" };
 
 	const first = mergeOrganize(existing, legacy, { a: "ao-a", b: "ao-b" });
 	assert.deepEqual(first.data.groups, [{ id: "g1", name: "Renamed", order: 3 }]);
 	assert.deepEqual(first.data.lanes, legacy.lanes);
-	assert.deepEqual(first.data.sessions, { "ao-a": { groupId: "g1", priority: "high", tags: ["x"] }, "ao-b": { color: "blue" }, c: { color: "red", pinned: true } });
+	assert.deepEqual(first.data.sessions, { "ao-a": { groupId: "g1", priority: "high", tags: ["x"] }, "ao-b": { color: "blue", completed: true, futureField: 1 }, c: { color: "red", pinned: true } });
+	assert.equal((first.data as unknown as Record<string, unknown>).sortBy, "completed");
 	assert.deepEqual(first.data.collapsed, { g1: false });
 
 	// `c` is adopted by a later run: its entry moves to the AO id, without the pin (AO holds it).
@@ -183,6 +185,11 @@ test("organize merge: old ids become AO ids, adopted pins leave the file, existi
 	assert.deepEqual(Object.keys(second.data.sessions).sort(), ["ao-a", "ao-b", "ao-c"]);
 	assert.deepEqual(second.data.sessions["ao-c"], { color: "red" });
 	assert.deepEqual(mergeOrganize(second.data, legacy, { a: "ao-a", b: "ao-b", c: "ao-c" }).data, second.data);
+
+	// The completed marker (PARKED §5) comes over with its time, also for a session with no other entry.
+	const done = mergeOrganize(undefined, legacy, { a: "ao-a", d: "ao-d" }, { a: 42, d: 0 });
+	assert.deepEqual(done.data.sessions["ao-a"], { groupId: "g1", priority: "high", tags: ["x"], completed: true, completedAt: 42 });
+	assert.deepEqual(done.data.sessions["ao-d"], { completed: true });
 });
 
 test("queue import: one paused lane on the AO session, tasks in order with their status, a future start kept", () => {
@@ -216,4 +223,15 @@ test("queue import: one paused lane on the AO session, tasks in order with their
 		{ op: "lane.startAt", id: "repo-3", at: 5_000 },
 	]);
 	assert.equal(queueImportOps("x", "t", { autoRun: false, startAt: 500, tasks: [] }, "normal", now).length, 1);
+	assert.deepEqual(queueImportOps("x", "t", { autoRun: false, tasks: [] }, undefined, now, true).at(-1), { op: "lane.complete", id: "x", completed: true });
+});
+
+test("legacy reader: parked-branch fields (queue after, completed marker, budget, worktree mode) survive", () => {
+	const home = legacyHomeWith({ s1: { cwd: "/x" } }, { "organize.json": { version: 1, sessions: { s1: { completed: true, completedAt: 7 }, s2: { completed: true } } }, "scheduler.json": { maxConcurrent: 3, budget: { day: 20, week: -1, hour: "x" } }, "launcher.json": { worktree: "always" } });
+	fs.writeFileSync(path.join(home, "sessions", "s1", "queue.json"), JSON.stringify({ autoRun: false, tasks: [{ id: "t", title: "T", status: "pending" }], after: ["s9", 3] }));
+	const state = readLegacyState(home);
+	assert.deepEqual(state.sessions[0].after, ["s9"]);
+	assert.deepEqual(state.completed, { s1: 7, s2: 0 });
+	assert.deepEqual(state.scheduler, { maxConcurrent: 3, budget: { day: 20 } });
+	assert.equal(state.launcher?.worktree, "always");
 });

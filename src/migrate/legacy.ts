@@ -33,6 +33,10 @@ export interface LegacySession {
 	/** `launch.json` `ompArgs`: extra omp flags the old host started omp with. */
 	ompArgs: string[];
 	queue?: TaskQueue;
+	/** queue.json `after` (omp/deps, PARKED §1): old session ids whose queues must finish first. */
+	after?: string[];
+	/** Whether `sessions/<id>/worktree.json` exists (omp/worktrees, PARKED §8). */
+	worktree?: boolean;
 	cost?: number;
 }
 
@@ -40,6 +44,8 @@ export interface LegacyScheduler {
 	maxConcurrent: number;
 	paused?: boolean;
 	stopWhenQueueDone?: boolean;
+	/** Spend caps in USD per rolling window (omp/autosched, PARKED §4). */
+	budget?: Partial<Record<"hour" | "day" | "week", number>>;
 }
 
 export interface LegacyLauncher {
@@ -48,6 +54,8 @@ export interface LegacyLauncher {
 	model?: string;
 	service?: string;
 	mode?: string;
+	/** `auto|always|never` (omp/worktrees, PARKED §8). */
+	worktree?: string;
 }
 
 export interface LegacyState {
@@ -57,6 +65,8 @@ export interface LegacyState {
 	/** Session dirs without a readable meta.json. */
 	unreadable: string[];
 	organize?: OrgData;
+	/** organize.json `completed`/`completedAt` per old id (omp/completed-sort, PARKED §5); value: completedAt or 0. */
+	completed: Record<string, number>;
 	/** organize.json exists but does not parse. */
 	organizeError?: string;
 	scheduler?: LegacyScheduler;
@@ -121,13 +131,16 @@ function readSession(dir: string, id: string): LegacySession | undefined {
 	if (queueFile.value !== undefined) {
 		const queue = normalizeQueue(queueFile.value);
 		if (queue.tasks.length) session.queue = queue;
+		const after = isRecord(queueFile.value) && Array.isArray(queueFile.value.after) ? queueFile.value.after.filter((a): a is string => typeof a === "string" && a !== "") : [];
+		if (after.length) session.after = after;
 	}
+	if (fs.existsSync(path.join(dir, "worktree.json"))) session.worktree = true;
 	return session;
 }
 
 /** Everything `migrate` reads from the old state dir. */
 export function readLegacyState(home = legacyHome()): LegacyState {
-	const state: LegacyState = { home, exists: fs.existsSync(home), sessions: [], unreadable: [] };
+	const state: LegacyState = { home, exists: fs.existsSync(home), sessions: [], unreadable: [], completed: {} };
 	if (!state.exists) return state;
 	let ids: string[] = [];
 	try {
@@ -148,7 +161,14 @@ export function readLegacyState(home = legacyHome()): LegacyState {
 
 	const organize = readJson(path.join(home, "organize.json"));
 	if (organize.error) state.organizeError = organize.error;
-	else if (!organize.missing) state.organize = normalizeOrgData(organize.value);
+	else if (!organize.missing) {
+		state.organize = normalizeOrgData(organize.value);
+		// The completed marker (PARKED §5) postdates organize.ts here, so it is read from the raw file.
+		const raw = isRecord(organize.value) && isRecord(organize.value.sessions) ? organize.value.sessions : {};
+		for (const [id, v] of Object.entries(raw)) {
+			if (isRecord(v) && v.completed === true) state.completed[id] = typeof v.completedAt === "number" && Number.isFinite(v.completedAt) ? v.completedAt : 0;
+		}
+	}
 
 	const scheduler = readJson(path.join(home, "scheduler.json")).value;
 	if (isRecord(scheduler)) {
@@ -156,6 +176,14 @@ export function readLegacyState(home = legacyHome()): LegacyState {
 		state.scheduler = { maxConcurrent: n };
 		if (scheduler.paused === true) state.scheduler.paused = true;
 		if (typeof scheduler.stopWhenQueueDone === "boolean") state.scheduler.stopWhenQueueDone = scheduler.stopWhenQueueDone;
+		if (isRecord(scheduler.budget)) {
+			const budget: NonNullable<LegacyScheduler["budget"]> = {};
+			for (const w of ["hour", "day", "week"] as const) {
+				const cap = scheduler.budget[w];
+				if (typeof cap === "number" && Number.isFinite(cap) && cap > 0) budget[w] = cap;
+			}
+			if (Object.keys(budget).length) state.scheduler.budget = budget;
+		}
 	}
 
 	const launcher = readJson(path.join(home, "launcher.json")).value;
@@ -166,6 +194,7 @@ export function readLegacyState(home = legacyHome()): LegacyState {
 		if (str(launcher.model)) out.model = String(launcher.model).trim();
 		if (str(launcher.service)) out.service = String(launcher.service);
 		if (str(launcher.mode)) out.mode = String(launcher.mode);
+		if (launcher.worktree === "auto" || launcher.worktree === "always" || launcher.worktree === "never") out.worktree = launcher.worktree;
 		state.launcher = out;
 	}
 

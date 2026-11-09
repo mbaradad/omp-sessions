@@ -15,11 +15,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { type AoClient, AoError, type AoSchemas, type AoSpawnRequest, gitRoot, nativeSessionFile, switchyardHome, unwrap } from "../ao/client";
 import type { PlanOp, PlannerOpName, PlannerOps } from "../planner/types";
 import { ompPaths, locateTranscript } from "../shared/omp-paths";
-import { emptyOrgData, normalizeOrgData, type OrgData, type Priority } from "../shared/organize";
+import { emptyOrgData, type OrgData, type Priority } from "../shared/organize";
 import { type PermissionMode, permissionModeInArgs, permissionModeOf } from "../shared/permissions";
 import type { TaskQueue } from "../shared/protocol";
 import { graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "./graft";
 import { type LegacySession, type LegacyState, legacyHome, readLegacyState } from "./legacy";
+import { isRecord } from "../shared/transcript-files";
 
 type AoApprovalMode = NonNullable<AoSpawnRequest["approvalMode"]>;
 
@@ -44,6 +45,8 @@ export interface LedgerSession {
 	importedMessages?: number;
 	/** Its old task queue is a planner lane now (or had nothing to import). */
 	queueImported?: boolean;
+	/** Its old queue's `after` dependencies are on the lane (PARKED §1). */
+	afterImported?: boolean;
 	spawnedAt: number;
 	updatedAt: number;
 }
@@ -119,9 +122,9 @@ const SPAWN_REQUEST_PREFIX = "switchyard-migrate:";
  * Planner edits that recreate an old task queue as the session's lane, in order. The lane starts
  * paused: a migration never starts work by itself (a future `startAt` the user set still arms it).
  * Done and skipped tasks keep their status; running, failed and pending ones come back pending, a
- * failure's reason in the notes.
+ * failure's reason in the notes. A session marked completed (PARKED §5) gives a completed lane.
  */
-export function queueImportOps(lane: string, title: string, queue: TaskQueue, priority: Priority | undefined, now = Date.now()): PlanOp[] {
+export function queueImportOps(lane: string, title: string, queue: TaskQueue, priority: Priority | undefined, now = Date.now(), completed = false): PlanOp[] {
 	const ops: PlanOp[] = [{ op: "lane.add", id: lane, title, session: lane, autoRun: false, ...(priority && priority !== "normal" && { priority }) }];
 	queue.tasks.forEach((t, i) => {
 		const ref = `old${i}`;
@@ -141,6 +144,7 @@ export function queueImportOps(lane: string, title: string, queue: TaskQueue, pr
 		if (t.status === "skipped") ops.push({ op: "skip", id: `@${ref}` });
 	});
 	if (queue.startAt && queue.startAt > now) ops.push({ op: "lane.startAt", id: lane, at: queue.startAt });
+	if (completed) ops.push({ op: "lane.complete", id: lane, completed: true });
 	return ops;
 }
 
@@ -247,14 +251,24 @@ export function planSessions(state: LegacyState, ledger: Ledger, opts: { session
 }
 
 /**
- * Merges the old organization into `existing` (entries already there win). `idMap`: old id → AO id.
- * An adopted session's pin is not kept here: the adoption pinned it in AO.
+ * Merges the old organization into `existing` (the parsed `~/.switchyard/organize.json`, kept as it is,
+ * fields this version does not know included; only what is missing is added). `idMap`: old id → AO id.
+ * An adopted session's pin is not kept here: the adoption pinned it in AO. `completed` (old id →
+ * completedAt, 0 when unknown) adds the PARKED §5 marker.
  */
-export function mergeOrganize(existing: OrgData | undefined, legacy: OrgData, idMap: Readonly<Record<string, string>>): { data: OrgData; groups: number; sessions: number } {
-	const data = existing ? normalizeOrgData(existing) : emptyOrgData();
+export function mergeOrganize(existing: unknown, legacy: OrgData, idMap: Readonly<Record<string, string>>, completed: Readonly<Record<string, number>> = {}): { data: OrgData; groups: number; sessions: number } {
+	const base: Record<string, unknown> = isRecord(existing) ? structuredClone(existing) : {};
+	const data = {
+		...emptyOrgData(),
+		...base,
+		groups: Array.isArray(base.groups) ? base.groups : [],
+		lanes: Array.isArray(base.lanes) ? base.lanes : [],
+		sessions: isRecord(base.sessions) ? base.sessions : {},
+		collapsed: isRecord(base.collapsed) ? base.collapsed : {},
+	} as OrgData;
 	let groups = 0;
 	let sessions = 0;
-	const groupIds = new Set(data.groups.map(g => g.id));
+	const groupIds = new Set(data.groups.map(g => (isRecord(g) ? g.id : undefined)));
 	for (const g of legacy.groups) {
 		if (groupIds.has(g.id)) continue;
 		data.groups.push({ ...g });
@@ -262,15 +276,17 @@ export function mergeOrganize(existing: OrgData | undefined, legacy: OrgData, id
 		groups++;
 	}
 	if (!data.lanes.length && legacy.lanes.length) data.lanes = legacy.lanes.map(l => ({ ...l }));
-	for (const [oldId, entry] of Object.entries(legacy.sessions)) {
+	const ids = new Set([...Object.keys(legacy.sessions), ...Object.keys(completed)]);
+	for (const oldId of ids) {
+		const at = completed[oldId];
+		const entry: Record<string, unknown> = { ...legacy.sessions[oldId], ...(at !== undefined && { completed: true, ...(at > 0 && { completedAt: at }) }) };
 		const id = idMap[oldId] ?? oldId;
 		// An earlier run, before this session was adopted, kept its entry under the old id: it moves now.
 		if (id !== oldId && data.sessions[oldId] && JSON.stringify(data.sessions[oldId]) === JSON.stringify(entry)) delete data.sessions[oldId];
 		if (data.sessions[id]) continue;
-		const { pinned: _pinned, ...rest } = entry;
-		const kept = idMap[oldId] ? rest : entry;
-		if (Object.keys(kept).length) {
-			data.sessions[id] = { ...kept, ...(kept.tags && { tags: [...kept.tags] }) };
+		if (idMap[oldId]) delete entry.pinned;
+		if (Object.keys(entry).length) {
+			data.sessions[id] = structuredClone(entry);
 			sessions++;
 		}
 	}
@@ -287,6 +303,9 @@ function droppedItems(state: LegacyState): string[] {
 	if (state.launcher?.ompPath) out.push(`launcher.json ompPath ${state.launcher.ompPath}: AO finds omp on PATH`);
 	if (state.launcher?.extraArgs?.length) out.push(`launcher.json extraArgs ${state.launcher.extraArgs.join(" ")}: AO launches omp itself`);
 	if (state.scheduler?.stopWhenQueueDone !== undefined) out.push("scheduler.json stopWhenQueueDone: AO hibernates idle sessions itself");
+	for (const name of ["limits.json", "spend.json"]) if (has(name)) out.push(`${name}: usage holds and spend history of the old scheduler (the planner keeps its own)`);
+	const worktrees = state.sessions.filter(s => s.worktree).length;
+	if (worktrees) out.push(`sessions/*/worktree.json (${worktrees}): old per-session worktree records; adopted sessions run in AO workspaces`);
 	for (const name of ["runtime", "slots", "bridge", "server.log", "server.pid", "vscode-window.json"]) if (has(name)) out.push(`${name}: old server runtime state`);
 	out.push("sessions/*/changes.jsonl, blobs/: old change snapshots (checkpoints start fresh); left in place");
 	return out;
@@ -443,6 +462,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	if (state.launcher?.mode && permissionModeOf(state.launcher.mode)) legacyConfig.mode = String(permissionModeOf(state.launcher.mode));
 	if (state.launcher?.model) legacyConfig.model = state.launcher.model;
 	if (state.launcher?.service === "off") legacyConfig.service = "off";
+	if (state.launcher?.worktree) legacyConfig.worktree = state.launcher.worktree;
 	report.dropped = droppedItems(state);
 
 	log(`${opts.apply ? "Migrating" : "Dry run: would migrate"} ${source} → AO + ${home}`);
@@ -498,13 +518,13 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	// A dry run counts the sessions it would adopt as adopted (their AO ids are not known yet).
 	if (!opts.apply) for (const a of actions) if (a.kind === "adopt") idMap[a.id] = `<AO id of ${a.id}>`;
 	if (state.organize) {
-		let existing: OrgData | undefined;
+		let existing: unknown;
 		try {
-			existing = normalizeOrgData(JSON.parse(fs.readFileSync(organizeFile, "utf8")));
+			existing = JSON.parse(fs.readFileSync(organizeFile, "utf8"));
 		} catch {
 			existing = undefined;
 		}
-		const merged = mergeOrganize(existing, state.organize, idMap);
+		const merged = mergeOrganize(existing, state.organize, idMap, state.completed);
 		const changed = JSON.stringify(merged.data) !== JSON.stringify(existing ?? emptyOrgData());
 		report.organize = { groups: merged.groups, sessions: merged.sessions, written: opts.apply && changed };
 		if (opts.apply && changed) {
@@ -558,7 +578,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 			const existing = await opts.planner.request("getQueue", { id: entry.aoSessionId });
 			if (!existing.tasks.length) {
 				beforeWrite();
-				await opts.planner.request("edit", { ops: queueImportOps(entry.aoSessionId, s.title, s.queue, state.organize?.sessions[s.id]?.priority) });
+				await opts.planner.request("edit", { ops: queueImportOps(entry.aoSessionId, s.title, s.queue, state.organize?.sessions[s.id]?.priority, Date.now(), s.id in state.completed) });
 			}
 			entry.queueImported = true;
 			saveLedger();
@@ -569,11 +589,45 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 			log(`queue of ${s.id}: the planner refused it (${errorText(err)})`);
 		}
 	}
+	// Dependencies between old queues (PARKED §1) once every lane exists: lane-level `after` on AO ids. A
+	// dependency whose session has no queue is a finished queue and is left out; one that is gone, or can
+	// never be adopted (no transcript), is dropped with a note: the lane is paused anyway.
+	const neverAdopted = new Set(actions.filter(a => a.kind === "skip" && !/busy/.test(a.reason)).map(a => a.id));
+	for (const s of state.sessions) {
+		const entry = ledger.sessions[s.id];
+		if (!s.after || (opts.only && !opts.only.includes(s.id))) continue;
+		if (!opts.apply) {
+			log(`queue of ${s.id}: waits for ${s.after.join(", ")} (becomes lane dependencies)`);
+			continue;
+		}
+		if (!entry?.queueImported || entry.afterImported || !opts.planner) continue;
+		const dropped = s.after.filter(d => neverAdopted.has(d) || !state.sessions.some(x => x.id === d));
+		const deps = s.after.filter(d => !dropped.includes(d));
+		const unresolved = deps.filter(d => ledger.sessions[d]?.state !== "done" || (state.sessions.some(x => x.id === d && x.queue) && !ledger.sessions[d].queueImported));
+		if (unresolved.length) {
+			log(`queue of ${s.id}: waits for ${unresolved.join(", ")}, not migrated yet; run migrate --apply again after them`);
+			continue;
+		}
+		const lanes = deps.filter(d => ledger.sessions[d].queueImported).map(d => ledger.sessions[d].aoSessionId);
+		if (dropped.length) log(`queue of ${s.id}: dependency on ${dropped.join(", ")} dropped (deleted or never adopted)`);
+		try {
+			if (lanes.length) {
+				beforeWrite();
+				await opts.planner.request("queue", { id: entry.aoSessionId, ops: [{ op: "after", ids: lanes }] });
+			}
+			entry.afterImported = true;
+			saveLedger();
+			log(`queue of ${s.id}: waits for lane(s) ${lanes.join(", ") || "(none left: their queues were finished)"}`);
+		} catch (err) {
+			log(`queue of ${s.id}: the planner refused its dependencies (${errorText(err)})`);
+		}
+	}
 	if (queues.waiting) log(`${queues.waiting} task queue(s) wait for the planner: run migrate --apply again once it runs`);
 	if (opts.apply) report.queues = queues;
 	if (state.scheduler && !ledger.schedulerImported) {
-		const set = { maxConcurrent: state.scheduler.maxConcurrent, ...(state.scheduler.paused && { paused: true }) };
-		const text = `max ${set.maxConcurrent || "unlimited"} at once${set.paused ? ", paused" : ""}`;
+		const set = { maxConcurrent: state.scheduler.maxConcurrent, ...(state.scheduler.paused && { paused: true }), ...(state.scheduler.budget && { budget: state.scheduler.budget }) };
+		const budget = state.scheduler.budget ? Object.entries(state.scheduler.budget).map(([w, usd]) => `${usd} USD/${w}`).join(", ") : "";
+		const text = `max ${set.maxConcurrent || "unlimited"} at once${set.paused ? ", paused" : ""}${budget ? `, budget ${budget}` : ""}`;
 		if (!opts.apply) log(`scheduler.json: ${text} would go to the planner`);
 		else if (opts.planner) {
 			beforeWrite();
