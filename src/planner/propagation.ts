@@ -13,7 +13,7 @@
 //   step is idempotent (a merge whose target is already an ancestor is done), so a planner restart
 //   mid-propagation finishes it exactly once.
 import * as fs from "node:fs";
-import { abortMerge, changesBetween, commitAll, git, isAncestor, merge, mergeInProgress, revParse, seedBranch, withRepoLock, worktreeOf } from "./git";
+import { abortMerge, changesBetween, commitAll, currentBranch, git, isAncestor, merge, mergeInProgress, revParse, seedBranch, withRepoLock, worktreeOf } from "./git";
 import { requeueForFollowUp, resolveNote } from "./engine";
 import type { EdgeSync, PlanState, Task } from "./types";
 
@@ -80,8 +80,9 @@ export class Propagation {
 	 */
 	async prepareSpawn(t: Task, repo: string): Promise<SeedResult> {
 		const parents = this.gitParents(t, repo);
-		if (!parents.length) return {};
-		const branch = childBranch(t.id);
+		// Always an explicit branch: without one AO renames the session's branch shortly after start, which races with the agent's first commit.
+		const branch = await this.freeBranch(repo, childBranch(t.id));
+		if (!parents.length) return { branch };
 		const heads = parents.map(p => ({ branch: p.git?.branch as string, head: p.git?.head as string }));
 		const tip = await revParse(repo, `refs/heads/${branch}`);
 		const { conflicts } = await withRepoLock(repo, () => seedBranch(repo, branch, heads, b => `switchyard: merge ${b} into ${t.title.slice(0, 80)}`));
@@ -102,12 +103,21 @@ export class Propagation {
 		return { branch, sync, ...(notes.length ? { followUp: notes.join("\n\n") } : {}) };
 	}
 
+	/** `base`, or `base-2`, `base-3`… when an earlier session of the task still has the branch checked out (AO refuses a branch that is checked out elsewhere). */
+	private async freeBranch(repo: string, base: string): Promise<string> {
+		for (let n = 1; n < 100; n++) {
+			const name = n === 1 ? base : `${base}-${n}`;
+			if (!(await worktreeOf(repo, name).catch(() => undefined))) return name;
+		}
+		return `${base}-${Date.now().toString(36)}`;
+	}
+
 	/**
 	 * A task that runs in a session that already exists (a client spawned it, or its lane continues it):
 	 * records the session's branch as the task's and merges its parents' committed work into that worktree
 	 * before the prompt goes out (a branch can't be seeded any more, so the parents are merged in).
 	 */
-	prepareExisting(t: Task, repo: string, branch: string): Promise<void> {
+	prepareExisting(t: Task, repo: string, branch: string, workspace?: string): Promise<void> {
 		return this.serial(async () => {
 			const parents = this.gitParents(t, repo);
 			const live = this.task(t.id);
@@ -115,9 +125,9 @@ export class Propagation {
 			if (!live.git) {
 				this.host.commit(s => {
 					const x = s.tasks.find(y => y.id === t.id);
-					if (x) x.git = { repo, branch };
+					if (x) x.git = { repo, branch, ...(workspace ? { worktree: workspace } : {}) };
 				});
-			} else if (live.git.branch !== branch) return;
+			} else if (live.git.branch !== branch && !workspace) return;
 			for (const p of parents) {
 				const head = p.git?.head as string;
 				const edge = this.task(t.id)?.sync?.[p.id];
@@ -129,24 +139,32 @@ export class Propagation {
 	}
 
 	/** After AO created the session: records the task's branch and worktree. */
-	async recordSession(id: string, repo: string, branch: string): Promise<void> {
-		const worktree = await worktreeOf(repo, branch).catch(() => undefined);
+	async recordSession(id: string, repo: string, branch: string, workspace?: string): Promise<void> {
+		// AO's own answer for the folder when it gave one; the branch is what is checked out there now.
+		const worktree = workspace ?? (await worktreeOf(repo, branch).catch(() => undefined));
+		const actual = worktree ? ((await currentBranch(worktree)) ?? branch) : branch;
 		this.host.commit(s => {
 			const t = s.tasks.find(x => x.id === id);
 			if (!t) return;
-			t.git = { ...t.git, repo, branch, ...(worktree ? { worktree } : {}) };
+			t.git = { ...t.git, repo, branch: actual, ...(worktree ? { worktree } : {}) };
 		});
 	}
 
 	/** The worktree of a git task (looked up again when it moved or wasn't known yet). */
 	private async worktree(t: Task): Promise<string | undefined> {
 		if (!t.git) return undefined;
-		if (t.git.worktree && fs.existsSync(t.git.worktree)) return t.git.worktree;
-		const found = await worktreeOf(t.git.repo, t.git.branch).catch(() => undefined);
-		if (found) this.host.commit(s => {
-			const x = s.tasks.find(y => y.id === t.id);
-			if (x?.git) x.git.worktree = found;
-		});
+		const found = t.git.worktree && fs.existsSync(t.git.worktree) ? t.git.worktree : await worktreeOf(t.git.repo, t.git.branch).catch(() => undefined);
+		if (!found) return undefined;
+		// Follow the worktree's HEAD, not the cached name: AO may have renamed the session branch since.
+		const branch = await currentBranch(found);
+		if (found !== t.git.worktree || (branch && branch !== t.git.branch)) {
+			this.host.commit(s => {
+				const x = s.tasks.find(y => y.id === t.id);
+				if (!x?.git) return;
+				x.git.worktree = found;
+				if (branch) x.git.branch = branch;
+			});
+		}
 		return found;
 	}
 

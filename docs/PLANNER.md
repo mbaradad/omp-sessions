@@ -248,6 +248,12 @@ there; its worktree creation and `omp/` branches are superseded by AO's worktree
 Applies to tasks that run in a git project (AO gives each such session its own worktree). A task with
 other `cwd`/standalone sessions only receives its parents' results.
 
+0. **Explicit branch, followed by HEAD.** Every git task is spawned with an explicit `branch` (roots included:
+   `switchyard/<task id>`, `-2`, `-3`… when an earlier session of the task still has it checked out). Without one
+   AO renames the session branch (`ao/<slug-of-prompt>/root`) shortly after start, which races with the agent's
+   first commit (test-infra: 3 of 8 runs failed to commit; 24/24 clean with an explicit branch). The planner
+   takes the worktree path from AO (`workspacePath`) and reads the branch from the worktree's HEAD whenever it
+   works with it, so a rename later on is followed.
 1. **One worktree per task.** A first-time task is spawned by AO on a branch the planner seeds: its first
    parent's committed head (`switchyard/<task id>`), further parents merged in a temporary worktree. AO
    checks that existing branch out for the session (`spawn.branch`). Roots use AO's own `ao/<slug>/root`.

@@ -3,6 +3,7 @@
 // in their prompt, a planner restart while B and C run (nothing dispatched twice), a lane whose second
 // task continues the first one's AO session, and a scheduled start.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -150,4 +151,30 @@ test("graph propagation on a real AO daemon: children branch from the parent's c
 	assert.equal(fs.readFileSync(path.join(b.git?.worktree as string, "x.txt"), "utf8").trim(), "A2");
 	assert.equal((await userPrompts(task(p, "PB").session as string)).length, 1);
 	assert.equal(task(p, "PB").session, b.session);
+});
+
+test("propagation with an agent that really edits and merges: a conflicting parent change is resolved by the child agent's own `git merge`", { skip }, async () => {
+	const file = path.join(dir, "conflict.json");
+	const p = startPlanner(file);
+	p.setConfig({ maxConcurrent: 0 });
+	// What the planner asks of a child on a conflict, as the fake agent runs it.
+	ao.setFakeRules([{ match: "conflicts with yours in .*\\n\\s*Merge it into your branch: run `git merge (\\S+)`", script: "bash git merge --no-edit $1\nresolve union\ncommit resolved\necho resolved $1" }]);
+	const options = { project: projectId };
+	p.edit([
+		{ op: "add", ref: "a", task: { title: "CA", notes: "write y.txt A1\ncommit a1\necho a-done", options } },
+		{ op: "add", task: { title: "CB", notes: "append y.txt from-B\ncommit b1\necho b-done", after: ["@a"], options } },
+	]);
+	await until("CB done", () => task(p, "CB").status === "done");
+	const a = task(p, "CA");
+	const b = task(p, "CB");
+	assert.equal(b.git?.branch?.startsWith("switchyard/"), true);
+	// A changes the same line again; B's edit overlaps it: the planner asks B to merge.
+	p.edit([{ op: "update", id: a.id, notes: "write y.txt A2\ncommit a2\necho a-again" }, { op: "requeue", id: a.id }]);
+	await until("edge resolved by the agent", () => task(p, "CB").sync?.[a.id]?.state === "merged", 90_000);
+	const text = fs.readFileSync(path.join(b.git?.worktree as string, "y.txt"), "utf8");
+	assert.match(text, /A2/);
+	assert.match(text, /from-B/);
+	assert.doesNotMatch(text, /<<<<<<<|>>>>>>>/);
+	// The merge finished: nothing is left in progress in the child's worktree.
+	assert.equal(spawnSync("git", ["-C", b.git?.worktree as string, "rev-parse", "-q", "--verify", "MERGE_HEAD"]).status, 1);
 });

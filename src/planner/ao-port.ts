@@ -83,7 +83,9 @@ export interface AoPort {
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
 	/** The git branch and project folder of an existing session (undefined parts: not a git project session). */
-	sessionGit(session: string): Promise<{ repo?: string; branch?: string }>;
+	sessionGit(session: string): Promise<{ repo?: string; branch?: string; workspace?: string }>;
+	/** The folder the session's agent works in (its git worktree); undefined when AO can't say. */
+	workspacePath(session: string): Promise<string | undefined>;
 	/** Folder of an AO project (the repo's main checkout). */
 	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
@@ -216,7 +218,11 @@ export function aoPort(ao: AoClient): AoPort {
 		async sessionGit(session) {
 			const view = await ao.getSession(session);
 			const repo = view.projectId ? (await ao.listProjects()).find(p => p.id === view.projectId)?.path : undefined;
-			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}) };
+			const workspace = await ao.workspacePath(session).catch(() => undefined);
+			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}), ...(workspace ? { workspace } : {}) };
+		},
+		async workspacePath(session) {
+			return ao.workspacePath(session).catch(() => undefined);
 		},
 		async projectPath(id) {
 			return (await ao.listProjects()).find(p => p.id === id)?.path;

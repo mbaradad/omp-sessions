@@ -194,7 +194,11 @@ export class FakeAo implements AoPort {
 
 	async sessionGit(session: string) {
 		const s = this.sessions.get(session);
-		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch } : {};
+		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch, ...(s.worktree ? { workspace: s.worktree } : {}) } : {};
+	}
+
+	async workspacePath(session: string) {
+		return this.sessions.get(session)?.worktree;
 	}
 
 	async projectPath(id: string) {

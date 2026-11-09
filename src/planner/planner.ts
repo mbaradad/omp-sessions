@@ -462,9 +462,9 @@ export class Planner {
 			if (opts.model) await this.checkModel(ao, opts.model);
 			// A session that exists already (a client spawned it): the parents' work is merged into its worktree.
 			if (session && this.propagation.gitParents(task).length) {
-				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string });
+				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string; workspace?: string });
 				const sessionRepo = info.repo ? await gitRoot(info.repo) : undefined;
-				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch);
+				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch, info.workspace);
 			}
 			if (!session) {
 				let projectId: string | undefined = opts.project;
@@ -637,7 +637,7 @@ export class Planner {
 		if (t.run.via === "spawn" && !t.run.session) {
 			// One idempotent sequence (spawn, options, mode, prompt); a replay after a crash finds the same session and turn.
 			const { session, branch, turn } = await ao.startSession({ ...(t.run.spawn as unknown as SessionStart), key: t.run.key, prompt: t.run.prompt });
-			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
+			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch, await ao.workspacePath(session));
 			// The lane learns its session now (not when the task ends): `show`/`wait` on the lane follow it.
 			this.commit(s => {
 				const x = s.tasks.find(y => y.id === id);

@@ -309,3 +309,24 @@ test("`rerun` on a conflict edge asks the agent to merge (edge resolving) and se
 	ao.finishTurn(bSession, "completed", "resolved");
 	await until("edge merged", () => byTitle(p, "B").sync?.[a.id]?.state === "merged");
 });
+
+test("every git task starts on an explicit branch, and a branch AO renames afterwards is followed through the worktree's HEAD", async t => {
+	const repo = scratchRepo(t);
+	const ao = new FakeAo(repo);
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", ref: "a", task: { title: "A", options: { cwd: repo } } }, { op: "add", task: { title: "B", after: ["@a"], options: { cwd: repo } } }]);
+	const aSession = await sentSession(p, "A");
+	const a = byTitle(p, "A");
+	assert.equal(ao.sessions.get(aSession)?.spawnBody.branch, `switchyard/${a.id}`, "a root task gets its own branch too (AO would rename its own)");
+	assert.equal(a.git?.branch, `switchyard/${a.id}`);
+	// AO renames the branch after the planner recorded it (the slug of the prompt).
+	const wt = ao.worktreeOf(aSession);
+	git(wt, "branch", "-m", "ao/a-slug/root");
+	write(ao, aSession, "x.txt", "A1\n");
+	ao.finishTurn(aSession, "completed", "A edited x.txt");
+	await until("B sent", () => sent(p, "B"));
+	assert.equal(byTitle(p, "A").git?.branch, "ao/a-slug/root", "the planner follows HEAD, not its cached name");
+	assert.equal(read(ao, sent(p, "B") as string, "x.txt"), "A1\n", "the child still got the parent's commit");
+	assert.equal(byTitle(p, "B").sync?.[a.id]?.state, "in-sync");
+});
