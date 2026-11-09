@@ -4,7 +4,7 @@ import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
 import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
+import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/ao/mobile";
 
 const T = "2026-11-09T15:00:00Z";
 

@@ -9,7 +9,7 @@ import { HostConnection } from "./host-conn";
 import { findOmp, ompSearchDirs } from "./launch";
 import type { SessionMeta } from "./protocol";
 import { parseConfigValue, readFlags, readLaunchArgs, setLaunchModel } from "./session-config";
-import { readSwitchyardConfig } from "./switchyard-config";
+import { readSwitchyardConfig } from "../ao/config";
 import { spawnTarget } from "./win-spawn";
 
 export interface ModelEntry {

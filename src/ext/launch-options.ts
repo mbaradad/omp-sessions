@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { THINKING_LEVELS } from "../planner/types";
 import { type ModelList, listModels } from "../shared/models";
 import { PERMISSION_MODE_INFO, type PermissionMode } from "../shared/permissions";
-import { readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { readSwitchyardConfig, writeSwitchyardConfig } from "../ao/config";
 import { pickPermissionMode } from "./permissions";
 import { plain } from "./plain";
 import { splitArgs } from "./session-view";

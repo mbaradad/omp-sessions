@@ -6,7 +6,7 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import type { AoClient } from "../ao/client";
-import { ANDROID_APP_URL, IOS_APP_URL, type PairingStatus, pairingLink, pairingPending, reachSummary } from "../shared/phone-pairing";
+import { ANDROID_APP_URL, IOS_APP_URL, type PairingStatus, pairingLink, pairingPending, reachSummary } from "../ao/mobile";
 import { qrSvg } from "../shared/remote-qr";
 import type { OmpApi } from "./api";
 import { plain } from "./plain";
