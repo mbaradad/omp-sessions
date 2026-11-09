@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Dependencies, verified on the planning layer.** A task that waits for others (`new --task … --after <session>`, `queue <session> after <s>…|off`, *Dependencies…*, Hermes `switchyard_session_start`/`switchyard_queue_add` `after`) stays blocked until its parents are done or skipped, then starts by itself; cycles, itself and unknown sessions are refused with the cycle path. A parent that failed keeps it blocked ("a dependency failed: …") until retried, skipped or its session is marked completed: **marking a session completed now releases what waits for it** (the old "completed counts as finished" rule).
+- `show --json`, `ls --json` and `new --json` carry `after` (the sessions a session waits for) and `blockedBy` (the unfinished ones), as before; `show` prints `waits for: <ids>` and `ls` says `blocked` instead of a queue position.
+- The Sessions view shows *waits for <session> +N* in the description of a session whose queued tasks are blocked.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.

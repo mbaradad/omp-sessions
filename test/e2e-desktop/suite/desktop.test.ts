@@ -253,6 +253,15 @@ describe("AO views", () => {
 			const theirs = plan?.tasks.find(t => t.lane === other)?.id;
 			assert.deepEqual(plan?.tasks.find(t => t.lane === id)?.after, [theirs]);
 			await waitFor("queue summary with the dependency", () => JSON.stringify(meta()?.queue?.after) === JSON.stringify([other]) && JSON.stringify(meta()?.queue?.blockedBy) === JSON.stringify([other]), 10_000);
+			// The Sessions tree says what the blocked session waits for.
+			const describe = async () => {
+				await api.sessionTree.getChildren();
+				const node = api.sessionTree.findSession(id);
+				return node ? String(api.sessionTree.getTreeItem(node).description) : "(not in the tree)";
+			};
+			await waitFor("the tree description names the dependency", async () => /waits for other/.test(await describe()), 10_000).catch(async err => {
+				throw new Error(`${err instanceof Error ? err.message : String(err)}: ${await describe()}`);
+			});
 			// The planner refuses a cycle; the error says so.
 			await assert.rejects(api.sessions.setDependencies(other, [id]), /cycle|circular|itself|loop/i);
 			assert.equal(await api.sessions.setDependencies(id, []), 1);

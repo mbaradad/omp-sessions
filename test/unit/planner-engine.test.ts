@@ -87,6 +87,28 @@ describe("graph readiness", () => {
 		assert.match(byTitle(ev.views, "B").waitReason ?? "", /\(missing\)/);
 	});
 
+	test("a failed dependency keeps blocking and says so; marking its queue completed releases the dependents, running work never does", () => {
+		const lane = "l_0000000002";
+		const { s, refs } = plan([
+			{ op: "lane.add", id: lane, title: "Q" },
+			{ op: "add", ref: "a", task: { title: "A", lane } },
+			{ op: "add", ref: "b", task: { title: "B", after: ["@a"] } },
+		]);
+		const a = s.tasks.find(t => t.id === refs.a);
+		assert.ok(a);
+		startRun(s, a.id, { key: "k-a", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
+		const running = applyOps(s, [{ op: "lane.complete", id: lane, completed: true }], NOW).state;
+		assert.equal(byTitle(evaluate(running, ctx()).views, "B").state, "blocked", "running work is never finished");
+		finishRun(s, a.id, { kind: "error", error: { message: "boom" } }, NOW + 1000);
+		const failed = byTitle(evaluate(s, ctx()).views, "B");
+		assert.equal(failed.state, "blocked");
+		assert.match(failed.waitReason ?? "", /a dependency failed: A/);
+		const completed = applyOps(s, [{ op: "lane.complete", id: lane, completed: true }], NOW + 2000).state;
+		assert.equal(evaluate(completed, ctx(NOW + 2000)).dispatch.map(t => t.title).includes("B"), true, "completed counts as finished");
+		const undone = applyOps(completed, [{ op: "lane.complete", id: lane, completed: false }], NOW + 3000).state;
+		assert.equal(byTitle(evaluate(undone, ctx(NOW + 3000)).views, "B").state, "blocked");
+	});
+
 	test("self, unknown and cyclic dependencies are refused with the path", () => {
 		const { s, refs } = graph();
 		assert.throws(() => applyOps(s, [{ op: "after", id: refs.a, ids: [refs.a] }], NOW), /can't wait for itself/);

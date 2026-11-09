@@ -108,6 +108,7 @@ async function resumeAgent(client: AoClient, s: Session): Promise<boolean> {
 const STATE_COLOR: Record<AgentState, (s: string) => string> = { queued: c.blue, scheduled: c.blue, starting: c.dim, working: c.yellow, needs_input: c.magenta, idle: c.green, interrupted: c.red, stopped: c.dim };
 
 function stateText(s: Session): string {
+	if (s.lane?.blockedBy?.length && s.state === "queued") return c.blue("blocked");
 	if (s.lane?.waiting && s.state === "queued") return c.blue(`queued #${s.lane.waiting.position}`);
 	return STATE_COLOR[s.state](s.state === "needs_input" ? "needs input" : s.state);
 }
@@ -338,12 +339,12 @@ async function cmdNew(args: Args): Promise<number> {
 	}
 	const cwd = (await client.workspacePath(id).catch(() => undefined)) || project?.path || dir;
 	if (json) {
-		process.stdout.write(`${JSON.stringify({ id, started: !task || !startAt, title, cwd, ...(project ? { worktree: { path: cwd, ...(res.session.branch && { branch: res.session.branch }), repo: project.path } } : {}), ...(startAt ? { startAt } : {}) })}\n`);
+		process.stdout.write(`${JSON.stringify({ id, started: !task || !startAt, title, cwd, ...(project ? { worktree: { path: cwd, ...(res.session.branch && { branch: res.session.branch }), repo: project.path } } : {}), ...(startAt ? { startAt } : {}), ...(after.length ? { after } : {}) })}\n`);
 		return 0;
 	}
 	const label = `${id} ${title}`;
 	if (task) {
-		const when = startAt ? c.dim(`(starts ${new Date(startAt).toLocaleString()})`) : c.dim("(starts when a slot is free)");
+		const when = startAt ? c.dim(`(starts ${new Date(startAt).toLocaleString()}${after.length ? `, once ${after.join(", ")} finished` : ""})`) : after.length ? c.dim(`(starts once ${after.join(", ")} finished)`) : c.dim("(starts when a slot is free)");
 		process.stdout.write(`${c.blue("queued")} ${label} ${when}\n`);
 		return 0;
 	}
@@ -421,6 +422,7 @@ function printReport(r: CliReport): void {
 		process.stdout.write(c.dim(`answer: switchyard answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
 	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
+	if (r.blockedBy?.length) process.stdout.write(c.blue(`waits for: ${r.blockedBy.join(", ")}\n`));
 	if (r.upstream?.length && r.upstreamState && r.upstreamState !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstreamState] ?? c.dim)(`upstream ${r.upstreamState}`)} ${c.dim(r.upstream.map(e => `${e.parentSession ?? e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstreamState === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: switchyard plan sync ${r.id} --rerun`) : ""}\n`);
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);

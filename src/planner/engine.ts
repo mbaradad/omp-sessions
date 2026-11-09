@@ -310,11 +310,15 @@ export function effectivePriority(state: PlanState, task: Task): Priority {
 
 /**
  * A dependency counts as finished when it is done or skipped (a missing one never does). A done task
- * in git counts once its work is committed: children branch from that commit.
+ * in git counts once its work is committed: children branch from that commit. A pending or failed task
+ * whose queue the person marked completed (`lane.complete`: "nothing more to do here") counts too, so
+ * marking a session completed releases what waits for it; running work never does.
  */
-function resolved(byId: Map<string, Task>, id: string): boolean {
+function resolved(byId: Map<string, Task>, lanes: Map<string, Lane>, id: string): boolean {
 	const t = byId.get(id);
-	return !!t && (t.status === "skipped" || (t.status === "done" && !t.undone && (!t.git || !!t.git.head)));
+	if (!t) return false;
+	if (t.status === "skipped" || (t.status === "done" && !t.undone && (!t.git || !!t.git.head))) return true;
+	return (t.status === "pending" || t.status === "failed") && !!t.lane && lanes.get(t.lane)?.completed === true;
 }
 
 /** The AO session a run continues: the lane's, else the task's own from an earlier run; none with fresh context. */
@@ -999,7 +1003,7 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 			continue;
 		}
 		const lane = t.lane ? lanes.get(t.lane) : undefined;
-		const blockedBy = (t.after ?? []).filter(id => !resolved(byId, id));
+		const blockedBy = (t.after ?? []).filter(id => !resolved(byId, lanes, id));
 		if (blockedBy.length) extra.blockedBy = blockedBy;
 		const set = (state: TaskState, more: Partial<TaskView> = {}) => views.set(t.id, view(t, state, { ...extra, ...more }));
 		if (t.interrupted) {
