@@ -19,11 +19,13 @@ const out = path.resolve(positional[0] ?? path.join(root, "out"));
 
 /** What cli.js uses next to itself; the same files the extension copies into its runtime folder (RUNTIME_FILES in src/ext/server.ts). */
 const FILES = ["cli.js", "server.js", "host.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg", "omp-sessions.SKILL.md"];
+/** Folders `omp-sessions omp-extension install` copies from next to cli.js (G38): the omp extension modules and the `omp` shim. */
+const BUNDLE_DIRS = ["omp-extension", "omp-shim"];
 /** The Hermes plugin `omp-sessions hermes install` copies (PLUGIN_BUNDLE). */
 const PLUGIN = path.join("hermes-plugin", "omp-sessions");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const missing = [...FILES, path.join(PLUGIN, "plugin.yaml")].filter(f => !fs.existsSync(path.join(out, f)));
+const missing = [...FILES, ...BUNDLE_DIRS, path.join(PLUGIN, "plugin.yaml")].filter(f => !fs.existsSync(path.join(out, f)));
 if (missing.length) throw new Error(`missing in ${out}: ${missing.join(", ")} (run node build.mjs first)`);
 
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-pack-"));
@@ -31,6 +33,7 @@ try {
 	for (const f of FILES) fs.copyFileSync(path.join(out, f), path.join(stage, f));
 	fs.chmodSync(path.join(stage, "cli.js"), 0o755);
 	fs.cpSync(path.join(out, PLUGIN), path.join(stage, PLUGIN), { recursive: true, filter: f => !f.includes("__pycache__") });
+	for (const dir of BUNDLE_DIRS) fs.cpSync(path.join(out, dir), path.join(stage, dir), { recursive: true });
 	fs.copyFileSync(path.join(root, "LICENSE"), path.join(stage, "LICENSE"));
 	// readHostVersion (src/shared/launch.ts) reads the version from the package.json next to host.js.
 	const manifest = {

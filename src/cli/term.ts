@@ -82,10 +82,6 @@ export function duration(ms: number): string {
 	return `${Math.round(h / 24)}d`;
 }
 
-export function shortId(id: string): string {
-	return id.slice(0, 8);
-}
-
 /** Asks a question on the TTY; resolves with the answer (empty string on EOF). */
 export function ask(question: string): Promise<string> {
 	const { promise, resolve } = Promise.withResolvers<string>();
@@ -113,14 +109,6 @@ export async function confirm(question: string, assumeYes = false): Promise<bool
 export function errorLine(message: string): void {
 	process.stderr.write(`${c.red("omp-sessions:")} ${message}\n`);
 }
-
-export const STATUS_COLOR: Record<string, (s: string) => string> = {
-	starting: c.cyan,
-	working: c.yellow,
-	waiting: c.magenta,
-	idle: c.green,
-	stopped: c.gray,
-};
 
 export const PRIORITY_MARK: Record<string, string> = { urgent: "!!", high: "! ", normal: "  ", low: "↓ " };
 

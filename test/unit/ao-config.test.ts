@@ -49,3 +49,22 @@ test("config.json hibernation: only on/off count, set and unset keep the rest, a
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("config.json omp: a write merges the nested omp object key by key; clearing extraArgs leaves other omp keys; the file path is the caller's", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sy-config-omp-"));
+	try {
+		const file = path.join(dir, "config.json");
+		fs.writeFileSync(file, JSON.stringify({ omp: { other: true, extraArgs: ["--old"] }, planner: { x: 1 } }));
+		writeSwitchyardConfig({ omp: { extraArgs: ["--profile", "work"] } }, file);
+		const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+		assert.deepEqual(raw, { omp: { other: true, extraArgs: ["--profile", "work"] }, planner: { x: 1 } });
+		writeSwitchyardConfig({ omp: { extraArgs: undefined } }, file);
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { omp: { other: true }, planner: { x: 1 } });
+		assert.deepEqual(readSwitchyardConfig(file), {}, "an omp object without extraArgs reads as unset");
+		writeSwitchyardConfig({ omp: undefined }, file);
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { planner: { x: 1 } }, "omp: undefined removes the whole object");
+		assert.deepEqual(fs.readdirSync(dir), ["config.json"], "atomic: no temp file left");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});

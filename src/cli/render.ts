@@ -1,90 +1,67 @@
-// Plain-terminal rendering of omp transcript messages and live events for `omp-sessions attach/tail`.
+// Plain-terminal rendering of AO conversations for `omp-sessions attach/tail`: messages and tool
+// activity in sequence order, and a follower that prints only what changed between two snapshots
+// (AO streams by rewriting the assistant message in place; its events only say "refetch").
+import type { AoActivity, AoConversation, AoMessage } from "../ao/client";
 import { c, oneLine, truncate } from "./term";
 
-function rec(v: unknown): Record<string, unknown> {
-	return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
+/** A timeline entry: a message or a tool activity, in conversation order. */
+export type Item = { kind: "message"; m: AoMessage } | { kind: "activity"; a: AoActivity };
 
-function str(v: unknown): string {
-	return typeof v === "string" ? v : "";
-}
-
-/** One-line description of a tool call: the command, path or first string argument. */
-export function toolSummary(name: string, args: unknown, width = 100): string {
-	const a = rec(args);
-	const pick = str(a.command) || str(a.path) || str(a.file_path) || str(a.pattern) || str(a.query) || str(a.url) || str(a.description) || str(Object.values(a).find(v => typeof v === "string"));
-	return truncate(oneLine(`${name}${pick ? ` ${pick}` : ""}`), width);
-}
-
-/** Text of a message's content (string or blocks). */
-export function textOf(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.map(b => rec(b))
-		.filter(b => b.type === "text")
-		.map(b => str(b.text))
-		.join("");
+export function timeline(conversation: AoConversation): Item[] {
+	const items: Item[] = [...conversation.messages.map(m => ({ kind: "message" as const, m })), ...conversation.activities.map(a => ({ kind: "activity" as const, a }))];
+	return items.sort((x, y) => (x.kind === "message" ? x.m.sequence : x.a.sequence) - (y.kind === "message" ? y.m.sequence : y.a.sequence));
 }
 
 const USER = () => c.cyan(c.bold("›"));
 const TOOL = () => c.dim("▸");
 
-/** Lines for one transcript message (no trailing newline). */
-export function renderMessage(raw: unknown, width = 100): string[] {
-	const m = rec(raw);
-	switch (m.role) {
-		case "user": {
-			const text = textOf(m.content).trim();
-			return text ? [`${USER()} ${c.bold(text)}`] : [];
-		}
-		case "assistant": {
-			const out: string[] = [];
-			for (const block of Array.isArray(m.content) ? m.content : []) {
-				const b = rec(block);
-				if (b.type === "text" && str(b.text).trim()) out.push(str(b.text).trimEnd());
-				else if (b.type === "toolCall") out.push(`  ${TOOL()} ${c.dim(toolSummary(str(b.name), b.arguments, width - 4))}`);
-			}
-			const error = str(m.errorMessage);
-			if (error) out.push(c.red(`  ✗ ${oneLine(error)}`));
-			return out;
-		}
-		case "toolResult":
-			return m.isError ? [c.red(`  ✗ ${str(m.toolName)}: ${truncate(oneLine(textOf(m.content)), width - 8)}`)] : [];
-		case "bashExecution":
-			return [`${c.dim("$")} ${str(m.command)}`, ...str(m.output).trimEnd().split("\n").slice(-20).map(l => c.dim(l))];
-		case "commandOutput":
-			return str(m.text) ? [c.dim(str(m.text).trimEnd())] : [];
-		case "notice": {
-			const color = m.level === "error" ? c.red : m.level === "warning" ? c.yellow : c.blue;
-			return [color(`ⓘ ${oneLine(str(m.message))}`)];
-		}
-		case "compactionSummary":
-			return [c.dim("── context compacted ──")];
+/** Lines for one tool activity as it starts (or as history); questions are the caller's (they get answered). */
+export function activityLines(a: AoActivity, width: number): string[] {
+	const failed = a.status === "failed";
+	switch (a.activityKind) {
+		case "command":
+		case "file_change":
+		case "mcp_tool":
+			return [failed ? c.red(`  ✗ ${truncate(oneLine(a.summary), width - 4)}`) : `  ${TOOL()} ${c.dim(truncate(oneLine(a.summary), width - 4))}`];
+		case "error":
+			return [c.red(`  ✗ ${oneLine(a.summary)}`)];
+		case "system":
+			return [c.blue(`ⓘ ${oneLine(a.summary)}`)];
 		default:
 			return [];
 	}
 }
 
+/** Lines for one whole message (history, `tail`). */
+export function messageLines(m: AoMessage): string[] {
+	const text = m.text.trim();
+	if (!text) return [];
+	return m.role === "user" ? [`${USER()} ${c.bold(text)}`] : text.split("\n");
+}
+
+export function itemLines(item: Item, width: number): string[] {
+	return item.kind === "message" ? messageLines(item.m) : activityLines(item.a, width);
+}
+
 /**
- * Incremental renderer for live host events: streams assistant text deltas, prints tool calls
- * as they start and failed results as they end.
+ * Prints a conversation as it changes: new messages and activities once, the growing tail of a
+ * streaming assistant message as it grows, and a tool that failed after it started.
  */
-export class LiveRenderer {
-	/** Mid-line: assistant text was streamed without a final newline. */
+export class ConversationFollower {
+	/** Characters of each message already printed. */
+	private readonly printed = new Map<string, number>();
+	private readonly activities = new Map<string, AoActivity["status"]>();
+	/** The message whose text is being streamed on the current line(s). */
+	private streaming: string | undefined;
 	private midLine = false;
-	private readonly toolNames = new Map<string, string>();
 
 	constructor(
 		/** Raw output sink (also for callers' own lines, after `endLine`). */
 		readonly write: (s: string) => void,
 		private readonly width: () => number,
+		/** User prompts typed here are on screen already. */
+		private readonly echoed: Set<string> = new Set(),
 	) {}
-
-	private line(s: string): void {
-		this.endLine();
-		this.write(`${s}\n`);
-	}
 
 	isMidLine(): boolean {
 		return this.midLine;
@@ -93,54 +70,55 @@ export class LiveRenderer {
 	endLine(): void {
 		if (this.midLine) this.write("\n");
 		this.midLine = false;
+		this.streaming = undefined;
 	}
 
-	message(raw: unknown): void {
-		for (const l of renderMessage(raw, this.width())) this.line(l);
+	private line(s: string): void {
+		this.endLine();
+		this.write(`${s}\n`);
 	}
 
-	/** One omp event frame (`{t:"event"}` payload). */
-	event(raw: unknown): void {
-		const ev = rec(raw);
-		switch (ev.type) {
-			case "message_update": {
-				const a = rec(ev.assistantMessageEvent);
-				if (a.type === "text_delta" && str(a.delta)) {
-					this.write(str(a.delta));
-					this.midLine = !str(a.delta).endsWith("\n");
-				}
-				return;
+	/** Marks everything in `conversation` as shown without printing it (history printed elsewhere, or skipped). */
+	seen(conversation: AoConversation): void {
+		for (const m of conversation.messages) this.printed.set(m.id, m.text.length);
+		for (const a of conversation.activities) this.activities.set(a.id, a.status);
+	}
+
+	/** Prints what `conversation` adds to what was shown. */
+	update(conversation: AoConversation): void {
+		for (const item of timeline(conversation)) {
+			if (item.kind === "activity") {
+				const { a } = item;
+				const before = this.activities.get(a.id);
+				this.activities.set(a.id, a.status);
+				if (before === undefined) for (const l of activityLines(a, this.width())) this.line(l);
+				else if (a.status === "failed" && before !== "failed" && (a.activityKind === "command" || a.activityKind === "mcp_tool" || a.activityKind === "file_change")) this.line(c.red(`  ✗ ${truncate(oneLine(a.summary), this.width() - 4)}`));
+				continue;
 			}
-			case "message_end": {
-				const m = rec(ev.message);
-				if (m.role === "assistant") {
-					this.endLine();
-					const error = str(m.errorMessage);
-					if (error) this.line(c.red(`  ✗ ${oneLine(error)}`));
-				} else if (m.role !== "toolResult") this.message(m);
-				return;
+			const { m } = item;
+			const done = this.printed.get(m.id);
+			if (m.role === "user") {
+				if (done !== undefined) continue;
+				this.printed.set(m.id, m.text.length);
+				if (this.echoed.delete(m.text.trim())) continue;
+				for (const l of messageLines(m)) this.line(l);
+				continue;
 			}
-			case "tool_execution_start": {
-				const name = str(ev.toolName);
-				this.toolNames.set(str(ev.toolCallId), name);
-				this.line(`  ${TOOL()} ${c.dim(toolSummary(name, ev.args, this.width() - 4))}`);
-				return;
+			if (done !== undefined && m.text.length <= done) {
+				if (!m.streaming && this.streaming === m.id) this.endLine();
+				continue;
 			}
-			case "tool_execution_end": {
-				const name = this.toolNames.get(str(ev.toolCallId)) ?? str(ev.toolName);
-				this.toolNames.delete(str(ev.toolCallId));
-				if (ev.isError) this.line(c.red(`  ✗ ${name}: ${truncate(oneLine(textOf(rec(ev.result).content)), this.width() - 8)}`));
-				return;
-			}
-			case "notice":
-				this.message({ role: "notice", level: ev.level, message: ev.message });
-				return;
-			case "auto_retry_start":
-				this.line(c.yellow(`ⓘ retrying: ${oneLine(str(ev.errorMessage))}`));
-				return;
-			case "command_output":
-				if (str(ev.text)) this.line(c.dim(str(ev.text).trimEnd()));
-				return;
+			const from = done ?? 0;
+			// A message earlier than the one streaming now (rare): print its new text on its own line.
+			if (this.streaming !== m.id) this.endLine();
+			let chunk = m.text.slice(from);
+			if (from === 0) chunk = chunk.replace(/^\s+/, "");
+			this.printed.set(m.id, m.text.length);
+			if (!chunk) continue;
+			this.write(chunk);
+			this.midLine = !chunk.endsWith("\n");
+			this.streaming = m.id;
+			if (!m.streaming) this.endLine();
 		}
 	}
 }
