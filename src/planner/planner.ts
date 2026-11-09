@@ -331,12 +331,23 @@ export class Planner {
 		// Tasks removed from the plan take their planner-made branches with them (when git agrees: merged, not checked out).
 		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch, t.title, t.id);
 		for (const e of res.effects) {
-			if (e.kind === "branches") void this.propagation.cleanKept();
+			if (e.kind === "branches") this.cleaning = this.propagation.cleanKept();
 			else if (e.kind === "sync") void this.propagation.sync(e.task);
 			else this.follow(e.task, 0);
 		}
 		this.schedule(0);
 		return { rev: this.state.rev, refs: res.refs };
+	}
+
+	/** The branch cleanup an edit started (`branch.clean`), for `editAndWait`. */
+	private cleaning: Promise<void> | undefined;
+
+	/** `edit`, and for `branch.clean` also waits until the cleanup is done, so the answer comes after its plan change. */
+	async editAndWait(ops: PlanOp[], rev?: number): Promise<{ rev: number; refs: Record<string, string> }> {
+		this.cleaning = undefined;
+		const res = this.edit(ops, rev);
+		if (this.cleaning) await this.cleaning;
+		return res;
 	}
 
 	/** Old `queue` op: QueueOps on a lane (or on the session lane of an AO session id). */

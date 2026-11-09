@@ -20,13 +20,18 @@ const configOptions = (current: { model?: string; thinking?: string; mode?: stri
 });
 
 /** Records every call the helper makes on the client; what AO answers is fixed, so only the helper's behaviour is under test. */
-function fakeAo(opts: { catalog?: string[]; ready?: boolean; turns?: number } = {}) {
+function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; refreshState?: "idle" | "queued" | "refreshing" | "error" }[]; ready?: boolean; turns?: number } = {}) {
+	let catalogCalls = 0;
 	const calls: string[] = [];
 	const state = { model: "anthropic/opus", thinking: "high", mode: "default" };
 	const sent: unknown[] = [];
 	const spawns: Record<string, unknown>[] = [];
 	const fake = {
-		agentModels: async () => (calls.push("agentModels"), { models: (opts.catalog ?? ["anthropic/opus", "anthropic/haiku", "zai/glm-4.5"]).map(id => ({ id })) }),
+		agentModels: async () => {
+			calls.push("agentModels");
+			const step = opts.catalogSteps?.[Math.min(catalogCalls++, opts.catalogSteps.length - 1)];
+			return { models: (step?.models ?? opts.catalog ?? ["anthropic/opus", "anthropic/haiku", "zai/glm-4.5"]).map(id => ({ id })), ...(step?.refreshState && { refreshState: step.refreshState }) };
+		},
 		projectForFolder: async (dir: string) => (calls.push(`projectForFolder ${dir}`), dir.includes("outside") ? undefined : { id: "repo", path: dir, name: "repo", kind: "single_repo", sessionPrefix: "repo", folderMissing: false }),
 		spawnSession: async (body: Record<string, unknown>) => (calls.push("spawnSession"), spawns.push(body), { session: { id: "repo-1" }, promptBytes: 0, systemPromptBytes: 0 }),
 		configOptions: async () => (calls.push("configOptions"), configOptions(state)),
@@ -256,6 +261,51 @@ test("daemonEnv: the Switchyard omp shim's folder goes first on the PATH of a da
 		assert.equal(withShim.PATH, `${path.join(home, "bin")}${path.delimiter}/usr/bin:/bin`);
 		// Not added twice when it is already there.
 		assert.equal(daemonEnv({ ...env, PATH: withShim.PATH }, "/r/running.json").PATH, withShim.PATH);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: a fresh daemon's empty, still-refreshing model catalog is waited out, not read as 'unknown model'", async () => {
+	const home = tmpHome();
+	try {
+		// What a daemon that just started answers: no models while omp lists them in the background, then the catalog.
+		const fresh = fakeAo({ catalogSteps: [{ models: [], refreshState: "refreshing" }, { models: [], refreshState: "refreshing" }, { models: ["anthropic/opus", "anthropic/haiku"], refreshState: "idle" }] });
+		await spawnSwitchyardSession(fresh.ao, { model: "anthropic/haiku", home, catalogWaitMs: 400 });
+		assert.equal(fresh.calls.filter(c => c === "agentModels").length, 3, "asked until it settled");
+		assert.ok(fresh.calls.includes("spawnSession"));
+		// A catalog that is already partly filled but still refreshing, and lacks the model for now.
+		const partial = fakeAo({ catalogSteps: [{ models: ["anthropic/opus"], refreshState: "refreshing" }, { models: ["anthropic/opus", "anthropic/haiku"], refreshState: "idle" }] });
+		await spawnSwitchyardSession(partial.ao, { model: "anthropic/haiku", home, catalogWaitMs: 400 });
+		assert.equal(partial.calls.filter(c => c === "agentModels").length, 2);
+		// Settled WITHOUT the model: refused at once, no waiting, nothing created.
+		const settled = fakeAo({ catalogSteps: [{ models: ["anthropic/opus"], refreshState: "idle" }] });
+		await assert.rejects(spawnSwitchyardSession(settled.ao, { model: "nope/model", home, catalogWaitMs: 400 }), /Unknown omp model "nope\/model"/);
+		assert.equal(settled.calls.filter(c => c === "agentModels").length, 1);
+		assert.equal(settled.calls.includes("spawnSession"), false);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: a catalog that never settles skips the pre-check; the session's own options still reject a bad model", async () => {
+	const home = tmpHome();
+	try {
+		const stuck = { models: [], refreshState: "refreshing" as const };
+		// A valid model: let AO and the session's options decide.
+		const ok = fakeAo({ catalogSteps: [stuck] });
+		await spawnSwitchyardSession(ok.ao, { model: "anthropic/haiku", home, catalogWaitMs: 40 });
+		assert.ok(ok.calls.includes("spawnSession"), "not rejected for an empty catalog");
+		// A bad one: it is the session's config options (step 4) that refuse it, and the session made for the check is removed.
+		const bad = fakeAo({ catalogSteps: [stuck] });
+		await assert.rejects(spawnSwitchyardSession(bad.ao, { model: "nope/model", prompt: "hi", home, catalogWaitMs: 40 }), /this session offers: anthropic\/opus/);
+		assert.deepEqual(bad.calls.slice(-3), ["getConversation", "killSession", "deleteSession"]);
+		assert.equal(bad.calls.includes("sendMessage"), false);
+		// An unreadable catalog is skipped too (as before).
+		const gone = fakeAo({ catalogSteps: [stuck] });
+		(gone.ao as unknown as { agentModels: () => Promise<never> }).agentModels = () => Promise.reject(new Error("offline"));
+		await spawnSwitchyardSession(gone.ao, { model: "anthropic/haiku", home, catalogWaitMs: 40 });
+		assert.ok(gone.calls.includes("spawnSession"));
 	} finally {
 		fs.rmSync(home, { recursive: true, force: true });
 	}

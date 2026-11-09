@@ -44,6 +44,8 @@ export interface AoFixture {
 	/** clientEnv + ompEnv: for a planner, CLI or Hermes process that should use this stack. */
 	stackEnv: Record<string, string>;
 	root: string;
+	/** True when this fixture runs the real omp: its home/.omp/agent is the REAL agent dir (linked), so installs of omp extensions are pinned off in every environment it hands out. */
+	realOmp: boolean;
 	/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's client code (process.env is pointed at it while the fixture lives) and, by default, a planner. */
 	switchyardHome: string;
 	dataDir: string;
@@ -62,6 +64,8 @@ export interface AoFixture {
 	setUsage(windows: { provider: string; id: string; label?: string; usedPercent: number; resetsAt?: number }[]): void;
 	/** Scripts for prompts the test doesn't write: the first rule whose `match` regex matches runs `script` instead ($1… = groups). */
 	setFakeRules(rules: { match: string; flags?: string; script: string }[]): void;
+	/** Installs a stand-in permission gate into the fixture's own omp agent dir (fake omp only) and returns the `gate` option for spawnSwitchyard / spawnSwitchyardSession (G46: modes other than `auto` need it). */
+	standInGate(): { omp: { home: string; env: Record<string, string> } };
 	/** JSON request against the daemon; throws on non-2xx with the body. */
 	api(method: string, path: string, body?: unknown): Promise<any>;
 	/**
