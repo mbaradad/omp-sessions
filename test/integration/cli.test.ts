@@ -40,6 +40,9 @@ before(async () => {
 after(async () => {
 	if (skip) return;
 	cli("server", "stop");
+	// Chat hosts and their fake omp outlive the daemon by design: end every session through the API first.
+	const { sessions } = await client.listSessions({}).catch(() => ({ sessions: [] }));
+	await Promise.all(sessions.map(s => client.killSession(s.id).catch(() => undefined)));
 	await ao?.stop();
 	fs.rmSync(home, { recursive: true, force: true });
 });
