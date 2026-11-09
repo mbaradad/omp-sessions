@@ -239,8 +239,8 @@ describe("AO views", () => {
 		try {
 			await waitFor("flagged session idle", () => api.sessions.get(flagged)?.status === "idle", 120_000);
 			assert.equal(fs.readFileSync(path.join(process.env.SWITCHYARD_HOME ?? "", "sessions", flagged, "omp-args"), "utf8").trim(), "--advisor");
-			const processes = execFileSync("ps", ["-eo", "args"], { encoding: "utf8" });
-			assert.match(processes, /\bacp\b.*--advisor/);
+			// pgrep exits non-zero when no omp acp process carries the flag.
+			assert.match(execFileSync("pgrep", ["-af", "acp .*--advisor"], { encoding: "utf8" }), /--advisor/);
 		} finally {
 			await api.sessions.stop(flagged).catch(() => undefined);
 			await api.sessions.remove(flagged).catch(() => undefined);
