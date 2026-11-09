@@ -70,6 +70,14 @@ test("ensureBundles reports the first install; config omp-extension off stops it
 		assert.equal(extensionReport(undefined, bundles).auto, "off");
 
 		writeSwitchyardConfig({ ompExtension: undefined });
+		// Test and dev runs pin SWITCHYARD_INSTALL_OMP_EXTENSIONS=0: the shared omp agent folder is never written by itself.
+		process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS = "0";
+		try {
+			assert.equal(ensureBundles(bundles), undefined);
+			assert.equal(extensionReport(undefined, bundles).installed, false);
+		} finally {
+			delete process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS;
+		}
 		const first = ensureBundles(bundles);
 		assert.equal(first?.firstInstall, true);
 		assert.equal(extensionReport(undefined, bundles).installed, true);

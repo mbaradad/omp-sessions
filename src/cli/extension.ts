@@ -150,7 +150,8 @@ export function uninstallBundles(): { extensions: boolean; shim: boolean } {
  */
 export function ensureBundles(bundles: Bundles = shippedBundles()): { firstInstall: boolean; dir: string } | undefined {
 	if (!bundles.extensions && !bundles.shim) return undefined;
-	if (readSwitchyardConfig().ompExtension === "off") return undefined;
+	// `=0` is what test and dev runs pin (checkpoints' globalInstallAllowed): never touch the shared omp agent folder by itself.
+	if (process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS === "0" || readSwitchyardConfig().ompExtension === "off") return undefined;
 	const report = extensionReport(undefined, bundles);
 	if (report.installed && report.current && (!bundles.shim || (report.shim.installed && report.shim.current))) return undefined;
 	const result = installBundles(bundles);
