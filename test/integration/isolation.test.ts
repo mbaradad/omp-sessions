@@ -131,12 +131,14 @@ test("client-side Switchyard code in the test process writes under the fixture's
 	const realSwitchyard = path.join(realHome, ".switchyard");
 	const listingOf = (dir: string) => (fs.existsSync(dir) ? fs.readdirSync(dir).sort().join(",") : "absent");
 	const before = listingOf(realSwitchyard);
-	const outside = process.env.SWITCHYARD_HOME;
+	const keys = ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"];
+	const outside = Object.fromEntries(keys.map(k => [k, process.env[k]]));
 	const ao = await startAoFixture();
 	try {
-		// The fixture points this process's SWITCHYARD_HOME at the one the daemon and its extensions read.
+		// The fixture points this process's own environment at the one the daemon and its extensions run with.
+		for (const key of keys) assert.equal(process.env[key], ao.stackEnv[key], `${key} of this process is the fixture's`);
 		assert.equal(process.env.SWITCHYARD_HOME, ao.switchyardHome);
-		assert.equal(ao.stackEnv.SWITCHYARD_HOME, ao.switchyardHome);
+		assert.equal(os.homedir(), ao.home, "os.homedir() (what ~ resolves to in client code) is the fixture's home");
 		const client = await AoClient.connect({ env: { ...process.env, ...ao.clientEnv } });
 		const repo = ao.scratchRepo();
 		// src/ao/spawn.ts writes sessions/<id>/mode under switchyardHome(); with SWITCHYARD_HOME unset it would
@@ -156,5 +158,5 @@ test("client-side Switchyard code in the test process writes under the fixture's
 	} finally {
 		await ao.stop();
 	}
-	assert.equal(process.env.SWITCHYARD_HOME, outside, "stop() restores this process's SWITCHYARD_HOME");
+	for (const key of keys) assert.equal(process.env[key], outside[key], `stop() restores this process's ${key}`);
 });
