@@ -875,6 +875,11 @@ export class Planner {
 					this.finish(id, { kind: "lost", reason: "the agent's host died while the turn ran (AO ended the turn when it was resumed)." });
 					return;
 				}
+				// A person's Stop (exit-agent) cancels the running turn at the ACP level (-32800): it is a stop, not a failure to retry.
+				if (/\b-32800\b|request cancell?ed/i.test(turn.errorMessage ?? "")) {
+					this.finish(id, { kind: "interrupted", reason: run.aborted || run.timedOut ? undefined : "the turn was stopped in AO", ...costPart });
+					return;
+				}
 				const reset = turn.usageLimitResetsAt ? ` Usage limit reached; resets at ${new Date(turn.usageLimitResetsAt).toISOString()}.` : "";
 				this.finish(id, { kind: "error", error: { message: `${turn.errorMessage ?? "The turn failed."}${reset}`, ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
 				return;

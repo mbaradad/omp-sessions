@@ -303,6 +303,13 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Known limit: a lost prompt can answer late
+
+After a host crash and `resume-agent`, omp may answer the lost prompt together with the next one (validate saw
+`DONE\n\nRETRY-OK`). The task dispatched next into that session can then carry the earlier task's answer in its
+`summary` (its result for the children). The planner does not filter it; an interrupted task is re-run only by a
+person, who can read the summary.
+
 ## "What this task changed", and branch cleanup
 
 AO's diff for a child is against the default branch, so it lists the parents' commits too. `Task.git.base` is the
@@ -377,6 +384,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: a turn failed with ACP `-32800` / "Request cancelled" (a person's Stop) is `interrupted`, not a failed attempt.
 - 2026-11-09: `Task.git.base`; removed tasks delete their reachable `switchyard/*` branches.
 - 2026-11-09: no planner-side model pre-check (the spawn helper checks the session's own choices).
 - 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.
