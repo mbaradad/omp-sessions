@@ -277,6 +277,8 @@ async function cmdNew(args: Args): Promise<number> {
 	// here. A session in the checkout itself (`never`) is not something AO does (MAPPING Q1): refuse it rather than ignore it.
 	if (!project && worktree === "always") throw new Error(`--worktree=always needs a git repository: ${dir} is not in one`);
 	if (worktree === "never") throw new Error("--worktree=never / --no-worktree: AO runs every session of a git project in its own worktree; running in the checkout itself is not available (MAPPING Q1). Start the session in a folder outside git, or leave the flag out");
+	// MAPPING Q1: a folder outside git is not opened by AO; the session gets an empty scratch directory.
+	if (!project) process.stderr.write(c.yellow(`warning: ${dir} is not in a git repository: the session runs in an empty scratch directory, not in ${dir}\n`));
 	// A queued task gets its session now (idle, no prompt), so its id is the session id like before; the planner prompts it.
 	const lane = task ? await planner() : undefined;
 	// Sessions this one waits for, checked before anything is created.
@@ -376,7 +378,8 @@ async function reportFor(id: string): Promise<CliReport> {
 	const client = await ao();
 	const s = await fresh(id, 200);
 	const live = s.model.conversation && s.state !== "stopped";
-	const [plan, changedFiles] = await Promise.all([live ? livePlanMode(client, id) : undefined, changedFileCount(client, id)]);
+	const edited = !!s.model.conversation?.activities.some(a => a.activityKind === "file_change" && a.status === "completed");
+	const [plan, changedFiles] = await Promise.all([live ? livePlanMode(client, id) : undefined, changedFileCount(client, id, edited)]);
 	return reportOf(s, { ...(s.model.conversation && { mode: aoPermissionMode(s.model.conversation.settings, plan === true) }), ...(changedFiles !== undefined && { changedFiles }) });
 }
 
@@ -1117,7 +1120,7 @@ async function cmdSched(args: Args): Promise<void> {
 			set = { paused: false };
 			break;
 		case "stop-when-done":
-			throw new UsageError("sched stop-when-done is gone: AO hibernates a chat that has been idle for 90 s, so a finished queue costs nothing (MAPPING, data migration: stopWhenQueueDone dropped)");
+			throw new UsageError("sched stop-when-done is gone: the planner has no per-queue stop. A finished queue frees its omp process only when AO's chat hibernation is on (it hibernates a chat nobody views after 90 s; off by default on a headless daemon: start AO with hibernation on). MAPPING: stopWhenQueueDone dropped");
 		case "budget": {
 			// budget <hour|day|week> <usd|off>: a cap on what planner-dispatched work may spend in a rolling window.
 			if (arg === undefined) break;
@@ -1519,15 +1522,24 @@ async function cmdConfig(args: Args): Promise<number> {
 
 type AgentModel = AoSchemas["AgentModelsResponse"]["models"][number];
 
-async function agentModels(): Promise<AgentModel[]> {
+/** AO's omp model catalog and the providers omp is logged in to: the catalog holds every provider's models (thousands), the user can use those of `configured`. */
+async function agentCatalog(): Promise<{ models: AgentModel[]; configured: string[] }> {
 	const client = await ao();
-	return (await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }))).models;
+	const res = await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }));
+	return { models: res.models, configured: res.configuredProviders ?? [] };
+}
+
+async function agentModels(): Promise<AgentModel[]> {
+	return (await agentCatalog()).models;
 }
 
 async function cmdModels(args: Args): Promise<number> {
 	const search = args._.join(" ").toLowerCase();
 	const def = readSwitchyardConfig().model;
-	const models = (await agentModels())
+	const { models: catalog, configured } = await agentCatalog();
+	// MAPPING: the raw list is the whole catalog; what a session can use is the configured providers' share (empty list: AO doesn't know, show all).
+	const usable = configured.length ? catalog.filter(m => m.provider !== undefined && configured.includes(m.provider)) : catalog;
+	const models = usable
 		.filter(m => !search || m.id.toLowerCase().includes(search) || m.label.toLowerCase().includes(search))
 		.map(m => {
 			const slash = m.id.indexOf("/");
@@ -1790,18 +1802,30 @@ function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Open event streams and keep-alive sockets must not hold the process, but a pipe is written
+ * asynchronously: exiting before stdout and stderr have drained cuts long output (`models --json`) short.
+ */
+function exitAfterFlush(code: number): void {
+	let pending = 2;
+	const done = () => {
+		if (--pending === 0) process.exit(code);
+	};
+	process.stdout.write("", done);
+	process.stderr.write("", done);
+}
+
 if (require.main === module) {
 	main(process.argv.slice(2))
 		.then(code => {
 			void plannerPromise?.then(p => p?.close());
 			process.exitCode = code;
-			// Open event streams and keep-alive sockets must not hold the process.
-			setImmediate(() => process.exit(code));
+			exitAfterFlush(code);
 		})
 		.catch(err => {
 			void plannerPromise?.then(p => p?.close());
 			errorLine(errorText(err));
 			process.exitCode = err instanceof UsageError ? 2 : 1;
-			setImmediate(() => process.exit(process.exitCode));
+			exitAfterFlush(process.exitCode);
 		});
 }

@@ -4,7 +4,7 @@
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
-import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, planModeOf, sessionModel, sessionReport } from "../ao/model";
+import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
 import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
@@ -119,9 +119,11 @@ function inside(child: string, parent: string): boolean {
 export async function buildSession(client: AoClient, view: AoSessionView, projects: ReadonlyMap<string, AoProject>, opts: LoadOptions, conversation?: AoConversation): Promise<Session> {
 	// A terminated session's workspace is gone: its project folder stands in.
 	const workspace = view.isTerminated ? undefined : client.workspacePath(view.id).catch(() => undefined);
-	const [conv, cwd] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace]);
+	// The files a session changed come from its workspace (omp's turns carry no diff, G31); a failed read counts as none.
+	const files = view.isTerminated ? undefined : client.workspaceManifest(view.id).then(changedFiles, () => []);
+	const [conv, cwd, changed] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace, files]);
 	const lane = opts.lanes?.get(view.id);
-	const model = sessionModel(view, conv, plannedState(lane));
+	const model = sessionModel(view, conv, plannedState(lane), changed);
 	const project = view.projectId ? projects.get(view.projectId) : undefined;
 	const org = opts.org ?? readOrgFile();
 	const e = org.sessions[view.id];
@@ -288,6 +290,7 @@ export function infoJson(s: Session, order: number) {
 		},
 		column: columnOf(s.state),
 		state: s.state,
+		...(report.mode && { mode: report.mode }),
 		queue: report.queue,
 		priority: s.priority,
 		order,
@@ -313,13 +316,27 @@ export async function livePlanMode(client: AoClient, sessionId: string): Promise
 	}
 }
 
-/** Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say. */
-export async function changedFileCount(client: AoClient, sessionId: string): Promise<number | undefined> {
-	try {
-		return (await client.workspaceManifest(sessionId)).files.length;
-	} catch {
-		return undefined;
+/** AO caches a workspace manifest for 3 s (foundation: manifestCacheMs): a read right after a turn may predate the edit. */
+const MANIFEST_CACHE_MS = 3000;
+const MANIFEST_RETRY_MS = 500;
+
+/**
+ * Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say.
+ * `expectFiles`: the conversation shows file edits, so an empty or failed read is a manifest that has not caught up
+ * (a stale cached one, or still being computed): read it again until AO's cache has expired before believing it.
+ */
+export async function changedFileCount(client: AoClient, sessionId: string, expectFiles = false): Promise<number | undefined> {
+	let last: number | undefined;
+	for (let attempt = 0; attempt <= (expectFiles ? Math.ceil(MANIFEST_CACHE_MS / MANIFEST_RETRY_MS) + 1 : 0); attempt++) {
+		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, MANIFEST_RETRY_MS));
+		try {
+			last = changedFiles(await client.workspaceManifest(sessionId)).length;
+			if (last > 0 || !expectFiles) return last;
+		} catch {
+			last = undefined;
+		}
 	}
+	return last;
 }
 
 /** Ranks sessions the way the board and the planner order them (priority, then manual order). */

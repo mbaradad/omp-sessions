@@ -27,7 +27,7 @@ export interface AttachOptions {
 const TAIL = 40;
 /** Fallback refetch period: the event stream is the fast path. */
 const POLL_MS = 2000;
-/** AO hibernates a chat nobody views after 90 s; a view lease (30 s) keeps it warm while attached. */
+/** With chat hibernation on, AO hibernates a chat nobody views after 90 s; a view lease (30 s) keeps it warm while attached. */
 const VIEW_LEASE_MS = 20_000;
 
 const STATE_COLOR: Record<string, (s: string) => string> = { working: c.yellow, starting: c.dim, needs_input: c.magenta, idle: c.green, stopped: c.dim, interrupted: c.red, queued: c.blue, scheduled: c.blue };
