@@ -79,5 +79,7 @@ export function aoAvailable(): boolean;
 /** node:test `skip` value for tests that need the daemon: false, or why they skip. */
 export const skipWithoutAo: false | string;
 export function fakeOmpAcpPath(): string;
+/** Removes a temp tree, retrying while a just-stopped process still writes into it; never throws. */
+export function removeTree(dir: string): Promise<void>;
 export function startAoFixture(opts?: AoFixtureOptions): Promise<AoFixture>;
 export function useAoFixture(hooks: { before: (fn: () => Promise<void>) => void; after: (fn: () => Promise<void>) => void }, opts?: AoFixtureOptions): { current: AoFixture | undefined };

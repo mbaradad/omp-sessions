@@ -25,7 +25,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fakeOmpAcpPath } from "./ao-fixture.mjs";
+import { fakeOmpAcpPath, removeTree } from "./ao-fixture.mjs";
 
 /** The planner's socket for a state root (same rule as src/planner/paths.ts listenPath). */
 function plannerSocket(stateRoot) {
@@ -201,7 +201,7 @@ export async function startPlannerFixture(opts) {
 		async stop() {
 			if (!live.delete(fx)) return;
 			await halt("SIGTERM");
-			fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+			await removeTree(root);
 		},
 	};
 	child = await launch();

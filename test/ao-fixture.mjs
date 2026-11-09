@@ -65,6 +65,25 @@ export function fakeOmpAcpPath() {
 	}
 }
 
+/**
+ * Removes a temp tree. A process that was just stopped (or a child of AO's cleanup) can still write into it
+ * for a moment ("ENOTEMPTY"), so it retries; a tree that stays busy is left in /tmp, never failing a test.
+ */
+export async function removeTree(dir) {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (err) {
+			if (attempt >= 20) {
+				console.warn(`ao-fixture: could not remove ${dir}: ${err.message}`);
+				return;
+			}
+			await sleep(100);
+		}
+	}
+}
+
 function freePort() {
 	return new Promise((resolve, reject) => {
 		const srv = net.createServer();
@@ -233,7 +252,7 @@ export async function startAoFixture(opts = {}) {
 			break;
 		}
 		if (r.failed === "exited" && attempt < 3 && /address already in use|bind/i.test(r.tail)) continue;
-		if (!keep) fs.rmSync(root, { recursive: true, force: true });
+		if (!keep) await removeTree(root);
 		throw new Error(`ao daemon ${r.failed === "exited" ? "exited" : "not ready"} (${aoBin}, port ${port}); log tail:\n${r.tail}`);
 	}
 	const baseUrl = `http://127.0.0.1:${port}`;
@@ -370,7 +389,7 @@ export async function startAoFixture(opts = {}) {
 			const deadline = Date.now() + 5000;
 			while (hosts.some(alive) && Date.now() < deadline) await sleep(50);
 			for (const pid of hosts) killGroup(pid, "SIGKILL");
-			if (!keep) fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+			if (!keep) await removeTree(root);
 		},
 	};
 	live.add(fx);
