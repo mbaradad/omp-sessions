@@ -1,6 +1,7 @@
 // "New Session with Options…": model, thinking, permission mode and a first prompt for the AO spawn; and
 // the omp Sessions defaults for new sessions (`model`/`mode` in ~/.switchyard/config.json, shared with the CLI's `config set`).
 import * as vscode from "vscode";
+import { THINKING_LEVELS } from "../planner/types";
 import { type ModelList, listModels } from "../shared/models";
 import { PERMISSION_MODE_INFO, type PermissionMode } from "../shared/permissions";
 import { readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
@@ -101,7 +102,7 @@ export async function askLaunchOptions(cwd: string): Promise<LaunchChoices | und
 	if (model.selector) out.model = model.selector;
 
 	const thinking = await vscode.window.showQuickPick(
-		["default", "off", "minimal", "low", "medium", "high", "xhigh"].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
+		["default", ...THINKING_LEVELS].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
 		{ title: step(2), placeHolder: "Thinking level" },
 	);
 	if (!thinking) return undefined;
