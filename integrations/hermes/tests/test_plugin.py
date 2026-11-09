@@ -424,6 +424,13 @@ class PluginTest(unittest.TestCase):
         with kbc.connect_closing(board="proj") as conn:
             runs = kb.list_runs(conn, card)
         self.assertTrue(any("interrupted" in (r.summary or "") for r in runs), [r.summary for r in runs])
+        # Unblocking is the person's go-ahead: the planner never restarts a cut-short task unattended, so the
+        # lane continues it with `queue run`.
+        with kbc.connect_closing(board="proj") as conn:
+            kb.unblock_task(conn, card)
+        self.tick("proj")
+        self.assertEqual(self.links()[f"proj/{card}"]["state"], "active", self.links()[f"proj/{card}"])
+        self.assertTrue(self.omp_said("proj", card, "Retrying in omp session"))
         omp_sessions("stop", sid, check=False)
 
     def test_a_comment_reaches_the_working_session_as_a_follow_up(self) -> None:
