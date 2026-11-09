@@ -89,6 +89,8 @@ export interface ExtensionReport {
 		path: string;
 		/** The AO daemon's PATH lists the shim's folder first (so its flags reach omp); undefined when it can't be told. */
 		onDaemonPath?: boolean;
+		/** The launcher is in effect: omp flags reach omp. False when not installed or not first on the daemon's PATH. */
+		inEffect?: boolean;
 	};
 	/** This build ships the bundles `install` copies. */
 	shipped: boolean;
@@ -110,6 +112,8 @@ export function extensionReport(daemonPid?: number, bundles: Bundles = shippedBu
 			current: bundles.shim ? shimCurrent(bundles.shim, binDir) : true,
 			path: status.shimFile,
 			...(first !== undefined && { onDaemonPath: path.resolve(first) === path.resolve(binDir) }),
+			// In effect = installed and first on the running daemon's PATH; undefined when installed but the daemon's PATH can't be read.
+			...(!status.shim ? { inEffect: false } : first !== undefined ? { inEffect: path.resolve(first) === path.resolve(binDir) } : {}),
 		},
 		shipped: !!(bundles.extensions || bundles.shim),
 		auto: readSwitchyardConfig().ompExtension ?? "on",

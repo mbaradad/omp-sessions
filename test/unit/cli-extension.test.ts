@@ -40,6 +40,7 @@ test("install puts the gate and the shim in place; a changed bundle makes the re
 		const before = extensionReport(undefined, bundles);
 		assert.equal(before.installed, false);
 		assert.equal(before.shim.installed, false);
+		assert.equal(before.shim.inEffect, false, "not installed: not in effect");
 		assert.equal(before.shipped, true);
 
 		const result = installBundles(bundles);
@@ -49,6 +50,10 @@ test("install puts the gate and the shim in place; a changed bundle makes the re
 		assert.equal(after.installed, true, "the gate counts only when the package lists mode.js");
 		assert.deepEqual(after.modules, ["checkpoints.js", "mode.js"]);
 		assert.equal(after.current && after.shim.current && after.shim.installed, true);
+		assert.equal(after.shim.inEffect, undefined, "installed, but no daemon to read a PATH from: not claimed either way");
+		// A daemon whose PATH starts elsewhere (this test process: its own PATH) does not have the shim first.
+		const against = extensionReport(process.pid, bundles).shim;
+		assert.deepEqual([against.onDaemonPath, against.inEffect], [false, false]);
 		assert.ok(fs.statSync(path.join(home, "bin", "omp")).mode & 0o100, "the shim is executable");
 		assert.equal(fs.existsSync(path.join(agent, "extensions", "switchyard", "package.json")), true);
 
