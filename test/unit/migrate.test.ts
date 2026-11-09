@@ -109,11 +109,25 @@ test("apply: structure, defaults and scheduler come over; the old dir is backed 
 	assert.deepEqual(organize.lanes, [{ id: "doing", name: "Doing", order: 0 }]);
 	assert.deepEqual(organize.collapsed, { g1: true });
 	assert.deepEqual(organize.sessions, {}, "per-session entries are not migrated");
-	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")), { mode: "edits", model: "p/m", service: "off" });
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")), { mode: "edits", model: "p/m", service: "off", omp: { extraArgs: ["--profile", "work"] } });
 	assert.deepEqual(planner.calls, [{ op: "scheduler", args: { set: { maxConcurrent: 3, paused: true, budget: { day: 20 } } } }]);
 	assert.ok(report.dropped.some(d => d.startsWith("remote.json: phone access was on")));
-	assert.ok(report.dropped.some(d => d.includes("extraArgs --profile work")));
 	assert.ok(report.dropped.some(d => d.startsWith("launcher.json ompPath")));
+	assert.ok(!report.dropped.some(d => d.includes("extraArgs")), "extraArgs is copied, not dropped");
+});
+
+test("config.json: omp.extraArgs is copied only when absent; other omp keys and existing values stay", async () => {
+	const legacyHome = oldInstall();
+	const home = path.join(temp(), "sy");
+	write(home, { "config.json": { model: "mine/own", omp: { other: 1 } } });
+	await migrate({ apply: true, legacyHome, home });
+	const first = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+	assert.deepEqual(first, { model: "mine/own", omp: { other: 1, extraArgs: ["--profile", "work"] }, mode: "edits", service: "off" });
+	// The user changes it afterwards: a later run keeps his value.
+	first.omp.extraArgs = ["--advisor"];
+	write(home, { "config.json": first });
+	await migrate({ apply: true, legacyHome, home });
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")).omp.extraArgs, ["--advisor"]);
 });
 
 test("apply twice: the second run writes nothing, makes no backup and does not call the planner again", async () => {

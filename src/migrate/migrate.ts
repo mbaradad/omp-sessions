@@ -67,7 +67,7 @@ export interface MigrateReport {
 	/** Old sessions that stay behind. */
 	sessions: LeftBehind[];
 	organize?: { groups: number; lanes: number; written: boolean };
-	config?: { set: Record<string, string>; written: boolean };
+	config?: { set: Record<string, unknown>; written: boolean };
 	scheduler?: { set: Record<string, unknown>; imported: boolean };
 	/** Old state that does not come over, with the reason. */
 	dropped: string[];
@@ -145,7 +145,6 @@ function droppedItems(state: LegacyState): string[] {
 	if (state.remoteEnabled) out.push("remote.json: phone access was on; pair the phone again with AO's mobile app (Connect Phone)");
 	else if (has("remote.json")) out.push("remote.json: old phone access settings (AO's mobile app pairs separately)");
 	if (state.launcher?.ompPath) out.push(`launcher.json ompPath ${state.launcher.ompPath}: AO finds omp on PATH`);
-	if (state.launcher?.extraArgs?.length) out.push(`launcher.json extraArgs ${state.launcher.extraArgs.join(" ")}: not applied (AO runs omp with its own arguments, G34)`);
 	if (state.scheduler?.stopWhenQueueDone !== undefined) out.push("scheduler.json stopWhenQueueDone: AO hibernates idle sessions itself");
 	for (const name of ["limits.json", "spend.json"]) if (has(name)) out.push(`${name}: usage holds and spend history of the old scheduler (the planner keeps its own)`);
 	for (const name of ["runtime", "slots", "bridge", "server.log", "server.pid", "vscode-window.json"]) if (has(name)) out.push(`${name}: old server runtime state`);
@@ -240,7 +239,8 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	if (mode) wanted.mode = mode;
 	if (state.launcher?.model) wanted.model = state.launcher.model;
 	if (state.launcher?.service === "off") wanted.service = "off";
-	if (Object.keys(wanted).length) {
+	const extraArgs = state.launcher?.extraArgs?.length ? state.launcher.extraArgs : undefined;
+	if (Object.keys(wanted).length || extraArgs) {
 		let existing: Record<string, unknown> = {};
 		try {
 			const raw: unknown = JSON.parse(fs.readFileSync(configFile, "utf8"));
@@ -248,16 +248,28 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		} catch {
 			/* none yet */
 		}
-		const set: Record<string, string> = {};
-		for (const [k, v] of Object.entries(wanted)) if (!(k in existing)) set[k] = v;
+		const next: Record<string, unknown> = { ...existing };
+		const set: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(wanted)) {
+			if (k in existing) continue;
+			next[k] = v;
+			set[k] = v;
+		}
+		// `omp.extraArgs` is the nested key `{"omp": {"extraArgs": [...]}}` (G34: the omp shim reads it).
+		const omp = isRecord(existing.omp) ? existing.omp : undefined;
+		if (extraArgs && !(omp && "extraArgs" in omp) && !("omp.extraArgs" in existing)) {
+			next.omp = { ...omp, extraArgs: [...extraArgs] };
+			set["omp.extraArgs"] = [...extraArgs];
+		}
 		const written = opts.apply && Object.keys(set).length > 0;
 		if (written) {
 			beforeWrite();
-			writeJsonAtomic(configFile, { ...existing, ...set });
+			writeJsonAtomic(configFile, next);
 		}
 		report.config = { set, written };
-		const text = Object.entries(set).map(([k, v]) => `${k}=${v}`).join(", ") || "nothing new";
+		const text = Object.entries(set).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(" ") : String(v)}`).join(", ") || "nothing new";
 		log(`launcher.json → ${configFile}: ${text}${opts.apply ? "" : " (dry run)"}`);
+		if (extraArgs) log("  omp.extraArgs is applied by the omp shim once it is installed (G34)");
 	}
 
 	if (state.scheduler) {
