@@ -328,3 +328,9 @@ test("a side chat becomes one /btw card: the first question and its answer, late
 	assert.deepEqual(done, { id: "s1", question: "why?", answer: "because", status: "done", followUps: [{ question: "and?", answer: "that" }] });
 	assert.deepEqual(btwRecord(snapshot([turn("a", "why?", "failed", "2026-11-09T10:00:00Z", "model overloaded")], [])), { id: "s1", question: "why?", answer: "", status: "error", error: "model overloaded", followUps: [] });
 });
+
+test("a queued prompt AO discarded on interrupt (turn interrupted, never started) is not shown as a message", () => {
+	const feed = new ChatFeed();
+	const snap = feed.reset(conv({ turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "interrupted")], messages: [msg(1, "user", "slow", "t1"), msg(2, "user", "queued behind it", "t2")] }));
+	assert.deepEqual(texts(snap.messages).filter(t => t && t !== "Interrupted"), ["slow"]);
+});

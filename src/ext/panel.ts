@@ -15,7 +15,7 @@ import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashComma
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { askSideQuestion, sideRecords } from "./chat-btw";
 import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
-import { sendResuming } from "./chat-send";
+import { interruptKeepingQueue, sendResuming } from "./chat-send";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
 import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
@@ -908,13 +908,13 @@ export class ChatPanel implements vscode.Disposable {
 					this.shell.kill();
 					return;
 				}
-				try {
-					await (await this.client()).interrupt(this.sessionId);
-				} catch (err) {
-					// The turn ended between the keypress and the call.
-					if (!(err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN")) throw err;
-				}
+			{
+				const queued = this.feed.queued();
+				const again = await interruptKeepingQueue(await this.client(), this.sessionId, queued);
+				if (again) this.post({ type: "notice", level: "info", text: `Interrupted. AO drops the messages queued behind a turn, so your ${again} queued message${again === 1 ? " was" : "s were"} sent again.` });
+				this.schedule();
 				return;
+			}
 			case "uiResponse": {
 				const req = this.feed.request(m.res.id);
 				if (req?.question.url && m.res.value === OPEN_LINK) {

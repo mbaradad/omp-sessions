@@ -488,12 +488,12 @@ export class ChatFeed {
 		return rows.sort((a, b) => key(a) - key(b));
 	}
 
-	/** A queued prompt shows as a queue chip, and one withdrawn before it ran not at all. */
+	/** A queued prompt shows as a queue chip; one withdrawn or discarded by an interrupt before it ran (GAPS G41) not at all. */
 	private visible(r: Row): boolean {
 		if (r.turnId && (this.hidden.has(r.turnId) || this.dupes.has(r.turnId))) return false;
 		if (r.kind !== "message" || r.role !== "user" || !r.turnId) return true;
 		const t = this.turns.get(r.turnId);
-		return !(t && (t.state === "queued" || (t.state === "cancelled" && !t.startedAt)));
+		return !(t && (t.state === "queued" || ((t.state === "cancelled" || t.state === "interrupted") && !t.startedAt)));
 	}
 
 	private turnNotice(t: AoTurn): { level: "error" | "warning"; text: string } | undefined {
