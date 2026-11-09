@@ -285,7 +285,7 @@ def queue_counts(q: dict) -> dict:
     return out
 
 
-def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]], question: Optional[dict]) -> dict:
+def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]], question: Optional[dict], upstream: Optional[list] = None) -> dict:
     meta = info.get("meta") or {}
     q = info.get("queue") or {}
     cwd = str(meta.get("cwd") or "")
@@ -319,7 +319,7 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "exitReason": meta.get("exitReason") if meta.get("status") == "stopped" else None,
         "authProblem": meta.get("authProblem"),
         "question": question,
-        "upstream": upstream_view(info.get("upstream")),
+        "upstream": upstream_view(upstream if upstream is not None else info.get("upstream")),
         "card": None,
     }
     if ref:
@@ -349,11 +349,12 @@ def list_sessions() -> dict:
     refs = {r: i for i in infos if (r := card_ref(i, by_session))}
     cards = card_lookup(set(refs)) if refs else {}
     questions = questions_for(o, infos)
+    upstream = o.upstream_by_session()
     views = []
     for info in infos:
         ref = card_ref(info, by_session)
         sid = str(info["meta"].get("id"))
-        views.append(session_view(info, cards.get(ref) if ref else None, ref, questions.get(sid)))
+        views.append(session_view(info, cards.get(ref) if ref else None, ref, questions.get(sid), upstream.get(sid, [])))
     return {"sessions": views, "at": time.time()}
 
 
@@ -370,8 +371,8 @@ def session_detail(sid: str) -> dict:
     ref = card_ref(info, by_session)
     card = card_lookup({ref}).get(ref) if ref else None
     question = report.get("question") if isinstance(report.get("question"), dict) else None
-    view = session_view(info, card, ref, question)
-    view.update(reply=report.get("reply"), mode=report.get("mode") or view["mode"], model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"], upstream=upstream_view(report.get("upstream")))
+    view = session_view(info, card, ref, question, o.upstream_by_session().get(str(report.get("id")), []))
+    view.update(reply=report.get("reply"), mode=report.get("mode") or view["mode"], model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"])
     return view
 
 

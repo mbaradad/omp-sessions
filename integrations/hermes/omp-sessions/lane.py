@@ -299,6 +299,8 @@ class Lane:
         self.store = store
         self.settings = settings
         self.omp = omp
+        # {child session: parent edges} of this pass (`plan status`), put into each tracked session's report.
+        self._upstream: dict[str, list[dict]] = {}
 
     # -- plugin state --
 
@@ -370,6 +372,7 @@ class Lane:
         if not mine and cfg is None:
             return
         omp = self.omp()
+        self._upstream = omp.upstream_by_session()
         errors: list[str] = []
         started: list[str] = []
         with kbc.connect_closing(board=slug) as conn:
@@ -413,7 +416,7 @@ class Lane:
         say so once on the card, with how to re-run it."""
         from hermes_cli import kanban_db as kb
 
-        edges = [e for e in omp.plan_status() if e.get("state") == "upstream-changed"]
+        edges = [e for es in self._upstream.values() for e in es if e.get("state") == "upstream-changed"]
         if not edges:
             return
         cards = {sid: card for card, sid in self._card_sessions(omp, slug).items()}
@@ -626,6 +629,8 @@ class Lane:
                     self._create(conn, slug, link, task, cfg, omp)
             return
         report = omp.show(link["session"])
+        if report is not None and "upstream" not in report:
+            report["upstream"] = self._upstream.get(str(link["session"]), [])
         if self._forward_comments(conn, link, report, omp, cfg or board_lane_fallback(settings, slug)):
             return  # the session got something new: look at it again next tick
         for act in decide(card, link, report, assignee):

@@ -300,6 +300,19 @@ class OmpSessions:
         edges = out.get("edges") if isinstance(out, dict) else None
         return [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
 
+    def upstream_by_session(self) -> dict[str, list[dict]]:
+        """{child session: its parent edges} from `plan status`: what `show`/`ls` don't carry. {} when the
+        CLI has no `plan status` or the planner isn't reachable: propagation is then simply not shown."""
+        try:
+            edges = self.plan_status()
+        except OmpSessionsError:
+            return {}
+        out: dict[str, list[dict]] = {}
+        for e in edges:
+            if e.get("childSession"):
+                out.setdefault(str(e["childSession"]), []).append(e)
+        return out
+
     def plan_sync(self, ref: str, *, rerun: bool = False) -> dict:
         """`plan sync <task|session> --json`: brings the parents' changes into its worktree now;
         `rerun` also runs its task again with them (for a done task marked upstream-changed)."""

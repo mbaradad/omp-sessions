@@ -739,6 +739,28 @@ class PureTest(unittest.TestCase):
         self.assertFalse(is_approval({"kind": "select", "title": "Pick one", "options": ["Allow once", "Deny"], "approval": False}), "the CLI's own flag wins")
         self.assertTrue(is_approval({"kind": "ask", "title": "x", "approval": True}))
 
+    def test_upstream_edges_are_grouped_by_child_session_and_absent_without_plan_status(self) -> None:
+        from hermes_plugins.omp_sessions.ompsessions import OmpSessions, OmpSessionsError
+
+        edges = [
+            {"parent": "t1", "parentSession": "p-1", "child": "t2", "childSession": "c-1", "state": "conflict", "files": ["x.txt"]},
+            {"parent": "t1", "parentSession": "p-1", "child": "t3", "childSession": "c-2", "state": "merged"},
+            {"parent": "t9", "child": "t8", "state": "pending"},  # a task with no session yet
+        ]
+
+        class Planned(OmpSessions):
+            def plan_status(self, ref=None):
+                return edges
+
+        class Old(OmpSessions):
+            def plan_status(self, ref=None):
+                raise OmpSessionsError('unknown command "plan"')
+
+        by = Planned().upstream_by_session()
+        self.assertEqual(sorted(by), ["c-1", "c-2"])
+        self.assertEqual(by["c-1"][0]["files"], ["x.txt"])
+        self.assertEqual(Old().upstream_by_session(), {}, "a CLI without plan status: propagation is not shown, nothing breaks")
+
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
         link = {"session": "s1", "state": "active", "asked": []}

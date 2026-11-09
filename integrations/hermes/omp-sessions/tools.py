@@ -367,6 +367,8 @@ class Tools:
             if report is None:
                 raise OmpSessionsError(f"no session matches {args.get('id')}")
             self.notifier.seen(report)
+            if "upstream" not in report:
+                report["upstream"] = self.omp().upstream_by_session().get(str(report.get("id")), [])
             return report
 
         return self._run(go)
