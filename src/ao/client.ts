@@ -14,7 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
-import { type AoQueueItem, queueOf } from "./model";
+import { type AoQueueItem, queueOf, turnReply } from "./model";
 import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
@@ -333,6 +333,22 @@ export class AoClient {
 				return { discarded: queued.filter(item => ended.has(item.turnId)) };
 			}
 			await new Promise(resolve => setTimeout(resolve, 150));
+		}
+	}
+
+	/**
+	 * The reply of one turn once it is final (turnReply): AO can mark a turn `completed` a moment before its
+	 * last assistant message stops streaming, and a read in that window returns nothing or a half reply. Reads
+	 * the conversation until the turn has ended and its reply is final, or `graceMs` (default 3 s) has passed,
+	 * and returns what there is then with `final: false` (a turn that ended with no assistant text never
+	 * becomes final). For anything that stores a turn's summary: the planner's task result.
+	 */
+	async awaitTurnReply(sessionId: string, turnId: string, options: { graceMs?: number; pollMs?: number } = {}): Promise<{ text?: string; final: boolean }> {
+		const deadline = Date.now() + (options.graceMs ?? 3_000);
+		for (;;) {
+			const reply = turnReply(await this.getConversation(sessionId), turnId);
+			if (reply.final || Date.now() >= deadline) return reply;
+			await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 150));
 		}
 	}
 
