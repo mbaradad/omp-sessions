@@ -288,6 +288,15 @@ export class AoClient {
 		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/settings", { params: { path: { sessionId } }, body }));
 	}
 
+	/** The agent's own settings (omp: `mode`, `model`, `thinking`), with their choices. */
+	configOptions(sessionId: string): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId } } }));
+	}
+
+	setConfigOption(sessionId: string, configId: string, body: AoSchemas["SetConversationConfigOptionRequest"]): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId, configId } }, body }));
+	}
+
 	// ---- projects ----
 
 	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
@@ -323,5 +332,36 @@ export class AoClient {
 	/** Per-account token and cost usage (`costNanos`) over the last `days`. */
 	agentAccountUsage(days?: number): Promise<AoSchemas["AgentAccountUsageResponse"]> {
 		return unwrap(this.client.GET("/api/v1/agents/accounts/usage", { params: { query: days === undefined ? {} : { days } } }));
+	}
+
+	// ---- daemon ----
+
+	/** `{hostId, apiVersion}`. */
+	identity(): Promise<AoSchemas["IdentityResponse"]> {
+		return unwrap(this.client.GET("/api/v1/identity"));
+	}
+
+	/** The models a harness offers (`omp`: its provider/model ids). */
+	agentModels(agent = "omp", query: NonNullable<paths["/api/v1/agents/{agent}/models"]["get"]["parameters"]["query"]> = {}): Promise<AoSchemas["AgentModelsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/{agent}/models", { params: { path: { agent }, query } }));
+	}
+
+	// ---- mobile (AO's phone app: LAN/tunnel listener and pairing) ----
+
+	mobileStatus(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.GET("/api/v1/mobile/status"));
+	}
+
+	setMobileEnabled(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(enabled ? this.client.POST("/api/v1/mobile/enable") : this.client.POST("/api/v1/mobile/disable"));
+	}
+
+	/** New connection password and pairing link; paired phones must pair again. */
+	regenerateMobile(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/regenerate"));
+	}
+
+	setMobileSecurePairing(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/secure-pairing", { body: { enabled } }));
 	}
 }
