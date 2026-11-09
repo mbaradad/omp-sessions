@@ -45,21 +45,18 @@ test("the pre-rename omp-sessions package is removed so its modules don't load t
 	}
 });
 
-test("the bridge's pre-rename folder is removed; its current switchyard-bridge extension and other folders stay", () => {
+test("the bridge's old stand-alone extension folder is removed (its tools now come from the package); other folders stay", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-ext-bridge-"));
 	const extensions = path.join(root, "agent", "extensions");
 	try {
 		const bridge = path.join(extensions, "omp-vscode-bridge");
-		const current = path.join(extensions, "switchyard-bridge");
-		const other = path.join(extensions, "mine");
-		const code = "// bridge\npi.registerTool({ name: `mcp__${n}_x`, mcpServerName: n });\n";
-		for (const d of [bridge, current, other]) fs.mkdirSync(d, { recursive: true });
-		fs.writeFileSync(path.join(bridge, "index.js"), code);
-		fs.writeFileSync(path.join(current, "index.js"), code);
+		const other = path.join(extensions, "switchyard-bridge");
+		fs.mkdirSync(bridge, { recursive: true });
+		fs.mkdirSync(other, { recursive: true });
+		fs.writeFileSync(path.join(bridge, "index.js"), "// bridge\npi.registerTool({ name: `mcp__${n}_x`, mcpServerName: n });\n");
 		fs.writeFileSync(path.join(other, "index.js"), "export default () => {}; // someone's own\n");
 		assert.equal(removeLegacyOmpExtensions(path.join(extensions, "switchyard")), true);
 		assert.ok(!fs.existsSync(bridge));
-		assert.ok(fs.existsSync(current), "the bridge's own current extension is not ours to remove");
 		assert.ok(fs.existsSync(other), "an extension that is not the bridge stays");
 		assert.equal(removeLegacyOmpExtensions(path.join(extensions, "switchyard")), false);
 	} finally {
