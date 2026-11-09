@@ -11,7 +11,8 @@ import { type FileChange, type QueueOp, type SessionMeta, type SessionStatus, ty
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -246,6 +247,18 @@ export class SessionManager implements vscode.Disposable {
 		const tasks = rerunTaskIds(source.plan, id);
 		if (tasks.length) await source.edit(tasks.map(task => ({ op: "requeue", id: task })));
 		return tasks.length;
+	}
+
+	/**
+	 * Scheduling priority of sessions: the planner's lane priority decides which waiting session starts first
+	 * (PLANNER-API.md), so it lives there; views sort by organize.json's copy, which callers write too. A session
+	 * without a lane gets one (id = the session id, which the planner treats as the session's queue). Without a
+	 * planner connection nothing is sent.
+	 */
+	async setPriority(ids: readonly string[], priority: Priority): Promise<void> {
+		const source = this.planSource;
+		if (!source || ids.length === 0) return;
+		await source.edit(priorityOps(source.plan, ids, priority));
 	}
 
 	/** Relists every session from AO. */

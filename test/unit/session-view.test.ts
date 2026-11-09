@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { PERMISSION_MODES } from "../../src/shared/permissions";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
@@ -193,4 +193,19 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 	assert.deepEqual(rerunTaskIds(plan, "repo-3"), ["c"]);
 	assert.deepEqual(rerunTaskIds(plan, "repo-1"), []);
 	assert.deepEqual(rerunTaskIds(clean, "repo-3"), []);
+});
+
+test("priorityOps: update the lane that continues a session, else add one named after it; normal clears", () => {
+	const lane = (l: Partial<LaneView>): LaneView => ({ id: "l_1", autoRun: true, createdAt: 1, pending: 0, running: 0, done: 0, failed: 0, total: 0, ...l });
+	const plan = { rev: 1, lanes: [lane({ id: "repo-1" }), lane({ id: "l_x", session: "repo-2" })], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
+	assert.deepEqual(priorityOps(plan, ["repo-1", "repo-2", "repo-3"], "urgent"), [
+		{ op: "lane.update", id: "repo-1", priority: "urgent" },
+		{ op: "lane.update", id: "l_x", priority: "urgent" },
+		{ op: "lane.add", id: "repo-3", session: "repo-3", priority: "urgent" },
+	]);
+	assert.deepEqual(priorityOps(plan, ["repo-1", "repo-3"], "normal"), [
+		{ op: "lane.update", id: "repo-1", priority: null },
+		{ op: "lane.add", id: "repo-3", session: "repo-3" },
+	]);
+	assert.deepEqual(priorityOps(undefined, ["repo-3"], "low"), [{ op: "lane.add", id: "repo-3", session: "repo-3", priority: "low" }]);
 });

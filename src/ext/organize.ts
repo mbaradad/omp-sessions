@@ -516,10 +516,10 @@ export function registerOrganize(api: OmpApi): void {
 			PRIORITIES.map(p => ({ label: `$(${PRIORITY_INFO[p].icon}) ${PRIORITY_INFO[p].label}`, description: p === current ? "current" : undefined, priority: p })),
 			{ placeHolder: `Priority of ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} sessions`} (also decides which waiting session runs next)` },
 		);
-		if (pick) store.setPriority(
-			metas.map(m => m.id),
-			pick.priority,
-		);
+		if (!pick) return;
+		const ids = metas.map(m => m.id);
+		store.setPriority(ids, pick.priority);
+		void sessions.setPriority(ids, pick.priority).catch(err => api.ao.log.warn(`planner priority: ${String(err)}`));
 	});
 
 	const flagCommand = (name: string, placeHolder: string, apply: (ids: string[]) => void, filter?: (m: SessionMeta) => boolean) =>

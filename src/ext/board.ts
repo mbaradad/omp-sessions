@@ -57,6 +57,9 @@ function buildData(api: OmpApi): BoardData {
 /** Board "apply": one store write for all lane/group/priority/rank patches of a move. */
 function apply(api: OmpApi, updates: FromBoard): void {
 	if (updates.type !== "apply") return;
+	for (const u of updates.updates) {
+		if (u.patch.priority !== undefined) void api.sessions.setPriority([u.id], u.patch.priority).catch(err => api.ao.log.warn(`planner priority: ${String(err)}`));
+	}
 	api.organize.update(d => {
 		for (const u of updates.updates) {
 			const e = d.sessions[u.id] ?? {};
@@ -110,6 +113,7 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			break;
 		case "setPriority":
 			store.setPriority(msg.ids, msg.priority);
+			void api.sessions.setPriority(msg.ids, msg.priority).catch(err => api.ao.log.warn(`planner priority: ${String(err)}`));
 			break;
 		case "setColor":
 			store.setColor(msg.ids, msg.color ?? undefined);

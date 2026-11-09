@@ -3,7 +3,8 @@
 // vscode), so the CLI and tests can use it too.
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
 import type { AoAgentState, AoSessionModel } from "../ao/model";
-import type { PlanView } from "../planner/types";
+import type { PlanOp, PlanView } from "../planner/types";
+import type { Priority } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
 import type { SessionMeta, SessionStatus, SyncState } from "../shared/protocol";
 
@@ -173,4 +174,17 @@ export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): str
 	const lanes = plan?.lanes.filter(l => l.id === sessionId || l.session === sessionId) ?? [];
 	const ids = new Set(lanes.map(l => l.id));
 	return (plan?.tasks ?? []).filter(t => (t.lane !== undefined && ids.has(t.lane) || t.session === sessionId) && Object.values(t.sync ?? {}).some(e => e.state === "upstream-changed" || e.state === "conflict")).map(t => t.id);
+}
+
+/**
+ * Plan edits that give sessions a scheduling priority: the lane that continues a session is updated (`normal`
+ * clears it), a session without a lane gets one named after it (the planner treats a lane id equal to an AO
+ * session id as that session's queue).
+ */
+export function priorityOps(plan: PlanView | undefined, ids: readonly string[], priority: Priority): PlanOp[] {
+	const value = priority === "normal" ? null : priority;
+	return ids.map(id => {
+		const lane = plan?.lanes.find(l => l.id === id || l.session === id);
+		return lane ? { op: "lane.update", id: lane.id, priority: value } : { op: "lane.add", id, session: id, ...(value && { priority: value }) };
+	});
 }
