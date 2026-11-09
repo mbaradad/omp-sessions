@@ -5,12 +5,16 @@
 // `_session/steering`) and asks the client through `session/request_permission` and
 // `elicitation/create`, without calling any model.
 //
-// Also answers the other commands AO runs: `omp --version` (version probe, `omp/<version>`) and
-// `omp models [find <pattern>] --json` (AO's model catalog).
+// Also answers the other commands AO and the planner run: `omp --version` (version probe,
+// `omp/<version>`), `omp models [find <pattern>] --json` (AO's model catalog) and `omp usage --json`
+// (provider limit windows, from FAKE_OMP_USAGE).
 //
-// The prompt drives the turn. Each line is one step, run in order:
+// The prompt is a script: each line that starts with a command below is one step, run in order;
+// other lines (a task title, parents' results a planner appends) are ignored. A prompt with no
+// command line is echoed back whole.
 //   echo <text>             stream <text> as assistant text (several agent_message_chunk)
 //   think <text>            stream <text> as reasoning (agent_thought_chunk)
+//   prompt                  stream the whole prompt text received (to assert what a client sent)
 //   bash <command>          `bash` tool call (kind execute); asks session/request_permission first
 //                           unless --approval-mode yolo or an earlier "allow_always"
 //   write <relpath> <text>  `write` tool call (kind edit) that really writes <cwd>/<relpath>; no
@@ -22,13 +26,17 @@
 //                           Steering sent meanwhile is injected and answered "steered: <text>"
 //   plan <a>; <b>; ...      plan update (first entry in_progress, the rest pending)
 //   title <text>            session_info_update with a title (persisted, listed by session/list)
-//   fail [message]          provider error: the message as assistant text, stopReason end_turn (as omp)
+//   cost <usd>              add <usd> to this turn's cost (usage_update carries the session total, as omp)
+//   fail [message]          provider error after omp's own retries: the message as one assistant
+//                           chunk, stopReason end_turn (as omp: AO records a *completed* turn); ends the script
+//   limited <secs> [key]    first time per key (marker file in PI_CODING_AGENT_DIR): `fail` with a 429
+//                           usage-limit error "… Please try again in <secs>s."; later: "ok after limit"
 //   refuse                  stopReason refusal
-//   /compact                compaction command: "Compacted" text, end_turn
-//   /<other>                "Unknown command: /<other>"
-//   anything else           echoed back as assistant text
-// A line equal to `---` separates nothing; blank lines are skipped. A prompt whose text has no
-// recognised command is echoed whole.
+//   error [message]         session/prompt answered with JSON-RPC -32603 (omp's internal errors): AO
+//                           records a *failed* turn
+//   crash [code]            the omp process exits mid-turn (default code 1)
+//   /compact                (whole prompt) compaction command: "Compacted" text, end_turn
+//   /<other>                (whole prompt) "Unknown command: /<other>"
 //
 // Flags (`omp acp ...`): --model <provider/id|id>, --thinking <level>, --approval-mode
 // default|write|yolo|always-ask, --yolo; others are accepted and ignored.
@@ -41,6 +49,8 @@
 //   FAKE_OMP_VERSION      version `--version` and initialize report (default 18.12.6)
 //   FAKE_OMP_NO_STEERING=1   initialize omits `_meta.steering` (AO then has no Steer)
 //   FAKE_OMP_NO_MODELS=1  no models: `models --json` is empty and session/new has no `model` option
+//   FAKE_OMP_USAGE        JSON file `omp usage --json` reports: omp's payload ({reports}) or compact
+//                         windows [{provider, id, label?, usedPercent, resetsAt?}]; read on every call
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -85,8 +95,37 @@ if (argv[0] === "models") {
 	process.stdout.write(`${JSON.stringify({ models })}\n`);
 	process.exit(0);
 }
+// `omp usage --json`: provider limit windows (what a planner gates on), from FAKE_OMP_USAGE.
+if (argv[0] === "usage") {
+	debug({ dir: "argv", argv });
+	let spec = [];
+	try {
+		if (process.env.FAKE_OMP_USAGE) spec = JSON.parse(fs.readFileSync(process.env.FAKE_OMP_USAGE, "utf8"));
+	} catch (err) {
+		if (err.code !== "ENOENT") throw err;
+	}
+	const now = Date.now();
+	// Either omp's own payload ({reports: [...]}) or compact windows [{provider, id, label?, usedPercent, resetsAt?}].
+	const reports = Array.isArray(spec)
+		? [...new Set(spec.map(w => w.provider))].map(provider => ({
+				provider,
+				fetchedAt: now,
+				limits: spec
+					.filter(w => w.provider === provider)
+					.map(w => ({
+						id: w.id,
+						label: w.label ?? w.id,
+						scope: { provider, windowId: w.id },
+						window: { id: w.id, label: w.label ?? w.id, ...(w.resetsAt ? { resetsAt: w.resetsAt } : {}) },
+						amount: { usedFraction: w.usedPercent / 100, remainingFraction: 1 - w.usedPercent / 100, unit: "percent" },
+					})),
+			}))
+		: (spec.reports ?? []);
+	process.stdout.write(`${JSON.stringify({ generatedAt: now, reports, accountsWithoutUsage: [], disabledCredentials: [], capacity: {} }, null, 2)}\n`);
+	process.exit(0);
+}
 if (argv[0] !== "acp") {
-	process.stderr.write(`fake-omp-acp: only \`acp\`, \`--version\` and \`models\` are scripted (got: ${argv.join(" ")})\n`);
+	process.stderr.write(`fake-omp-acp: only \`acp\`, \`--version\`, \`models\` and \`usage\` are scripted (got: ${argv.join(" ")})\n`);
 	process.exit(2);
 }
 debug({ dir: "argv", argv, cwd: process.cwd() });
@@ -192,25 +231,30 @@ function sessionFiles() {
 function fileFor(id) {
 	return sessionFiles().find(f => path.basename(f).endsWith(`_${id}.jsonl`));
 }
+const MESSAGE_TYPES = new Set(["user", "assistant", "tool"]);
 function readStore(file) {
 	const entries = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
 	const header = entries.find(e => e.type === "session");
 	let title;
-	for (const e of entries) if (e.type === "title") title = e.title;
-	return { header, title, entries: entries.filter(e => e.type === "user" || e.type === "assistant" || e.type === "tool") };
+	let cost = 0;
+	for (const e of entries) {
+		if (e.type === "title") title = e.title;
+		else if (e.type === "cost") cost += e.amount;
+	}
+	return { header, title, cost, entries: entries.filter(e => MESSAGE_TYPES.has(e.type)) };
 }
 
 /** Open sessions of this process, by id. */
 const sessions = new Map();
 
-function openSession({ id, cwd, file, title, entries }) {
-	const s = { id, cwd, file, title, entries, model: startModel, thinking: startThinking, mode: "default", allowAlways: new Set(), rejectAlways: new Set(), turn: null, queue: Promise.resolve() };
+function openSession({ id, cwd, file, title, entries, cost = 0 }) {
+	const s = { id, cwd, file, title, entries, cost, model: startModel, thinking: startThinking, mode: "default", allowAlways: new Set(), rejectAlways: new Set(), turn: null, queue: Promise.resolve() };
 	sessions.set(id, s);
 	return s;
 }
 function append(s, entry) {
 	fs.appendFileSync(s.file, `${JSON.stringify(entry)}\n`);
-	if (entry.type !== "title") s.entries.push(entry);
+	if (MESSAGE_TYPES.has(entry.type)) s.entries.push(entry);
 }
 function newSession(cwd, history = []) {
 	const id = crypto.randomUUID();
@@ -234,8 +278,8 @@ function loadStored(id, cwd) {
 	}
 	const file = fileFor(id);
 	if (!file) throw internal(`ACP session not found: ${id}`);
-	const { header, title, entries } = readStore(file);
-	return openSession({ id, cwd: header?.cwd ?? cwd, file, title, entries });
+	const { header, title, cost, entries } = readStore(file);
+	return openSession({ id, cwd: header?.cwd ?? cwd, file, title, entries, cost });
 }
 function sessionOf(params) {
 	const s = sessions.get(params?.sessionId);
@@ -534,19 +578,41 @@ async function runStep(s, turn, line) {
 			append(s, { type: "title", title: rest });
 			update(s.id, { sessionUpdate: "session_info_update", title: rest, updatedAt: new Date().toISOString() });
 			return;
-		case "fail":
-			await streamMessage(s, turn, rest || "Error: fake provider failure");
-			turn.failed = true;
+		case "fail": {
+			// A provider error after omp's own retries: omp sends the error text whole, ends the turn with
+			// end_turn (not an error), and skips the rest of the script.
+			const messageId = crypto.randomUUID();
+			const text = rest || "Error: fake provider failure";
+			update(s.id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text }, messageId });
+			append(s, { type: "assistant", messageId, text });
+			turn.ended = true;
 			return;
+		}
+		case "limited": {
+			const [secs = "2", key = "default"] = rest.split(/\s+/).filter(Boolean);
+			const marker = path.join(agentDir, `limited-${key.replace(/[^\w.-]/g, "_")}`);
+			if (fs.existsSync(marker)) return streamMessage(s, turn, "ok after limit");
+			fs.mkdirSync(agentDir, { recursive: true });
+			fs.writeFileSync(marker, String(Date.now()));
+			return runStep(s, turn, `fail 429 {"type":"error","error":{"type":"rate_limit_error","message":"Usage limit reached for this account. Please try again in ${secs}s."}}`);
+		}
 		case "refuse":
 			turn.stopReason = "refusal";
 			return;
-		default:
-			return streamMessage(s, turn, line);
+		case "prompt":
+			return streamMessage(s, turn, turn.text);
+		case "cost":
+			turn.extraCost += Number(rest) || 0;
+			return;
+		case "error":
+			throw internal(rest || "fake internal error");
+		case "crash":
+			debug({ dir: "exit", code: Number(rest) || 1 });
+			process.exit(Number(rest) || 1);
 	}
 }
 
-const COMMAND_RE = /^(echo|think|bash|slow|write|delete|ask|plan|title|fail|refuse)(\s|$)/;
+const COMMAND_RE = /^(echo|think|bash|slow|write|delete|ask|plan|title|fail|limited|refuse|prompt|cost|error|crash)(\s|$)/;
 
 async function runTurn(s, turn, text) {
 	append(s, { type: "user", messageId: turn.messageId, text });
@@ -559,9 +625,11 @@ async function runTurn(s, turn, text) {
 		.split("\n")
 		.map(l => l.trim())
 		.filter(l => l && l !== "---");
-	const steps = lines.some(l => COMMAND_RE.test(l)) ? lines : [text];
+	// A script runs its command lines and ignores the prose around them (a task title, parents'
+	// results a planner appends); a prompt with no command line is echoed whole.
+	const steps = lines.some(l => COMMAND_RE.test(l)) ? lines.filter(l => COMMAND_RE.test(l)) : [`echo ${text}`];
 	for (const line of steps) {
-		if (turn.stopReason) break;
+		if (turn.stopReason || turn.ended) break;
 		await runStep(s, turn, line);
 		await drainSteering(s, turn);
 	}
@@ -584,7 +652,8 @@ async function prompt(params) {
 	s.queue = new Promise(r => (release = r));
 	await prev;
 	const ctl = new AbortController();
-	const turn = { signal: ctl.signal, steering: [], outputChars: 0, stopReason: undefined, messageId: params.messageId ?? crypto.randomUUID() };
+	const text = promptText(params.prompt);
+	const turn = { signal: ctl.signal, text, steering: [], outputChars: 0, extraCost: 0, stopReason: undefined, ended: false, messageId: params.messageId ?? crypto.randomUUID() };
 	let resolveCancelled;
 	const cancelled = new Promise(r => (resolveCancelled = r));
 	turn.cancel = () => {
@@ -593,7 +662,6 @@ async function prompt(params) {
 		resolveCancelled();
 	};
 	s.turn = turn;
-	const text = promptText(params.prompt);
 	try {
 		const run = runTurn(s, turn, text).catch(err => {
 			if (!(err instanceof Cancelled)) throw err;
@@ -608,9 +676,13 @@ async function prompt(params) {
 	const usage = { inputTokens: 100 + Math.ceil(text.length / 4), outputTokens: Math.max(1, Math.ceil(turn.outputChars / 4)) };
 	usage.totalTokens = usage.inputTokens + usage.outputTokens;
 	if (ctl.signal.aborted) return { stopReason: "cancelled", usage };
+	// usage_update carries the session's cumulative cost, like omp (getUsageStatistics().cost).
+	const amount = usage.totalTokens * 1e-6 + turn.extraCost;
+	append(s, { type: "cost", amount });
+	s.cost += amount;
 	const ctx = s.model?.contextWindow ?? 200000;
 	const used = s.entries.reduce((n, e) => n + Math.ceil(JSON.stringify(e).length / 4), 0);
-	update(s.id, { sessionUpdate: "usage_update", size: ctx, used, cost: { amount: usage.totalTokens * 1e-6, currency: "USD" } });
+	update(s.id, { sessionUpdate: "usage_update", size: ctx, used, cost: { amount: s.cost, currency: "USD" } });
 	update(s.id, { sessionUpdate: "session_info_update", updatedAt: new Date().toISOString(), ...(s.title ? { title: s.title } : {}) });
 	return { stopReason: turn.stopReason ?? "end_turn", usage };
 }
