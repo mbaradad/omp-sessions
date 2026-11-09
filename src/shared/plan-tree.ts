@@ -1,6 +1,6 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
-import type { BudgetCaps, LaneView, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
+import type { BudgetCaps, EdgeSync, LaneView, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
@@ -44,6 +44,37 @@ export function taskStateText(task: TaskView, titleOf: (id: string) => string | 
 	}
 }
 
+/** Edge states that need a look, worst first (`in-sync` and `merged` are fine). */
+const ATTENTION: ReadonlyArray<EdgeSync["state"]> = ["conflict", "resolving", "upstream-changed", "pending"];
+
+/** The worst state among a task's incoming dependency edges (a parent's changes reaching its worktree), if one needs attention. */
+export function syncAttention(task: Pick<TaskView, "sync">): EdgeSync["state"] | undefined {
+	const states = new Set(Object.values(task.sync ?? {}).map(e => e.state));
+	return ATTENTION.find(s => states.has(s));
+}
+
+const SYNC_TEXT: Record<EdgeSync["state"], string> = {
+	"in-sync": "",
+	merged: "",
+	pending: "⇄ parent changed, merging soon",
+	"upstream-changed": "⇄ parent changed after this ran",
+	resolving: "⇄ resolving a merge conflict",
+	conflict: "⚠ merge conflict: needs a person",
+};
+
+/** One-line label for an edge or task sync state ("" when nothing needs attention). */
+export function syncText(state: EdgeSync["state"] | undefined): string {
+	return state ? SYNC_TEXT[state] : "";
+}
+
+/** Why a queue's next task isn't starting, when it is held, blocked or cut short ("" otherwise: paused/scheduled show as the arm state). */
+function laneWaitText(lane: LaneView, now: Date): string {
+	if (lane.state === "held") return `✋ ${lane.waitReason ?? "held"}${lane.waitUntil ? ` until ${formatStartTime(lane.waitUntil, now)}` : ""}`;
+	if (lane.state === "blocked") return "⛓ blocked";
+	if (lane.state === "interrupted") return "⚠ interrupted";
+	return "";
+}
+
 /** "running · 2 pending · 1/4 done · ▶ auto-run" for a lane. */
 export function laneSummary(lane: LaneView, now = new Date()): string {
 	const armed = lane.autoRun ? "▶ auto-run" : lane.startAt ? `⏰ starts ${formatStartTime(lane.startAt, now)}` : lane.pending ? "⏸ paused" : "";
@@ -54,6 +85,7 @@ export function laneSummary(lane: LaneView, now = new Date()): string {
 		lane.failed ? `${lane.failed} failed` : "",
 		lane.total ? `${lane.done}/${lane.total} done` : "no tasks",
 		armed,
+		laneWaitText(lane, now),
 		lane.completed ? "✔ completed" : "",
 	]
 		.filter(Boolean)

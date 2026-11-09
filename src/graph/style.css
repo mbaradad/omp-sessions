@@ -13,11 +13,16 @@ body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(-
 .legend .key::before { content: ""; display: inline-block; width: 22px; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--vscode-descriptionForeground); }
 .legend .key.dashed::before { border-top-style: dashed; }
 .legend .key.pending::before { border-top-style: dashed; border-top-color: var(--c-yellow); }
+.legend .key.changed::before { border-top-color: var(--vscode-charts-orange, #d18616); border-top-width: 3px; }
+.legend .key.conflict::before { border-top-color: var(--c-red); border-top-width: 3px; }
 .graph { flex: 1; padding: 10px; overflow: auto; }
 .graph-svg { display: block; overflow: visible; }
 .gedge { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1.4; opacity: 0.7; }
 .gedge.lane { stroke-dasharray: 2 4; opacity: 0.55; }
 .gedge.pending { stroke: var(--c-yellow); opacity: 1; }
+.gedge.sync-pending { stroke: var(--vscode-charts-orange, #d18616); stroke-dasharray: 3 3; opacity: 1; }
+.gedge.sync-changed { stroke: var(--vscode-charts-orange, #d18616); stroke-width: 2.4; opacity: 1; }
+.gedge.sync-conflict { stroke: var(--c-red); stroke-width: 2.4; opacity: 1; }
 .gedge.hl { stroke: var(--vscode-focusBorder); stroke-width: 2; opacity: 1; }
 .graph-arrow path { fill: var(--vscode-descriptionForeground); }
 .graph-arrow-pending path { fill: var(--c-yellow); }

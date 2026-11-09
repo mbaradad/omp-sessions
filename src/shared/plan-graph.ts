@@ -3,9 +3,9 @@
 // drawn: an edge needs at least one open end (not done/skipped), and a node needs an edge, so a finished
 // chain disappears and a lone task with neither dependencies nor queue neighbours doesn't clutter it.
 // Pure; the webview gets the result as JSON.
-import type { LaneView, PlanView, TaskView } from "../planner/types";
+import type { EdgeSync, LaneView, PlanView, TaskView } from "../planner/types";
 import type { GraphEdge } from "./graph-layout";
-import { taskStateText } from "./plan-tree";
+import { syncAttention, taskStateText } from "./plan-tree";
 
 export interface PlanGraphNode {
 	id: string;
@@ -17,12 +17,18 @@ export interface PlanGraphNode {
 	lane?: string;
 	/** AO session it runs / ran in (the chat to open). */
 	session?: string;
+	/** Worst state of its incoming dependency edges when one needs attention (a parent's changes reaching this task's branch). */
+	sync?: EdgeSync["state"];
+	/** The task works in a git branch (the planner can `sync` it). */
+	git?: true;
 }
 
 export interface PlanGraphEdge extends GraphEdge {
 	kind: "after" | "lane";
 	/** The edge still holds something back (the earlier task isn't finished). */
 	pending: boolean;
+	/** Dependency edges: how the parent's changes reached the child (`TaskView.sync`). */
+	sync?: EdgeSync["state"];
 }
 
 export interface PlanGraph {
@@ -39,7 +45,7 @@ export function planGraph(plan: PlanView, laneTitle: (lane: LaneView) => string,
 	for (const t of plan.tasks) {
 		for (const dep of new Set(t.after ?? [])) {
 			const parent = byId.get(dep);
-			if (parent && parent !== t && keep(parent, t)) edges.push({ from: dep, to: t.id, kind: "after", pending: !finished(parent) });
+			if (parent && parent !== t && keep(parent, t)) edges.push({ from: dep, to: t.id, kind: "after", pending: !finished(parent), ...(t.sync?.[dep] ? { sync: t.sync[dep].state } : {}) });
 		}
 	}
 	const dependsOn = new Set(edges.map(e => `${e.from}\n${e.to}`));
@@ -61,6 +67,9 @@ export function planGraph(plan: PlanView, laneTitle: (lane: LaneView) => string,
 			const node: PlanGraphNode = { id: t.id, title: t.title, state: t.state, text: taskStateText(t, titleOf, now) };
 			if (lane) node.lane = laneTitle(lane);
 			if (t.session) node.session = t.session;
+			const sync = syncAttention(t);
+			if (sync) node.sync = sync;
+			if (t.git) node.git = true;
 			return node;
 		});
 	return { nodes, edges };

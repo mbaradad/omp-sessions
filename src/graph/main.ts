@@ -15,7 +15,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 export type ToGraph = { type: "graph"; graph: PlanGraph } | { type: "unreachable"; reason: string };
 /** Messages to the extension host. */
 export type FromGraph = { type: "ready" } | { type: "action"; action: GraphAction; id: string };
-export type GraphAction = "openChat" | "runNow" | "requeue" | "dependencies" | "schedule";
+export type GraphAction = "openChat" | "runNow" | "requeue" | "dependencies" | "schedule" | "rerun" | "sync";
 
 const vscode = acquireVsCodeApi();
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -48,6 +48,15 @@ const STATE_CLASS: Record<string, string> = {
 	waiting: "s-waiting",
 };
 
+/** Edge colour per propagation state (`in-sync`/`merged` look like any other dependency). */
+const SYNC_CLASS: Partial<Record<string, string>> = { pending: "sync-pending", "upstream-changed": "sync-changed", resolving: "sync-changed", conflict: "sync-conflict" };
+const SYNC_TITLE: Partial<Record<string, string>> = {
+	pending: "The parent changed; the change is merged into this task when its turn ends",
+	"upstream-changed": "The parent changed after this task finished; re-run it to take the change into account",
+	resolving: "The task's agent is resolving a merge conflict",
+	conflict: "The merge conflicted: a person decides",
+};
+
 const root = el("div", "app");
 document.body.append(root);
 let graph: PlanGraph | undefined;
@@ -68,6 +77,9 @@ function actionsFor(node: PlanGraph["nodes"][number]): Array<{ action: GraphActi
 		...(node.state === "failed" || node.state === "interrupted" || !open ? [{ action: "requeue" as const, label: "Requeue" }] : []),
 		{ action: "dependencies", label: "Dependencies…" },
 		...(open ? [{ action: "schedule" as const, label: "Schedule…" }] : []),
+		// The parent's changes reached a task that had already finished: run it once more with just that note.
+		...(node.sync === "upstream-changed" || node.sync === "conflict" ? [{ action: "rerun" as const, label: "Re-run with parent changes" }] : []),
+		...(node.git ? [{ action: "sync" as const, label: "Sync branch" }] : []),
 	];
 }
 
@@ -116,8 +128,9 @@ function render(): void {
 		const info = edgeInfo.get(`${r.from}\n${r.to}`);
 		const pending = info?.pending === true;
 		const highlight = selected !== undefined && (r.from === selected || r.to === selected);
-		const cls = ["gedge", info?.kind === "lane" ? "lane" : "", pending ? "pending" : "", highlight ? "hl" : ""].filter(Boolean).join(" ");
-		edgeLayer.append(svgEl("path", { class: cls, d, "marker-end": `url(#${pending ? "graph-arrow-pending" : "graph-arrow"})` }));
+		const sync = info?.sync && SYNC_CLASS[info.sync];
+		const cls = ["gedge", info?.kind === "lane" ? "lane" : "", pending ? "pending" : "", sync ?? "", highlight ? "hl" : ""].filter(Boolean).join(" ");
+		edgeLayer.append(svgEl("path", { class: cls, d, "marker-end": `url(#${pending ? "graph-arrow-pending" : "graph-arrow"})` }, ...(info?.sync && SYNC_TITLE[info.sync] ? [svgEl("title", {}, SYNC_TITLE[info.sync])] : [])));
 	}
 
 	const nodeLayer = svgEl("g", { class: "graph-nodes" });
@@ -147,7 +160,7 @@ function render(): void {
 	}
 	svg.append(edgeLayer, nodeLayer);
 
-	const legend = el("div", "legend", el("span", "key solid", "dependency"), el("span", "key dashed", "queue order"), el("span", "key pending", "still waiting"));
+	const legend = el("div", "legend", el("span", "key solid", "dependency"), el("span", "key dashed", "queue order"), el("span", "key pending", "still waiting"), el("span", "key changed", "parent changed"), el("span", "key conflict", "conflict"));
 	root.append(legend, el("div", "graph", svg));
 
 	const node = graph.nodes.find(n => n.id === selected);

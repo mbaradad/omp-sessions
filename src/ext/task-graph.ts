@@ -4,14 +4,17 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import type { FromGraph, ToGraph } from "../graph/main";
+import type { PlanOp } from "../planner/types";
 import { planGraph } from "../shared/plan-graph";
 import { tasksOf } from "../shared/plan-tree";
 import type { OmpApi } from "./api";
 import type { TaskNode, TasksProvider } from "./tasks";
 import type { TasksDeps } from "./tasks-deps";
 
-/** Tasks view command that implements each graph action. */
-const COMMAND: Record<Extract<FromGraph, { type: "action" }>["action"], string> = {
+type GraphAction = Extract<FromGraph, { type: "action" }>["action"];
+
+/** Tasks view command that implements each graph action; `rerun` and `sync` are planner ops instead. */
+const COMMAND: Record<Exclude<GraphAction, "rerun" | "sync">, string> = {
 	openChat: "omp.tasks.openChat",
 	runNow: "omp.tasks.runNow",
 	requeue: "omp.tasks.markPending",
@@ -38,7 +41,7 @@ function html(api: OmpApi, webview: vscode.Webview): string {
 </html>`;
 }
 
-export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksProvider): void {
+export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksProvider, edit: (ops: PlanOp[]) => Promise<boolean>): void {
 	const { context } = api;
 	let panel: vscode.WebviewPanel | undefined;
 
@@ -72,9 +75,11 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 		panel.webview.onDidReceiveMessage((m: FromGraph) => {
 			if (m.type === "ready") refresh();
 			else if (m.type === "action") {
-				const node = nodeOf(m.id);
-				const command = COMMAND[m.action];
-				if (node && command) void vscode.commands.executeCommand(command, node);
+				if (m.action === "rerun" || m.action === "sync") void edit([{ op: m.action, id: m.id }]);
+				else {
+					const node = nodeOf(m.id);
+					if (node) void vscode.commands.executeCommand(COMMAND[m.action], node);
+				}
 			}
 		});
 		panel.onDidDispose(() => {

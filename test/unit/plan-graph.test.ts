@@ -50,4 +50,18 @@ describe("planGraph", () => {
 		assert.equal(g.nodes[0].session, "proj-1");
 		assert.equal(g.nodes[1].text, "⏰ 14:30");
 	});
+
+	test("a dependency edge carries how the parent's changes reached the child; the child shows the worst state that needs attention", () => {
+		const edge = (state: "in-sync" | "merged" | "pending" | "upstream-changed" | "resolving" | "conflict") => ({ state, at: 1 });
+		const g = planGraph(
+			plan([], [task("a"), task("b"), task("c", { git: { repo: "/r", branch: "switchyard/c" }, after: ["a", "b"], sync: { a: edge("merged"), b: edge("conflict") } }), task("d", { after: ["a"], sync: { a: edge("in-sync") } })]),
+			titleOf,
+			NOW,
+		);
+		assert.deepEqual(g.edges.map(e => `${e.from}>${e.to}:${e.sync}`), ["a>c:merged", "b>c:conflict", "a>d:in-sync"]);
+		assert.equal(g.nodes.find(n => n.id === "c")?.sync, "conflict");
+		assert.equal(g.nodes.find(n => n.id === "c")?.git, true);
+		assert.equal(g.nodes.find(n => n.id === "d")?.sync, undefined, "in-sync is nothing to look at");
+		assert.equal(g.nodes.find(n => n.id === "a")?.git, undefined);
+	});
 });

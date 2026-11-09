@@ -6,7 +6,7 @@
 import * as vscode from "vscode";
 import type { LaneView, PlanOp, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { laneSummary, orderedLanes, taskStateText, tasksOf } from "../shared/plan-tree";
+import { laneSummary, orderedLanes, syncAttention, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -192,6 +192,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		const titleOf = (id: string) => this.deps.planner.plan?.tasks.find(x => x.id === id)?.title;
 		item.description = [
 			t.state === "waiting" && !t.position ? "" : taskStateText(t, titleOf),
+			syncText(syncAttention(t)),
 			t.priority && t.priority !== "normal" ? t.priority : "",
 			retrying,
 			t.subtasks.length ? `${subsDone}/${t.subtasks.length}` : "",
@@ -302,7 +303,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	const view = vscode.window.createTreeView("omp.tasks", { treeDataProvider: provider, dragAndDropController: provider, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(view);
 	registerTaskExtras(api, deps, provider);
-	registerTaskGraph(api, deps, provider);
+	registerTaskGraph(api, deps, provider, ops => editOrWarn(deps, ops));
 
 	const update = () => {
 		provider.refresh();

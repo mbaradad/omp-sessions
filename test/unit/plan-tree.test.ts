@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { holdLines, laneSummary, orderedLanes, parseBudget, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { holdLines, laneSummary, orderedLanes, parseBudget, syncAttention, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -90,5 +90,25 @@ describe("holdLines", () => {
 			NOW,
 		);
 		assert.deepEqual(lines, ["anthropic is rate-limited until 13:00 (429 usage limit)", "spend this day: $21.50 of $20 (cap reached, frees 14:00)", "spend this hour: $1.00 of $5"]);
+	});
+});
+
+describe("sync state", () => {
+	const edge = (state: "in-sync" | "merged" | "pending" | "upstream-changed" | "resolving" | "conflict") => ({ state, at: 1 });
+
+	test("the worst incoming edge decides; merged and in-sync need nothing", () => {
+		assert.equal(syncAttention({ sync: { a: edge("merged"), b: edge("in-sync") } }), undefined);
+		assert.equal(syncAttention({ sync: { a: edge("pending"), b: edge("upstream-changed") } }), "upstream-changed");
+		assert.equal(syncAttention({ sync: { a: edge("resolving"), b: edge("conflict"), c: edge("pending") } }), "conflict");
+		assert.equal(syncAttention({}), undefined);
+		assert.equal(syncText(undefined), "");
+		assert.equal(syncText("conflict"), "⚠ merge conflict: needs a person");
+	});
+
+	test("a queue says why its next task isn't starting when it is held, blocked or interrupted", () => {
+		const at = new Date(2026, 10, 9, 14, 30).getTime();
+		assert.equal(laneSummary(lane("q", { autoRun: true, pending: 1, total: 1, state: "held", waitReason: "rate-limit anthropic", waitUntil: at }), NOW), "1 pending · 0/1 done · ▶ auto-run · ✋ rate-limit anthropic until 14:30");
+		assert.equal(laneSummary(lane("q", { autoRun: true, pending: 1, total: 1, state: "blocked" }), NOW), "1 pending · 0/1 done · ▶ auto-run · ⛓ blocked");
+		assert.equal(laneSummary(lane("q", { pending: 1, total: 1, state: "paused" }), NOW), "1 pending · 0/1 done · ⏸ paused", "paused shows only as the arm state");
 	});
 });
