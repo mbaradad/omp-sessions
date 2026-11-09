@@ -271,6 +271,8 @@ export function infoJson(s: Session, order: number) {
 			createdAt: m.createdAt,
 			updatedAt: m.updatedAt,
 			changedFiles: report.changedFiles,
+			// Tags are on the entry (as before) and in `meta` (SessionMeta.tags): the Hermes lane finds its cards by `hermes:<board>` and `card:<id>`.
+			...(s.tags.length && { tags: s.tags }),
 			// Old SessionMeta fields scripts and the Hermes plugin read: the mode (AO's setting; omp's live plan mode shows in `show`) and the reply's first line.
 			...(report.mode && { permissionMode: report.mode }),
 			...(report.reply && { lastText: oneLine(report.reply).slice(0, 200) }),

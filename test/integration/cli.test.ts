@@ -271,3 +271,28 @@ test("cli: plan status lists the graph's edges with their sync state; plan sync 
 	assert.equal(cli("plan", "sync", "--", "no-such-thing").status, 1);
 	assert.equal(cli("plan", "bogus").status, 2);
 });
+
+test("cli: the error texts and exit codes the Hermes plugin matches; tags are on the entry and in meta", { skip }, () => {
+	const missing = cli("show", "--json", "--", "no-such-session-1");
+	assert.equal(missing.status, 1);
+	assert.match(missing.stderr, /no session matches/);
+	const id = started("echo tagged", "--mode", "auto", "--tag", "hermes:proj", "--tag", "card:t_1");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	type Entry = { tags?: string[]; meta: { id: string; tags?: string[] } };
+	const entry = json<Entry[]>("ls", "--all", "--json").data.find(i => i.meta.id === id);
+	assert.deepEqual(entry?.tags, ["hermes:proj", "card:t_1"]);
+	assert.deepEqual(entry?.meta.tags, ["hermes:proj", "card:t_1"]);
+	// Nothing waits: answering says so (exit 1); a stale --question says the question changed.
+	const idle = cli("answer", id, "--", "yes");
+	assert.equal(idle.status, 1);
+	assert.match(idle.stderr, /question changed|not waiting for an answer|no question is waiting/i);
+	// A real question: the wrong id → "question changed" (1); an answer that doesn't fit → 2.
+	const asking = started("bash touch q.txt");
+	const w = json("wait", asking, "--timeout", "60s", "--json");
+	assert.equal(w.status, 3);
+	const moved = cli("answer", asking, `--question=nope`, "--", "yes");
+	assert.equal(moved.status, 1);
+	assert.match(moved.stderr, /question changed/i);
+	assert.equal(cli("answer", asking, `--question=${w.data.question.id}`, "--", "maybe").status, 2);
+	assert.equal(cli("answer", asking, `--question=${w.data.question.id}`, "--", "reject").status, 0);
+});
