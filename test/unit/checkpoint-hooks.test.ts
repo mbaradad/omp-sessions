@@ -58,6 +58,7 @@ test("rewind refuses what would also undo a later prompt, an unknown session and
 	await undone.hooks.rewind({ session: "s-1", turn: "t2" });
 	assert.deepEqual(undone.sent, [], "nothing to send: the attempt is already undone");
 
-	const refused = setup([["only", true]], () => ({ ok: false, message: "Nothing undone: a.txt changed since omp edited it, and the changes overlap." }));
-	await assert.rejects(refused.hooks.rewind({ session: "s-1", turn: "t1" }), /changes overlap/);
+	const refused = setup([["only", true]], () => ({ ok: false, message: "Nothing undone: a.txt changed since omp edited it, and the changes overlap.", conflicts: ["/w/a.txt", "/w/b/c.ts"] }));
+	await assert.rejects(refused.hooks.rewind({ session: "s-1", turn: "t1" }), /changes overlap.*Conflicting files: \/w\/a\.txt, \/w\/b\/c\.ts/);
+	assert.deepEqual(refused.sent, ["/undo e1"], "never sent with --force");
 });
