@@ -40,10 +40,17 @@ export function childBranch(taskId: string): string {
 	return `switchyard/${taskId}`;
 }
 
+/** Whether the planner created this branch (`childBranch`, with its `-2`… suffixes): the only ones it ever deletes. */
+export function isPlannerBranch(branch: string): boolean {
+	return branch.startsWith("switchyard/");
+}
+
 /** What seeding a git task's branch from its parents decided. */
 export interface SeedResult {
 	/** The branch AO checks out for the task's session. */
 	branch?: string;
+	/** The branch head after seeding (the parents' work, none of the task's): `TaskGit.base`. Only with git parents. */
+	base?: string;
 	/** The task's edges to its parents. */
 	sync?: Record<string, EdgeSync>;
 	/** Run note: merges the parents' branches that conflicted while seeding. */
@@ -100,7 +107,8 @@ export class Propagation {
 			if (conflict) notes.push(resolveNote(p, conflict.files));
 		}
 		this.host.log("seeded", t.id, branch, "from", heads.map(h => `${h.branch}@${h.head.slice(0, 8)}`).join(", "), conflicts.length ? `(${conflicts.length} conflicted)` : "");
-		return { branch, sync, ...(notes.length ? { followUp: notes.join("\n\n") } : {}) };
+		const base = await revParse(repo, `refs/heads/${branch}`);
+		return { branch, ...(base ? { base } : {}), sync, ...(notes.length ? { followUp: notes.join("\n\n") } : {}) };
 	}
 
 	/** `base`, or `base-2`, `base-3`… when an earlier session of the task still has the branch checked out (AO refuses a branch that is checked out elsewhere). */
@@ -130,14 +138,52 @@ export class Propagation {
 					if (x) x.git = { repo, branch, ...(workspace ? { worktree: workspace } : {}) };
 				});
 			} else if (live.git.branch !== branch && !workspace) return;
-			if (!parents.length) return;
 			for (const p of parents) {
 				const head = p.git?.head as string;
 				const edge = this.task(t.id)?.sync?.[p.id];
 				if (edge?.head === head && (edge.state === "in-sync" || edge.state === "merged" || edge.state === "upstream-changed")) continue;
 				this.setEdge(t.id, p.id, { ...edge, state: "pending", pendingHead: head, at: this.host.now() });
 			}
-			await this.applyPending(t.id);
+			if (parents.length) await this.applyPending(t.id);
+			await this.recordBase(t.id);
+		});
+	}
+
+	/**
+	 * A removed task's branch: AO never deletes the branches of its sessions, so the planner does, but only when
+	 * every commit on it is still reachable from another branch (a parent's, `main`…): nothing is lost. A branch with
+	 * work of its own stays, and git refuses one that is checked out.
+	 */
+	dropBranch(repo: string, branch: string): Promise<void> {
+		if (!isPlannerBranch(branch)) return Promise.resolve();
+		const still = this.host.state().tasks.some(t => t.git?.branch === branch && real(t.git.repo) === real(repo));
+		if (still) return Promise.resolve();
+		return this.serial(async () => {
+			try {
+				const deleted = await withRepoLock(repo, async () => {
+					const tip = await revParse(repo, `refs/heads/${branch}`);
+					if (!tip) return false;
+					const others = (await git(repo, ["for-each-ref", "--contains", tip, "--format=%(refname:short)", "refs/heads"])).split("\n").filter(b => b && b !== branch);
+					if (!others.length) throw new Error("it has commits no other branch has");
+					await git(repo, ["branch", "-D", branch]);
+					return true;
+				});
+				if (deleted) this.host.log("deleted branch", branch);
+			} catch (err) {
+				this.host.log("kept branch", branch, err instanceof Error ? err.message.split("\n")[0] : String(err));
+			}
+		});
+	}
+
+	/** The branch head now (parents merged, the task not started) is where this task's own work begins; kept from its first run. */
+	private async recordBase(id: string): Promise<void> {
+		const t = this.task(id);
+		const wt = t ? await this.worktree(t) : undefined;
+		const head = wt ? await revParse(wt, "HEAD") : undefined;
+		if (!head) return;
+		this.host.commit(s => {
+			const x = s.tasks.find(y => y.id === id);
+			if (x?.git && !x.git.base) x.git.base = head;
 		});
 	}
 

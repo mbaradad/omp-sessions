@@ -149,6 +149,12 @@ export interface TaskGit {
 	worktree?: string;
 	/** Branch head after the task's work was last committed. */
 	head?: string;
+	/**
+	 * Where the task's own work starts: the branch head after its parents were merged in and before its first
+	 * run. `git diff base..head` is "what this task changed" (AO's own diff is against the default branch, so
+	 * it lists the parents' commits too). Absent for a root task in a session the planner created: AO's diff is exact there.
+	 */
+	base?: string;
 }
 
 /**
