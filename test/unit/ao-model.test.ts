@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -109,10 +109,24 @@ test("agentState: the conversation decides once there is one", () => {
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "hibernated" })), "queued");
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "connecting" })), "starting");
 	assert.equal(agentState(v, conversation({ controller: "recovering" })), "starting");
-	// The daemon lost a running turn (restart, agent died): someone has to look.
-	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "interrupted");
-	// A person stopping a turn is not an interruption.
+	// The agent died while a turn ran: AO fails the turn and reports the agent exited. Someone has to look.
+	const exited = view({ activity: { state: "exited", lastActivityAt: T } });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	assert.equal(agentState(exited, conversation({ turns: [lost] })), "interrupted");
+	assert.equal(sessionModel(exited, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A turn that failed on its own (provider error) leaves a live agent: idle, with the reason.
+	const failed = conversation({ turns: [turn("t1", "failed", { errorMessage: "rate limited" })] });
+	assert.equal(agentState(v, failed), "idle");
+	assert.equal(sessionModel(v, failed).exitReason, "rate limited");
+	// omp killed mid-turn, as observed live: the turn stays `running`, the controller stops, the agent exited.
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "running")], controller: "stopped" })), "interrupted");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "running")], activities: [approval], controller: "stopped" })), "interrupted");
+	// After `resume-agent` (observed live): the agent is back, the lost turn stays failed: idle, with the reason.
+	assert.equal(agentState(v, conversation({ turns: [lost] })), "idle");
+	assert.equal(sessionModel(v, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A person stopping a turn is not an interruption; nor is history replayed on resume or adoption.
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "interrupted")] })), "idle");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "idle");
 	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "completed")] })), "stopped");
 	// A stale activity signal does not override a settled conversation.
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" }), conversation({ turns: [turn("t1", "completed")] })), "idle");
@@ -148,6 +162,16 @@ test("questionOf: approvals carry their decisions", () => {
 	assert.equal(q.kind, "approval");
 	assert.equal(q.id, "req-1");
 	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject"]);
+});
+
+test("approvals as omp sends them: bare ACP option ids get labels and kinds", () => {
+	// VALIDATION.md §3: omp's pending approval, decisions without label or kind.
+	const q = questionOf(activity({ requestId: "acp-request:29848af1:1", summary: "date > stamp.txt && cat stamp.txt", detail: { decisions: [{ id: "allow_once" }, { id: "allow_always" }, { id: "reject_once" }, { id: "reject_always" }], input: { command: "date > stamp.txt && cat stamp.txt" }, protocol: "acp", subjectKind: "command", toolKind: "execute" } }));
+	assert.deepEqual(q.options, ["Allow once", "Always allow", "Reject", "Always reject"]);
+	assert.deepEqual(answerFor(q, "y"), { kind: "approval", decisionId: "allow_once" });
+	assert.deepEqual(answerFor(q, "no"), { kind: "approval", decisionId: "reject_once" });
+	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "allow_always" });
+	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
 });
 
 test("answerFor: approvals by number, label or yes/no", () => {
@@ -206,6 +230,11 @@ test("changedFiles: per-turn diffs merged; rolled back turns and files left out"
 		{ path: "a.ts", status: "added", additions: 12, deletions: 1 },
 		{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 1, deletions: 1 },
 	]);
+	// Turns omp's /undo rewound (AO still has their diffs) drop out with their files.
+	assert.deepEqual(changedFiles(c, new Set(["t3", "t4"])), [
+		{ path: "a.ts", status: "added", additions: 10, deletions: 0 },
+		{ path: "b.ts", status: "modified", additions: 1, deletions: 1 },
+	]);
 });
 
 test("lastReply and sessionModel", () => {
@@ -217,7 +246,7 @@ test("lastReply and sessionModel", () => {
 		activities: [ask],
 	});
 	assert.equal(lastReply(c), "PONG");
-	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc…");
+	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc\n… (clipped)");
 	const m = sessionModel(view({ displayName: "my task", model: "other" }), c);
 	assert.equal(m.title, "my task");
 	assert.equal(m.state, "needs_input");
