@@ -12,7 +12,7 @@ function task(id: string, extra: Partial<TaskView> = {}): TaskView {
 	return { id, title: `task ${id}`, subtasks: [], status: "pending", createdAt: 0, state: "waiting", ...extra };
 }
 function plan(lanes: LaneView[], tasks: TaskView[]): PlanView {
-	return { rev: 1, lanes, tasks, recurring: [], status: {} as PlanView["status"] };
+	return { rev: 1, lanes, tasks, recurring: [], edges: [], status: {} as PlanView["status"] };
 }
 const titleOf = (l: LaneView) => `queue ${l.id}`;
 const keys = (g: PlanGraph) => g.edges.map(e => `${e.from}>${e.to}:${e.kind}${e.pending ? "" : ":done"}`);
