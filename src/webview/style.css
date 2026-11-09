@@ -438,22 +438,6 @@ button.stop { background: var(--vscode-inputValidation-errorBorder, #be1100); co
 .picker .prow .star { flex: none; padding: 0 8px; color: var(--muted); }
 .picker .prow .star.on { color: var(--vscode-charts-yellow, #cca700); }
 
-.voice-btn.active { color: var(--brand-2); }
-.voicebar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 5px 8px; border: 1px solid var(--brand-2); border-radius: var(--radius-sm); background: var(--vscode-editorWidget-background); font-size: 0.88em; min-width: 0; }
-.vb-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
-.vb-dot.listening { background: var(--vscode-charts-green, #89d185); animation: vb-pulse 1.4s ease-in-out infinite; }
-.vb-dot.speaking { background: var(--brand-2); animation: vb-pulse 0.8s ease-in-out infinite; }
-.vb-dot.working { background: var(--vscode-charts-yellow, #cca700); }
-.vb-dot.error { background: var(--vscode-charts-red, #f14c4c); }
-@keyframes vb-pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .vb-dot { animation: none !important; } }
-.vb-phase { font-weight: 600; white-space: nowrap; }
-.vb-level { width: 48px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
-.vb-level > span { display: block; height: 100%; background: var(--brand-2); transition: width 0.1s linear; }
-.vb-text { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-.vb-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.vb-line.user { color: var(--vscode-foreground); }
-
 /* ---------- timing / actions ---------- */
 .tdur { color: var(--muted); font-size: 0.82em; font-variant-numeric: tabular-nums; flex: none; min-width: 2.5em; text-align: right; }
 .tbadges + .tdur { margin-left: 8px; }

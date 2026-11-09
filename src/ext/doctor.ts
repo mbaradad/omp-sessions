@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
+import { aoCheckpointDir } from "../shared/checkpoints";
 import { HOST_CRASHED, isOutdated, settleDeadHost } from "../shared/health";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { canConnect, hostAlive as hostIsAlive, sendToHost } from "../shared/launch";
@@ -148,7 +149,7 @@ async function gatherSessions(): Promise<SessionFacts[]> {
 			if (!meta) return undefined;
 			const hostAlive = meta.status !== "stopped" && hostIsAlive(meta);
 			const socketOk = hostAlive ? await canConnect(meta.socket) : undefined;
-			const blobBytes = await dirBytes(path.join(sessionDir(id), "blobs"));
+			const blobBytes = await dirBytes(path.join(aoCheckpointDir(id), "blobs"));
 			const troubled = settleDeadHost(meta, hostAlive) !== meta || abnormalStop(meta) || socketOk === false;
 			return { meta, hostAlive, socketOk, blobBytes, logTail: troubled ? logTail(id) : undefined };
 		}),
@@ -543,7 +544,7 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 			const now = readMetaFile(s.meta.id);
 			if (!now || (now.status !== "stopped" && hostIsAlive(now))) continue;
 			try {
-				fs.rmSync(path.join(sessionDir(s.meta.id), "blobs"), { recursive: true, force: true });
+				fs.rmSync(path.join(aoCheckpointDir(s.meta.id), "blobs"), { recursive: true, force: true });
 				freed += s.blobBytes;
 			} catch {
 				/* in use or permissions: leave it */
