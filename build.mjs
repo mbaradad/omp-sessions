@@ -16,6 +16,8 @@ const builds = [
 	{ ...common, entryPoints: ["src/cli/main.ts"], outfile: "out/cli.js", platform: "node", format: "cjs", banner: { js: "#!/usr/bin/env node" } },
 	{ ...common, entryPoints: ["src/mobile/main.ts"], outfile: "out/mobile.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/mobile/style.css"], outfile: "out/mobile.css" },
+	// omp extensions shipped with Switchyard; src/ext/omp-extension.ts installs them into omp's agent folder.
+	{ ...common, sourcemap: false, entryPoints: ["src/omp-extension/checkpoints.ts"], outdir: "out/omp-extension", platform: "node", format: "esm" },
 ];
 /** Files used next to the bundles as they are: the phone app the server serves, the agent skill. */
 const copies = [
