@@ -217,7 +217,7 @@ Sessions are named by id, id prefix, title words, or `.` (latest in this folder)
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `omp.extraArgs` | `[]` | Extra CLI args for omp in new sessions, e.g. `["--profile","work"]`; user or remote setting only. Needs an AO build with extra-args support (see [docs/SETUP.md](docs/SETUP.md)) |
+| `omp.extraArgs` | `[]` | Extra CLI args for omp in new sessions, e.g. `["--profile","work"]`; user or remote setting only. Applied through Switchyard's `omp` launcher shim, so it needs a daemon that Switchyard started (see [docs/SETUP.md](docs/SETUP.md#extra-omp-arguments)) |
 | `omp.sendWhileBusy` | `steer` | Enter while working: `steer` or `followUp` |
 | `omp.panelLocation` | `beside` | Chat column for editor-tab chats |
 | `omp.chatLocation` | `editor` | Where clicking a session opens its chat: `editor` or `sidebar` |

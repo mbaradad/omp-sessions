@@ -57,6 +57,12 @@ The editor actions that work on what you are looking at (*Fix with omp*, *Commit
 
 A repository without a remote needs a default branch for AO: `git remote set-head origin main`, or Switchyard sets `defaultBranch` on the AO project for you.
 
+### Extra omp arguments
+
+AO starts omp as `omp acp` with a fixed set of flags and has no setting for more. Switchyard adds a small `omp` launcher in `~/.switchyard/bin/` and puts that folder first on the PATH of the AO daemon it starts. For `omp acp` inside an AO session the launcher appends your extra arguments and runs the real omp; for everything else it just runs omp. Set them with `switchyard config set omp.extraArgs --profile work` (machine-wide), in VS Code with *New Session with Options…* or `switchyard new … -- <flags>` (one session; applied by a restart before the first prompt), or per project through the AO project's environment variable `SWITCHYARD_OMP_ARGS`.
+
+If the daemon is not one that Switchyard started (the AO desktop app owns it), put `~/.switchyard/bin` first on that daemon's PATH yourself, or the arguments are ignored. `switchyard status` says whether the launcher is in effect.
+
 ### Coming from omp Sessions
 
 `switchyard migrate` moves your settings: default model, permission mode, the concurrency limit, and the group and board-lane definitions. It is a dry run until you add `--apply`, copies `~/.omp/vscode` to `~/.switchyard/backups/` before it writes anything, and never deletes old data. **Sessions are not carried over**: the dry run lists each old session with the command that continues it in omp's terminal (`omp --resume <id>`), and each unfinished queued task, so you can queue it again with `switchyard new <dir> --task …`.
