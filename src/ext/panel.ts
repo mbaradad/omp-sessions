@@ -13,6 +13,7 @@ import type { FileChange, QueueOp, SessionMeta, TaskQueue } from "../shared/prot
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
+import { askSideQuestion, sideRecords } from "./chat-btw";
 import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
 import { sendResuming } from "./chat-send";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
@@ -461,6 +462,10 @@ export class ChatPanel implements vscode.Disposable {
 		});
 		for (const m of snap.live) this.postFeed(m);
 		this.post({ type: "checkpoints", redo: this.checkpoints?.redoCount(this.sessionId) ?? 0 });
+		// Earlier side questions (/btw) live in AO as side chats: draw their cards again.
+		void sideRecords(ao, this.sessionId).then(records => {
+			for (const record of records) this.post({ type: "event", ev: { type: "btw_record", record } });
+		}, () => undefined);
 		this.postOrigin(true);
 	}
 
@@ -566,6 +571,17 @@ export class ChatPanel implements vscode.Disposable {
 		}
 		const queue = await this.tasks.edit(this.sessionId, ops);
 		if (queue) this.post({ type: "queue", queue });
+	}
+
+	/** `/btw`: asks in a forked side chat; the webview draws the card as it fills. */
+	private async askSide(typed: string): Promise<void> {
+		const question = typed || (await vscode.window.showInputBox({ prompt: "Side question (answered without interrupting the agent)" })) || "";
+		if (!question.trim()) return;
+		try {
+			await askSideQuestion(await this.client(), this.sessionId, question.trim(), record => this.post({ type: "event", ev: { type: "btw_record", record } }));
+		} catch (err) {
+			this.post({ type: "notice", level: "error", text: `Side question failed: ${errorText(err)}` });
+		}
 	}
 
 	// ---------- checkpoints (omp extension) ----------
@@ -795,6 +811,7 @@ export class ChatPanel implements vscode.Disposable {
 			post: msg => this.post(msg),
 			insertText: text => this.insertText(text),
 			setMode: mode => this.setMode(mode),
+			askSide: question => this.askSide(question),
 			runShell: (command, keep) => this.runShell(command, keep),
 		};
 	}

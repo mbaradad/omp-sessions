@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { AoClient, type AoConversation } from "../../src/ao/client";
+import { type BtwRecord, askSideQuestion, sideRecords } from "../../src/ext/chat-btw";
 import { ChatFeed, replyFor } from "../../src/ext/chat-feed";
 import { sendResuming } from "../../src/ext/chat-send";
 import type { ToWebview } from "../../src/shared/webview";
@@ -223,6 +224,27 @@ test("chat feed: sending to a chat whose omp died restarts omp and the prompt go
 		await sendResuming(client, id, async () => void (await client.sendMessage(id, { text: "echo after the crash" })), () => resumed++);
 		assert.equal(resumed, 1);
 		await chat.until("the reply after the crash", () => !chat.feed.isBusy() && texts(chat.feed.transcript()).includes("after the crash"));
+	} finally {
+		await chat.close();
+	}
+});
+
+test("/btw: a side question is answered in a forked side chat and the main conversation does not change", { skip }, async () => {
+	const id = await spawn("feed btw", "echo main answer");
+	const chat = new Follower(id);
+	try {
+		await chat.load();
+		await chat.until("the main reply", () => texts(chat.feed.transcript()).includes("main answer"));
+		const turnsBefore = (await client.getConversation(id, { limit: 50 })).turns.length;
+		const cards: BtwRecord[] = [];
+		const done = await askSideQuestion(client, id, "echo side answer", r => cards.push(r));
+		assert.equal(done.status, "done", JSON.stringify(done));
+		assert.equal(done.question, "echo side answer");
+		assert.equal(done.answer, "side answer");
+		assert.equal(cards[0].status, "running", "the card appears before the answer");
+		assert.equal((await client.getConversation(id, { limit: 50 })).turns.length, turnsBefore, "no turn in the main conversation");
+		// A reload draws the same card again.
+		assert.deepEqual((await sideRecords(client, id)).map(r => [r.question, r.answer, r.status]), [["echo side answer", "side answer", "done"]]);
 	} finally {
 		await chat.close();
 	}

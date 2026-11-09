@@ -22,6 +22,8 @@ export interface CommandContext {
 	post(msg: ToWebview): void;
 	insertText(text: string): void;
 	setMode(mode: PermissionMode): void;
+	/** `/btw`: a side question in a forked side chat; its card appears in the transcript. */
+	askSide(question: string): Promise<void>;
 	/** Runs `!command` in the session folder; `keep` adds its output to the next prompt's context. */
 	runShell(command: string, keep: boolean): Promise<void>;
 }
@@ -32,6 +34,7 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "clear", description: "Same as /new", local: true },
 	{ name: "undo", description: "Undo the last turn: revert its file edits and rewind the conversation", local: true },
 	{ name: "redo", description: "Bring back what the last undo / checkpoint restore removed", local: true },
+	{ name: "btw", description: "Ask a side question without interrupting the agent (answered in a fork of this conversation)", input: { hint: "<question>" }, local: true },
 	{ name: "login", description: "Log in to a model provider (in omp's terminal UI)", local: true },
 	{ name: "logout", description: "Remove a stored provider credential (in omp's terminal UI)", local: true },
 	{ name: "queue", description: "Add a task to this session's background queue (Title :: sub; sub)", input: { hint: "<task>" }, local: true },
@@ -82,6 +85,10 @@ export async function handleComposerInput(text: string, ctx: CommandContext, run
 	if (!m) return false;
 	const name = m[1];
 	const args = (m[2] ?? "").trim();
+	if (name === "btw") {
+		await ctx.askSide(args);
+		return true;
+	}
 	if (name === "mode" || name === "plan") {
 		await permissionMode(ctx, name === "plan" ? "plan" : args);
 		return true;

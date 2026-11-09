@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoTurn } from "../../src/ao/client";
+import { btwRecord } from "../../src/ext/chat-btw";
 import { ChatFeed, ompItemId, replyFor, toolNameOf, toolResultOf } from "../../src/ext/chat-feed";
 import type { ToWebview } from "../../src/shared/webview";
 
@@ -314,4 +315,16 @@ test("turns AO replays from omp's history after a restart (acp-history-turn) are
 	shown.apply(conv({ turns: [turn("t1", "completed"), hist("h1")], messages: [msg(3, "user", "hello", "t1"), msg(4, "assistant", "hi", "t1")] }));
 	assert.equal(shown.takeStale(), true);
 	assert.equal(shown.takeStale(), false);
+});
+
+test("a side chat becomes one /btw card: the first question and its answer, later ones as follow-ups, failures as errors", () => {
+	const side = { id: "s1" } as never;
+	const turn = (id: string, text: string, state: string, createdAt: string, errorMessage?: string) => ({ id, text, state, createdAt, sideId: "s1", clientMessageId: id, ...(errorMessage && { errorMessage }) });
+	const m = (id: string, turnId: string, role: string, text: string, sequence: number) => ({ id, turnId, role, text, sequence, sideId: "s1", revision: 0, streaming: false, createdAt: T, updatedAt: T });
+	const snapshot = (turns: unknown[], messages: unknown[]) => ({ side, turns, messages, activities: [], hasMore: false }) as never;
+	assert.equal(btwRecord(snapshot([], [])), undefined);
+	assert.deepEqual(btwRecord(snapshot([turn("a", "why?", "running", "2026-11-09T10:00:00Z")], [m("1", "a", "user", "why?", 1)])), { id: "s1", question: "why?", answer: "", status: "running", followUps: [] });
+	const done = btwRecord(snapshot([turn("a", "why?", "completed", "2026-11-09T10:00:00Z"), turn("b", "and?", "completed", "2026-11-09T10:01:00Z")], [m("1", "a", "user", "why?", 1), m("2", "a", "assistant", "because", 2), m("3", "b", "assistant", "that", 4)]));
+	assert.deepEqual(done, { id: "s1", question: "why?", answer: "because", status: "done", followUps: [{ question: "and?", answer: "that" }] });
+	assert.deepEqual(btwRecord(snapshot([turn("a", "why?", "failed", "2026-11-09T10:00:00Z", "model overloaded")], [])), { id: "s1", question: "why?", answer: "", status: "error", error: "model overloaded", followUps: [] });
 });
