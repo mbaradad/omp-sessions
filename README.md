@@ -78,8 +78,8 @@ Spend and tokens per day, project, model and session, today's spend in the statu
 1. **Install omp** on the machine where sessions will run (your computer, a workstation or server) and log in to a model provider: `curl -fsSL https://omp.sh/install | sh`
 2. **Install Agent Orchestrator** on that machine: the [AO desktop app](https://orchestrator.inc/download/), or the `ao` binary built from source on a headless machine ([setup guide](docs/SETUP.md#1-omp-ao-and-switchyard)).
 3. **Install Switchyard**, either way:
-   - **VS Code extension** from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions) (`code --install-extension mbaradad.omp-sessions`); over Remote-SSH it installs on the SSH host. *Switchyard: Install switchyard Command* then adds the terminal command.
-   - **Command only** (no VS Code on that machine), with Node 22+: `npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v0.6.0/omp-sessions-0.6.0.tgz` (the package is attached to every [release](https://github.com/mbaradad/omp-sessions/releases)).
+   - **VS Code extension** from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard) (`code --install-extension mbaradad.switchyard`); over Remote-SSH it installs on the SSH host. *Switchyard: Install switchyard Command* then adds the terminal command.
+   - **Command only** (no VS Code on that machine), with Node 22+: `npm install -g <switchyard-<version>.tgz>`, the package attached to each [release](https://github.com/mbaradad/omp-sessions/releases), then `switchyard omp-extension install`.
 4. **Start a session**: press `+` in the Switchyard **Sessions** view, or `switchyard new . -p "…"` in a terminal. `switchyard status` shows AO, the planner, omp and your sessions at a glance.
 5. Optional: *Connect Phone…* (or `switchyard remote on`) for the phone, `switchyard hermes install` for Hermes Agent.
 
