@@ -10,6 +10,7 @@ import { laneSummary, orderedLanes, taskStateText, tasksOf } from "../shared/pla
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
+import { registerTaskGraph } from "./task-graph";
 import type { TasksDeps } from "./tasks-deps";
 
 export type TaskNode =
@@ -301,6 +302,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	const view = vscode.window.createTreeView("omp.tasks", { treeDataProvider: provider, dragAndDropController: provider, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(view);
 	registerTaskExtras(api, deps, provider);
+	registerTaskGraph(api, deps, provider);
 
 	const update = () => {
 		provider.refresh();

@@ -550,6 +550,12 @@
 				"icon": "$(check)"
 			},
 			{
+				"command": "omp.tasks.showGraph",
+				"title": "Show Task Graph",
+				"category": "omp",
+				"icon": "$(type-hierarchy)"
+			},
+			{
 				"command": "omp.editWithOmp",
 				"title": "Edit with omp…",
 				"category": "omp",
@@ -1092,6 +1098,11 @@
 					"command": "omp.scheduler.setBudget",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@3"
+				},
+				{
+					"command": "omp.tasks.showGraph",
+					"when": "view == omp.tasks",
+					"group": "navigation@4"
 				},
 				{
 					"command": "omp.doctor",

@@ -9,6 +9,8 @@ const builds = [
 	{ ...common, entryPoints: ["src/ext/extension.ts"], outfile: "out/extension.js", platform: "node", format: "cjs", external: ["vscode"] },
 	// Switchyard omp extension module: the omp todo-plan mirror (installed with the others by src/ext/omp-extension.ts).
 	{ ...common, sourcemap: false, entryPoints: ["src/omp-extension/todos.ts"], outdir: "out/omp-extension", platform: "node", format: "esm" },
+	{ ...common, entryPoints: ["src/graph/main.ts"], outfile: "out/graph.js", platform: "browser", format: "iife" },
+	{ ...common, entryPoints: ["src/graph/style.css"], outfile: "out/graph.css" },
 	{ ...common, entryPoints: ["src/webview/main.ts"], outfile: "out/webview.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/webview/style.css"], outfile: "out/webview.css" },
 	{ ...common, entryPoints: ["src/bridge/mcp.ts"], outfile: "out/mcp.js", platform: "node", format: "cjs" },
