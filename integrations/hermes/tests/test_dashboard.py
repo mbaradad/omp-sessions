@@ -383,21 +383,17 @@ class DashboardApiTest(unittest.TestCase):
         self.assertTrue(self.view(sid)["archived"])
         self.post(f"/sessions/{sid[:8]}/unarchive", {})
         self.assertFalse(self.view(sid)["archived"])
-        # complete/uncomplete run `switchyard complete|uncomplete <session> --json` (stubbed here, so the
-        # test doesn't depend on the CLI version the plugin runs against).
-        calls: list[list[str]] = []
-        real_json = self.api.switchyard.Switchyard.json
-
-        def fake_json(o, args, **kw):
-            if args[0] in ("complete", "uncomplete"):
-                calls.append(list(args))
-                return {"id": sid, "completed": args[0] == "complete", "changed": True}
-            return real_json(o, args, **kw)
-
-        with mock.patch.object(self.api.switchyard.Switchyard, "json", fake_json):
-            self.assertEqual(self.post(f"/sessions/{sid}/complete", {}), {"ok": True, "id": sid, "completed": True, "changed": True})
-            self.assertFalse(self.post(f"/sessions/{sid}/uncomplete", {})["completed"])
-        self.assertEqual(calls, [["complete", sid, "--json"], ["uncomplete", sid, "--json"]])
+        # complete/uncomplete run the real `switchyard complete|uncomplete <session> --json` (the marker the planner keeps on the session's lane).
+        done = self.post(f"/sessions/{sid}/complete", {})
+        self.assertEqual((done["ok"], done["id"], done["completed"], done["changed"]), (True, sid, True, True))
+        self.assertIsInstance(done["completedAt"], int)
+        v = self.view(sid)
+        self.assertEqual((v["completed"], v["completedAt"]), (True, done["completedAt"]))
+        self.assertIs(json.loads(switchyard("show", sid, "--json").stdout)["completed"], True, "the CLI reports the same marker")
+        self.assertFalse(self.post(f"/sessions/{sid}/complete", {})["changed"], "completing twice changes nothing")
+        reopened = self.post(f"/sessions/{sid[:8]}/uncomplete", {})
+        self.assertEqual((reopened["completed"], reopened["changed"]), (False, True))
+        self.assertEqual((self.view(sid)["completed"], self.view(sid)["completedAt"]), (False, None))
         self.assertIn("unknown action", self.post(f"/sessions/{sid}/bogus", {}, status=404)["error"])
         self.assertIn("invalid value", self.post("/sessions/--all/archive", {}, status=400)["error"], "a session reference is never a flag")
 
@@ -416,18 +412,10 @@ class DashboardApiTest(unittest.TestCase):
 
         # The view's filters: board (a card's board or a hermes:<board> tag) and group.
         self.assertEqual(self.post("/sessions/archive-done", {"group": group, "board": "dash"}), {"archived": [done2], "failed": []})
-        # A session marked completed is done whatever its state (stubbed: `ls --json` reports `completed`).
-        real_sessions = self.api.switchyard.Switchyard.sessions
-
-        def with_completed(o, all=True):
-            out = real_sessions(o, all)
-            for i in out:
-                if i["meta"]["id"] == marked:
-                    i["completed"] = True
-            return out
-
-        with mock.patch.object(self.api.switchyard.Switchyard, "sessions", with_completed):
-            r = self.post("/sessions/archive-done", {"group": group})
+        # A session marked completed (the real `switchyard complete`) is done whatever its state: `marked` is scheduled.
+        self.post(f"/sessions/{marked}/complete", {})
+        self.assertEqual(self.view(marked)["state"], "scheduled")
+        r = self.post("/sessions/archive-done", {"group": group})
         self.assertEqual((set(r["archived"]), r["failed"]), ({done1, marked}, []), "idle with nothing queued, or completed; never one already archived")
         self.assertFalse(self.view(later)["archived"], "scheduled work is not done")
         self.assertTrue(all(self.view(s)["archived"] for s in (done1, done2, marked, already)))

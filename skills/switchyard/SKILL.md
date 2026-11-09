@@ -157,6 +157,7 @@ hermes kanban --board <slug> assign <card-id> switchyard      # hand an existing
 ```
 
 - On success the card is completed, with the session's final reply as the result. Child cards see it as their parent's result.
+- Done cards pile up. With `archive_completed` on (`hermes switchyard lane on --archive-completed on`, or one board's `hermes switchyard board <slug> --archive-completed on`), a card is archived on the board, and its session hidden (`switchyard archive`, a Switchyard flag: the AO session keeps running), right after it completes. `hermes switchyard archive-done [--board <slug>]` does that for cards already done.
 - If the session waits for an answer, the card is blocked as `needs_input` until someone answers, in VS Code, on the phone or with `switchyard answer`.
 - A session that stops on an error blocks the card as `transient`; a task a crash or reboot interrupted blocks it too, and unblocking the card continues it in the same session.
 - `--board` goes before the verb. `hermes switchyard status` shows the lane and its linked cards.
