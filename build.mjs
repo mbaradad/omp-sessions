@@ -10,8 +10,8 @@ const builds = [
 	{ ...common, entryPoints: ["src/webview/main.ts"], outfile: "out/webview.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/webview/style.css"], outfile: "out/webview.css" },
 	{ ...common, entryPoints: ["src/bridge/mcp.ts"], outfile: "out/mcp.js", platform: "node", format: "cjs" },
-	// omp extensions shipped with Switchyard, one module each; src/ext/omp-extension.ts installs them into omp's agent folder as one package.
-	{ ...common, sourcemap: false, entryPoints: ["src/omp-extension/bridge.ts"], outdir: "out/omp-extension", platform: "node", format: "esm" },
+	// omp extensions shipped with Switchyard: every module in src/omp-extension/ (checkpoints, mode, todos, …); src/ext/omp-extension.ts installs them.
+	{ ...common, sourcemap: false, entryPoints: fs.readdirSync("src/omp-extension").filter(f => f.endsWith(".ts")).map(f => `src/omp-extension/${f}`), outdir: "out/omp-extension", platform: "node", format: "esm" },
 	{ ...common, entryPoints: ["src/kanban/main.ts"], outfile: "out/kanban.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/kanban/style.css"], outfile: "out/kanban.css" },
 	{ ...common, entryPoints: ["src/server/main.ts"], outfile: "out/server.js", platform: "node", format: "cjs" },
