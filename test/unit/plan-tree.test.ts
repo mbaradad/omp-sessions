@@ -147,7 +147,7 @@ describe("checkTaskOption", () => {
 });
 
 describe("undoing a task", () => {
-	const ran = (id: string, session: string, startedAt: number, extra: Partial<TaskView> = {}): TaskView => task(id, undefined, { session, turn: `turn-${id}`, status: "done", state: "done", startedAt, ...extra });
+	const ran = (id: string, session: string, startedAt: number, extra: Partial<TaskView> = {}): TaskView => task(id, { session, turn: `turn-${id}`, status: "done", state: "done", startedAt, ...extra });
 
 	test("only a finished task that has an AO session and turn can be undone", () => {
 		assert.equal(isUndoable(ran("a", "s", 1)), true);
@@ -162,7 +162,7 @@ describe("undoing a task", () => {
 		const t2 = ran("2", "s", 200);
 		const t3 = ran("3", "s", 300, { status: "failed", state: "failed" });
 		const other = ran("o", "other", 250);
-		const pending = task("p", undefined, { session: "s", startedAt: 400 });
+		const pending = task("p", { session: "s", startedAt: 400 });
 		const p = plan([], [t3, other, t2, pending, t1]);
 		assert.deepEqual(undoneWith(p, t2).map(t => t.id), ["2", "3"]);
 		assert.deepEqual(undoneWith(p, t1).map(t => t.id), ["1", "2", "3"]);
@@ -170,8 +170,8 @@ describe("undoing a task", () => {
 	});
 
 	test("afterwards every undone task is pending again and held: queues are paused (requeue re-arms them), separate tasks paused one by one", () => {
-		const inQueue = [task("a", "q", { lane: "q" }), task("b", "q", { lane: "q" })];
-		const free = task("f", undefined);
+		const inQueue = [task("a", { lane: "q" }), task("b", { lane: "q" })];
+		const free = task("f");
 		const ops = afterUndoOps([...inQueue, free]);
 		assert.deepEqual(ops, [{ op: "requeue", id: "a" }, { op: "requeue", id: "b" }, { op: "requeue", id: "f" }, { op: "pause", id: "f" }, { op: "lane.pause", id: "q" }]);
 		const requeueIndex = ops.findIndex(o => o.op === "requeue" && o.id === "b");
