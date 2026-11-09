@@ -17,8 +17,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
-import { sessionStateFile, switchyardHome } from "./native";
+import { refuseRealStateInTests, sessionStateFile, switchyardHome } from "./native";
+import { writeMode } from "../shared/session-mode";
+import { gateStatus } from "./gate";
 import type { AoPermissionMode } from "./report";
+import type { OmpPathOptions } from "../shared/omp-paths";
 
 /** The permission modes; the gate in the omp extension reads one of these from the mode file. */
 export type AoSessionMode = AoPermissionMode;
@@ -35,8 +38,10 @@ export interface SpawnSwitchyardOptions {
 	model?: string;
 	/** omp's thinking level (`off`, `low`, `medium`, `high`, …), checked against its choices. */
 	thinking?: string;
-	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). */
+	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). Any other mode needs the permission gate installed: without it the spawn is refused (`switchyard install`). */
 	mode?: AoSessionMode;
+	/** Where to look for the gate (omp's agent folder): default the machine's own. For tests that install a stand-in gate in a temp folder. */
+	gate?: { omp?: OmpPathOptions };
 	/**
 	 * Extra `omp acp` arguments for this session (G34), read by the Switchyard `omp` shim, which must be first on
 	 * the daemon's PATH. Written as plain words when every argument is one word, else as a JSON array of strings
@@ -93,9 +98,16 @@ function writeFileAtomic(file: string, content: string): void {
 /** Starts a Switchyard session (see the file header). Rejects before creating anything for an unknown model. */
 export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwitchyardOptions = {}): Promise<SpawnedSwitchyardSession> {
 	const home = options.home ?? switchyardHome();
+	refuseRealStateInTests(home);
 	const mode = options.mode ?? "auto";
 	const ompArgs = options.ompArgs ?? [];
 	if (ompArgs.includes("")) throw new Error("an omp argument is empty");
+	// Fail closed (G46): the session is launched in AO's bypass-permissions and only the gate enforces ask/edits/plan,
+	// so a mode file nobody reads would run everything unrestricted while reporting the mode. Refuse before anything exists.
+	if (mode !== "auto") {
+		const status = gateStatus(options.gate);
+		if (!status.gate) throw new Error(`Permission mode "${mode}" needs the Switchyard permission gate, which is not installed (looked in ${status.extensionDir}). Run \`switchyard install\`; without the gate a session can only start in mode "auto".`);
+	}
 
 	// 1. A model no catalog knows would leave a terminated session behind; refuse it before any session exists.
 	if (options.model) {
@@ -155,11 +167,12 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		}
 
 		// 6. The permission mode, last for the same reason (omp's `plan` option is one of the live ones).
-		// The caller's setMode writes the mode file and handles plan (MAPPING D11: never write the file
-		// by hand); without one this does both itself, which is all a session with no turns needs.
+		// A caller's setMode (e.g. setSessionMode, which also declines gate questions left open) takes
+		// over; without one this writes the mode file and handles plan, which is all a session with no
+		// turns needs.
 		if (options.setMode) await options.setMode(id, mode);
 		else {
-			writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
+			writeMode(id, mode, home);
 			if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
 		}
 	} catch (error) {

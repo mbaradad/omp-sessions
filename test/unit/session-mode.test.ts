@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import switchyardMode from "../../src/omp-extension/mode";
-import { APPROVE, APPROVE_SESSION, DENY, type PermissionMode, gateDecision, readMode, writeMode } from "../../src/shared/session-mode";
+import { APPROVE, APPROVE_SESSION, DENY, type PermissionMode, gateDecision, readMode, targetsOnlyInternal, writeMode } from "../../src/shared/session-mode";
 
 type Ctx = ReturnType<typeof ctxWith>["ctx"];
 type Handler = (event: { toolName: string; input: Record<string, unknown> }, ctx: Ctx) => Promise<{ block: true; reason: string } | undefined>;
@@ -96,4 +96,21 @@ test("a mode switch from ask to plan withdraws the question and refuses the edit
 			}),
 	);
 	assert.match((await handler?.({ toolName: "edit", input: { path: "a" } }, ctx))?.reason ?? "", /Plan mode/);
+});
+
+test("plan mode lets omp present its plan: writes to local:// and xd:// pass, writes to files still don't", async () => {
+	assert.equal(gateDecision("plan", "write", false, true), "allow");
+	assert.equal(gateDecision("plan", "write", false, false), "block");
+	assert.equal(gateDecision("ask", "write", false, true), "ask", "only plan mode relaxes it");
+	assert.equal(targetsOnlyInternal({ path: "local://PLAN.md" }), true);
+	assert.equal(targetsOnlyInternal({ path: "xd://propose" }), true);
+	assert.equal(targetsOnlyInternal({ path: "src/a.ts" }), false);
+	assert.equal(targetsOnlyInternal({ path: "local://PLAN.md", paths: ["src/a.ts"] }), false, "one real file among them");
+	assert.equal(targetsOnlyInternal({ input: "[local://PLAN.md#AB12]\n1:x" }), true, "hashline edit header");
+	assert.equal(targetsOnlyInternal({ input: "[local://PLAN.md#AB12]\n1:x\n[src/a.ts#CD34]\n1:y" }), false);
+	assert.equal(targetsOnlyInternal({}), false, "no target named: stays refused");
+	const { handler } = setup("plan");
+	const { ctx } = ctxWith(async () => DENY);
+	assert.equal(await handler?.({ toolName: "write", input: { path: "local://PLAN.md", content: "# plan" } }, ctx), undefined);
+	assert.match((await handler?.({ toolName: "write", input: { path: "a.txt", content: "x" } }, ctx))?.reason ?? "", /Plan mode/);
 });

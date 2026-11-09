@@ -9,8 +9,8 @@ import * as path from "node:path";
 import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AoError } from "../../src/ao/client";
-import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
-import { Planner } from "../../src/planner/planner";
+import { type AoConversationInfo, type AoPort, type AoStreamHandlers, type AoTurnInfo, DispatchRefused, type StartSession } from "../../src/planner/ao-port";
+import { Planner, type PlannerOptions } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
 
@@ -97,6 +97,18 @@ export class FakeAo implements AoPort {
 		return { session: id, ...(created?.branch ? { branch: created.branch } : {}) };
 	}
 
+	/** The D11 sequence as the port sees it: spawn (idempotent in the key), then the prompt (idempotent in the key). */
+	async startSession(opts: StartSession) {
+		if (this.modelIds.length && opts.model && !this.modelIds.includes(opts.model)) throw new DispatchRefused(`Unknown omp model "${opts.model}"`);
+		const { prompt, key, ...rest } = opts;
+		const res = await this.spawn({ ...rest, harness: "omp", approvalMode: "bypass-permissions", clientRequestId: key });
+		const s = this.sessions.get(res.session);
+		assert.ok(s);
+		let turn = s.conv.messages.find(m => m.clientMessageId === key)?.turnId;
+		if (!turn) turn = this.turn(s, prompt, key);
+		return { ...res, turn };
+	}
+
 	async send(session: string, text: string, clientMessageId: string) {
 		const s = this.sessions.get(session);
 		assert.ok(s && !s.terminated && !s.exited, `send to ${session}: terminated or exited`);
@@ -121,6 +133,7 @@ export class FakeAo implements AoPort {
 
 	async interrupt(session: string) {
 		this.finishTurn(session, "interrupted");
+		return { discarded: 0 };
 	}
 
 	async resumeAgent(session: string) {
@@ -129,8 +142,18 @@ export class FakeAo implements AoPort {
 		this.resumed.push(session);
 	}
 
-	async models() {
-		return this.modelIds;
+	/** What the config asks for (set by a test) and how often the planner applied it. */
+	hibernation: { enabled: boolean; changed: boolean } | undefined;
+	hibernationCalls = 0;
+
+	async applyHibernation() {
+		this.hibernationCalls++;
+		return this.hibernation;
+	}
+
+	/** An AO event for the session with the given activity (someone chatted: active, then idle). */
+	poke(session: string, activity: string): void {
+		this.event(session, activity);
 	}
 
 	/** Simulates the chat host dying mid-turn: the turn stays running, the session reads exited. */
@@ -139,6 +162,11 @@ export class FakeAo implements AoPort {
 		assert.ok(s, `no session ${session}`);
 		s.exited = true;
 		this.event(session, "exited");
+	}
+
+	/** The event stream reopens, as after a daemon restart. */
+	reopen(): void {
+		this.handlers?.onOpen(true);
 	}
 
 	/** The host died and no event told anyone (a missed SSE event). */
@@ -153,12 +181,23 @@ export class FakeAo implements AoPort {
 		if (s) s.terminated = false;
 	}
 
-	async setModel() {
-		return undefined;
+	/** Current model and thinking level of each session, and every change made (previous value returned, as AO's port does). */
+	models_ = new Map<string, string>();
+	thinking_ = new Map<string, string>();
+	changes: string[] = [];
+
+	async setModel(session: string, model: string) {
+		const prev = this.models_.get(session) ?? "default/model";
+		this.models_.set(session, model);
+		this.changes.push(`model ${session} ${model}`);
+		return prev;
 	}
 
-	async setThinking() {
-		return undefined;
+	async setThinking(session: string, level: string) {
+		const prev = this.thinking_.get(session) ?? "high";
+		this.thinking_.set(session, level);
+		this.changes.push(`thinking ${session} ${level}`);
+		return prev;
 	}
 
 	/** Folders registered as projects, as AO refuses a second registration of the same path. */
@@ -177,7 +216,11 @@ export class FakeAo implements AoPort {
 
 	async sessionGit(session: string) {
 		const s = this.sessions.get(session);
-		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch } : {};
+		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch, ...(s.worktree ? { workspace: s.worktree } : {}) } : {};
+	}
+
+	async workspacePath(session: string) {
+		return this.sessions.get(session)?.worktree;
 	}
 
 	async projectPath(id: string) {
@@ -208,6 +251,24 @@ export class FakeAo implements AoPort {
 		this.event(session);
 	}
 
+	/** AO marks the turn completed while its last reply is still streaming; `settleReply` finishes it. */
+	finishTurnWhileStreaming(session: string, partial: string): void {
+		const s = this.sessions.get(session);
+		const turn = s?.conv.turns.find(t => t.state === "running");
+		assert.ok(s && turn, `no running turn in ${session}`);
+		turn.state = "completed";
+		s.conv.messages.push({ turnId: turn.id, role: "assistant", text: partial, streaming: true });
+		this.event(session);
+	}
+
+	settleReply(session: string, finalText: string): void {
+		const m = this.sessions.get(session)?.conv.messages.filter(x => x.role === "assistant" && x.streaming).pop();
+		assert.ok(m, "no streaming reply");
+		m.text = finalText;
+		m.streaming = false;
+		this.event(session);
+	}
+
 	promptOf(session: string): string {
 		return this.sessions.get(session)?.conv.messages.find(m => m.role === "user")?.text ?? "";
 	}
@@ -230,8 +291,8 @@ export function tempPlan(t: TestContext): string {
 	return path.join(dir, "plan.json");
 }
 
-export function start(file: string, ao: FakeAo): Planner {
-	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
+export function start(file: string, ao: FakeAo, hooks: Pick<PlannerOptions, "undone" | "rewind"> = {}): Planner {
+	const p = new Planner({ ...hooks, file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50, userDefaults: () => ({}) });
 	p.start();
 	return p;
 }

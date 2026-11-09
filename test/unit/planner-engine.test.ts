@@ -29,7 +29,7 @@ const dispatched = (s: PlanState, c = ctx()) => evaluate(s, c).dispatch.map(t =>
 function complete(s: PlanState, title: string, summary = `${title} done`, now = NOW): void {
 	const t = s.tasks.find(x => x.title === title);
 	assert.ok(t);
-	startRun(s, t.id, { key: `k-${t.id}`, via: "spawn", prompt: "p", spawn: {} }, now);
+	startRun(s, t.id, { key: `k-${t.id}`, via: "spawn", prompt: "p", spawn: { displayName: "t" } }, now);
 	finishRun(s, t.id, { kind: "completed", summary }, now + 1000);
 }
 
@@ -66,7 +66,7 @@ describe("graph readiness", () => {
 	test("a failed parent keeps children blocked and says so; requeue + success unblocks", () => {
 		const { s } = graph();
 		const a = s.tasks[0];
-		startRun(s, a.id, { key: "k", via: "spawn", prompt: "p", spawn: {} }, NOW);
+		startRun(s, a.id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		finishRun(s, a.id, { kind: "error", error: { message: "boom" } }, NOW);
 		assert.equal(a.status, "failed");
 		const ev = evaluate(s, ctx());
@@ -120,7 +120,7 @@ describe("lanes (queues)", () => {
 		// While "two" runs, the lane is busy.
 		const two = ran.tasks.find(t => t.title === "two");
 		assert.ok(two);
-		startRun(ran, two.id, { key: "k", via: "spawn", prompt: "p", spawn: {} }, NOW);
+		startRun(ran, two.id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		ev = evaluate(ran, ctx());
 		assert.equal(ev.dispatch.length, 0);
 	});
@@ -136,7 +136,7 @@ describe("lanes (queues)", () => {
 		assert.deepEqual(dispatched(later, ctx(NOW + 31 * MIN)), ["one"]);
 		// A failure without retries stops the lane; lane.requeue re-runs the failed task and re-arms.
 		const one = s.tasks[0];
-		startRun(s, one.id, { key: "k", via: "spawn", prompt: "p", spawn: {} }, NOW);
+		startRun(s, one.id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		finishRun(s, one.id, { kind: "error", error: { message: "x" } }, NOW);
 		assert.equal(s.lanes[0].autoRun, false);
 		assert.equal(dispatched(s).length, 0);
@@ -150,7 +150,7 @@ describe("lanes (queues)", () => {
 		const withSub = applyOps(s, [{ op: "addSubtask", id: s.tasks[0].id, title: "sub" }, { op: "done", id: s.tasks[0].id }, { op: "skip", id: s.tasks[1].id }], NOW).state;
 		assert.equal(withSub.tasks[0].subtasks[0].done, true);
 		assert.deepEqual(dispatched(withSub), ["three"]);
-		startRun(withSub, withSub.tasks[2].id, { key: "k", via: "spawn", prompt: "p", spawn: {} }, NOW);
+		startRun(withSub, withSub.tasks[2].id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		assert.throws(() => applyOps(withSub, [{ op: "remove", id: withSub.tasks[2].id }], NOW), /is running; abort it/);
 		assert.throws(() => applyOps(withSub, [{ op: "update", id: withSub.tasks[2].id, options: { model: "a/b" } }], NOW), /only its title, notes and priority/);
 	});
@@ -198,7 +198,7 @@ describe("slots and priorities", () => {
 		assert.equal(byTitle(ev.views, "n2").position, 1);
 		assert.equal(byTitle(ev.views, "low").position, 2);
 		assert.match(byTitle(ev.views, "n2").waitReason ?? "", /waiting for a slot/);
-		startRun(s, s.tasks[3].id, { key: "k", via: "spawn", prompt: "p", spawn: {} }, NOW);
+		startRun(s, s.tasks[3].id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		assert.deepEqual(dispatched(s), ["n1"]);
 		s.config.maxConcurrent = 0;
 		assert.deepEqual(dispatched(s), ["n1", "n2", "low"]);
@@ -270,7 +270,7 @@ describe("usage gating", () => {
 	test("a limit error holds the provider without using an attempt; success clears it", () => {
 		const { s } = plan([{ op: "add", task: { title: "t", options: { model: "anthropic/claude-x", retries: 1 } } }]);
 		const t = s.tasks[0];
-		startRun(s, t.id, { key: "k", via: "spawn", prompt: "p", spawn: {}, provider: "anthropic" }, NOW);
+		startRun(s, t.id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" }, provider: "anthropic" }, NOW);
 		finishRun(s, t.id, { kind: "error", error: { message: "Usage limit reached. Resets in 2 hr." } }, NOW);
 		assert.equal(t.status, "pending");
 		assert.equal(t.attempts, undefined);
@@ -279,7 +279,7 @@ describe("usage gating", () => {
 		const view = byTitle(evaluate(s, c).views, "t");
 		assert.equal(view.state, "held");
 		assert.match(view.waitReason ?? "", /rate-limit anthropic until/);
-		startRun(s, t.id, { key: "k3", via: "spawn", prompt: "p", spawn: {}, provider: "anthropic" }, NOW + 3 * 60 * MIN);
+		startRun(s, t.id, { key: "k3", via: "spawn", prompt: "p", spawn: { displayName: "t" }, provider: "anthropic" }, NOW + 3 * 60 * MIN);
 		finishRun(s, t.id, { kind: "completed", summary: "ok" }, NOW + 3 * 60 * MIN);
 		assert.equal(s.limits.anthropic, undefined);
 	});
@@ -350,7 +350,7 @@ describe("run outcomes", () => {
 	const one = (options = {}) => {
 		const { s } = plan([{ op: "lane.add", id: "l_0000000003" }, { op: "add", task: { title: "t", lane: "l_0000000003", options } }]);
 		const t = s.tasks[0];
-		startRun(s, t.id, { key: "k", via: "spawn", prompt: "p", spawn: {}, session: "sess-9" }, NOW);
+		startRun(s, t.id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" }, session: "sess-9" }, NOW);
 		return { s, t };
 	};
 
@@ -402,7 +402,7 @@ describe("persistence", () => {
 			{ op: "add", task: { title: "B", after: ["@a"], priority: "high", usage: "spare" } },
 			{ op: "recur.add", recurring: { rule: { at: ["09:00"] }, task: { title: "daily" } } },
 		]);
-		startRun(s, s.tasks[0].id, { key: "k", via: "spawn", prompt: "p", spawn: { harness: "omp" } }, NOW);
+		startRun(s, s.tasks[0].id, { key: "k", via: "spawn", prompt: "p", spawn: { displayName: "t" } }, NOW);
 		const back = normalizeState(JSON.parse(JSON.stringify(s)));
 		assert.deepEqual(back, s);
 		const raw = JSON.parse(JSON.stringify(s));
@@ -418,5 +418,17 @@ describe("task options", () => {
 		assert.equal(normalizeOptions({ thinking: "minimal" })?.thinking, "low");
 		for (const level of ["off", "auto", "low", "medium", "high", "xhigh", "max"]) assert.equal(normalizeOptions({ thinking: level })?.thinking, level);
 		assert.equal(normalizeOptions({ thinking: "extreme" }), undefined);
+	});
+});
+
+// The chat panel (ext-chat) turns these message shapes into chips by their first line and trailing sentence.
+describe("task prompt shapes the chat panel recognises", () => {
+	test("a lane task, a free task and a follow-up keep their heads and trailers", () => {
+		const { s: state } = plan([{ op: "lane.add", id: "l_00000000d4" }, { op: "add", task: { title: "In lane", lane: "l_00000000d4" } }, { op: "add", task: { title: "Free" } }]);
+		const [inLane, free] = state.tasks;
+		assert.match(taskPrompt(state, inLane), /^\[Task 1\/1 from the queue\] In lane\n[\s\S]*\nWork through this task completely/);
+		assert.match(taskPrompt(state, free), /^\[Task from the plan\] Free\n[\s\S]*\nWork through this task completely/);
+		const followUp = { ...free, followUpOnly: true, followUp: "A changed x.txt." };
+		assert.match(taskPrompt(state, followUp), /^\[Follow-up on your task\] Free\n\nA changed x\.txt\.\n\nTake this into account, fix whatever it breaks/);
 	});
 });

@@ -7,13 +7,15 @@
 // replays the outstanding steps: AO answers a replayed spawn or message with what it already made,
 // so nothing runs twice. A run AO lost (session deleted or killed, turn recovered/interrupted by
 // someone else) becomes `interrupted` and is never re-run unattended.
+import { type SwitchyardConfig, readSwitchyardConfig } from "../ao/config";
+import { isCheckpointCommand } from "../shared/checkpoints";
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
-import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
+import { type Outcome, PlanError, advance, taskByRef, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
-import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
+import type { EdgeView, PlanOp, PlanState, SessionStart, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, replyIsProviderError, spendUse } from "./usage";
 
 export interface PlannerOptions {
@@ -29,6 +31,14 @@ export interface PlannerOptions {
 	now?: () => number;
 	version?: string;
 	retryBaseMs?: number;
+	/** Model and mode for a NEW session whose task, lane and planner defaults name none (config.json, MAPPING D7); read at every dispatch. */
+	userDefaults?: () => Pick<SwitchyardConfig, "model" | "mode">;
+	/** Whether a person undid this finished task's turn (checkpoints); asked when its session shows activity. */
+	undone?: (task: Task) => Promise<boolean>;
+	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
+	rewind?: (task: Task) => Promise<void>;
+	/** How long a completed turn may wait for its last reply to stop streaming (default 5 s). */
+	settleMs?: number;
 	/** How often a running task's session is asked about when no event said it died (default 10 s). */
 	livenessMs?: number;
 	/** Fallback poll of running tasks (events usually come first). */
@@ -68,17 +78,18 @@ export class Planner {
 	/** Tasks to look at again once their in-flight step ends. */
 	private readonly recheck = new Set<string>();
 	private readonly interruptSent = new Set<string>();
+	/** When a completed turn was first seen with its reply still streaming (bounded wait for the final text). */
+	private readonly settleSince = new Map<string, number>();
 	/** When AO was last asked whether a running task's session is still alive. */
 	private readonly livenessAt = new Map<string, number>();
 	private tickTimer: NodeJS.Timeout | undefined;
 	private tickDue = 0;
 	private pollTimer: NodeJS.Timeout | undefined;
 	private usageTimer: NodeJS.Timeout | undefined;
-	private readonly retryTimers = new Map<string, NodeJS.Timeout>();
+	/** Pending check of a running task: its timer and when it is due (an earlier request replaces a later one). */
+	private readonly retryTimers = new Map<string, { timer: NodeJS.Timeout; due: number }>();
 	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
-	/** omp model ids AO knows, fetched at most every 10 minutes. */
-	private models: { at: number; ids: ReadonlySet<string> } | undefined;
 
 	constructor(private readonly opts: PlannerOptions) {
 		this.state = opts.initial ?? emptyState();
@@ -120,7 +131,7 @@ export class Planner {
 		clearTimeout(this.tickTimer);
 		clearInterval(this.pollTimer);
 		clearInterval(this.usageTimer);
-		for (const t of this.retryTimers.values()) clearTimeout(t);
+		for (const t of this.retryTimers.values()) clearTimeout(t.timer);
 		this.retryTimers.clear();
 		this.stream?.close();
 	}
@@ -145,6 +156,13 @@ export class Planner {
 					this.lastEventAt = this.now();
 					// Events may have been missed while the stream was down: look at everything again.
 					void this.refreshActivity();
+					this.refreshUndone();
+					void this.propagation.cleanKept();
+					// AO keeps the hibernation flag in memory only: put it back on every (re)connect when the user asked for it.
+					void this.ao?.applyHibernation().then(
+						r => r?.changed && this.log("chat hibernation turned", r.enabled ? "on" : "off"),
+						err => this.log("applying chat hibernation failed", String(err)),
+					);
 					this.poll();
 					this.emit();
 				},
@@ -172,7 +190,73 @@ export class Planner {
 		if (activity !== before && this.state.lanes.some(l => l.session === session)) this.schedule(100);
 		// A finished git task's session went idle after someone worked in it: its branch may have new commits.
 		if (activity === "idle" && before !== undefined && before !== "idle") {
-			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.propagation.sync(t.id);
+			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.syncUnlessUndo(t.id, session);
+		}
+		if (activity !== before) this.refreshUndone(session);
+		if (activity === "active" && before !== "active") void this.clearCompletedOnPrompt(session);
+	}
+
+	/** Propagates a finished task's branch after activity in its session, unless that activity was `/undo` or `/redo` (checkpoints: not work to propagate). */
+	private async syncUnlessUndo(id: string, session: string): Promise<void> {
+		try {
+			const messages = (await this.ao?.conversation(session))?.messages ?? [];
+			const last = messages.filter(m => m.role === "user").pop()?.text ?? "";
+			if (isCheckpointCommand(last)) return;
+		} catch {
+			return;
+		}
+		await this.propagation.sync(id);
+	}
+
+	/** A person typed a prompt into a completed lane's session (not one of ours, not a `/command`): the lane is not completed any more (PARKED §5). */
+	private async clearCompletedOnPrompt(session: string): Promise<void> {
+		const lane = this.state.lanes.find(l => l.completed && l.session === session);
+		if (!lane || this.state.tasks.some(t => t.status === "running" && (t.run?.session ?? t.session) === session)) return;
+		try {
+			const last = (await this.ao?.conversation(session))?.messages.filter(m => m.role === "user").pop()?.text ?? "";
+			if (!last.trim() || last.trim().startsWith("/")) return;
+		} catch {
+			return;
+		}
+		this.commit(s => {
+			const l = s.lanes.find(x => x.id === lane.id);
+			if (l?.completed) {
+				delete l.completed;
+				delete l.completedAt;
+			}
+		});
+	}
+
+	private readonly undoneTimers = new Map<string, NodeJS.Timeout>();
+
+	/** Re-reads "was this task's turn undone" for the finished tasks of `session` that others still wait on. */
+	private refreshUndone(session?: string): void {
+		const check = this.opts.undone;
+		if (!check || this.stopped) return;
+		const needed = new Set(this.state.tasks.filter(t => t.status !== "done" && t.status !== "skipped").flatMap(t => t.after ?? []));
+		for (const sid of session ? [session] : new Set(this.state.tasks.map(t => t.session).filter((x): x is string => !!x))) {
+			if (!this.state.tasks.some(t => t.status === "done" && t.session === sid && t.turn && needed.has(t.id))) continue;
+			clearTimeout(this.undoneTimers.get(sid));
+			const timer = setTimeout(async () => {
+				this.undoneTimers.delete(sid);
+				for (const t of this.state.tasks.filter(x => x.status === "done" && x.session === sid && x.turn && needed.has(x.id))) {
+					const undone = await check(t).catch(err => {
+						this.log("undone check failed", t.id, String(err));
+						return !!t.undone;
+					});
+					if (undone === !!t.undone) continue;
+					this.commit(s => {
+						const x = s.tasks.find(y => y.id === t.id);
+						if (!x) return;
+						if (undone) x.undone = true;
+						else delete x.undone;
+					});
+					this.log(undone ? "task undone" : "task redone", t.id);
+					this.schedule(0);
+				}
+			}, 500);
+			timer.unref();
+			this.undoneTimers.set(sid, timer);
 		}
 	}
 
@@ -242,13 +326,28 @@ export class Planner {
 	edit(ops: PlanOp[], rev?: number): { rev: number; refs: Record<string, string> } {
 		if (rev !== undefined && rev !== this.state.rev) throw new PlanError(`stale rev ${rev} (the plan is at ${this.state.rev}); reload and retry`);
 		const res = applyOps(this.state, ops, this.now());
+		const tracked = this.state.tasks.filter(t => t.git);
 		this.commit(s => Object.assign(s, res.state));
+		// Tasks removed from the plan take their planner-made branches with them (when git agrees: merged, not checked out).
+		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch, t.title, t.id);
 		for (const e of res.effects) {
-			if (e.kind === "sync") void this.propagation.sync(e.task);
+			if (e.kind === "branches") this.cleaning = this.propagation.cleanKept();
+			else if (e.kind === "sync") void this.propagation.sync(e.task);
 			else this.follow(e.task, 0);
 		}
 		this.schedule(0);
 		return { rev: this.state.rev, refs: res.refs };
+	}
+
+	/** The branch cleanup an edit started (`branch.clean`), for `editAndWait`. */
+	private cleaning: Promise<void> | undefined;
+
+	/** `edit`, and for `branch.clean` also waits until the cleanup is done, so the answer comes after its plan change. */
+	async editAndWait(ops: PlanOp[], rev?: number): Promise<{ rev: number; refs: Record<string, string> }> {
+		this.cleaning = undefined;
+		const res = this.edit(ops, rev);
+		if (this.cleaning) await this.cleaning;
+		return res;
 	}
 
 	/** Old `queue` op: QueueOps on a lane (or on the session lane of an AO session id). */
@@ -271,7 +370,17 @@ export class Planner {
 		return this.state.lanes.find(l => l.id === id)?.id ?? this.state.lanes.find(l => l.session === id)?.id ?? id;
 	}
 
-	setConfig(set: Partial<PlannerConfig> | undefined): PlannerStatus {
+	setConfig(set: Partial<PlannerConfig> | undefined, clearLimits?: true | string[]): PlannerStatus {
+		if (clearLimits) {
+			const providers = clearLimits === true ? Object.keys(this.state.limits) : clearLimits.filter(p => p in this.state.limits);
+			if (providers.length) {
+				this.commit(s => {
+					for (const p of providers) delete s.limits[p];
+				});
+				this.log("limits cleared", providers.join(", "));
+				this.schedule(0);
+			}
+		}
 		if (set && Object.keys(set).length) {
 			const config = normalizeConfig({ ...this.state.config, ...set, usage: { ...this.state.config.usage, ...set.usage } }, this.state.config);
 			this.commit(s => {
@@ -309,7 +418,38 @@ export class Planner {
 		const tasks = views
 			.filter(t => (!lane || t.lane === lane) && (all || !((t.state === "done" || t.state === "skipped") && (t.finishedAt ?? now) < weekAgo)))
 			.map(t => (t.waitReason === "starting" && !this.ao ? { ...t, waitReason: `waiting for AO (${this.aoError ?? "not connected"})` } : t));
-		return { rev: this.state.rev, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+		return { rev: this.state.rev, edges: this.edges(), keptBranches: this.state.keptBranches, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+	}
+
+	/** Every parent → child edge that has a propagation state. */
+	edges(): EdgeView[] {
+		const out: EdgeView[] = [];
+		for (const child of this.state.tasks) {
+			for (const [parentId, e] of Object.entries(child.sync ?? {})) {
+				const parent = this.state.tasks.find(t => t.id === parentId);
+				out.push({
+					parent: parentId,
+					...(parent?.session ? { parentSession: parent.session } : {}),
+					child: child.id,
+					...(child.session ? { childSession: child.session } : {}),
+					state: e.state,
+					...(e.files?.length ? { files: e.files } : {}),
+					...(parent?.git?.head ? { parentHead: parent.git.head } : {}),
+					...(child.git?.head ? { childHead: child.git.head } : {}),
+					at: e.at,
+				});
+			}
+		}
+		return out;
+	}
+
+	/** `plan sync`: propagate now, wait for it, answer with the edges around the task (as child and as parent). */
+	async syncTask(ref: string, rerun = false): Promise<{ task: string; rerun: boolean; edges: EdgeView[] }> {
+		const task = taskByRef(this.state, ref);
+		if (!task) throw new PlanError(`unknown task ${ref}`);
+		if (rerun) this.edit([{ op: "rerun", id: task.id }]);
+		else await this.propagation.sync(task.id);
+		return { task: task.id, rerun, edges: this.edges().filter(e => e.child === task.id || e.parent === task.id) };
 	}
 
 	status(views: TaskView[] = this.evaluateNow().views): PlannerStatus {
@@ -337,8 +477,11 @@ export class Planner {
 	/** Runs a scheduling pass within `delay` ms (an earlier pending pass is kept). */
 	schedule(delay = 300): void {
 		if (this.stopped) return;
-		const due = this.now() + delay;
-		if (this.tickTimer && this.tickDue <= due) return;
+		const now = this.now();
+		const due = now + delay;
+		// A pending pass is kept when it is due earlier. One that is already overdue by the clock (it was set for
+		// a wake time the clock has since jumped past: machine suspend, a test clock) is replaced: its timer is late.
+		if (this.tickTimer && this.tickDue <= due && this.tickDue >= now) return;
 		clearTimeout(this.tickTimer);
 		this.tickDue = due;
 		this.tickTimer = setTimeout(
@@ -377,12 +520,6 @@ export class Planner {
 		return next;
 	}
 
-	/** Refuses a model AO doesn't list (an unknown one leaves a terminated session behind); passes when AO can't say. */
-	private async checkModel(ao: AoPort, model: string): Promise<void> {
-		if (!this.models || this.now() - this.models.at > 10 * 60_000) this.models = { at: this.now(), ids: new Set(await ao.models()) };
-		if (this.models.ids.size && !this.models.ids.has(model)) throw new PlanError(`AO doesn't know the model "${model}" (see \`omp models\`)`);
-	}
-
 	/** Chooses spawn or send, resolves the project, writes the dispatch record, then drives it. */
 	private async launch(id: string): Promise<void> {
 		const ao = this.ao;
@@ -391,47 +528,48 @@ export class Planner {
 		try {
 			const task = this.state.tasks.find(t => t.id === id);
 			if (!task || task.status !== "pending") return;
-			const opts = effectiveOptions(this.state, task);
+			const base = effectiveOptions(this.state, task);
 			const key = `planner-${task.id}-${(task.attempts ?? 0) + 1}-${this.now().toString(36)}`;
-			const provider = providerOf(opts.model);
 			// The session this task continues (its lane's, or its own from an earlier run); one AO no longer knows starts a new one.
 			let session = targetSession(this.state, task);
 			if (session && !(await ao.session(session))) session = undefined;
-			let spawn: Record<string, unknown> | undefined;
+			// Lowest fallback for a session the planner STARTS: the user's own defaults (config.json). A continued session keeps its model and mode.
+			const user = session ? {} : (this.opts.userDefaults ?? readSwitchyardConfig)();
+			const opts = { ...base, ...(base.model || !user.model ? {} : { model: user.model }), ...(base.mode || !user.mode ? {} : { mode: user.mode }) };
+			const provider = providerOf(opts.model);
+			let spawn: SessionStart | undefined;
 			let repo: string | undefined;
 			let seeded: SeedResult = {};
-			// A typo'd model would leave a terminated session behind in AO (G36): check before anything is created.
-			if (opts.model) await this.checkModel(ao, opts.model);
-			// A session that exists already (a client spawned it): the parents' work is merged into its worktree.
-			if (session && this.propagation.gitParents(task).length) {
-				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string });
+			// `requeue {clean}`: the failed attempt is undone first, so the retry starts from before it.
+			if (task.clean && session) {
+				if (!this.opts.rewind) throw new PlanError(`"${task.title}" asks for a clean retry, which needs the Switchyard checkpoints extension (not available in this planner)`);
+				await this.opts.rewind(task).catch(err => {
+					throw new PlanError(`could not undo the earlier attempt of "${task.title}": ${err instanceof Error ? err.message : String(err)}`);
+				});
+			}
+			// A session that exists already (a client spawned it): the task is tracked in git, and its parents' work is merged into the worktree.
+			if (session) {
+				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string; workspace?: string });
 				const sessionRepo = info.repo ? await gitRoot(info.repo) : undefined;
-				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch);
+				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch, info.workspace);
 			}
 			if (!session) {
 				let projectId: string | undefined = opts.project;
 				const cwd = opts.cwd;
 				// Registering a folder as an AO project must not race with another task registering the same one.
 				if (!projectId && cwd) projectId = await this.serialProject(() => ao.projectFor(cwd));
-				if (opts.worktree === "always" && !projectId) throw new PlanError(`worktree "always" needs a git folder; ${opts.cwd ?? "no cwd"} is not in git`);
-				// AO runs every project session in its own worktree (ao/<session>/root); there is no way to run in the checkout itself.
-				if (opts.worktree === "never" && projectId) throw new PlanError(`worktree "never" can't be honored: AO runs every session of a git project in its own worktree (drop the option, or use a folder outside git)`);
 				const projectPath = projectId ? await ao.projectPath(projectId) : undefined;
 				repo = projectPath ? await gitRoot(projectPath) : undefined;
 				// A task with finished parents in this repo starts from their work (GRAPH-PROPAGATION.md).
 				if (repo) seeded = await this.propagation.prepareSpawn(task, repo);
-				// D11: spawn with no prompt (AO refuses `effort` for omp; the thinking level is a config option), then send the task.
-				// An unattended task can't wait for an approval, so sessions start in bypass-permissions unless the task says otherwise.
+				// D11 (src/ao/spawn.ts) does the rest at dispatch: spawn without a prompt, model and thinking, the mode, then the task.
 				spawn = {
-					harness: "omp",
-					mode: "chat",
-					kind: "worker",
 					displayName: task.title.slice(0, 100),
-					clientRequestId: key,
-					approvalMode: opts.approvalMode ?? "bypass-permissions",
 					...(projectId ? { projectId } : {}),
 					...(seeded.branch ? { branch: seeded.branch } : {}),
 					...(opts.model ? { model: opts.model } : {}),
+					...(opts.thinking ? { thinking: opts.thinking } : {}),
+					...(opts.mode ? { mode: opts.mode } : {}),
 				};
 			}
 			const donor = session ? this.state.tasks.find(x => x.id !== id && x.session === session && x.git) : undefined;
@@ -439,8 +577,8 @@ export class Planner {
 			// The task may have changed while the project was looked up.
 			const now = this.now();
 			if (!this.evaluateNow().dispatch.some(t => t.id === id)) return;
-			// A spawn already carries the model; a continued session gets model and thinking before the prompt.
-			const settings = session ? { ...(opts.model ? { model: opts.model } : {}), ...(opts.thinking ? { thinking: opts.thinking } : {}) } : opts.thinking ? { thinking: opts.thinking } : {};
+			// A new session gets model and thinking from the start sequence; a continued one before the prompt.
+			const settings = session ? { ...(opts.model ? { model: opts.model } : {}), ...(opts.thinking ? { thinking: opts.thinking } : {}) } : {};
 			this.commit(s => {
 				const t = startRun(
 					s,
@@ -457,7 +595,9 @@ export class Planner {
 					},
 					now,
 				);
+				delete t.clean;
 				if (seeded.sync) t.sync = { ...t.sync, ...seeded.sync };
+				if (seeded.base && repo && seeded.branch) t.git = { ...t.git, repo, branch: seeded.branch, base: seeded.base };
 				if (seeded.followUp) t.followUp = [t.followUp, seeded.followUp].filter(Boolean).join("\n\n");
 				// A lane task continuing a session shares that session's branch and worktree.
 				if (donor?.git && !t.git) t.git = { repo: donor.git.repo, branch: donor.git.branch, ...(donor.git.worktree ? { worktree: donor.git.worktree } : {}) };
@@ -487,7 +627,17 @@ export class Planner {
 
 	/** Drives or checks task `id` after `delay` ms (coalesced; one AO step per task at a time). */
 	private follow(id: string, delay: number): void {
-		if (this.stopped || this.retryTimers.has(id)) return;
+		if (this.stopped) return;
+		const now = this.now();
+		const due = now + Math.max(0, delay);
+		const pending = this.retryTimers.get(id);
+		// A check already due sooner covers this request; a later one (a slow re-check) gives way to it. One already
+		// overdue by the clock (the clock jumped past it) has a late timer and is replaced.
+		if (pending && pending.due <= due && pending.due >= now) return;
+		if (pending) {
+			clearTimeout(pending.timer);
+			this.retryTimers.delete(id);
+		}
 		const run = () => {
 			this.retryTimers.delete(id);
 			if (this.busy.has(id)) {
@@ -504,7 +654,7 @@ export class Planner {
 			run();
 			return;
 		}
-		this.retryTimers.set(id, setTimeout(run, delay));
+		this.retryTimers.set(id, { timer: setTimeout(run, delay), due });
 	}
 
 	private task(id: string): Task | undefined {
@@ -583,20 +733,23 @@ export class Planner {
 		let t = this.task(id);
 		if (!t?.run) return;
 		if (t.run.via === "spawn" && !t.run.session) {
-			const { session, branch } = await ao.spawn(t.run.spawn ?? {});
-			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
+			// One idempotent sequence (spawn, options, mode, prompt); a replay after a crash finds the same session and turn.
+			const { session, branch, turn } = await ao.startSession({ ...(t.run.spawn as unknown as SessionStart), key: t.run.key, prompt: t.run.prompt });
+			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch, await ao.workspacePath(session));
 			// The lane learns its session now (not when the task ends): `show`/`wait` on the lane follow it.
 			this.commit(s => {
 				const x = s.tasks.find(y => y.id === id);
 				if (x?.status !== "running" || !x.run) return;
 				x.run.session = session;
 				x.session = session;
+				if (turn) x.run.turn = turn;
+				x.run.phase = "sent";
 				delete x.run.tries;
 				const l = laneOf(s, x);
 				if (l) l.session = session;
 			});
-			t = this.task(id);
-			if (!t?.run) return;
+			this.follow(id, 500);
+			return;
 		}
 		const session = t.run.session as string;
 		if (t.run.via === "send") {
@@ -686,11 +839,27 @@ export class Planner {
 			const live = this.task(id);
 			if ((live?.run?.timedOut || live?.run?.aborted) && !this.interruptSent.has(id)) {
 				this.interruptSent.add(id);
-				await ao.interrupt(session);
+				const { discarded } = await ao.interrupt(session);
+				// AO throws away what a person queued behind the turn; the planner never queues, so it is not ours to re-send.
+				if (discarded) this.log("interrupt discarded", discarded, "queued prompt(s) in", session);
 			}
-			if (timeout) this.follow(id, 30_000);
+			// Look again before the deadline (the periodic poll and AO's events cover the rest).
+			if (timeout) this.follow(id, Math.max(500, Math.min(30_000, (t.startedAt ?? this.now()) + timeout * 60_000 - this.now())));
 			return;
 		}
+		// AO can mark a turn completed a moment before its last assistant message stops streaming (about 1 read in 20):
+		// recording the summary now would take the previous reply, or none. Look again shortly, for a bounded time.
+		if (turn.state === "completed") {
+			const first = this.settleSince.get(id) ?? this.now();
+			this.settleSince.set(id, first);
+			const mine = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant");
+			const waited = this.now() - first;
+			if ((mine.some(m => m.streaming) && waited < (this.opts.settleMs ?? 5000)) || (mine.length === 0 && waited < Math.min(1000, this.opts.settleMs ?? 5000))) {
+				this.follow(id, 250);
+				return;
+			}
+		}
+		this.settleSince.delete(id);
 		const cost = conv.cost !== undefined ? Math.max(0, conv.cost - (run.baseCost ?? 0)) : undefined;
 		const costPart = cost ? { cost } : {};
 		// Put the session's model and thinking back the way they were (best effort).
@@ -714,6 +883,16 @@ export class Planner {
 				return;
 			}
 			case "failed": {
+				// resume-agent on a dead host turns its stuck turn into a failed one (G39): the agent stopped (a person's Stop, or a crash that was resumed), the model did not fail.
+				if (/controller ended before the turn completed/i.test(turn.errorMessage ?? "")) {
+					this.finish(id, { kind: "lost", reason: "the agent stopped before the turn completed (AO ended the turn: a person's Stop, or the agent crashed and was resumed)." });
+					return;
+				}
+				// A person's Stop (exit-agent) cancels the running turn at the ACP level (-32800): it is a stop, not a failure to retry.
+				if (/\b-32800\b|request cancell?ed/i.test(turn.errorMessage ?? "")) {
+					this.finish(id, { kind: "interrupted", reason: run.aborted || run.timedOut ? undefined : "the turn was stopped in AO", ...costPart });
+					return;
+				}
 				const reset = turn.usageLimitResetsAt ? ` Usage limit reached; resets at ${new Date(turn.usageLimitResetsAt).toISOString()}.` : "";
 				this.finish(id, { kind: "error", error: { message: `${turn.errorMessage ?? "The turn failed."}${reset}`, ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
 				return;

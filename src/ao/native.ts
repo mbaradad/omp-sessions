@@ -20,6 +20,16 @@ export function switchyardHome(env: NodeJS.ProcessEnv = process.env): string {
 	return env.SWITCHYARD_HOME ? path.resolve(env.SWITCHYARD_HOME) : path.join(os.homedir(), ".switchyard");
 }
 
+/**
+ * Under `node --test` (which sets NODE_TEST_CONTEXT), refuses a state dir that is the machine's real
+ * `~/.switchyard`: a test that forgot to set SWITCHYARD_HOME would otherwise write the user's real
+ * sessions/<id>/mode and omp-args (CONTRACT.md, "Isolated HOME"). Production code is never under it.
+ */
+export function refuseRealStateInTests(home: string): void {
+	if (!process.env.NODE_TEST_CONTEXT) return;
+	if (path.resolve(home) === path.join(os.userInfo().homedir, ".switchyard")) throw new Error(`refusing to use ${home} from a test run: set SWITCHYARD_HOME to a temp dir (CONTRACT.md, "Isolated HOME")`);
+}
+
 export function nativeSessionFile(aoSessionId: string, home = switchyardHome()): string {
 	return path.join(home, "sessions", aoSessionId, "omp.json");
 }

@@ -2,15 +2,25 @@
 // and the socket protocol. Clients import types from here and PlannerClient from ./client; nothing else.
 // Pure types; no Node APIs.
 
+/** What the planner's start-up `ensureOmpIntegration()` reported (the shape of `OmpIntegrationResult`). */
+export interface OmpIntegrationStatus {
+	/** What this start wrote: the permission gate (`gate`) and the `omp` shim (`shim`). */
+	installed: string[];
+	upToDate: boolean;
+	skipped?: string;
+	error?: string;
+	code?: string;
+}
+
 export const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
 /** What omp accepts for its `thinking` option over ACP (`minimal` is read as `low`, see normalizeOptions). */
 export const THINKING_LEVELS = ["off", "auto", "low", "medium", "high", "xhigh", "max"] as const;
-export const APPROVAL_MODES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
-export type ApprovalMode = (typeof APPROVAL_MODES)[number];
-export type WorktreeMode = "auto" | "always" | "never";
+/** The permission modes the Switchyard omp extension's gate enforces (AO itself always runs the session in bypass). */
+export const PERMISSION_MODES = ["ask", "edits", "plan", "auto"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export interface Subtask {
 	id: string;
@@ -33,8 +43,19 @@ export interface TaskOptions {
 	cwd?: string;
 	/** AO project id; wins over cwd. */
 	project?: string;
-	worktree?: WorktreeMode;
-	approvalMode?: ApprovalMode;
+	/** Permission mode of a session the planner starts (default `auto`: the gate lets everything through). Unattended work that asks will wait for a person. */
+	mode?: PermissionMode;
+}
+
+/** What a new AO session starts with (the `spawn` of a TaskRun; MAPPING D11). */
+export interface SessionStart {
+	displayName: string;
+	projectId?: string;
+	/** An existing local branch AO checks out (graph propagation seeds one at the parent's head). */
+	branch?: string;
+	model?: string;
+	thinking?: string;
+	mode?: PermissionMode;
 }
 
 /**
@@ -49,7 +70,7 @@ export interface TaskRun {
 	/** `spawn`: a new AO session; `send`: a message to the lane's session. */
 	via: "spawn" | "send";
 	/** Exact spawn body (replayed verbatim after a restart; AO answers a replay with the same session). */
-	spawn?: Record<string, unknown>;
+	spawn?: SessionStart;
 	/** The git repo (AO project folder) a spawned session works in: its branch is recorded once AO answers. */
 	repo?: string;
 	/** AO session (known up front for `send`, after the spawn otherwise). */
@@ -114,8 +135,12 @@ export interface Task {
 	holdUntil?: number;
 	/** In-flight dispatch (status running). */
 	run?: TaskRun;
-	/** AO turn id of the latest run (link from the task to the chat). */
+	/** AO turn id of the latest run (link task → chat; the key for "this task's changes" and "undo this task"). */
 	turn?: string;
+	/** A person undid this task's turn in AO (checkpoints): its work is gone, so it no longer satisfies `after`. */
+	undone?: boolean;
+	/** The next run starts from before the previous attempt: that turn is undone first (`requeue {clean}`). */
+	clean?: boolean;
 	/** The task's git branch and worktree (AO project sessions), for graph propagation. */
 	git?: TaskGit;
 	/** Propagation state of each parent edge (parent task id → state). */
@@ -134,6 +159,12 @@ export interface TaskGit {
 	worktree?: string;
 	/** Branch head after the task's work was last committed. */
 	head?: string;
+	/**
+	 * Where the task's own work starts: the branch head after its parents were merged in and before its first
+	 * run. `git diff base..head` is "what this task changed" (AO's own diff is against the default branch, so
+	 * it lists the parents' commits too). Absent for a root task in a session the planner created: AO's diff is exact there.
+	 */
+	base?: string;
 }
 
 /**
@@ -246,6 +277,21 @@ export interface PlanState {
 	limits: Record<string, ProviderLimit>;
 	/** Spend of planner-dispatched turns: [epoch ms, USD]. Kept for a week. */
 	spend: Array<[number, number]>;
+	/** `switchyard/*` branches of removed tasks that hold work no other branch has: left in git for a person to merge or delete. */
+	keptBranches: KeptBranch[];
+}
+
+/** A branch the planner made for a task that was removed from the plan, and left behind because deleting it would lose work. */
+export interface KeptBranch {
+	repo: string;
+	branch: string;
+	/** Title and id of the removed task. */
+	task: string;
+	taskId: string;
+	/** The branch tip when it was kept. */
+	tip?: string;
+	why: string;
+	at: number;
 }
 
 // ---------- views ----------
@@ -299,8 +345,25 @@ export interface PlannerStatus extends PlannerConfig {
 	startedAt: number;
 }
 
+/** One graph edge, parent → child, as clients show it (derived from `Task.sync`; the plan view lists every edge). */
+export interface EdgeView {
+	parent: string;
+	parentSession?: string;
+	child: string;
+	childSession?: string;
+	state: EdgeSync["state"];
+	files?: string[];
+	parentHead?: string;
+	childHead?: string;
+	at: number;
+}
+
 export interface PlanView {
 	rev: number;
+	/** Every parent → child edge with a propagation state (only git tasks have any). */
+	edges: EdgeView[];
+	/** Leftover `switchyard/*` branches with unmerged work of removed tasks (`branch.clean` retries their deletion). */
+	keptBranches: KeptBranch[];
 	tasks: TaskView[];
 	lanes: LaneView[];
 	recurring: Recurring[];
@@ -333,7 +396,8 @@ export type PlanOp =
 	| { op: "move"; id: string; index: number }
 	| { op: "after"; id: string; ids: string[] }
 	| { op: "run"; id: string }
-	| { op: "requeue"; id: string }
+	/** `clean`: before it runs again, undo the failed attempt's turn (files and context) through the checkpoints extension. */
+	| { op: "requeue"; id: string; clean?: boolean }
 	| { op: "pause"; id: string }
 	| { op: "resume"; id: string }
 	| { op: "abort"; id: string }
@@ -344,7 +408,8 @@ export type PlanOp =
 	| { op: "updateSubtask"; id: string; subtaskId: string; title?: string; done?: boolean }
 	| { op: "removeSubtask"; id: string; subtaskId: string }
 	| { op: "moveSubtask"; id: string; subtaskId: string; index: number }
-	| { op: "lane.add"; id?: string; title?: string; session?: string; priority?: Priority; defaults?: TaskOptions; autoRun?: boolean; ref?: string }
+	/** `ensure`: when the lane exists already, do nothing (its ref still names it) instead of refusing the batch. A new lane is armed unless `autoRun: false`. */
+	| { op: "lane.add"; id?: string; title?: string; session?: string; priority?: Priority; defaults?: TaskOptions; autoRun?: boolean; ensure?: boolean; ref?: string }
 	| { op: "lane.update"; id: string; title?: string; priority?: Priority | null; defaults?: TaskOptions | null }
 	| { op: "lane.remove"; id: string }
 	| { op: "lane.pause"; id: string }
@@ -358,6 +423,8 @@ export type PlanOp =
 	| { op: "recur.update"; id: string; title?: string; rule?: RecurRule; task?: TaskInput; lane?: string | null; skipIfRunning?: boolean; enabled?: boolean }
 	| { op: "recur.remove"; id: string }
 	| { op: "recur.fire"; id: string }
+	/** Retries the deletion of the kept branches: those gone from git, or by now reachable from another branch, leave the list. */
+	| { op: "branch.clean" }
 	/** Re-checks the task's branch now and propagates new commits to its children (GRAPH-PROPAGATION.md). */
 	| { op: "sync"; id: string }
 	/** "Re-run with parent changes": one more run in the task's own session with only the upstream note. */
@@ -423,12 +490,22 @@ export type QueueOp =
 // ---------- wire ----------
 
 export interface PlannerOps {
-	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1 } };
+	/**
+	 * `omp`: what the start-up `ensureOmpIntegration()` did (G46): the gate and the `omp` shim installed, `error`
+	 * when one is missing (a mode other than `auto` is then refused at spawn), `skipped` for a development host.
+	 */
+	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1; omp?: OmpIntegrationStatus } };
 	plan: { args: { lane?: string; all?: boolean }; result: PlanView };
 	edit: { args: { ops: PlanOp[]; rev?: number }; result: { rev: number; refs: Record<string, string> } };
 	getQueue: { args: { id: string }; result: QueueView };
 	queue: { args: { id: string; ops: QueueOp[] }; result: QueueView };
-	scheduler: { args: { set?: Partial<PlannerConfig> }; result: PlannerStatus };
+	/**
+	 * Propagates now and answers when it is done: commits the task's worktree, merges its branch into its
+	 * children's, and (with `rerun`) runs it once more first with the upstream note. `id`: task id or AO session id.
+	 */
+	sync: { args: { id: string; rerun?: boolean }; result: { task: string; rerun: boolean; edges: EdgeView[] } };
+	/** `clearLimits`: forget the provider limits learned from failed turns (`true`: all, or the named providers); held work may start again. */
+	scheduler: { args: { set?: Partial<PlannerConfig>; clearLimits?: true | string[] }; result: PlannerStatus };
 	status: { args: Record<string, never>; result: PlannerStatus };
 	shutdown: { args: Record<string, never>; result: Record<string, never> };
 }

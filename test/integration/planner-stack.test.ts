@@ -90,11 +90,7 @@ test("a usage drop releases a spare task without a planner restart", { skip }, a
 	assert.equal(prompts("spare-two"), 1);
 });
 
-// Last in the file on purpose: until the planner is fixed, this leaves its pass timer 1 h out and starves later tests.
-// todo: the planner's schedule() keeps a pending pass whose due time is <= the new now, but its real timer was set
-// for the old wake time (1 h): after a clock jump (this test clock, or a machine waking from sleep) the periodic
-// poll never replaces it, so the start waits for the original timer. Reported to `planner`.
-test("a scheduled start comes due when the clock moves forward", { skip, todo: "planner: schedule(0) keeps the pending 1 h timer after a clock jump" }, async () => {
+test("a scheduled start comes due when the clock moves forward", { skip }, async () => {
 	await planner.call("edit", { ops: [{ op: "add", task: { title: "T", notes: "echo clock-ran", startAt: Date.now() + 3_600_000, options: { project } } }] });
 	const scheduled: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "T").state === "scheduled", { what: "T scheduled" });
 	assert.ok((byTitle(scheduled, "T").waitUntil ?? 0) > Date.now());
