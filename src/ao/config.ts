@@ -1,4 +1,4 @@
-// Switchyard's user settings (`~/.switchyard/config.json`, MAPPING D7): the model and permission mode
+// Switchyard's user settings (`~/.switchyard/config.json`, MAPPING D7): the harness, model and permission mode
 // new sessions start with when they ask for none (AO has no per-harness default model), extra `omp acp`
 // arguments (G34: the `omp` shim reads `omp.extraArgs`), whether the planner may install itself as a
 // user service, and the opt-in chat hibernation (G28). Shared by the CLI, the extension and the planner:
@@ -9,10 +9,12 @@ import { type PermissionMode, isPermissionMode } from "../shared/permissions";
 import { refuseRealStateInTests, switchyardHome } from "./native";
 
 export interface SwitchyardConfig {
-	/** `provider/id` of new sessions that pick no model; absent: omp's own default. */
+	/** `provider/id` of new omp sessions that pick no model; absent: omp's own default. Other harnesses name their models their own way: it is not applied to them. */
 	model?: string;
-	/** Permission mode of new sessions that ask for none; absent: AO's default for omp. */
+	/** Permission mode of new sessions that ask for none; absent: auto. */
 	mode?: PermissionMode;
+	/** The AO harness (claude-code, codex, omp, …) of new sessions that ask for none; absent: the AO project's worker harness, else AO's default (src/ao/harness.ts). */
+	harness?: string;
 	/** "off": never install the planner as a user service by itself. */
 	service?: "on" | "off";
 	/** G28: "on" / "off" makes Switchyard set AO's chat hibernation after it starts a daemon and on every planner reconnect; absent: leave AO alone. (`ensureDaemon` reads this key through native.ts's `readHibernationSetting`; the values agree.) */
@@ -41,6 +43,7 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 	const out: SwitchyardConfig = {};
 	if (typeof raw.model === "string" && raw.model.trim()) out.model = raw.model.trim();
 	if (isPermissionMode(raw.mode)) out.mode = raw.mode;
+	if (typeof raw.harness === "string" && raw.harness.trim()) out.harness = raw.harness.trim();
 	if (raw.service === "on" || raw.service === "off") out.service = raw.service;
 	if (raw.hibernation === "on" || raw.hibernation === "off") out.hibernation = raw.hibernation;
 	if (raw.ompExtension === "on" || raw.ompExtension === "off") out.ompExtension = raw.ompExtension;

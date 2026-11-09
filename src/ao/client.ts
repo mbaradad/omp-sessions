@@ -61,6 +61,8 @@ export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
 export { nativeSessionFile, readHibernationSetting, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
 export type { AoSessionMode, SpawnedSwitchyardSession, SpawnSwitchyardOptions } from "./spawn";
+export type { AoAuthStatus, AoHarnessInfo, HarnessChoice, HarnessSource } from "./harness";
+export { availableHarnesses, defaultHarness, HarnessError, isOmpHarness, OMP_HARNESS, projectWorkerHarness, resolveHarness, resolveSessionHarness } from "./harness";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -430,12 +432,17 @@ export class AoClient {
 		return (await unwrap(this.client.POST("/api/v1/projects", { body }))).project;
 	}
 
+	/** One project with its config (`config.worker.agent`: the project's worker harness); a degraded project has no config. */
+	async getProject(projectId: string): Promise<AoSchemas["ProjectOrDegraded"]> {
+		return (await unwrap(this.client.GET("/api/v1/projects/{id}", { params: { path: { id: projectId } } }))).project;
+	}
+
 	/** Replaces the project's whole per-project config. */
 	async setProjectConfig(projectId: string, config: AoSchemas["ProjectConfig"]): Promise<void> {
 		await unwrap(this.client.PUT("/api/v1/projects/{id}/config", { params: { path: { id: projectId } }, body: { config } }));
 	}
 
-	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
+	/** The AO project of `dir`'s git repo, registered (default branch; the worker harness stays AO's project setting) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
 	}
@@ -466,6 +473,22 @@ export class AoClient {
 	/** `{hostId, apiVersion}`. */
 	identity(): Promise<AoSchemas["IdentityResponse"]> {
 		return unwrap(this.client.GET("/api/v1/identity"));
+	}
+
+	/** AO's settings (`chatHarnesses`: the harnesses that run in Chat mode, the only mode Switchyard drives). */
+	settings(): Promise<AoSchemas["SettingsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/settings"));
+	}
+
+	/** AO's agent catalog: every supported harness with its auth status and usage, and the installed and authorized ones. */
+	agents(): Promise<AoSchemas["ListAgentsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents"));
+	}
+
+	/** The AO approval modes `harness` can run a chat in, strictest first (Kimi: only `default`); undefined when AO doesn't say. */
+	async chatPermissionModes(harness: string): Promise<string[] | undefined> {
+		const res = await unwrap(this.client.GET("/api/v1/agents/chat/permission-modes", { params: { query: { agents: harness } } }));
+		return res.agents.find(a => a.agent === harness)?.modes;
 	}
 
 	/** Whether AO hibernates idle chats now (`GET /settings` `chatHibernationEnabled`). In memory in AO: false after every daemon boot. */

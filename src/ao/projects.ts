@@ -65,6 +65,8 @@ export async function projectForFolder(client: AoClient, dir: string, options: A
 	const existing = (await client.listProjects()).find(p => realpath(p.path) === root);
 	if (existing || options.create === false) return existing;
 	const project = await client.addProject({ path: root, ...(options.name && { name: options.name }) });
-	await client.setProjectConfig(project.id, { defaultBranch: gitDefaultBranch(root), worker: { agent: "omp" } });
+	// The default branch only: the worker harness stays AO's project setting (Switchyard passes the harness of every
+	// session it starts, resolved in harness.ts, so pinning one here would hide AO's own default).
+	await client.setProjectConfig(project.id, { defaultBranch: gitDefaultBranch(root) });
 	return (await client.listProjects()).find(p => p.id === project.id);
 }
