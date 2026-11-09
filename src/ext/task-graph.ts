@@ -45,7 +45,14 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 	const { context } = api;
 	let panel: vscode.WebviewPanel | undefined;
 
-	const post = (msg: ToGraph) => void panel?.webview.postMessage(msg);
+	// The webview rebuilds its whole DOM on every message, which swallows a click that lands in between: only send a change.
+	let last = "";
+	const post = (msg: ToGraph) => {
+		const key = JSON.stringify(msg);
+		if (key === last) return;
+		last = key;
+		void panel?.webview.postMessage(msg);
+	};
 	const refresh = () => {
 		if (!panel) return;
 		const plan = deps.planner.plan;
@@ -73,7 +80,10 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 		});
 		panel.webview.html = html(api, panel.webview);
 		panel.webview.onDidReceiveMessage((m: FromGraph) => {
-			if (m.type === "ready") refresh();
+			if (m.type === "ready") {
+				last = ""; // a fresh webview has nothing yet
+				refresh();
+			}
 			else if (m.type === "action") {
 				if (m.action === "rerun" || m.action === "sync") void edit([{ op: m.action, id: m.id }]);
 				else {
@@ -84,6 +94,7 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 		});
 		panel.onDidDispose(() => {
 			panel = undefined;
+			last = "";
 		});
 	};
 
