@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import type { AoClient, AoConfigOptions } from "../../src/ao/client";
 import { daemonEnv } from "../../src/ao/daemon";
 import { spawnSwitchyardSession } from "../../src/ao/spawn";
+import { ompExtensionDir } from "../../src/shared/omp-extension-install";
 
 const choices = (...values: string[]) => values.map(value => ({ value, name: value }));
 /** The levels depend on the model, as in omp: haiku has no `low`. */
@@ -44,11 +45,61 @@ function fakeAo(opts: { catalog?: string[]; ready?: boolean; turns?: number } = 
 const tmpHome = () => fs.mkdtempSync(path.join(os.tmpdir(), "ao-spawn-test-"));
 const sessionFile = (home: string, name: string) => path.join(home, "sessions", "repo-1", name);
 
+const strays: string[] = [];
+after(() => {
+	for (const dir of strays) fs.rmSync(dir, { recursive: true, force: true });
+});
+/** omp's agent folder of a temp "user home", with or without the Switchyard gate package installed in it (G46). */
+function ompHome(installed: boolean): { omp: { home: string; env: NodeJS.ProcessEnv } } {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "ao-spawn-omp-"));
+	strays.push(home);
+	const omp = { home, env: {} as NodeJS.ProcessEnv };
+	if (installed) {
+		const dir = ompExtensionDir(omp);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } }));
+		fs.writeFileSync(path.join(dir, "mode.js"), "export default () => {};\n");
+	}
+	return { omp };
+}
+/** The gate is installed: what the mode tests assume. */
+const gate = ompHome(true);
+
+test("spawnSwitchyardSession fails closed: a mode other than auto is refused, before anything exists in AO, when the gate is not installed", async () => {
+	const home = tmpHome();
+	try {
+		const missing = ompHome(false);
+		for (const mode of ["ask", "edits", "plan"] as const) {
+			const { ao, calls } = fakeAo();
+			await assert.rejects(spawnSwitchyardSession(ao, { mode, prompt: "go", home, gate: missing }), /Permission mode "(ask|edits|plan)" needs the Switchyard permission gate.*switchyard install/s);
+			assert.deepEqual(calls, [], `${mode}: no AO call was made, no session created`);
+		}
+		assert.equal(fs.existsSync(path.join(home, "sessions")), false, "no mode file or omp-args written");
+		// A package that lists the gate but does not ship it is not a gate either.
+		const hollow = ompHome(false);
+		const dir = ompExtensionDir(hollow.omp);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ omp: { extensions: ["./mode.js"] } }));
+		await assert.rejects(spawnSwitchyardSession(fakeAo().ao, { mode: "ask", home, gate: hollow }), /needs the Switchyard permission gate/);
+		// `auto` (the default) never needs it: AO's bypass is what the person asked for.
+		const auto = fakeAo();
+		await spawnSwitchyardSession(auto.ao, { prompt: "go", home, gate: missing });
+		assert.ok(auto.calls.includes("sendMessage"));
+		assert.equal(fs.readFileSync(path.join(home, "sessions", "repo-1", "mode"), "utf8"), "auto\n");
+		// With the gate installed every mode goes through.
+		const { ao } = fakeAo();
+		await spawnSwitchyardSession(ao, { mode: "ask", home, gate });
+		assert.equal(fs.readFileSync(path.join(home, "sessions", "repo-1", "mode"), "utf8"), "ask\n");
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
 test("spawnSwitchyardSession: bypass launch with no prompt or model, then the mode file, options, and the prompt last", async () => {
 	const home = tmpHome();
 	try {
 		const { ao, calls, sent, spawns } = fakeAo();
-		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", branch: "feature/fix-it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home });
+		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", branch: "feature/fix-it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home, gate });
 		// AO gets the bypass launch (the extension's gate is the only one), no prompt, no model; the ids and the branch are the caller's.
 		assert.deepEqual(spawns, [{ harness: "omp", mode: "chat", kind: "worker", approvalMode: "bypass-permissions", clientRequestId: "rq-1", projectId: "repo", displayName: "fix it", branch: "feature/fix-it" }]);
 		assert.deepEqual(calls, ["agentModels", "projectForFolder /work/repo", "spawnSession", "configOptions", "setConfigOption model=anthropic/haiku", "configOptions", "setConfigOption thinking=off", "sendMessage"]);
@@ -89,7 +140,7 @@ test("spawnSwitchyardSession: plan mode sets omp's own plan option; options alre
 	const home = tmpHome();
 	try {
 		const { ao, calls } = fakeAo();
-		await spawnSwitchyardSession(ao, { mode: "plan", model: "anthropic/opus", thinking: "high", home });
+		await spawnSwitchyardSession(ao, { mode: "plan", model: "anthropic/opus", thinking: "high", home, gate });
 		// The fake session already runs opus at high thinking: only plan is a change.
 		assert.deepEqual(calls.filter(c => c.startsWith("setConfigOption")), ["setConfigOption mode=plan"]);
 		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "plan\n");
@@ -164,6 +215,7 @@ test("spawnSwitchyardSession: the caller's setMode runs after the restart and th
 			mode: "plan",
 			prompt: "go",
 			home,
+			gate,
 			// checkpoints' setSessionMode: writes the file and sets omp's plan option itself.
 			setMode: async (id, mode) => void (asked.push(`${id}=${mode}`), calls.push(`setMode ${mode}`)),
 		});
@@ -176,7 +228,7 @@ test("spawnSwitchyardSession: the caller's setMode runs after the restart and th
 
 		// Without a hook, plan is applied after the restart too, not before it.
 		const plain = fakeAo();
-		await spawnSwitchyardSession(plain.ao, { ompArgs: ["--advisor"], mode: "plan", home });
+		await spawnSwitchyardSession(plain.ao, { ompArgs: ["--advisor"], mode: "plan", home, gate });
 		assert.deepEqual(plain.calls.slice(plain.calls.indexOf("exitAgent")), ["exitAgent", "resumeAgent", "getConversation", "configOptions", "setConfigOption mode=plan"]);
 		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "plan\n");
 
