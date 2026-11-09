@@ -540,6 +540,8 @@ export interface AoWatcherOptions {
 	settleMs?: number;
 	/** The read that makes them final, this long after the session settled: AO caches a manifest for 3 s without saying so, so this must exceed that. Default 3400 ms. */
 	manifestCacheMs?: number;
+	/** Also read the changed files while a turn runs (on every event). Off by default: those reads make AO cache a half-done manifest that the settle read then gets back. */
+	liveFiles?: boolean;
 }
 
 /**
@@ -693,14 +695,15 @@ export class AoSessionWatcher {
 
 	/**
 	 * Files change only while the agent works, which adds conversation items or settles turns: the manifest (a
-	 * git diff on the daemon) is read again only when those moved. But the read at the instant a turn settles
-	 * can be stale, and AO does not say so: it returns its last computed manifest for 3 s
-	 * (`workspaceCacheTTL`) as fresh (`stale: false`), and only a filesystem watcher, which exists while a
-	 * client holds the workspace events stream (nobody here does), marks it stale earlier. So a manifest
-	 * computed while the turn ran, before it wrote its file, is served unflagged for up to 3 s after the turn
-	 * settles, and no event follows to correct it (seen live: 1 e2e run in 3, the file count stuck for 30 s).
-	 * A session that just settled is therefore read at once (usually right), again after `settleMs`, and
-	 * finally at `manifestCacheMs` after it settled: any read made more than 3 s after AO's last computation
+	 * git diff on the daemon) is read when a turn settles, not while it runs. AO does not tell a stale
+	 * manifest from a fresh one: it returns its last computed manifest for 3 s (`workspaceCacheTTL`) as fresh
+	 * (`stale: false`), and only a filesystem watcher, which exists while a client holds the workspace events
+	 * stream (nobody here does), marks it stale earlier. So a manifest computed while the turn ran, between
+	 * the agent's writes, is served unflagged for up to 3 s after the turn settles and no event follows to
+	 * correct it (seen live: the file count stuck for 30 s in an e2e run). Not reading while the turn runs
+	 * (`liveFiles` opts back in) removes our own source of that; the settle read is then fresh. Another client
+	 * (AO's UI) can still cache a mid-turn manifest, so a session that just settled is also read after
+	 * `settleMs` and finally at `manifestCacheMs`: any read made more than 3 s after AO's last computation
 	 * recomputes, so that one is fresh whatever the earlier ones returned. Only then is it final.
 	 */
 	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
@@ -709,6 +712,11 @@ export class AoSessionWatcher {
 		const settleMs = this.options.settleMs ?? 1_500;
 		const cacheMs = this.options.manifestCacheMs ?? 3_400;
 		const known = this.files.get(view.id);
+		// While a turn runs, leave the manifest alone: each read computes it at that moment and AO then serves it
+		// for 3 s, so one made between the agent's two writes is what the settle read gets back (seen live: a list
+		// with the new file but not the appended-to one, 1 session in 6; with these reads off it was complete 6 in 6).
+		// A session seen for the first time is still read once.
+		if (open && known && !this.options.liveFiles) return known.files;
 		const sameKey = known?.key === key;
 		if (sameKey && known.confirmed) return known.files;
 		// When this state was first seen settled after a change: the clock the final read counts from. A session

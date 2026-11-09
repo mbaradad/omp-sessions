@@ -12,7 +12,9 @@ import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
 
 const REPO = "/tmp/ao-smoke-foundation/repo";
-const TURN_TIMEOUT_MS = 90_000;
+// Below the runner's 120 s limit for the whole file (test/run.mjs): a wait that is stuck must fail with its own
+// message, not as a nameless file timeout.
+const TURN_TIMEOUT_MS = 45_000;
 
 let ao: AoClient;
 let watcher: AoSessionWatcher;
