@@ -23,8 +23,12 @@ before(async () => {
 	ao = await startAoFixture();
 	repo = ao.scratchRepo("cli-repo");
 	home = fs.mkdtempSync(path.join(os.tmpdir(), "cli-it-"));
-	// Own planner and Switchyard state; never a user service; the fixture's AO through discovery.
-	env = { ...process.env, ...ao.stackEnv, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
+	// Own planner and Switchyard state, and an isolated HOME with XDG_* under it (CONTRACT.md "Isolated HOME"): the CLI
+	// must never touch the real launcher, skill, Hermes plugin or user services. The fixture's AO is found through discovery.
+	const fakeHome = path.join(home, "home");
+	fs.mkdirSync(fakeHome, { recursive: true });
+	const xdg = { XDG_CONFIG_HOME: path.join(fakeHome, ".config"), XDG_DATA_HOME: path.join(fakeHome, ".local", "share"), XDG_STATE_HOME: path.join(fakeHome, ".local", "state"), XDG_CACHE_HOME: path.join(fakeHome, ".cache") };
+	env = { ...process.env, ...ao.stackEnv, HOME: fakeHome, ...xdg, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
 	assert.equal(cli("config", "set", "service", "off").status, 0);
 });
 
