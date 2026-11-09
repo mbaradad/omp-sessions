@@ -68,6 +68,13 @@ export function readTranscriptHeader(file: string): TranscriptHeader | undefined
 /** Entry types omp writes into a session before any user turn (`session/new` bootstrap). */
 const BOOTSTRAP_TYPES: Record<string, true> = { title: true, session: true, model_change: true, thinking_level_change: true, service_tier_change: true, credential_pin: true, custom: true, title_change: true };
 
+/** Number of entries (lines) in a transcript, for noticing that an old session kept growing after its migration. */
+export function countTranscriptEntries(file: string): number {
+	return readTranscriptText(file)
+		.split("\n")
+		.filter(l => l.trim()).length;
+}
+
 /** True while the transcript holds no conversation yet: only omp's bootstrap entries, no message. */
 export function isFreshTranscript(file: string): boolean {
 	for (const line of readTranscriptText(file).split("\n")) {

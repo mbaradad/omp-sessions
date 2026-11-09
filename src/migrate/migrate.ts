@@ -18,7 +18,7 @@ import { ompPaths, locateTranscript } from "../shared/omp-paths";
 import { emptyOrgData, type OrgData, type Priority } from "../shared/organize";
 import { type PermissionMode, permissionModeInArgs, permissionModeOf } from "../shared/permissions";
 import type { TaskQueue } from "../shared/protocol";
-import { graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "./graft";
+import { countTranscriptEntries, graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "./graft";
 import { type LegacySession, type LegacyState, legacyHome, readLegacyState } from "./legacy";
 import { isRecord } from "../shared/transcript-files";
 
@@ -38,6 +38,8 @@ export interface LedgerSession {
 	workspace?: string;
 	sourceOmpSessionId?: string;
 	sourceTranscript: string;
+	/** Entries the old transcript held when it was copied. The old extension may keep appending to it. */
+	sourceEntries?: number;
 	/** omp's id for the AO session's transcript (AO's provider id). */
 	ompSessionId?: string;
 	transcript?: string;
@@ -89,7 +91,7 @@ export interface MigrateOptions {
 export type SessionAction =
 	| { kind: "adopt"; id: string; title: string; cwd: string; transcript: string; projectRoot?: string; projectId?: string; standaloneReason?: string; approvalMode: AoApprovalMode; resumeFrom?: LedgerSession["state"]; notes: string[] }
 	| { kind: "skip"; id: string; title: string; reason: string }
-	| { kind: "done"; id: string; title: string; aoSessionId: string };
+	| { kind: "done"; id: string; title: string; aoSessionId: string; drift?: number };
 
 export interface SessionOutcome {
 	id: string;
@@ -207,7 +209,17 @@ export function planSessions(state: LegacyState, ledger: Ledger, opts: { session
 		if (opts.only && !opts.only.includes(s.id)) continue;
 		const entry = ledger.sessions[s.id];
 		if (entry?.state === "done") {
-			actions.push({ kind: "done", id: s.id, title: s.title, aoSessionId: entry.aoSessionId });
+			// The old extension can still be running: say when the old session moved on after the copy.
+			let drift: number | undefined;
+			if (entry.sourceEntries !== undefined) {
+				try {
+					const now = countTranscriptEntries(entry.sourceTranscript);
+					if (now > entry.sourceEntries) drift = now - entry.sourceEntries;
+				} catch {
+					/* the old transcript is gone: nothing to compare */
+				}
+			}
+			actions.push({ kind: "done", id: s.id, title: s.title, aoSessionId: entry.aoSessionId, ...(drift && { drift }) });
 			continue;
 		}
 		if (!entry && s.hostAlive && (s.status === "working" || s.status === "waiting" || s.status === "starting")) {
@@ -315,23 +327,35 @@ function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
-/** Copies the old state dir (sockets skipped) into `<home>/backups/omp-vscode-<stamp>`. */
+/**
+ * Copies the old state dir (sockets skipped) into `<home>/backups/omp-vscode-<stamp>`. The old extension
+ * may still be running and writing there (temp files come and go), so a copy that trips over a vanished
+ * file starts over, up to three times.
+ */
 export function backupLegacy(source: string, home: string, now = new Date()): string {
 	const dest = path.join(home, "backups", `omp-vscode-${now.toISOString().replace(/[:.]/g, "-")}`);
 	fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-	fs.cpSync(source, dest, {
-		recursive: true,
-		errorOnExist: true,
-		force: false,
-		filter: src => {
-			try {
-				return !fs.lstatSync(src).isSocket();
-			} catch {
-				return false;
-			}
-		},
-	});
-	return dest;
+	for (let attempt = 1; ; attempt++) {
+		try {
+			fs.cpSync(source, dest, {
+				recursive: true,
+				errorOnExist: true,
+				force: false,
+				filter: src => {
+					try {
+						return !fs.lstatSync(src).isSocket();
+					} catch {
+						return false;
+					}
+				},
+			});
+			return dest;
+		} catch (err) {
+			const vanished = err instanceof Error && "code" in err && err.code === "ENOENT";
+			fs.rmSync(dest, { recursive: true, force: true });
+			if (!vanished || attempt >= 3) throw err;
+		}
+	}
 }
 
 interface AdoptContext {
@@ -397,7 +421,9 @@ async function adopt(ctx: AdoptContext, action: Extract<SessionAction, { kind: "
 		}
 		if (candidates.length !== 1) throw new Error(`expected one new omp transcript for ${ws.workspacePath}, found ${candidates.length}`);
 		await exitAgent(client, aoId);
+		const sourceEntries = countTranscriptEntries(entry.sourceTranscript);
 		const result = graftTranscript({ source: entry.sourceTranscript, target: candidates[0], ...(ctx.model && { model: ctx.model }) });
+		entry.sourceEntries = sourceEntries;
 		entry.state = "grafted";
 		entry.ompSessionId = result.targetId;
 		entry.transcript = candidates[0];
@@ -466,6 +492,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	report.dropped = droppedItems(state);
 
 	log(`${opts.apply ? "Migrating" : "Dry run: would migrate"} ${source} → AO + ${home}`);
+	log("The old omp Sessions extension can stay installed and running: this only reads its data, and the two keep separate state (old: the dir above, new: Switchyard's).");
 	// The first write of a run (an AO spawn, a file of ours, a planner edit) is preceded by a backup.
 	const beforeWrite = () => {
 		if (report.backup) return;
@@ -477,8 +504,9 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	const saveLedger = () => writeJsonAtomic(ledgerFile, ledger);
 	for (const action of actions) {
 		if (action.kind === "done") {
-			log(`= ${action.id} "${action.title}": already migrated as ${action.aoSessionId}`);
-			report.sessions.push({ id: action.id, title: action.title, kind: "done", aoSessionId: action.aoSessionId });
+			const drift = action.drift ? `${action.drift} new entr${action.drift === 1 ? "y" : "ies"} in the old omp Sessions transcript since the copy (the old extension is still using it; not re-imported)` : undefined;
+			log(`= ${action.id} "${action.title}": already migrated as ${action.aoSessionId}${drift ? `; ${drift}` : ""}`);
+			report.sessions.push({ id: action.id, title: action.title, kind: "done", aoSessionId: action.aoSessionId, ...(drift && { notes: [drift] }) });
 			continue;
 		}
 		if (action.kind === "skip") {
