@@ -1115,13 +1115,6 @@ em {
 	height: 16px;
 }
 
-.round--mic {
-	border: 1px solid var(--vs-line-2);
-	color: #e2ccff;
-	background:
-		radial-gradient(circle at 50% 50%, rgba(155, 77, 255, 0.25), transparent 70%);
-}
-
 .round--send {
 	background: #7c3aed;
 	color: #fff;
@@ -1594,71 +1587,6 @@ h2 .grad {
 	border-radius: 12px 0 0 0;
 	border-right: 0;
 	border-bottom: 0;
-}
-
-.viz-voice {
-	flex-direction: row;
-	gap: 22px;
-}
-
-.orb {
-	display: grid;
-	place-items: center;
-	flex: none;
-	width: 66px;
-	height: 66px;
-	border-radius: 50%;
-	background: var(--grad);
-	color: #fff;
-	box-shadow: 0 0 0 8px color-mix(in srgb, var(--violet) 14%, transparent), 0 0 50px -6px color-mix(in srgb, var(--violet) 80%, transparent);
-}
-
-.orb .i {
-	width: 26px;
-	height: 26px;
-	stroke-width: 2;
-}
-
-.wave {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	height: 60px;
-}
-
-.wave i {
-	width: 4px;
-	height: 30%;
-	border-radius: 3px;
-	background: var(--grad);
-	background-size: 4px 60px;
-	transform-origin: center;
-}
-
-.wave i:nth-child(4n + 1) { height: 40%; }
-.wave i:nth-child(4n + 2) { height: 75%; }
-.wave i:nth-child(4n + 3) { height: 55%; }
-.wave i:nth-child(4n) { height: 90%; }
-.wave i:nth-child(5n) { height: 25%; }
-
-@media (prefers-reduced-motion: no-preference) {
-	.wave i {
-		animation: wave 1.1s ease-in-out infinite alternate;
-	}
-
-	.wave i:nth-child(2n) { animation-delay: -0.35s; }
-	.wave i:nth-child(3n) { animation-delay: -0.7s; }
-	.wave i:nth-child(5n) { animation-delay: -0.2s; }
-}
-
-@keyframes wave {
-	from {
-		transform: scaleY(0.35);
-	}
-
-	to {
-		transform: scaleY(1);
-	}
 }
 
 .tui {
