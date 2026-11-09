@@ -1474,7 +1474,8 @@ async function cmdStatus(args: Args): Promise<number> {
 	if (extReport.shim.onDaemonPath === false) problems.push(`the AO daemon was not started with ${path.dirname(extReport.shim.path)} first on its PATH: omp flags (config omp.extraArgs, new -- …) are ignored until AO is restarted through Switchyard`);
 	const HIBERNATION_FIX = `curl -X PATCH ${daemon?.baseUrl ?? "http://127.0.0.1:3001"}/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'`;
 	const notes: string[] = [];
-	if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or omp-sessions config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
+	if (hibernation === false && config.hibernation === "on") notes.push(`config.json says hibernation on but AO's chat hibernation reads off: it has not been applied yet (the daemon was not started by Switchyard, or was restarted by systemd). Apply it now: omp-sessions config set hibernation on`);
+	else if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or omp-sessions config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
@@ -1505,7 +1506,8 @@ async function cmdStatus(args: Args): Promise<number> {
 	const rows = [`${c.bold("omp-sessions")} ${VERSION} ${c.dim(`· home ${status.home}`)}`];
 	rows.push(row("ao", daemon ? `${c.green("running")} ${daemon.baseUrl} pid ${daemon.pid}` : `${c.red("not running")} ${c.dim("(systemctl --user start ao-daemon)")}`));
 	rows.push(row("idle", hibernation === undefined ? c.dim("unknown") : hibernation ? c.green("hibernation on") + c.dim(" (AO stops the omp of a chat nobody views after 90 s)") : `hibernation off ${c.dim("(idle omp hosts stay up; a note, not a problem)")}`));
-	if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · lost when AO restarts (it reads off after every boot, even if you turned it on); omp-sessions config set hibernation on makes Switchyard re-apply it`)}`);
+	if (hibernation === false && config.hibernation === "on") rows.push(`${" ".repeat(10)}${c.yellow("config says on but AO reads off: not applied yet")} ${c.dim("(the daemon wasn't started by Switchyard, or was restarted by systemd) · apply it now: omp-sessions config set hibernation on")}`);
+	else if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · lost when AO restarts (it reads off after every boot, even if you turned it on); omp-sessions config set hibernation on makes Switchyard re-apply it`)}`);
 	rows.push(row("planner", plannerInfo ? `${c.green("running")} pid ${plannerInfo.pid} · ${plannerInfo.version} · up ${ago(plannerInfo.startedAt)}` : `${c.red("not running")} ${c.dim("(omp-sessions server start)")}`));
 	const sv = status.service;
 	rows.push(row("service", sv.installed ? `${sv.kind} ${c.green("installed")}${sv.file ? c.dim(` · ${sv.file}`) : ""}` : c.dim(sv.kind ? `not installed (omp-sessions server install sets up a ${sv.kind} service)` : "none on this platform (the planner starts on demand)")));
@@ -1618,12 +1620,19 @@ async function cmdConfig(args: Args): Promise<number> {
 		default:
 			throw new UsageError(`unknown config command "${sub}" (get, set, unset)`);
 	}
+	// hibernation: apply it to the running AO at once (no argument: follow the file; an absent key leaves AO alone).
+	const aoNow = key === "hibernation" ? await aoIfRunning() : undefined;
+	const applied = aoNow ? await aoNow.applyChatHibernation().catch(() => undefined) : undefined;
 	if (json) {
 		process.stdout.write(`${JSON.stringify(key === undefined ? null : configValue(key))}\n`);
 		return 0;
 	}
 	if (key === "service") {
 		process.stdout.write(`${c.green("saved")} service ${configValue("service")} ${c.dim(configValue("service") === "off" ? "(the planner still starts on demand; omp-sessions server uninstall removes an installed service)" : "(installed on the next on-demand start)")}\n`);
+		return 0;
+	}
+	if (key === "hibernation") {
+		process.stdout.write(`${c.green("saved")} hibernation ${configValue("hibernation") ?? c.dim("(unset)")} ${c.dim(applied ? `· applied to the running AO now (${applied.enabled ? "on" : "off"}${applied.changed ? "" : ", it already was"})` : aoNow ? "· AO left as it is" : "· applied when Switchyard next starts AO or the planner reconnects")}\n`);
 		return 0;
 	}
 	process.stdout.write(`${c.green("saved")} ${c.dim(switchyardConfigPath())} · applies to sessions started from now on\n`);

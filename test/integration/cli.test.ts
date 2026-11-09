@@ -413,3 +413,27 @@ test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what 
 	assert.equal(shim.omp.shim.onDaemonPath, false);
 	assert.ok(shim.problems.some(p => /first on its PATH/.test(p)));
 });
+
+test("cli: config set hibernation applies it to the running AO at once; status says when the config says on but AO reads off", { skip }, async () => {
+	type Status = { ao: { chatHibernation?: boolean }; notes: string[]; problems: string[] };
+	assert.equal((await client.chatHibernation()), false, "AO starts with hibernation off");
+	const set = cli("config", "set", "hibernation", "on");
+	assert.equal(set.status, 0, set.stderr);
+	assert.match(set.stdout, /applied to the running AO now/);
+	assert.equal(await client.chatHibernation(), true);
+	assert.equal(json<string>("config", "get", "hibernation", "--json").data, "on");
+	assert.equal(cli("config", "set", "hibernation", "maybe").status, 2);
+	// AO forgets it on every boot: config on, AO reading off = not applied yet, and the status says so (a note, not a problem).
+	await client.applyChatHibernation(false);
+	const lost = json<Status>("status", "--json").data;
+	assert.equal(lost.ao.chatHibernation, false);
+	assert.ok(lost.notes.some(n => /has not been applied yet/.test(n)), JSON.stringify(lost.notes));
+	assert.ok(!lost.problems.some(p => /hibernation/.test(p)));
+	assert.equal(json<string>("config", "set", "hibernation", "on", "--json").status, 0, "--json applies it too");
+	assert.equal(await client.chatHibernation(), true);
+	// Unset removes the key and leaves AO as it is.
+	assert.equal(cli("config", "unset", "hibernation").status, 0);
+	assert.equal(json<string | null>("config", "get", "hibernation", "--json").data, null);
+	assert.equal(await client.chatHibernation(), true, "an absent key leaves AO alone");
+	await client.applyChatHibernation(false);
+});
