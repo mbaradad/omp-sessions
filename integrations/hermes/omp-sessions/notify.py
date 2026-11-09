@@ -28,7 +28,7 @@ WATCH_MAX_AGE_S = 7 * 24 * 3600
 # chat that started the session is usually gone (a one-shot `hermes chat -Q`, a closed CLI chat).
 REFUSED_GIVE_UP_S = 3600
 REPLY_EXCERPT = 600
-WHERE_TO_ANSWER = "VS Code, the omp phone app, the omp Sessions page, or `omp-sessions answer`"
+WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page, or `omp-sessions answer`"
 
 
 def signature(report: dict) -> str:

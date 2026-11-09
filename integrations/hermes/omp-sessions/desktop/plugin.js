@@ -1606,7 +1606,7 @@ function createPage(host2) {
       main = h(Empty, {
         icon: "sparkle",
         title: "No omp sessions yet",
-        body: "Start one here, with omp-sessions new, from VS Code or the omp phone app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+        body: "Start one here, with omp-sessions new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
         action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) })
       });
     } else {

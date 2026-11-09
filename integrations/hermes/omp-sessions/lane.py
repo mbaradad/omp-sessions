@@ -54,7 +54,7 @@ MAX_SEND_TRIES = 5
 HOLD_STATES = ("queued", "scheduled", "starting", "interrupted")
 # `omp-sessions answer` failures that only mean the dialog changed meanwhile (look again next pass).
 QUESTION_MOVED = re.compile(r"question changed|not waiting for an answer|no question is waiting", re.IGNORECASE)
-WHERE_TO_ANSWER = "VS Code, the omp phone app, the omp Sessions page"
+WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page"
 
 
 def claimer_id() -> str:

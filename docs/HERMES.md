@@ -2,14 +2,14 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to omp. The `omp-sessions` Hermes plugin gives it:
 
-- **Tools** (toolset `omp_sessions`, 14 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, switch their model, and check the omp Sessions server.
+- **Tools** (toolset `omp_sessions`, 14 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
 - **Notifications.** When an omp session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
 - **A kanban lane.** Kanban cards assigned to `omp` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`omp-sessions` skill**, plus `/omp` in chats and `hermes omp …` in a terminal.
 
-The plugin drives the `omp-sessions` CLI, so every session it starts is an ordinary omp session run by the `omp-sessions` server. You can watch and steer it from the omp Sessions page in Hermes, with `omp-sessions attach`, in the omp phone app, or in VS Code (omp Sessions). Queued sessions respect omp's global concurrency limit (`omp-sessions sched set <n>`).
+The plugin drives the `omp-sessions` CLI, so every session it starts is an ordinary omp session run by [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO), the daemon behind omp Sessions. The plugin never talks to AO itself: `omp-sessions` is the one client that maps AO sessions onto omp Sessions states, questions, queues and costs, the same way for VS Code, the CLI and Hermes. You can watch and steer a session from the omp Sessions page in Hermes, with `omp-sessions attach`, in the AO app or AO Mobile, or in VS Code (omp Sessions). Queued sessions respect omp's global concurrency limit (`omp-sessions sched set <n>`).
 
-For the whole arrangement (one workstation running omp, the `omp-sessions` server and Hermes; VS Code and Hermes Desktop on a laptop; the phone over Tailscale), see [the setup guide](SETUP.md).
+For the whole arrangement (one workstation running omp, the AO daemon and Hermes; VS Code and Hermes Desktop on a laptop; AO Mobile on the phone), see [the setup guide](SETUP.md).
 
 ## Install
 
@@ -121,7 +121,7 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
    - the paths of the `SKILL.md` files the card asks for.
 
    The session gets the tags `hermes`, `hermes:<board>` and `card:<id>`, goes into the board's omp group, and starts in the board's permission mode, if one is set.
-4. **Comments** on the card with the session id and how to watch it: the omp Sessions page, `omp-sessions attach <id>`, the phone app, or VS Code.
+4. **Comments** on the card with the session id and how to watch it: the omp Sessions page, `omp-sessions attach <id>`, the AO app or AO Mobile, or VS Code.
 5. **Tracks** the session and mirrors it onto the card:
 
 | Session | Card |
@@ -169,7 +169,7 @@ From any chat (including clients whose assignee picker lists only Hermes profile
 Comments on a card the lane runs can reach its omp session, but only from **trusted authors**: `lane.comment_authors`, default `["dashboard"]`, which is what the Hermes dashboard and Hermes Console post as (`*` trusts anyone). Hermes agents comment under their profile name, so another profile's agent, which may act on untrusted input, can't prompt omp or hand it cards unless you list that profile. A comment from anyone else gets one note per author per card saying it doesn't reach the session. Approvals are never answered by comments.
 
 - While omp waits on a question (ask, input or editor), the first new comment is the answer (an option's number or label, or free text); the lane then unblocks the card. If it doesn't fit the question, the lane says so and tries the next comment.
-- **Approvals are never answered by comments.** While one waits, comments are held, the card gets one note saying where to approve (the omp Sessions page, the phone app, VS Code or `omp-sessions answer`), and the comments are delivered after it's answered.
+- **Approvals are never answered by comments.** While one waits, comments are held, the card gets one note saying where to approve (the omp Sessions page, the AO app or AO Mobile, VS Code or `omp-sessions answer`), and the comments are delivered after it's answered.
 - Otherwise comments arrive as a message: a follow-up while omp works, a new prompt once it is idle (the card is completed again from the new reply). omp sees each one wrapped as `<kanban-comment author="…">`.
 - Comments are held until the card's queued task has started, so they never jump the concurrency limit or a scheduled start.
 - The lane confirms each delivery with its own comment (`omp session 1a2b3c4d: passed the comment on`), and says so when omp rejects an answer. If a comment can't be delivered, the card gets one "Couldn't reach omp session …" note and the lane retries on later passes, giving up (and saying so) after 5 tries.
@@ -218,7 +218,7 @@ plugins:
 
 When a card is blocked with `needs_input`, answer the omp session in any of these places:
 
-- the omp Sessions page in Hermes, or the omp phone app;
+- the omp Sessions page in Hermes, the AO app or AO Mobile;
 - VS Code (the session's chat);
 - `omp-sessions answer <id> <choice>`;
 - from Hermes, with `omp_session_answer` (questions only; approvals need `agent_approvals`);
@@ -292,13 +292,13 @@ The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashbo
 
 - **Chats**: Hermes calls the `omp_session_*` tools as usual (Console shows them as steps), and the note that a session finished or needs input arrives in the chat that started it.
 - **`/omp`**: a short summary (how many sessions need you, are working, queued, scheduled, interrupted or done, and which need you); `/omp status` for the lane; `/omp take <card> [board]` routes a kanban card to omp, which Console's assignee picker can't (it lists only profiles).
-- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@omp` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them on the phone app or the omp Sessions page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
+- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@omp` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them in AO Mobile or on the omp Sessions page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
 
-For the omp sessions themselves on Android (every session, not only cards), pair the omp phone app (**omp: Connect Phone…**): it lists them, follows them live, and answers questions and approvals.
+For the omp sessions themselves on Android (every session, not only cards), pair AO Mobile with the AO daemon (see the [setup guide](SETUP.md)): it lists them, follows them live, and answers questions and approvals.
 
 ## Troubleshooting
 
-- **Start with `omp-sessions status`** on the machine (server, omp, problems), then **omp Doctor** in VS Code (*omp: Run Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-sessions`, with fixes (see [In VS Code](#in-vs-code)).
+- **Start with `omp-sessions status`** on the machine (the AO daemon, omp, problems; `ao doctor` checks AO itself), then **omp Doctor** in VS Code (*omp: Run Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-sessions`, with fixes (see [In VS Code](#in-vs-code)).
 - **`hermes omp status` says `omp-sessions: NOT FOUND`.** Install the command (VS Code: **omp: Install omp-sessions Command**, or the release package), or set `plugins.entries.omp-sessions.settings.omp_sessions` to its path. The gateway may run with a smaller `PATH` than your shell. A 0.5.0 setting named `omp_vs` is no longer read; rename it to `omp_sessions`.
 - **Comments don't reach the session.** Check the author: only `lane.comment_authors` (default `dashboard`) count. Approvals never go through comments.
 - **The tools are missing in Hermes.** Check `hermes plugins list`. A user plugin loads only once it is enabled. Start a new Hermes session after enabling, or run `hermes gateway restart`.
@@ -310,4 +310,4 @@ For the omp sessions themselves on Android (every session, not only cards), pair
   - `hermes omp lane run` forces a pass from the terminal.
   - Just updated the plugin files? The running gateway keeps the old code until it reloads the plugin: the extension's automatic refresh and `omp-sessions hermes install` do that for you; by hand, `hermes -p <profile> plugins disable omp-sessions` then `enable`, or `hermes gateway restart`.
 - **A card was blocked with "could not prepare the workspace".** A `worktree` card needs a path inside a git repository, or a board `default_workdir`. A `dir` path must be absolute.
-- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. omp's own logs: `omp-sessions server log` and `omp-sessions tail <id>`.
+- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. A session's own output: `omp-sessions tail <id>`; the AO daemon: `ao status` and `ao doctor`.

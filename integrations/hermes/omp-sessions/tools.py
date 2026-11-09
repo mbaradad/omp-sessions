@@ -55,7 +55,7 @@ SCHEMAS: dict[str, dict] = {
     "omp_session_start": {
         "name": "omp_session_start",
         "description": (
-            "Start an omp coding session (an autonomous coding agent running in the background; the user can follow and steer it in VS Code, the omp phone app, the omp Sessions page or the omp-sessions CLI). "
+            "Start an omp coding session (an autonomous coding agent running in the background; the user can follow and steer it in VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page or the omp-sessions CLI). "
             "Give `prompt` to start now, or `task` to queue it (it starts when the omp Sessions scheduler's concurrency limit allows; with `at` it is scheduled). "
             "Where it runs: `cwd`, or `project` (a Hermes project or the name of a known folder), or `board` (that kanban board's folder and group). "
             "You are told when it finishes or needs input; omp_session_wait blocks until then. To add work to an existing session use omp_queue_add."
@@ -413,7 +413,7 @@ class Tools:
             if is_approval(q) and not self.settings().agent_approvals:
                 raise OmpSessionsError(
                     f"this is an approval dialog ({one_line(str(q.get('title') or q.get('kind')), 120)}): the user approves or denies it in VS Code, "
-                    "the omp phone app, the omp Sessions page or with `omp-sessions answer` (the plugin's agent_approvals setting lets you answer approvals)"
+                    "the Agent Orchestrator app or AO Mobile, the omp Sessions page or with `omp-sessions answer` (the plugin's agent_approvals setting lets you answer approvals)"
                 )
             r = omp.answer(str(report["id"]), answer, str(q.get("id") or "") or None)
             if r.code != 0:
