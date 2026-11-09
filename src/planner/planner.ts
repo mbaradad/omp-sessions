@@ -7,6 +7,7 @@
 // replays the outstanding steps: AO answers a replayed spawn or message with what it already made,
 // so nothing runs twice. A run AO lost (session deleted or killed, turn recovered/interrupted by
 // someone else) becomes `interrupted` and is never re-run unattended.
+import { isCheckpointCommand } from "../shared/checkpoints";
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
 import { type Outcome, PlanError, advance, taskByRef, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
@@ -199,7 +200,7 @@ export class Planner {
 		try {
 			const messages = (await this.ao?.conversation(session))?.messages ?? [];
 			const last = messages.filter(m => m.role === "user").pop()?.text ?? "";
-			if (/^\/(?:undo|redo)(?:\s|$)/i.test(last.trim())) return;
+			if (isCheckpointCommand(last)) return;
 		} catch {
 			return;
 		}
