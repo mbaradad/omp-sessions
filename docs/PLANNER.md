@@ -328,7 +328,7 @@ Branches the planner did not create are never touched.
 A task dispatched into an **existing** session (its lane is the session) is tracked in git like a planner-spawned
 one: the planner records the session's repo, branch and worktree before the first run, merges the parents' committed
 heads into that worktree first (edges `merged`/`conflict`), and after the turn commits the work and records the head,
-so its own children merge it in turn. `after` may name session ids, so a graph made only of `queue {id: <session>}`
+so its own children merge it in turn. A session that has not run and has no commits of its own (a fresh one) **fast-forwards** to the first parent's head, so its branch starts from that head with no merge commit (`Task.git.base` = that head); the other parents are merged on top. `after` may name session ids, so a graph made only of `queue {id: <session>}`
 calls (`queue {add, after [<session>], autoRun}`) propagates exactly like one the planner spawned. Sessions outside a
 git repository are not tracked.
 

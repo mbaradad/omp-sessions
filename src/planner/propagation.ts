@@ -358,6 +358,12 @@ export class Propagation {
 				await commitAll(wt, c.title, c.id);
 				const before = await git(wt, ["rev-parse", "HEAD"]);
 				if (await isAncestor(wt, target, before)) return { ok: true as const, before, after: before };
+				// A child that has not run yet and has no work of its own (a session a client spawned, still at the default
+				// branch's head) takes the parent's head as its own: its branch starts from the parent, with no merge commit.
+				if (!c.startedAt && c.status === "pending" && (await isAncestor(wt, before, target))) {
+					await git(wt, ["merge", "--ff-only", "-q", target]);
+					return { ok: true as const, before, after: target };
+				}
 				const res = await merge(wt, target, `switchyard: merge ${parent.git?.branch} (${parent.title.slice(0, 60)}) into ${c.git?.branch}`);
 				return res.ok ? { ok: true as const, before, after: res.head } : { ok: false as const, before, files: res.conflicts ?? [] };
 			});
