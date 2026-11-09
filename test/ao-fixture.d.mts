@@ -84,6 +84,8 @@ export function aoAvailable(): boolean;
 /** node:test `skip` value for tests that need the daemon: false, or why they skip. */
 export const skipWithoutAo: false | string;
 export function fakeOmpAcpPath(): string;
+/** Env variables a parent omp session sets for its tools (PI_SESSION_FILE…): never passed to a fixture's daemon, omp or planner. */
+export const PARENT_OMP_ENV: ReadonlySet<string>;
 /** Removes a temp tree, retrying while a just-stopped process still writes into it; never throws. */
 export function removeTree(dir: string): Promise<void>;
 export function startAoFixture(opts?: AoFixtureOptions): Promise<AoFixture>;

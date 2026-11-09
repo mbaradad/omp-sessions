@@ -46,6 +46,30 @@ test("the daemon runs with HOME, XDG and state dirs under the fixture root, and 
 	}
 });
 
+test("env of an enclosing omp session never reaches the daemon or the omp it spawns; the daemon's own HOME/XDG are isolated", { skip: skip || process.platform !== "linux" }, async () => {
+	const planted = { PI_SESSION_FILE: "/nonexistent/parent-session.jsonl", PI_SESSION_ID: "parent-session-id", PI_NO_TITLE: "1", OMPCODE: "1" };
+	Object.assign(process.env, planted);
+	let ao: Awaited<ReturnType<typeof startAoFixture>> | undefined;
+	try {
+		ao = await startAoFixture();
+		const env = environOf(ao.pid);
+		for (const key of Object.keys(planted)) assert.equal(env[key], undefined, `${key} must not reach the daemon`);
+		// The daemon process itself (not only its clients) runs on the isolated HOME: its readiness probes of
+		// other harnesses write there, never into the real home.
+		assert.equal(env.HOME, ao.home);
+		assert.equal(env.XDG_CONFIG_HOME, path.join(ao.home, ".config"));
+		const planner = await startPlannerFixture({ ao });
+		try {
+			for (const key of Object.keys(planted)) assert.equal(environOf(planner.pid)[key], undefined, `${key} must not reach the planner`);
+		} finally {
+			await planner.stop();
+		}
+	} finally {
+		for (const key of Object.keys(planted)) delete process.env[key];
+		await ao?.stop();
+	}
+});
+
 test("overriding HOME (or a state dir) to a real location is refused, and nothing is left behind", { skip }, async () => {
 	const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith("ao-fixture-"));
 	await assert.rejects(startAoFixture({ env: { HOME: realHome } }), /not under the fixture root/);

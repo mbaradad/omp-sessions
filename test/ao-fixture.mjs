@@ -91,6 +91,9 @@ export async function removeTree(dir) {
 	}
 }
 
+/** Set by a parent omp session for its tools; must not reach the omp processes of a test daemon. */
+export const PARENT_OMP_ENV = new Set(["PI_SESSION_FILE", "PI_SESSION_ID", "PI_NO_TITLE", "PI_NO_PTY", "PI_NOTIFICATIONS", "OMPCODE"]);
+
 /** The user's real home (from the password database: HOME may already be an isolated one). */
 function realHome() {
 	return fs.realpathSync(os.userInfo().homedir);
@@ -208,8 +211,11 @@ export async function startAoFixture(opts = {}) {
 	const binDir = path.join(root, "bin");
 	for (const d of [dataDir, home, agentDir, binDir]) fs.mkdirSync(d, { recursive: true });
 
-	// The daemon inherits nothing AO-specific from a test run that itself happens to be an AO session.
-	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_")));
+	// The daemon inherits nothing AO-specific, and nothing of an omp session the test itself may be running in:
+	// the daemon hands its whole env to every `omp acp` it spawns, so PI_SESSION_FILE & co would point them at the
+	// caller's session (same list as validate's IsolatedDaemon). HOME and XDG_* below are for the daemon process
+	// itself: its readiness probes for other harnesses (claude, codex, kiro…) write into $HOME.
+	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !PARENT_OMP_ENV.has(k)));
 	// CONTRACT.md "Isolated HOME": every run, fake or real omp, gets its own HOME, XDG dirs and Switchyard
 	// state dirs under the fixture root. There is no switch for the real HOME.
 	const isolation = {
