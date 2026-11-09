@@ -157,6 +157,7 @@ export class Planner {
 					// Events may have been missed while the stream was down: look at everything again.
 					void this.refreshActivity();
 					this.refreshUndone();
+					void this.propagation.cleanKept();
 					// AO keeps the hibernation flag in memory only: put it back on every (re)connect when the user asked for it.
 					void this.ao?.applyHibernation().then(
 						r => r?.changed && this.log("chat hibernation turned", r.enabled ? "on" : "off"),
@@ -328,13 +329,25 @@ export class Planner {
 		const tracked = this.state.tasks.filter(t => t.git);
 		this.commit(s => Object.assign(s, res.state));
 		// Tasks removed from the plan take their planner-made branches with them (when git agrees: merged, not checked out).
-		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch);
+		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch, t.title, t.id);
 		for (const e of res.effects) {
-			if (e.kind === "sync") void this.propagation.sync(e.task);
+			if (e.kind === "branches") this.cleaning = this.propagation.cleanKept();
+			else if (e.kind === "sync") void this.propagation.sync(e.task);
 			else this.follow(e.task, 0);
 		}
 		this.schedule(0);
 		return { rev: this.state.rev, refs: res.refs };
+	}
+
+	/** The branch cleanup an edit started (`branch.clean`), for `editAndWait`. */
+	private cleaning: Promise<void> | undefined;
+
+	/** `edit`, and for `branch.clean` also waits until the cleanup is done, so the answer comes after its plan change. */
+	async editAndWait(ops: PlanOp[], rev?: number): Promise<{ rev: number; refs: Record<string, string> }> {
+		this.cleaning = undefined;
+		const res = this.edit(ops, rev);
+		if (this.cleaning) await this.cleaning;
+		return res;
 	}
 
 	/** Old `queue` op: QueueOps on a lane (or on the session lane of an AO session id). */
@@ -405,7 +418,7 @@ export class Planner {
 		const tasks = views
 			.filter(t => (!lane || t.lane === lane) && (all || !((t.state === "done" || t.state === "skipped") && (t.finishedAt ?? now) < weekAgo)))
 			.map(t => (t.waitReason === "starting" && !this.ao ? { ...t, waitReason: `waiting for AO (${this.aoError ?? "not connected"})` } : t));
-		return { rev: this.state.rev, edges: this.edges(), tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+		return { rev: this.state.rev, edges: this.edges(), keptBranches: this.state.keptBranches, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
 	}
 
 	/** Every parent → child edge that has a propagation state. */

@@ -150,7 +150,7 @@ export function normalizeConfig(raw: unknown, base: PlannerConfig = DEFAULT_CONF
 }
 
 export function emptyState(): PlanState {
-	return { version: 1, rev: 0, tasks: [], lanes: [], recurring: [], config: structuredClone(DEFAULT_CONFIG), limits: {}, spend: [] };
+	return { version: 1, rev: 0, tasks: [], lanes: [], recurring: [], config: structuredClone(DEFAULT_CONFIG), limits: {}, spend: [], keptBranches: [] };
 }
 
 const STATUSES: Record<TaskStatus, true> = { pending: true, running: true, done: true, failed: true, skipped: true };
@@ -284,6 +284,11 @@ export function normalizeState(raw: unknown): PlanState {
 		const l = rec(v);
 		if (l && finite(l.until) !== undefined) s.limits[k] = { provider: k, until: l.until as number, since: finite(l.since) ?? (l.until as number), failures: finite(l.failures) ?? 1, reason: typeof l.reason === "string" ? l.reason : "", ...(typeof l.model === "string" ? { model: l.model } : {}), ...(l.guessed === true ? { guessed: true } : {}) };
 	}
+	for (const k of Array.isArray(r.keptBranches) ? r.keptBranches : []) {
+		const kr = rec(k);
+		if (kr && typeof kr.repo === "string" && typeof kr.branch === "string" && typeof kr.taskId === "string")
+			s.keptBranches.push({ repo: kr.repo, branch: kr.branch, task: typeof kr.task === "string" ? kr.task : "", taskId: kr.taskId, ...(typeof kr.tip === "string" ? { tip: kr.tip } : {}), why: typeof kr.why === "string" ? kr.why : "", at: finite(kr.at) ?? 0 });
+	}
 	if (Array.isArray(r.spend)) for (const e of r.spend) if (Array.isArray(e) && finite(e[0]) !== undefined && finite(e[1]) !== undefined) s.spend.push([e[0], e[1]]);
 	return s;
 }
@@ -347,7 +352,7 @@ export function afterError(id: string, after: readonly string[], exists: (id: st
 // ---------- edits ----------
 
 /** Side effects an edit asks the service to carry out in AO. */
-export type Effect = { kind: "interrupt"; task: string; session: string } | { kind: "sync"; task: string };
+export type Effect = { kind: "interrupt"; task: string; session: string } | { kind: "sync"; task: string } | { kind: "branches" };
 
 export interface EditResult {
 	state: PlanState;
@@ -839,6 +844,9 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "sync":
 				// Carried out by the service: re-check the task's branch and propagate to its children.
 				effects.push({ kind: "sync", task: task(o.id).id });
+				break;
+			case "branch.clean":
+				effects.push({ kind: "branches" });
 				break;
 			case "recur.fire":
 				fireRecurring(s, recurring(o.id), now);
