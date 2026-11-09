@@ -144,6 +144,7 @@ Works on Linux and macOS, locally and over Remote-SSH. On Windows, run it in WSL
 - **Tasks view**: queue work per session — tasks with subtasks (`Title :: step; step`), drag & drop to reorder (also between sessions), checkboxes to complete, run now / start / pause the queue, edit details, and edit omp's own plan (its todo list). From the chat: `/queue …`, **Alt+Enter** (queue instead of send), and the queue bar above the composer. Queued tasks show up in the transcript as *Queued task i/n*; a failure or an interruption pauses the queue.
 - Per-task *Options…* (model, thinking level, fresh context, retries 1–5, timeout), *Duplicate Task*, *Retry Failed Tasks*, and *Schedule Queue Start…* (`HH:MM`, `YYYY-MM-DD HH:MM`, or `+30m/+2h/+3d`). The planner applies each task's model, thinking level and retries; *fresh context* runs the task in a new AO session.
 - **Concurrency scheduler**: queues across *all* sessions share a limit, held by the planner, so it holds with VS Code closed. The status bar shows `N/M running · K waiting`; *Set Concurrency…*, *Increase/Decrease*, *Pause/Resume Queued Tasks*. A task waiting for a slot shows its queue position in the tree and the board.
+- **Autoschedule by usage** (planner, so it runs with VS Code closed): queued work is *held*, not failed, while its provider's rate or usage limit is in force (the reset time comes from the provider's error: "try again in 2 h", "resets 3pm", `retry-after`; else 5 min doubling up to 2 h) or its usage window from `omp usage` is at the hold threshold (95%), and starts by itself at the reset. A task marked *spare* (`--usage spare`, or *Task Options…* on a task in the Tasks view) starts only while its provider's windows are below 60% (*Set Usage Limits for Queued Tasks…* moves both thresholds). *Set Spend Budget for Queued Tasks…* caps what planner tasks spend per rolling hour, day or week; a task that would start over a cap waits until the oldest spend leaves the window. The tree description, the board card (a *Held* pill and a line with the reason and the time) and `switchyard ls`/`show`/`status`/`sched` say why work waits; `switchyard sched limits clear` forgets a provider limit so held work starts now.
 
 ### Agents and Hermes
 
@@ -199,6 +200,9 @@ switchyard config set model anthropic/claude-sonnet-4-5   # default model of new
 switchyard config set mode auto     # default permission mode of new sessions that ask for none
 switchyard vscode fix               # open a session in VS Code (vscode path/to/dir: that project's checkout)
 switchyard sched set 2              # at most 2 queued tasks at once, across all sessions
+switchyard sched budget day 20      # stop starting queued work after $20 in a rolling day (hour|day|week; off removes it)
+switchyard sched usage hold 90      # hold a provider's work at 90% of its usage window (usage spare 50: where "spare" tasks start)
+switchyard sched limits [clear]     # provider limits in force and omp's usage windows; clear lets held work start now
 switchyard server status|log -f|install|uninstall      # the planner service (AO: ao status)
 switchyard remote on|off|status|qr|rotate # phone pairing (on: --bind tailscale|lan|tunnel|all)
 switchyard new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id

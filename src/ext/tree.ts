@@ -7,6 +7,7 @@ import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organiz
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
 import { agentState } from "../shared/session-report";
+import { holdText } from "../shared/task-text";
 import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
 import { headOf } from "./worktree-git";
@@ -171,9 +172,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const worktree = projectRoot(m.cwd).worktree;
 		const branch = worktree && headOf(worktree.gitDir);
 		const where = worktree ? `⎇ ${branch ?? path.basename(worktree.root)}` : node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
-		// A session whose queued tasks wait for other sessions says so, with the first one's title ("waits for X +1").
+		// A session whose queued work is held (provider limit, usage window, budget, retry backoff) says why instead of just "idle";
+		// one whose queued tasks wait for other sessions says so, with the first one's title ("waits for X +1").
+		const held = m.queue?.state === "held" && m.queue.pending > 0 ? `✋ ${holdText(m.queue.waitReason, m.queue.waitUntil)}` : "";
 		const waits = m.status === "working" || m.status === "starting" || m.status === "waiting" ? undefined : waitsForLabel(m.queue ?? {}, (m.queue?.blockedBy ?? []).map(id => ({ id, title: this.sessions.get(id)?.title ?? "" })));
-		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], waits?.text ?? "", where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
+		item.description = [unread ? "● new" : "", held || STATUS_LABEL[m.status], waits?.text ?? "", where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
@@ -183,7 +186,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **Switchyard: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
-		if (m.queue?.waitReason) tip.appendMarkdown(`$(clock) ${m.queue.state ?? "waiting"}: ${m.queue.waitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.waitReason) tip.appendMarkdown(`$(clock) ${m.queue.state ?? "waiting"}: ${holdText(m.queue.waitReason, m.queue.state === "held" ? m.queue.waitUntil : undefined).replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.queue?.sync) {
 			const from = m.queue.sync.parents.map(id => this.sessions.get(id)?.title ?? id.slice(0, 8)).join(", ");
 			const files = m.queue.sync.files?.length ? ` in ${m.queue.sync.files.slice(0, 5).join(", ")}${m.queue.sync.files.length > 5 ? ", …" : ""}` : "";

@@ -1,6 +1,7 @@
 // Sessions board webview: columns per mode, cards, drag & drop, keyboard moves, filters, swimlanes.
 import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
 import { plainExcerpt } from "../shared/excerpt";
+import { holdText } from "../shared/task-text";
 import type { SyncState } from "../shared/protocol";
 import { parseStartTime } from "../planner/when";
 import {
@@ -498,8 +499,9 @@ function statusPill(c: BoardCard): HTMLElement {
 	if (key === "working") return el("span", "pill working", el("span", "spinner"), c.status === "starting" ? "Starting" : "Working");
 	if (key === "waiting") return el("span", "pill waiting", icon("bell"), "Needs input");
 	if (key === "queued") {
-		const pill = el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : "Queued");
-		if (c.queue?.waitReason) pill.title = `${c.queue.state ?? "waiting"}: ${c.queue.waitReason}`;
+		const held = c.queue?.state === "held";
+		const pill = el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : held ? "Held" : "Queued");
+		if (c.queue?.waitReason) pill.title = `${c.queue.state ?? "waiting"}: ${holdText(c.queue.waitReason, held ? c.queue.waitUntil : undefined)}`;
 		return pill;
 	}
 	if (key === "stopped") return el("span", "pill stopped", icon("circle"), "Stopped");
@@ -543,6 +545,13 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 	if (waits) {
 		const badge = el("div", "deps-badge", icon("link"), el("span", "deps-text", waits.text));
 		badge.title = waits.tooltip;
+		parts.push(badge);
+	}
+	// Why queued work is held (provider limit, usage window, budget, retry backoff), where the card shows it without a hover.
+	if (c.queue?.state === "held" && c.queue.waitReason && (c.queue.pending ?? 0) > 0) {
+		const text = holdText(c.queue.waitReason, c.queue.waitUntil);
+		const badge = el("div", "deps-badge hold-badge", icon("clock"), el("span", "deps-text", text));
+		badge.title = `Held: ${text}`;
 		parts.push(badge);
 	}
 	if (c.lastText) parts.push(el("div", "excerpt", plainExcerpt(c.lastText)));

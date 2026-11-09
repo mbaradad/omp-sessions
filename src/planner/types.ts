@@ -277,6 +277,8 @@ export interface PlanState {
 	limits: Record<string, ProviderLimit>;
 	/** Spend of planner-dispatched turns: [epoch ms, USD]. Kept for a week. */
 	spend: Array<[number, number]>;
+	/** Provider of omp's own default model, learned from the last session the planner started for a task with no model: it tells tasks that name no model which provider's limits and usage windows apply. */
+	defaultProvider?: string;
 	/** `switchyard/*` branches of removed tasks that hold work no other branch has: left in git for a person to merge or delete. */
 	keptBranches: KeptBranch[];
 }
@@ -342,6 +344,8 @@ export interface PlannerStatus extends PlannerConfig {
 	limits: ProviderLimit[];
 	usageWindows: UsageWindow[];
 	spend: SpendUse[];
+	/** Provider tasks with no model of their own are gated on (omp's default model's), once the planner has run one. */
+	defaultProvider?: string;
 	ao: { url?: string; connected: boolean; lastEventAt?: number; error?: string };
 	version: string;
 	startedAt: number;

@@ -16,8 +16,9 @@ let project: string;
 before(async () => {
 	if (skip) return;
 	ao = await startAoFixture();
-	// The fake provider is nearly out of usage: `spare` work must wait.
-	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97, resetsAt: Date.now() + 3_600_000 }]);
+	// Plenty of usage left. Tasks that name no model are gated by omp's default provider once the planner has run one, so the
+	// graph test must not start under a full window; the `spare` test below fills it.
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 10, resetsAt: Date.now() + 3_600_000 }]);
 	planner = await startPlannerFixture({ ao, pollMs: 200, usageEveryMs: 500 });
 	project = await ao.createProject(ao.scratchRepo());
 });
@@ -56,6 +57,9 @@ test("graph A → B: B runs after A with A's result in its prompt", { skip }, as
 });
 
 test("a spare task waits for usage room; a planner crash loses nothing", { skip }, async () => {
+	// The fake provider is nearly out of usage: `spare` work must wait. Wait until the planner has read it.
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97, resetsAt: Date.now() + 3_600_000 }]);
+	await planner.waitFor((p: PlanView) => p.status.usageWindows?.some(w => w.usedPercent >= 97) ?? false, { what: "the planner to read 97% usage" });
 	await planner.call("edit", { ops: [{ op: "add", task: { title: "S", notes: "echo spare-ran", usage: "spare", options: { project, model: "fake/fake-model" } } }] });
 	const held: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "S").state === "held", { what: "S held" });
 	assert.match(byTitle(held, "S").waitReason ?? "", /spare: usage fake 5 Hour 97%/);

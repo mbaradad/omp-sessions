@@ -25,8 +25,8 @@ export interface BoardCard {
 	status: SessionStatus;
 	lastText?: string;
 	cost?: number;
-	/** Task queue summary: `failed`/`interrupted` counts, `autoRun` on, what the next task waits for. */
-	queue?: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number; autoRun?: boolean; state?: string; waitReason?: string };
+	/** Task queue summary: `failed`/`interrupted` counts, `autoRun` on, what the next task waits for and until when. */
+	queue?: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number; autoRun?: boolean; state?: string; waitReason?: string; waitUntil?: number };
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
 	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */
@@ -167,7 +167,8 @@ export function canRerunWithParent(c: BoardCard): boolean {
 /** A session marked completed shows as Completed only while nothing happens in it (stopped or idle). */
 export function statusKey(c: BoardCard): StatusKey {
 	// Pending tasks held back by unfinished dependencies: queued, even when the session is stopped.
-	if (c.blockedBy?.length && (c.queue?.pending ?? 0) > 0 && (c.status === "stopped" || c.status === "idle")) return "queued";
+	// Held ones (a provider limit, a usage window, the budget, a retry backoff) are queued too: they start by themselves.
+	if ((c.blockedBy?.length || c.queue?.state === "held") && (c.queue?.pending ?? 0) > 0 && (c.status === "stopped" || c.status === "idle")) return "queued";
 	if (c.status === "stopped") return c.completed ? "completed" : "stopped";
 	// A merge the child agent could not resolve needs a person: it sits with the questions.
 	if (c.status === "waiting" || c.sync?.state === "conflict") return "waiting";

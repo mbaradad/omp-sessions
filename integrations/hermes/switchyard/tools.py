@@ -147,7 +147,7 @@ SCHEMAS: dict[str, dict] = {
     },
     "switchyard_server_status": {
         "name": "switchyard_server_status",
-        "description": "The Switchyard server's health: running or not, version, omp found, sessions by state, pending/running tasks, the scheduler (concurrency limit, paused), remote access, and problems.",
+        "description": "The Switchyard server's health: running or not, version, omp found, sessions by state, pending/running tasks, the scheduler (concurrency limit, paused; `scheduler.held` = tasks held back, `scheduler.limits` = provider rate/usage limits in force with their reset time, `scheduler.usageWindows` = provider usage windows from omp, `scheduler.budget` and `scheduler.spend` = the spend caps and what each rolling window has spent), remote access, and problems. Queued work is held, not failed, while a provider limit or the budget is in force, and starts by itself afterwards.",
         "parameters": {"type": "object", "properties": {}},
     },
     "switchyard_models_list": {

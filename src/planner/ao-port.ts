@@ -85,6 +85,8 @@ export interface AoPort {
 	removeSession(session: string): Promise<void>;
 	/** Sets the model for the next turns; returns the one it replaced. */
 	setModel(session: string, model: string): Promise<string | undefined>;
+	/** The `provider/id` the session's omp uses now (its own default for a session no task set a model on); undefined when AO can't say. */
+	currentModel(session: string): Promise<string | undefined>;
 	/** Sets omp's thinking level; returns the one it replaced. */
 	setThinking(session: string, level: string): Promise<string | undefined>;
 	/** AO project for a folder (registered on first use); undefined outside git. */
@@ -230,6 +232,10 @@ export function aoPort(ao: AoClient): AoPort {
 			const current = (await ao.getConversation(session, { limit: 1 })).settings;
 			await ao.setTurnSettings(session, { ...current, model });
 			return current.model || undefined;
+		},
+		async currentModel(session) {
+			const list = await ao.configOptions(session);
+			return list.options.find(o => o.id === "model")?.currentValue || undefined;
 		},
 		async setThinking(session, level) {
 			const params = { params: { path: { sessionId: session } } };

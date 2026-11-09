@@ -364,6 +364,42 @@ test("cli: sched budget, usage and limits are set through the planner; --usage s
 	assert.equal(cli("wait", spare.data.id, "--timeout", "60s").status, 0, "no usage window is full: a spare task runs");
 });
 
+test("cli: a provider limit holds a queued task; ls, show, status and sched say why, and sched limits clear lets it run", { skip, timeout: 120_000 }, () => {
+	type Held = { state: string; waitReason?: string; waitUntil?: number };
+	type Sched = { held: number; limits: Array<{ provider: string; until: number }> };
+	const created = json("new", repo, "--task", "limit task", "--notes", "limited 120 cli-limit-key\necho cli-after-limit", "--model", "fake/fake-model", "--mode", "auto", "--json");
+	assert.equal(created.status, 0, created.stderr);
+	const id = created.data.id;
+	const deadline = Date.now() + 60_000;
+	let shown: Held = { state: "" };
+	while (Date.now() < deadline && shown.state !== "queued") shown = json<Held>("show", id, "--json").data;
+	assert.equal(shown.state, "queued", "a held task shows as queued");
+	// The limit is recorded by the planner when the turn finishes; `show` already carries the reason once it is.
+	while (Date.now() < deadline && !shown.waitReason) shown = json<Held>("show", id, "--json").data;
+	assert.match(shown.waitReason ?? "", /^rate-limit fake until \d\d:\d\d$/);
+	assert.ok((shown.waitUntil ?? 0) > Date.now() + 60_000, "the reset the error states (120 s)");
+	const text = cli("show", id).stdout;
+	assert.match(text, /held: rate-limit fake until \d\d:\d\d/);
+	const ls = cli("ls").stdout;
+	assert.match(ls, new RegExp(`${id}\\s+held`), "the status column says held");
+	assert.match(ls, new RegExp(`held ${id} rate-limit fake until`), "and a line under the table says why");
+	const sched = json<Sched>("sched", "limits", "--json").data;
+	assert.equal(sched.held, 1);
+	assert.deepEqual(sched.limits.map(l => l.provider), ["fake"]);
+	assert.match(cli("sched").stdout, /limit\s+fake until/);
+	const status = cli("status");
+	assert.match(status.stdout, /held\s+1 task/);
+	assert.match(status.stdout, /limit\s+fake until/);
+	const machine = JSON.parse(cli("status", "--json").stdout) as { scheduler: Sched };
+	assert.equal(machine.scheduler.limits[0]?.provider, "fake", "status --json carries the limits (Hermes' switchyard_server_status reads it)");
+	assert.equal(cli("sched", "limits", "bogus").status, 2);
+	// Clearing the limit lets the held task run (the fake answers "ok after limit" the second time).
+	assert.equal(json<Sched>("sched", "limits", "clear", "--json").data.limits.length, 0);
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.match(json("show", id, "--json").data.reply, /cli-after-limit/);
+	assert.equal(json<Sched>("sched", "--json").data.held, 0);
+});
+
 test("cli: plan status lists the graph's edges with their sync state; plan sync takes a task or session", { skip, timeout: 180_000 }, () => {
 	// The notes are the fake's script (the planner wraps the title). A session the CLI created has no planner-seeded branch, so its edge may carry no sync state yet (asked planner).
 	const a = json("new", repo, "--task", "PA", "--notes", "write x.txt A1\necho a-done", "--mode", "auto", "--json");

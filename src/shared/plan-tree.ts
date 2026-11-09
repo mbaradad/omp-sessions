@@ -2,7 +2,7 @@
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
 import type { BudgetCaps, EdgeSync, KeptBranch, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { formatStartTime } from "./task-text";
+import { formatStartTime, holdText } from "./task-text";
 
 const rank = (p: Priority | undefined): number => PRIORITIES.indexOf(p ?? "normal");
 
@@ -31,7 +31,7 @@ export function taskStateText(task: TaskView, titleOf: (id: string) => string | 
 		case "paused":
 			return "⏸ paused";
 		case "held":
-			return `✋ ${task.waitReason ?? "held"}${task.waitUntil ? ` until ${formatStartTime(task.waitUntil, now)}` : ""}`;
+			return `✋ ${holdText(task.waitReason, task.waitUntil, now)}`;
 		case "waiting":
 			return task.position ? `⏳ waiting #${task.position}` : "⏳ waiting";
 		case "interrupted":
@@ -87,7 +87,7 @@ export function syncText(state: EdgeSync["state"] | undefined): string {
 
 /** Why a queue's next task isn't starting, when it is held, blocked or cut short ("" otherwise: paused/scheduled show as the arm state). */
 function laneWaitText(lane: LaneView, now: Date): string {
-	if (lane.state === "held") return `✋ ${lane.waitReason ?? "held"}${lane.waitUntil ? ` until ${formatStartTime(lane.waitUntil, now)}` : ""}`;
+	if (lane.state === "held") return `✋ ${holdText(lane.waitReason, lane.waitUntil, now)}`;
 	if (lane.state === "blocked") return "⛓ blocked";
 	if (lane.state === "interrupted") return "⚠ interrupted";
 	return "";
@@ -240,18 +240,19 @@ function providerOfModel(model: string | undefined): string | undefined {
 
 /**
  * The provider the planner gates a task on: the prefix of the model it will run with (planner defaults < the
- * queue's defaults < the task's own options). Undefined when no model is known: such a task is gated by the
- * spend budget only, and `usage: "spare"` has nothing to look at.
+ * queue's defaults < the task's own options), else the provider of omp's own default model once the planner has
+ * run a task on it. Undefined when neither is known: such a task is gated by the spend budget only, and
+ * `usage: "spare"` has nothing to look at until a first task has run.
  */
 export function taskProvider(plan: Pick<PlanView, "lanes" | "status"> | undefined, task: Pick<TaskView, "lane" | "options">): string | undefined {
 	const lane = task.lane ? plan?.lanes.find(l => l.id === task.lane) : undefined;
-	return providerOfModel(task.options?.model ?? lane?.defaults?.model ?? plan?.status.defaults?.model);
+	return providerOfModel(task.options?.model ?? lane?.defaults?.model ?? plan?.status.defaults?.model) ?? plan?.status.defaultProvider;
 }
 
 /** What `usage: "spare"` means for this task right now, for the picker and the tooltip. */
 export function spareNote(plan: Pick<PlanView, "lanes" | "status"> | undefined, task: Pick<TaskView, "lane" | "options">): string {
 	const provider = taskProvider(plan, task);
-	if (!provider) return "no effect yet: the task has no known provider (set a model on it, on its queue, or the planner's default model); only the spend budget gates it";
+	if (!provider) return "no effect yet: the task has no known provider yet (set a model on it, on its queue, or the planner's default model, or run any task on omp's default model first: the planner learns its provider); only the spend budget gates it";
 	const below = plan?.status.usage.spareBelowPercent;
 	return `starts only while every ${provider} usage window is below ${below ?? "the"}%`;
 }

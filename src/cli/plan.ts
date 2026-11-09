@@ -94,9 +94,6 @@ export interface LaneSummary {
 	waitUntil?: number;
 	/** The planner's derived state of the next task (blocked, scheduled, held, paused, waiting, interrupted, running): what Hermes's graph shows on a card. */
 	planState?: string;
-	/** The AO sessions of the tasks the next task waits for (`after`), and the ones of them not finished yet (`blockedBy`). */
-	after?: string[];
-	blockedBy?: string[];
 	/** Marked completed (epoch ms of the mark; the marker lives on the lane, PARKED §5). */
 	completed?: number;
 	/** Sessions its queued tasks wait for (`new --after`, `queue after`), and of those the ones not finished yet. A task's own queue is left out. */
@@ -134,18 +131,7 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		// Why queued work waits when it isn't a slot or dependency (provider limit, usage window, budget, retry backoff).
 		if (next?.state === "held" && next.waitReason) summary.waitReason = next.waitReason;
 		if (next?.waitUntil !== undefined) summary.waitUntil = next.waitUntil;
-		if (next) {
-			summary.planState = next.state;
-			// A parent's session: its own, else its lane's (a task not dispatched yet has none).
-			const sessionOf = (id: string): string | undefined => {
-				const t = plan.tasks.find(x => x.id === id);
-				return t ? (t.session ?? plan.lanes.find(l => l.id === t.lane)?.session) : undefined;
-			};
-			const after = (next.after ?? []).map(sessionOf).filter((x): x is string => x !== undefined);
-			if (after.length) summary.after = after;
-			const blocked = (next.blockedBy ?? []).map(sessionOf).filter((x): x is string => x !== undefined);
-			if (blocked.length) summary.blockedBy = blocked;
-		}
+		if (next) summary.planState = next.state;
 		if (lane.completed) summary.completed = lane.completedAt ?? 0;
 		const after = sessionsOf(tasks.flatMap(t => t.after ?? []), session);
 		const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []), session);
