@@ -11,7 +11,7 @@
 //   await planner.stop(); await ao.stop();
 //
 // Options: { ao, stateRoot, plannerJs, env, usage, retryBaseMs, pollMs, usageEveryMs, readyTimeoutMs }
-//   stateRoot    SWITCHYARD_HOME to use (e.g. the one a VS Code under test already has); default a temp dir
+//   stateRoot    SWITCHYARD_HOME to use; default the AO fixture's (ao.switchyardHome), shared with the daemon
 //   plannerJs    bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, which test/run.mjs builds; else built here)
 //   env          extra planner env
 //   usage        false: SWITCHYARD_PLANNER_USAGE=off (no `omp usage` polling); default on, against ao.ompBin
@@ -85,15 +85,20 @@ export async function startPlannerFixture(opts) {
 	const { ao } = opts;
 	if (!ao) throw new Error("startPlannerFixture needs { ao } (an AO fixture)");
 	const root = fs.mkdtempSync(path.join(ao.root, "planner-"));
-	const stateRoot = path.resolve(opts.stateRoot ?? path.join(root, "state"));
+	// One Switchyard home for the daemon, its extensions and the planner, as in a real install: the planner's
+	// files live under <home>/planner/, client-side session files (sessions/<id>/mode) under <home>/sessions/.
+	const stateRoot = path.resolve(opts.stateRoot ?? ao.switchyardHome);
+	// The planner's state dir (SWITCHYARD_HOME; src/planner/paths.ts) must be a temp dir: checked before anything is created.
+	const tmpRoot = fs.realpathSync(os.tmpdir());
+	if (path.relative(tmpRoot, stateRoot).startsWith("..")) {
+		fs.rmSync(root, { recursive: true, force: true });
+		throw new Error(`planner fixture: stateRoot ${stateRoot} is not under ${tmpRoot}: tests never touch the real state dirs`);
+	}
 	fs.mkdirSync(stateRoot, { recursive: true });
 	const plannerJs = opts.plannerJs ?? process.env.SWITCHYARD_TEST_PLANNER_JS ?? (await buildPlanner(path.join(root, "planner.js")));
 	const socket = plannerSocket(stateRoot);
 	const logFile = path.join(root, "planner-stderr.log");
 	const clockFile = path.join(root, "planner-clock-ms");
-	// The planner's state dir (SWITCHYARD_HOME; src/planner/paths.ts) must be a temp dir.
-	const tmpRoot = fs.realpathSync(os.tmpdir());
-	if (path.relative(tmpRoot, stateRoot).startsWith("..")) throw new Error(`planner fixture: stateRoot ${stateRoot} is not under ${tmpRoot}: tests never touch the real state dirs`);
 	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO.
 	const clientEnv = { ...ao.stackEnv, SWITCHYARD_HOME: stateRoot };
 	let clockOffset = 0;
