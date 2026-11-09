@@ -1243,7 +1243,7 @@ function renderQueue(steering: string[], followUp: string[]): void {
 		...chips.map(c =>
 			h(
 				"span",
-				{ class: "qchip", title: c.q === "steering" ? "Injected into the running turn" : "Runs after this turn" },
+				{ class: "qchip", title: c.q === "steering" ? "Injected into the running turn" : "Runs after this turn. If you interrupt (Esc), AO drops it and the chat sends it again." },
 				`${c.q === "steering" ? "↪" : "⏭"} ${c.t.slice(0, 80)}`,
 				h("button", { class: "x", title: "Remove", onclick: () => post({ type: "removeQueued", text: c.t, queue: c.q }) }, "×"),
 			),
