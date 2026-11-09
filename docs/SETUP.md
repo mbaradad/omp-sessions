@@ -94,6 +94,8 @@ The old server (`omp-sessions server`) and its phone app are gone; uninstall the
 
 The old Hermes plugin (`omp-sessions`, tools `omp_*`, cards assigned to `omp`) is a different plugin from `switchyard`, and its settings don't move by themselves. In each profile that has it: install the new one (`switchyard hermes install --all-profiles`), set the lane up again in the profile that ran it (`hermes switchyard lane on --board <board>`, then `hermes switchyard board <board> --folder … --group … --mode …` with the values of `plugins.entries.omp-sessions.settings.lane` in that profile's `config.yaml`), remove the old one (`hermes -p <profile> plugins remove omp-sessions`), and restart the gateway and dashboard (`hermes gateway restart`) so neither keeps the old plugin loaded. Cards still assigned to `omp` stay where they are: reassign them to `switchyard` (`hermes kanban assign <card> switchyard`), or keep the old name with `hermes switchyard lane on --assignee omp`.
 
+Hermes Desktop keeps its own copy of the old page (*omp Sessions* in its sidebar), and in remote mode that copy is on the laptop, where nothing on the machine can reach it. Remove it in Desktop (*Capabilities → Plugins → omp Sessions → Remove*), then add the new page as in [The Switchyard page in Hermes](#the-switchyard-page-in-hermes). The old page has no backend any more, so it shows errors until it is removed.
+
 ## 2. Hermes Agent (optional)
 
 1. **Hermes** on the same machine, with its gateway running as a service (`hermes gateway install`). Run the web dashboard too (`hermes dashboard`) if you want the browser page or Hermes Desktop in remote mode.
@@ -133,7 +135,7 @@ The phone uses **AO's mobile app** ([iPhone and iPad](https://apps.apple.com/app
    - **Tailscale on Windows, omp in WSL 2**, and other setups where the phone can't see the machine: [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2).
 
    Details and limits: [Phone and API access](REMOTE-API.md).
-3. **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/omp` says what needs you and `/omp take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
+3. **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/switchyard` says what needs you and `/switchyard take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
 
 ## 4. The laptop, in the remote arrangement
 
@@ -146,7 +148,7 @@ Voice isn't available in this version.
 
 ## A day with this setup
 
-1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `omp`, or starts and schedules sessions directly (`switchyard_session_start`, with `at` for later).
+1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `switchyard`, or starts and schedules sessions directly (`switchyard_session_start`, with `at` for later).
 2. **omp does the coding.** The planner sends ready cards and tasks to AO, which gives each session its own worktree and branch, within the planner's concurrency limit (`switchyard sched set <n>`).
 3. **Answer questions anywhere.** A session that needs you shows up on the Switchyard page in Hermes, on the phone, in VS Code, in `switchyard ls`, and as a message in the chat that started it. Answering in one place answers it everywhere. Approvals are yours: comments and the Hermes agent can't answer them (unless you turn on `agent_approvals`).
 4. **Review in VS Code.** *Open project in VS Code* on the Hermes page (or `switchyard vscode <session>`) opens the worktree; diffs, checkpoints and undo per turn. Merge the branch when you are happy. The card gets the session's final reply, and dependent cards start.
