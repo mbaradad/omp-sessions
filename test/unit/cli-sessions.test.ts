@@ -184,3 +184,13 @@ test("reportOf: the changed-file count of a graph child says it includes what it
 	assert.equal(child.upstreamState, "merged");
 	assert.equal(reportOf(session("repo-1", "Free", { lane })).changedFilesIncludeUpstream, undefined);
 });
+
+test("reportOf: a reply AO has not finalized is left out (replyPending) instead of the previous turn's text; a final one is reported", () => {
+	const base = session("repo-1", "Task");
+	const final = reportOf({ ...base, model: { ...base.model, reply: "done: v2" } });
+	assert.equal(final.reply, "done: v2");
+	assert.equal(final.replyPending, undefined);
+	const pending = reportOf({ ...base, model: { ...base.model, reply: "done: v1 (the turn before)", replyPending: true } });
+	assert.equal(pending.reply, undefined, "never the previous turn's text as this turn's result");
+	assert.equal(pending.replyPending, true);
+});

@@ -249,7 +249,7 @@ export function queueSummary(s: Session): AoReportQueue {
  * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
  * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNullable<AoSessionReport["question"]> & { approval: boolean }; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: GraphEdge[]; upstreamState?: string; changedFilesIncludeUpstream?: true };
+export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNullable<AoSessionReport["question"]> & { approval: boolean }; replyPending?: true; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: GraphEdge[]; upstreamState?: string; changedFilesIncludeUpstream?: true };
 
 /**
  * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
@@ -259,9 +259,17 @@ export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNull
 export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFiles?: number } = {}): CliReport {
 	// The gate's mode file is the truth for a Switchyard session (ask included); AO's settings only say what omp was launched with.
 	const mode = s.mode ?? live.mode;
-	const { question, ...base } = sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live, ...(mode && { mode }) });
+	const { question, reply, ...base } = sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live, ...(mode && { mode }) });
 	// An omp `ask` with options and a tool approval are both `select`s to a reader: `approval` tells them apart (AO's question kind, the gate's and write prompts included).
-	const report: CliReport = { ...base, ...(question && { question: { ...question, approval: s.model.question?.kind === "approval" } }), completed: s.lane?.completed !== undefined };
+	// A reply AO has not finalized (the last turn completed but its assistant message is absent or still streaming) may be the previous turn's text or half of this one:
+	// it is left out and `replyPending` says why, so a caller never stores a stale reply as this turn's result. A turn with no assistant text (tool-only, failed) has no reply.
+	const report: CliReport = {
+		...base,
+		...(reply !== undefined && !s.model.replyPending && { reply }),
+		...(s.model.replyPending && { replyPending: true }),
+		...(question && { question: { ...question, approval: s.model.question?.kind === "approval" } }),
+		completed: s.lane?.completed !== undefined,
+	};
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;

@@ -95,7 +95,7 @@ This blocks until the session has nothing left to do on its own, then prints a s
 - `state`: queued, scheduled, starting, working, needs_input, interrupted, idle or stopped;
 - `queue`: pending, running, done and total tasks;
 - `question`: the waiting question, as `{id, kind, title, message?, options?, questions?}`; `kind` is `approval` (a tool asks for permission), `select`, `confirm`, `input` or `ask` (omp's ask tool: one entry per question in `questions`);
-- `reply`: the last thing the agent said, in full;
+- `reply`: the last thing the agent said, in full. While AO has not finalized the last turn's reply (it completed but the assistant message is missing or still streaming) `reply` is absent and `replyPending` is true instead: `wait` holds a few seconds for it, and never take the previous turn's text as this turn's result. A turn with no assistant text (tool-only, failed) has no `reply`;
 - `exitReason`.
 
 `omp-sessions ls --json` lists running sessions and sessions with work ahead (`--all` adds finished ones). Narrow it with `--project`, `--cwd`, `--group`, `--tag` or `--state <state>` (matches `state` exactly). `omp-sessions tail <session> -n 30` shows recent history as text.
