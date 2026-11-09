@@ -41,11 +41,13 @@ const finished = (t: TaskView): boolean => t.status === "done" || t.status === "
 export function planGraph(plan: PlanView, laneTitle: (lane: LaneView) => string, now = new Date()): PlanGraph {
 	const byId = new Map(plan.tasks.map(t => [t.id, t]));
 	const edges: PlanGraphEdge[] = [];
-	const keep = (from: TaskView, to: TaskView): boolean => !(finished(from) && finished(to));
+	// An edge between two finished tasks is clutter, unless git tracks it (`sync` entry): the parent can still change and the
+	// change reaches the finished child, which is exactly when its state (upstream-changed, conflict) and its actions matter.
+	const keep = (from: TaskView, to: TaskView, tracked: boolean): boolean => tracked || !(finished(from) && finished(to));
 	for (const t of plan.tasks) {
 		for (const dep of new Set(t.after ?? [])) {
 			const parent = byId.get(dep);
-			if (parent && parent !== t && keep(parent, t)) edges.push({ from: dep, to: t.id, kind: "after", pending: !finished(parent), ...(t.sync?.[dep] ? { sync: t.sync[dep].state } : {}) });
+			if (parent && parent !== t && keep(parent, t, !!t.sync?.[dep])) edges.push({ from: dep, to: t.id, kind: "after", pending: !finished(parent), ...(t.sync?.[dep] ? { sync: t.sync[dep].state } : {}) });
 		}
 	}
 	const dependsOn = new Set(edges.map(e => `${e.from}\n${e.to}`));
@@ -54,7 +56,7 @@ export function planGraph(plan: PlanView, laneTitle: (lane: LaneView) => string,
 		for (let i = 1; i < tasks.length; i++) {
 			const [from, to] = [tasks[i - 1], tasks[i]];
 			// A queue edge that a dependency already draws would only double the arrow.
-			if (keep(from, to) && !dependsOn.has(`${from.id}\n${to.id}`)) edges.push({ from: from.id, to: to.id, kind: "lane", pending: !finished(from) });
+			if (keep(from, to, false) && !dependsOn.has(`${from.id}\n${to.id}`)) edges.push({ from: from.id, to: to.id, kind: "lane", pending: !finished(from) });
 		}
 	}
 	const lanes = new Map(plan.lanes.map(l => [l.id, l]));

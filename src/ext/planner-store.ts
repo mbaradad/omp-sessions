@@ -52,9 +52,9 @@ export class PlannerStore implements vscode.Disposable {
 		return client.request("queue", { id, ops });
 	}
 
-	async scheduler(set?: Partial<PlannerConfig>): Promise<PlannerStatus> {
+	async scheduler(set?: Partial<PlannerConfig>, clearLimits?: true | string[]): Promise<PlannerStatus> {
 		const client = await this.connect();
-		return client.request("scheduler", set ? { set } : {});
+		return client.request("scheduler", { ...(set ? { set } : {}), ...(clearLimits ? { clearLimits } : {}) });
 	}
 
 

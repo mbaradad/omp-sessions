@@ -2,7 +2,7 @@
 // a pause switch, and a status bar counter "2/3 running · 5 waiting". The planner enforces them with
 // VS Code closed; this only shows them and sends changes.
 import * as vscode from "vscode";
-import { holdLines, parseBudget } from "../shared/plan-tree";
+import { checkPercent, checkTaskOption, holdLines, parseBudget, usageLines } from "../shared/plan-tree";
 import type { PlannerConfig } from "../planner/types";
 import type { OmpApi } from "./api";
 import type { PlannerStore } from "./planner-store";
@@ -63,7 +63,7 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 	source = planner;
 	const status = vscode.window.createStatusBarItem("omp.scheduler", vscode.StatusBarAlignment.Left, 49);
 	status.name = "omp: queued task slots";
-	status.command = "omp.scheduler.setConcurrency";
+	status.command = "switchyard.scheduler.configure";
 	context.subscriptions.push(status);
 
 	const render = (s: SchedulerSnapshot) => {
@@ -74,14 +74,17 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 		}
 		status.text = `${s.paused ? "$(debug-pause)" : "$(layers)"} ${text}`;
 		const holds = source?.plan ? holdLines(source.plan.status) : [];
-		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to change.\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}`;
+		const windows = source?.plan ? usageLines(source.plan.status) : [];
+		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click for the scheduler settings.\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}${windows.length ? `\n\nProvider usage (${source?.plan?.status.usage.holdAtPercent}% holds work, spare tasks wait below ${source?.plan?.status.usage.spareBelowPercent}%):\n${windows.join("\n")}` : ""}`;
 		status.show();
 	};
 	context.subscriptions.push(watchScheduler(render));
+	// Limits and usage windows change without the counts changing: refresh the tooltip on every plan event too.
+	context.subscriptions.push(planner.onDidChange(() => render(schedulerSnapshot())));
 
-	const set = async (change: Partial<Pick<PlannerConfig, "maxConcurrent" | "paused" | "budget">>): Promise<boolean> => {
+	const set = async (change: Partial<Pick<PlannerConfig, "maxConcurrent" | "paused" | "budget" | "usage" | "defaults">>, clearLimits?: true | string[]): Promise<boolean> => {
 		try {
-			await planner.scheduler(change);
+			await planner.scheduler(change, clearLimits);
 			return true;
 		} catch (err) {
 			void vscode.window.showWarningMessage(`Switchyard planner: ${err instanceof Error ? err.message : String(err)}`);
@@ -131,6 +134,73 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			if (text === undefined) return;
 			const parsed = parseBudget(text);
 			if ("caps" in parsed) await set({ budget: parsed.caps });
+		}),
+		// Usage-based scheduling: when provider usage holds work, and when a task marked "spare" may start.
+		vscode.commands.registerCommand("switchyard.scheduler.setUsage", async () => {
+			const current = source?.plan?.status.usage ?? { holdAtPercent: 95, spareBelowPercent: 60 };
+			const hold = await vscode.window.showInputBox({
+				title: "Usage limits (1/2): hold work at",
+				prompt: "No planner task starts on a provider while any of its usage windows (from `omp usage`) is at or above this percent.",
+				value: String(current.holdAtPercent),
+				validateInput: checkPercent,
+				ignoreFocusOut: true,
+			});
+			if (hold === undefined) return;
+			const spare = await vscode.window.showInputBox({
+				title: "Usage limits (2/2): spare tasks start below",
+				prompt: "A task marked \"spare\" starts only while every usage window of its provider is below this percent. Keep it under the hold limit.",
+				value: String(Math.min(current.spareBelowPercent, Number(hold))),
+				validateInput: v => checkPercent(v) ?? (Number(v) > Number(hold) ? `At most ${hold} (the hold limit).` : undefined),
+				ignoreFocusOut: true,
+			});
+			if (spare === undefined) return;
+			await set({ usage: { holdAtPercent: Number(hold), spareBelowPercent: Number(spare) } });
+		}),
+		vscode.commands.registerCommand("switchyard.scheduler.setDefaultModel", async () => {
+			const defaults = source?.plan?.status.defaults ?? {};
+			const text = await vscode.window.showInputBox({
+				title: "Default model for planner tasks",
+				prompt: "provider/modelId. Tasks with no model of their own or their queue's use it, and it tells the planner which provider's usage to watch for them (without a known provider only the spend budget gates a task, and \"spare\" does nothing). Empty removes it.",
+				value: defaults.model ?? "",
+				validateInput: v => checkTaskOption("model", v),
+				ignoreFocusOut: true,
+			});
+			if (text === undefined) return;
+			const { model: _drop, ...rest } = defaults;
+			const model = text.trim();
+			await set({ defaults: model ? { ...rest, model } : rest });
+		}),
+		vscode.commands.registerCommand("switchyard.scheduler.clearLimits", async () => {
+			const limits = (source?.plan?.status.limits ?? []).filter(l => l.until > Date.now());
+			if (!limits.length) {
+				void vscode.window.showInformationMessage("Switchyard: no provider is held by a rate or usage limit.");
+				return;
+			}
+			const picked = await vscode.window.showQuickPick(
+				[
+					...limits.map(l => ({ label: l.provider, detail: `held until ${new Date(l.until).toLocaleString()}${l.reason ? ` — ${l.reason.slice(0, 100)}` : ""}${l.guessed ? " (a guess: the error gave no reset time)" : ""}`, providers: [l.provider] })),
+					...(limits.length > 1 ? [{ label: "All providers", detail: "start work again everywhere", providers: limits.map(l => l.provider) }] : []),
+				],
+				{ title: "Clear a provider limit", placeHolder: "Tasks held by it may start again; a new limit error puts the hold back", ignoreFocusOut: true },
+			);
+			if (picked) await set({}, picked.providers);
+		}),
+		// One place for the planner's global settings (the status bar item opens it).
+		vscode.commands.registerCommand("switchyard.scheduler.configure", async () => {
+			const st = source?.plan?.status;
+			const snap = schedulerSnapshot();
+			const budget = Object.entries(st?.budget ?? {}).map(([w, usd]) => `${w} $${usd}`).join(", ");
+			const limited = (st?.limits ?? []).filter(l => l.until > Date.now()).length;
+			const items = [
+				{ label: `Concurrency: ${snap.maxConcurrent || "unlimited"}`, detail: "how many planner tasks may run at once", id: "omp.scheduler.setConcurrency" },
+				{ label: snap.paused ? "Resume the planner" : "Pause the planner", detail: snap.paused ? "queued tasks may start again" : "no new task starts; running ones finish", id: "omp.scheduler.togglePause" },
+				{ label: `Spend budget: ${budget || "none"}`, detail: "cap on what planner tasks spend per hour / day / week", id: "switchyard.scheduler.setBudget" },
+				{ label: `Usage limits: hold at ${st?.usage.holdAtPercent ?? 95}%, spare below ${st?.usage.spareBelowPercent ?? 60}%`, detail: "when provider usage holds work, and when a spare task may start", id: "switchyard.scheduler.setUsage" },
+				{ label: `Default model: ${st?.defaults?.model ?? "none"}`, detail: "names the provider whose usage to watch for tasks without a model", id: "switchyard.scheduler.setDefaultModel" },
+				{ label: limited ? `Clear provider limits (${limited} held)` : "Clear provider limits", detail: "start work again on a provider held by a rate or usage limit", id: "switchyard.scheduler.clearLimits" },
+			];
+			const picked = await vscode.window.showQuickPick(items, { title: "Planner settings", ignoreFocusOut: true });
+			if (picked) await vscode.commands.executeCommand(picked.id);
 		}),
 	);
 }
