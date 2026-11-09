@@ -114,6 +114,7 @@ const plan = (tasks: Array<Partial<PlanView["tasks"][number]>>, lane: Partial<Pl
 		tasks: tasks.map((t, i) => ({ id: `t${i}`, title: `t${i}`, subtasks: [], status: "pending", createdAt: 0, lane: "repo-1", state: "waiting", ...t })),
 		lanes: [{ id: "repo-1", autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1, ...lane }],
 		recurring: [],
+		edges: [],
 		status: {} as PlanView["status"],
 	}) as PlanView;
 
