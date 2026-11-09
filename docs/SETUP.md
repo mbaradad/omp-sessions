@@ -79,7 +79,12 @@ AO starts omp as `omp acp` with a fixed set of flags and has no setting for more
 2. **per project:** the environment variable `SWITCHYARD_OMP_ARGS` on the AO project (plain words, or a JSON array of strings);
 3. **per session:** the session's `omp-args` file, written by *New Session with Options…* or `switchyard new … -- <flags>` (plain words or a JSON array; applied by a restart before the first prompt).
 
-If the daemon is not one that Switchyard started (the AO desktop app owns it), put `~/.switchyard/bin` first on that daemon's PATH yourself, or the arguments are ignored. `switchyard status` says whether the launcher is in effect.
+Limits:
+
+- A daemon that Switchyard did not start (the AO desktop app, or an already installed unit such as a dev one) does not get the launcher on its PATH: put `~/.switchyard/bin` first on that daemon's PATH yourself, or the arguments are ignored.
+- The unit Switchyard writes for a daemon it starts only gets that PATH entry if `~/.switchyard/bin/omp` exists **at that time**. Install the launcher (`switchyard omp-extension install`) before the first daemon start, or rewrite the unit afterwards.
+- An argument that contains whitespace goes in as a JSON array of strings; plain words split on whitespace. An empty argument is refused.
+- `switchyard status` is meant to say whether the launcher is in effect; that check is not built yet (G34).
 
 ### Coming from omp Sessions
 
