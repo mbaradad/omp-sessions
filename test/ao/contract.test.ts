@@ -4,8 +4,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { after, before, test } from "node:test";
-import { type AoEvent, AoClient, AoError, sessionStateFile } from "../../src/ao/client";
+import { type AoEvent, AoClient, AoError, sessionStateFile, switchyardHome } from "../../src/ao/client";
 import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
 
@@ -51,6 +53,8 @@ function until(id: string, done: (m: AoSessionModel) => boolean, what: string): 
 before(async () => {
 	// CONTRACT.md "Isolated HOME": run through `npm run test:ao`, which sets one up.
 	assert.ok(isolatedHome(), "run this test with an isolated HOME (npm run test:ao), never the real one");
+	// The Switchyard state folder too: the spawn helper writes the mode file there (the real ~/.switchyard is kept empty until cutover).
+	assert.ok(switchyardHome() !== path.join(os.userInfo().homedir, ".switchyard"), `SWITCHYARD_HOME is the real ~/.switchyard: ${switchyardHome()}`);
 	ao = await AoClient.connect();
 	scratchRepo();
 	watcher = new AoSessionWatcher(ao, { query: { active: true } });
