@@ -6,9 +6,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const SYSTEMD_UNIT = "omp-sessions-planner.service";
-export const LAUNCHD_LABEL = "dev.omp.sessions-planner";
-const DESCRIPTION = "omp Sessions planner (task graphs, queues and schedules dispatched to Agent Orchestrator)";
+export const SYSTEMD_UNIT = "switchyard-planner.service";
+export const LAUNCHD_LABEL = "dev.switchyard.planner";
+const DESCRIPTION = "Switchyard planner (task graphs, queues and schedules dispatched to Agent Orchestrator)";
 
 export type ServiceKind = "systemd" | "launchd";
 
@@ -70,7 +70,7 @@ const quietExec: ServiceExec = (cmd, argv) => spawnSync(cmd, argv, { stdio: "ign
 /** The environment the unit pins: the data home (when not the default), PATH (omp, ao), AO discovery overrides. */
 export function serviceEnv(env: NodeJS.ProcessEnv = process.env): string[] {
 	const out = ["ELECTRON_RUN_AS_NODE=1", `PATH=${[...new Set((env.PATH ?? "").split(path.delimiter).filter(Boolean))].join(path.delimiter)}`];
-	for (const k of ["OMP_VSCODE_HOME", "AO_RUN_FILE", "AO_PORT", "OMP_PLANNER_OMP"]) if (env[k]) out.push(`${k}=${env[k]}`);
+	for (const k of ["SWITCHYARD_HOME", "AO_RUN_FILE", "AO_PORT", "SWITCHYARD_PLANNER_OMP"]) if (env[k]) out.push(`${k}=${env[k]}`);
 	return out;
 }
 
@@ -101,10 +101,10 @@ export function uninstallService(exec: ServiceExec = quietExec, home = os.homedi
 }
 
 /**
- * Starts the installed unit when it serves this data home (the unit pins OMP_VSCODE_HOME only when it
+ * Starts the installed unit when it serves this state dir (the unit pins SWITCHYARD_HOME only when it
  * is set); false when none is installed for it or starting failed.
  */
-export function startService(exec: ServiceExec = quietExec, home = os.homedir(), dataHome = process.env.OMP_VSCODE_HOME): boolean {
+export function startService(exec: ServiceExec = quietExec, home = os.homedir(), dataHome = process.env.SWITCHYARD_HOME): boolean {
 	const kind = serviceKind();
 	let text: string;
 	try {
@@ -113,7 +113,7 @@ export function startService(exec: ServiceExec = quietExec, home = os.homedir(),
 		return false;
 	}
 	if (!kind) return false;
-	const servesHome = dataHome ? text.includes(kind === "systemd" ? `"OMP_VSCODE_HOME=${dataHome}"` : `<key>OMP_VSCODE_HOME</key><string>${xmlText(dataHome)}</string>`) : !text.includes("OMP_VSCODE_HOME");
+	const servesHome = dataHome ? text.includes(kind === "systemd" ? `"SWITCHYARD_HOME=${dataHome}"` : `<key>SWITCHYARD_HOME</key><string>${xmlText(dataHome)}</string>`) : !text.includes("SWITCHYARD_HOME");
 	if (!servesHome) return false;
 	return kind === "systemd" ? exec("systemctl", ["--user", "start", SYSTEMD_UNIT]) : exec("launchctl", ["kickstart", `gui/${os.userInfo().uid}/${LAUNCHD_LABEL}`]);
 }

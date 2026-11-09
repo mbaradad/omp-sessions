@@ -1,17 +1,14 @@
-// Where the planner keeps its state and listens. `<stateRoot>/planner/` (stateRoot: $OMP_VSCODE_HOME or
-// ~/.omp/vscode): plan.json, planner.pid, planner.log, planner.sock (or, on Windows, planner.pipe
-// naming a random named pipe). Node-only.
+// Where the planner keeps its state and listens: `<switchyard home>/planner/` (SWITCHYARD_HOME, default
+// ~/.switchyard): plan.json, planner.pid, planner.log, planner.sock (or, on Windows, planner.pipe naming
+// a random named pipe). Node-only.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-export function stateRoot(): string {
-	return process.env.OMP_VSCODE_HOME || path.join(os.homedir(), ".omp", "vscode");
-}
+import { switchyardHome } from "../ao/native";
 
 export function plannerDir(): string {
-	return path.join(stateRoot(), "planner");
+	return path.join(switchyardHome(), "planner");
 }
 
 export const planPath = (): string => path.join(plannerDir(), "plan.json");
@@ -19,27 +16,27 @@ export const pidPath = (): string => path.join(plannerDir(), "planner.pid");
 export const logPath = (): string => path.join(plannerDir(), "planner.log");
 const pipeFile = (): string => path.join(plannerDir(), "planner.pipe");
 
-const PIPE = /^\\\\\.\\pipe\\omp-planner-[0-9a-f]{32}$/;
+const PIPE = /^\\\\\.\\pipe\\switchyard-planner-[0-9a-f]{32}$/;
 
 /**
- * `<tmp>/ompv-<uid>`: where the socket goes when its normal path exceeds sun_path (~104 bytes). It must
- * be a real folder owned by this user with no group/other access (else another user could swap sockets).
+ * `<tmp>/switchyard-<uid>`: where the socket goes when its normal path exceeds sun_path (~104 bytes). It
+ * must be a real folder owned by this user with no group/other access (else another user could swap sockets).
  */
 function privateSocketDir(): string {
-	const dir = path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`);
+	const dir = path.join(os.tmpdir(), `switchyard-${process.getuid?.() ?? "u"}`);
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const st = fs.lstatSync(dir);
 	const uid = process.getuid?.();
-	if (!st.isDirectory() || (uid !== undefined && st.uid !== uid) || (st.mode & 0o077) !== 0) throw new Error(`unsafe socket folder ${dir}: remove it, or set OMP_VSCODE_HOME or TMPDIR to a shorter path`);
+	if (!st.isDirectory() || (uid !== undefined && st.uid !== uid) || (st.mode & 0o077) !== 0) throw new Error(`unsafe socket folder ${dir}: remove it, or set SWITCHYARD_HOME or TMPDIR to a shorter path`);
 	return dir;
 }
 
 /** Where the planner listens: a fixed Unix socket, or a fresh random pipe on Windows (recorded once listening). */
 export function listenPath(): string {
-	if (process.platform === "win32") return `\\\\.\\pipe\\omp-planner-${crypto.randomBytes(16).toString("hex")}`;
+	if (process.platform === "win32") return `\\\\.\\pipe\\switchyard-planner-${crypto.randomBytes(16).toString("hex")}`;
 	const preferred = path.join(plannerDir(), "planner.sock");
 	if (Buffer.byteLength(preferred) < 100) return preferred;
-	const tag = crypto.createHash("sha256").update(stateRoot()).digest("hex").slice(0, 16);
+	const tag = crypto.createHash("sha256").update(switchyardHome()).digest("hex").slice(0, 16);
 	return path.join(privateSocketDir(), `planner-${tag}.sock`);
 }
 
