@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AoError, type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
+import { AoError, type AoSpawnResponse, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
@@ -94,8 +94,6 @@ export interface PlanSource {
 export class SessionManager implements vscode.Disposable {
 	private sessions = new Map<string, SessionMeta>();
 	private readonly models = new Map<string, AoSessionModel>();
-	/** Workspace folder of each session (AO's list has none; a session's folder never moves). */
-	private readonly workspaces = new Map<string, string>();
 	private readonly emitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.emitter.event;
 	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
@@ -159,7 +157,7 @@ export class SessionManager implements vscode.Disposable {
 			try {
 				const client = await this.ao.client();
 				const watcher = new AoSessionWatcher(client, { conversationLimit: 20 });
-				watcher.onChange(change => void this.apply(client, change.changed, change.removed));
+				watcher.onChange(change => this.apply(change.changed, change.removed));
 				watcher.onStatus(s => {
 					if (s.state === "retrying") this.ao.log.warn(`AO change stream: ${s.error} (retry ${s.attempt})`);
 				});
@@ -178,17 +176,7 @@ export class SessionManager implements vscode.Disposable {
 		return this.starting;
 	}
 
-	private async workspaceOf(client: AoClient, model: AoSessionModel): Promise<string> {
-		const known = this.workspaces.get(model.id);
-		if (known) return known;
-		const dir = await client.workspacePath(model.id).catch(() => undefined);
-		// A terminated session may have released its workspace: retry on its next change.
-		if (dir) this.workspaces.set(model.id, dir);
-		return dir ?? "";
-	}
-
-	private async apply(client: AoClient, changed: readonly AoSessionModel[], removed: readonly string[]): Promise<void> {
-		const cwds = await Promise.all(changed.map(m => this.workspaceOf(client, m)));
+	private apply(changed: readonly AoSessionModel[], removed: readonly string[]): void {
 		if (this.disposed) return;
 		const next = new Map(this.sessions);
 		const transitions: { meta: SessionMeta; from: SessionStatus }[] = [];
@@ -197,8 +185,8 @@ export class SessionManager implements vscode.Disposable {
 			next.delete(id);
 			this.models.delete(id);
 		}
-		changed.forEach((model, i) => {
-			const meta = metaOf(model, cwds[i], readNativeSession(model.id));
+		changed.forEach(model => {
+			const meta = metaOf(model, model.cwd ?? "", readNativeSession(model.id));
 			const queue = laneQueue(this.planSource?.plan, model.id);
 			const prev = next.get(model.id);
 			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
