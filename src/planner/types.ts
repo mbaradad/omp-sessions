@@ -277,6 +277,21 @@ export interface PlanState {
 	limits: Record<string, ProviderLimit>;
 	/** Spend of planner-dispatched turns: [epoch ms, USD]. Kept for a week. */
 	spend: Array<[number, number]>;
+	/** `switchyard/*` branches of removed tasks that hold work no other branch has: left in git for a person to merge or delete. */
+	keptBranches: KeptBranch[];
+}
+
+/** A branch the planner made for a task that was removed from the plan, and left behind because deleting it would lose work. */
+export interface KeptBranch {
+	repo: string;
+	branch: string;
+	/** Title and id of the removed task. */
+	task: string;
+	taskId: string;
+	/** The branch tip when it was kept. */
+	tip?: string;
+	why: string;
+	at: number;
 }
 
 // ---------- views ----------
@@ -347,6 +362,8 @@ export interface PlanView {
 	rev: number;
 	/** Every parent → child edge with a propagation state (only git tasks have any). */
 	edges: EdgeView[];
+	/** Leftover `switchyard/*` branches with unmerged work of removed tasks (`branch.clean` retries their deletion). */
+	keptBranches: KeptBranch[];
 	tasks: TaskView[];
 	lanes: LaneView[];
 	recurring: Recurring[];
@@ -406,6 +423,8 @@ export type PlanOp =
 	| { op: "recur.update"; id: string; title?: string; rule?: RecurRule; task?: TaskInput; lane?: string | null; skipIfRunning?: boolean; enabled?: boolean }
 	| { op: "recur.remove"; id: string }
 	| { op: "recur.fire"; id: string }
+	/** Retries the deletion of the kept branches: those gone from git, or by now reachable from another branch, leave the list. */
+	| { op: "branch.clean" }
 	/** Re-checks the task's branch now and propagates new commits to its children (GRAPH-PROPAGATION.md). */
 	| { op: "sync"; id: string }
 	/** "Re-run with parent changes": one more run in the task's own session with only the upstream note. */

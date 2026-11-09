@@ -447,4 +447,14 @@ test("removing a task deletes its switchyard/* branch when git agrees (merged, n
 	assert.ok(branches().includes(c), "C's commit is merged nowhere: its branch is kept");
 	assert.ok(branches().includes(a), "A is still in the plan");
 	assert.ok(branches().includes("main"));
+	// The kept one is on the plan view, with the removed task and the reason.
+	await until("C's branch listed", () => p.view().keptBranches.some(k => k.branch === c));
+	const kept = p.view().keptBranches.find(k => k.branch === c);
+	assert.deepEqual([kept?.taskId, kept?.task, kept?.tip === git(repo, "rev-parse", c)], [ids[1], "C", true]);
+	assert.match(kept?.why ?? "", /no other branch/);
+	assert.equal(p.view().keptBranches.length, 1, "B's deleted branch is not listed");
+	// A person merges it; `branch.clean` then deletes it and drops it from the list.
+	git(repo, "merge", "-q", "--no-edit", c);
+	p.edit([{ op: "branch.clean" }]);
+	await until("C's branch deleted", () => !branches().includes(c) && p.view().keptBranches.length === 0);
 });
