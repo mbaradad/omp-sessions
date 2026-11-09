@@ -285,6 +285,11 @@ async function cmdNew(args: Args): Promise<number> {
 		if (report.shim.onDaemonPath === false) throw new Error(`the AO daemon was not started with ${path.dirname(report.shim.path)} first on its PATH, so omp flags after -- would be ignored: restart AO through Switchyard (it starts it that way)`);
 	}
 	const model = value(args, "model") ?? defaults.model;
+	// An unusable model would fail the spawn after AO created the session: check it first, so nothing is created.
+	if (model) {
+		const usable = await agentModels().catch(() => []);
+		if (usable.length && !usable.some(m => m.id === model)) throw new Error(`omp can't use the model ${model}: it is not one of the ${usable.length} models of the providers omp is configured for (omp-sessions models lists them)`);
+	}
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
 	// A git folder runs in its AO project (AO gives the session its own worktree); any other folder runs standalone (MAPPING D2, Q1).
@@ -1616,23 +1621,22 @@ async function cmdConfig(args: Args): Promise<number> {
 
 type AgentModel = AoSchemas["AgentModelsResponse"]["models"][number];
 
-/** AO's omp model catalog and the providers omp is logged in to: the catalog holds every provider's models (thousands), the user can use those of `configured`. */
-async function agentCatalog(): Promise<{ models: AgentModel[]; configured: string[] }> {
+/**
+ * The omp models a session can start with: AO's catalog is every provider's models (3768 here), the user can
+ * use those of the providers omp is configured for (VALIDATION §19: any other id fails the spawn with a 409 and
+ * leaves a terminated session). Empty `configuredProviders`: AO doesn't know, so the whole catalog stands.
+ */
+async function agentModels(): Promise<AgentModel[]> {
 	const client = await ao();
 	const res = await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }));
-	return { models: res.models, configured: res.configuredProviders ?? [] };
-}
-
-async function agentModels(): Promise<AgentModel[]> {
-	return (await agentCatalog()).models;
+	const configured = res.configuredProviders ?? [];
+	return configured.length ? res.models.filter(m => m.provider !== undefined && configured.includes(m.provider)) : res.models;
 }
 
 async function cmdModels(args: Args): Promise<number> {
 	const search = args._.join(" ").toLowerCase();
 	const def = readSwitchyardConfig().model;
-	const { models: catalog, configured } = await agentCatalog();
-	// MAPPING: the raw list is the whole catalog; what a session can use is the configured providers' share (empty list: AO doesn't know, show all).
-	const usable = configured.length ? catalog.filter(m => m.provider !== undefined && configured.includes(m.provider)) : catalog;
+	const usable = await agentModels();
 	const models = usable
 		.filter(m => !search || m.id.toLowerCase().includes(search) || m.label.toLowerCase().includes(search))
 		.map(m => {

@@ -350,6 +350,9 @@ test("cli: new --worktree auto|always reports the worktree; never/--no-worktree 
 	}
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=sometimes").status, 2);
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=auto", "--no-worktree").status, 2);
+	const unusable = cli("new", repo, "-p", "echo x", "--model", "nowhere/not-a-model");
+	assert.equal(unusable.status, 1, "a model omp can't use fails before AO creates a session (it would leave a terminated one)");
+	assert.match(unusable.stderr, /model/);
 	assert.equal(json<unknown[]>("ls", "--all", "--json").data.length, before + 2, "a refused start creates nothing");
 	type Archived = { id: string; archived: boolean; changed: boolean };
 	const id = made.data.id;
