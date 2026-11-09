@@ -1,213 +1,228 @@
-// Checkpoints in a chat: restore the checkpoint before any prompt (files + conversation), undo the
-// last turn, and redo what a restore replaced. The conversation side is omp's `branch` (the old
-// transcript file stays intact, so redo switches back to it); files come from the host snapshots.
+// Checkpoints in VS Code, for sessions Agent Orchestrator runs. The Switchyard omp extension
+// (src/omp-extension/checkpoints.ts) does the work inside omp: it records every edit and runs
+// `/undo` and `/redo`, which rewind omp's conversation and put the files back. This module is its
+// client: it asks before undoing (listing the files), interrupts a running turn, sends the command
+// through AO like any message, and reports the outcome omp wrote to state.json. It also serves the
+// recorded edits: Review Changes (VS Code's multi-file diff), per-file and per-edit diffs, the chat's
+// inline diffs, and which AO turns are undone (AO's timeline keeps them; GAPS.md G27). The AO side
+// of undo/redo is src/shared/checkpoint-ops.ts, shared with the CLI, Hermes and the planner.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { type CheckpointFile, findPrompt, lastPrompt, planCheckpoint, promptText } from "../shared/checkpoints";
-import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
-import { EMPTY_BLOB, type FileChange, type SessionMeta, blobPath } from "../shared/protocol";
-import type { SlimState, ToWebview } from "../shared/webview";
-import type { HostClient } from "./client";
+import { type AoClient, type AoConversation, switchyardHome } from "../ao/client";
+import { type UndoTarget, interruptAndWait, isBusy, planRedo, planUndo, runCheckpointCommand } from "../shared/checkpoint-ops";
+import {
+	type CheckpointResult,
+	type CheckpointState,
+	type FileChange,
+	type TurnStatus,
+	aoCheckpointDir,
+	aoTurns,
+	liveChanges,
+	readBlob,
+	readChanges,
+	readState,
+	turnStatuses,
+} from "../shared/checkpoints";
+import { diffTexts } from "../shared/diff";
+import type { DiffsByPath } from "../shared/webview";
+import { type SnapshotProvider, targetColumn } from "./diff";
 
-/** What the chat panel lends the controller. */
-export interface CheckpointHost {
-	readonly sessionId: string;
-	readonly client: HostClient | undefined;
-	readonly meta: SessionMeta | undefined;
-	readonly state: SlimState | null;
-	readonly changes: readonly FileChange[];
-	transcript(): Promise<unknown[]>;
-	findUserEntry(text: string): Promise<string | undefined>;
-	insertText(text: string): void;
-	post(msg: ToWebview): void;
-	/** Shown after the transcript reset that `branch` / `switch_session` cause. */
-	postAfterReset(msg: ToWebview): void;
-}
+/** Larger before/after pairs get no inline diff. */
+const MAX_INLINE_DIFF_BYTES = 2 * 1024 * 1024;
+/** How long omp may take to answer `/undo` or `/redo` once AO delivered it. */
+const RESULT_TIMEOUT_MS = 60_000;
 
-interface RedoEntry {
-	/** omp transcript before the restore (it keeps the rewound turns). */
-	sessionFile: string;
-	files: CheckpointFile[];
-	prompt: string;
-}
-
-export class Checkpoints {
-	private readonly redoStack: RedoEntry[] = [];
-
-	constructor(private readonly host: CheckpointHost) {}
-
-	get redoCount(): number {
-		return this.redoStack.length;
-	}
-
-	/** A new prompt moves the conversation on: earlier restores can no longer be redone. */
-	clearRedo(): void {
-		if (!this.redoStack.length) return;
-		this.redoStack.length = 0;
-		this.publish();
-	}
-
-	/** Restores the checkpoint before the prompt with `text`, or before the last prompt (undo last turn). */
-	async restore(text?: string): Promise<void> {
-		const { client, meta } = this.host;
-		if (!client?.connected || !meta?.ompSessionFile) {
-			this.notice("warning", "Resume the session first: checkpoints rewind the running conversation.");
-			return;
-		}
-		const messages = await this.host.transcript();
-		const index = text === undefined ? lastPrompt(messages) : findPrompt(messages, text);
-		if (index < 0) {
-			this.notice("warning", text === undefined ? "Nothing to undo: no prompt on the current branch." : "Could not find that prompt on the current branch.");
-			return;
-		}
-		const prompt = promptText(messages, index);
-		const plan = planCheckpoint(messages, this.host.changes, index);
-		const changedSince = plan.files.filter(f => !this.matches(f.path, f.after));
-		const busy = meta.status === "working" || !!this.host.state?.isStreaming;
-		const names = plan.files.map(f => this.rel(f.path));
-		const detail = [
-			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before it: ${listNames(names)}.` : "No file edits to revert.",
-			"The conversation rewinds to before the prompt, which goes back into the composer.",
-			changedSince.length ? `Changed since omp last wrote them (your edits are overwritten): ${listNames(changedSince.map(f => this.rel(f.path)))}.` : "",
-			busy ? "omp is working: the turn is interrupted first." : "",
-			"Changes made by shell commands are not tracked. Redo (/redo) brings everything back.",
-		]
-			.filter(Boolean)
-			.join("\n\n");
-		const ok = await vscode.window.showWarningMessage(text === undefined ? "Undo the last turn?" : "Restore the checkpoint before this prompt?", { modal: true, detail }, "Restore");
-		if (ok !== "Restore") return;
-		if (busy && !(await this.interrupt(client))) {
-			this.notice("error", "omp did not stop; nothing was restored.");
-			return;
-		}
-		const entryId = await this.host.findUserEntry(prompt);
-		if (!entryId) {
-			this.notice("warning", "Could not locate that prompt in omp's history; nothing was restored.");
-			return;
-		}
-		const sessionFile = meta.ompSessionFile;
-		const res = await client.rpc({ type: "branch", entryId });
-		if (!res.success || isCancelled(res.data)) {
-			this.notice("error", res.success ? "omp cancelled the rewind; nothing was restored." : String(res.error));
-			return;
-		}
-		const failed = await this.write(plan.files, "before");
-		this.redoStack.push({ sessionFile, files: plan.files, prompt });
-		this.publish();
-		this.host.insertText(prompt.replace(PLAN_PROMPT_PREFIX, ""));
-		this.host.postAfterReset({
-			type: "notice",
-			level: failed.length ? "warning" : "info",
-			text: `Restored the checkpoint: ${plan.files.length ? `reverted ${listNames(names)}` : "no files to revert"} and rewound the conversation.${failed.length ? ` Could not write ${listNames(failed)}.` : ""} /redo brings it back.`,
-		});
-	}
-
-	/** Undoes the newest restore: the earlier transcript comes back and its files are rewritten. */
-	async redo(): Promise<void> {
-		const { client, meta } = this.host;
-		const entry = this.redoStack.at(-1);
-		if (!entry) {
-			this.notice("info", "Nothing to redo.");
-			return;
-		}
-		if (!client?.connected || !meta) {
-			this.notice("warning", "Resume the session first.");
-			return;
-		}
-		if (meta.status === "working" || this.host.state?.isStreaming) {
-			this.notice("warning", "omp is working: stop it (Esc) before redoing.");
-			return;
-		}
-		const changedSince = entry.files.filter(f => !this.matches(f.path, f.before));
-		if (changedSince.length) {
-			const ok = await vscode.window.showWarningMessage("Redo the restored turns?", { modal: true, detail: `Changed since the restore (your edits are overwritten): ${listNames(changedSince.map(f => this.rel(f.path)))}.` }, "Redo");
-			if (ok !== "Redo") return;
-		}
-		if (!fs.existsSync(entry.sessionFile)) {
-			this.redoStack.pop();
-			this.publish();
-			this.notice("error", "The earlier transcript is gone; cannot redo.");
-			return;
-		}
-		const res = await client.rpc({ type: "switch_session", sessionPath: entry.sessionFile });
-		if (!res.success || isCancelled(res.data)) {
-			this.notice("error", res.success ? "omp cancelled the switch; nothing was redone." : String(res.error));
-			return;
-		}
-		this.redoStack.pop();
-		this.publish();
-		const failed = await this.write(entry.files, "after");
-		this.host.post({ type: "clearComposerIf", text: entry.prompt.replace(PLAN_PROMPT_PREFIX, "") });
-		this.host.postAfterReset({
-			type: "notice",
-			level: failed.length ? "warning" : "info",
-			text: `Redone: the conversation is back${entry.files.length ? ` and so are ${listNames(entry.files.map(f => this.rel(f.path)))}` : ""}.${failed.length ? ` Could not write ${listNames(failed)}.` : ""}`,
-		});
-	}
-
-	private publish(): void {
-		this.host.post({ type: "checkpoints", redo: this.redoStack.length });
-	}
-
-	private notice(level: "info" | "warning" | "error", text: string): void {
-		this.host.post({ type: "notice", level, text });
-	}
-
-	private rel(file: string): string {
-		return path.relative(this.host.meta?.cwd ?? "", file) || file;
-	}
-
-	private blob(hash: string): Buffer {
-		return hash === EMPTY_BLOB ? Buffer.alloc(0) : fs.readFileSync(blobPath(this.host.sessionId, hash));
-	}
-
-	/** Whether the file on disk holds the snapshot `hash` (null: absent). */
-	private matches(file: string, hash: string | null): boolean {
-		try {
-			const exists = fs.existsSync(file);
-			if (hash === null) return !exists;
-			return exists && fs.readFileSync(file).equals(this.blob(hash));
-		} catch {
-			return false;
-		}
-	}
-
-	/** Writes each file's `side` snapshot (deleting files that did not exist); returns the ones that failed. */
-	private async write(files: readonly CheckpointFile[], side: "before" | "after"): Promise<string[]> {
-		const failed: string[] = [];
-		for (const f of files) {
-			const hash = f[side];
-			const uri = vscode.Uri.file(f.path);
-			try {
-				if (hash === null) {
-					if (fs.existsSync(f.path)) await vscode.workspace.fs.delete(uri, { useTrash: false });
-				} else {
-					fs.mkdirSync(path.dirname(f.path), { recursive: true });
-					await vscode.workspace.fs.writeFile(uri, this.blob(hash));
-				}
-			} catch {
-				failed.push(this.rel(f.path));
-			}
-		}
-		return failed;
-	}
-
-	private async interrupt(client: HostClient): Promise<boolean> {
-		await client.rpc({ type: "abort" });
-		for (let i = 0; i < 50; i++) {
-			if (this.host.meta?.status !== "working" && !this.host.state?.isStreaming) return true;
-			await sleep(200);
-		}
-		return false;
-	}
-}
-
-function isCancelled(data: unknown): boolean {
-	return typeof data === "object" && data !== null && "cancelled" in data && data.cancelled === true;
+export interface CheckpointsChange {
+	sessionId: string;
+	/** Edits recorded since the last event for this session. */
+	added: FileChange[];
+	state: CheckpointState | undefined;
 }
 
 function listNames(names: readonly string[]): string {
 	return names.length > 4 ? `${names.slice(0, 4).join(", ")} and ${names.length - 4} more` : names.join(", ");
+}
+
+export class Checkpoints implements vscode.Disposable {
+	private readonly emitter = new vscode.EventEmitter<CheckpointsChange>();
+	/** Fires when a session's edits or checkpoint state change on disk. */
+	readonly onDidChange = this.emitter.event;
+	/** Edits already reported per session (line count of changes.jsonl). */
+	private readonly seen = new Map<string, number>();
+	private readonly diffCache = new Map<string, DiffsByPath>();
+	private readonly watcher: vscode.FileSystemWatcher;
+
+	constructor(private readonly connect: () => Promise<AoClient>) {
+		const root = vscode.Uri.file(path.join(switchyardHome(), "sessions"));
+		this.watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, "*/checkpoints/{changes.jsonl,state.json}"));
+		const fire = (uri: vscode.Uri) => {
+			const sessionId = path.basename(path.dirname(path.dirname(uri.fsPath)));
+			const all = this.changes(sessionId);
+			const added = all.slice(this.seen.get(sessionId) ?? all.length);
+			this.seen.set(sessionId, all.length);
+			this.emitter.fire({ sessionId, added, state: this.state(sessionId) });
+		};
+		this.watcher.onDidCreate(fire);
+		this.watcher.onDidChange(fire);
+	}
+
+	dispose(): void {
+		this.watcher.dispose();
+		this.emitter.dispose();
+	}
+
+	/** Every edit omp's edit tools made in the session, in order. */
+	changes(sessionId: string): FileChange[] {
+		const all = readChanges(aoCheckpointDir(sessionId));
+		if (!this.seen.has(sessionId)) this.seen.set(sessionId, all.length);
+		return all;
+	}
+
+	/** The edits still in effect: those of undone prompts left out. */
+	liveChanges(sessionId: string): FileChange[] {
+		return liveChanges(aoCheckpointDir(sessionId));
+	}
+
+	state(sessionId: string): CheckpointState | undefined {
+		return readState(aoCheckpointDir(sessionId));
+	}
+
+	/** How many undos `/redo` can bring back. */
+	redoCount(sessionId: string): number {
+		return this.state(sessionId)?.redo.length ?? 0;
+	}
+
+	/** Content of a snapshot; undefined when absent (null) or unreadable. */
+	blob(sessionId: string, hash: string | null): Buffer | undefined {
+		if (hash === null) return undefined;
+		try {
+			return readBlob(aoCheckpointDir(sessionId), hash);
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The chat's inline diffs of one edit, by path (absent files diff as empty). */
+	toolDiffs(sessionId: string, change: FileChange): DiffsByPath {
+		const key = `${sessionId}\0${change.toolCallId}`;
+		const cached = this.diffCache.get(key);
+		if (cached) return cached;
+		const out: DiffsByPath = {};
+		for (const f of change.files) {
+			const before = f.before === null ? Buffer.alloc(0) : this.blob(sessionId, f.before);
+			const after = f.after === null ? Buffer.alloc(0) : this.blob(sessionId, f.after);
+			if (before && after && before.length + after.length < MAX_INLINE_DIFF_BYTES) out[f.path] = diffTexts(before.toString("utf8"), after.toString("utf8"));
+		}
+		this.diffCache.set(key, out);
+		return out;
+	}
+
+	/** AO turns the chat should not show as live conversation: undone ones and the /undo, /redo commands. */
+	turnStatuses(sessionId: string, conversation: AoConversation): Map<string, TurnStatus> {
+		return turnStatuses(aoTurns(conversation), this.state(sessionId)?.prompts ?? []);
+	}
+
+	/**
+	 * Undoes the last prompt, or the prompt `target` names and everything after it: omp rewinds the
+	 * conversation and writes back the files. Asks first, interrupts a running turn. Resolves with
+	 * omp's result (its `prompt` goes back into the composer), or undefined when nothing happened.
+	 */
+	async undo(sessionId: string, target?: UndoTarget): Promise<CheckpointResult | undefined> {
+		const ao = await this.connect();
+		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
+		const plan = planUndo(sessionId, conversation, target);
+		if ("error" in plan) {
+			void vscode.window.showInformationMessage(plan.error);
+			return undefined;
+		}
+		const rel = (f: string) => path.relative(plan.cwd, f) || f;
+		const busy = isBusy(view, conversation);
+		const detail = [
+			plan.rewound.length > 1 ? `${plan.rewound.length} prompts are undone: this one and every later one.` : "",
+			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
+			"The conversation rewinds to before the prompt, which goes back into the composer.",
+			plan.merged.length ? `Changed since omp wrote them, without overlapping its edits (kept): ${listNames(plan.merged.map(rel))}.` : "",
+			plan.conflicts.length ? `Changed since omp wrote them, overlapping its edits (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
+			busy ? "omp is working: the turn is interrupted first." : "",
+			"Changes made by shell commands are not tracked. Redo brings everything back.",
+		]
+			.filter(Boolean)
+			.join("\n\n");
+		const ok = await vscode.window.showWarningMessage(target ? "Restore the checkpoint before this prompt?" : "Undo the last prompt?", { modal: true, detail }, "Undo");
+		if (ok !== "Undo") return undefined;
+		if (busy && !(await interruptAndWait(ao, sessionId))) {
+			void vscode.window.showErrorMessage("omp did not stop; nothing was undone.");
+			return undefined;
+		}
+		return this.run(ao, sessionId, plan.conflicts.length ? `${plan.command} --force` : plan.command);
+	}
+
+	/** Brings back what the newest undo removed: the conversation and the files. */
+	async redo(sessionId: string): Promise<CheckpointResult | undefined> {
+		const ao = await this.connect();
+		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
+		const plan = planRedo(sessionId);
+		if ("error" in plan) {
+			void vscode.window.showInformationMessage(plan.error);
+			return undefined;
+		}
+		if (isBusy(view, conversation)) {
+			void vscode.window.showWarningMessage("omp is working: stop it before redoing.");
+			return undefined;
+		}
+		if (plan.conflicts.length || plan.merged.length) {
+			const rel = (f: string) => path.relative(plan.cwd, f) || f;
+			const detail = [
+				plan.merged.length ? `Changed since the undo, without overlapping (kept): ${listNames(plan.merged.map(rel))}.` : "",
+				plan.conflicts.length ? `Changed since the undo, overlapping (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			const ok = await vscode.window.showWarningMessage("Redo?", { modal: true, detail }, "Redo");
+			if (ok !== "Redo") return undefined;
+		}
+		return this.run(ao, sessionId, plan.conflicts.length ? "/redo --force" : plan.command);
+	}
+
+	private async run(ao: AoClient, sessionId: string, command: string): Promise<CheckpointResult | undefined> {
+		const last = await runCheckpointCommand(ao, sessionId, command, RESULT_TIMEOUT_MS);
+		if (!last) {
+			void vscode.window.showWarningMessage(`omp has not answered ${command.split(" ")[0]} yet; it runs once the session is connected.`);
+			return undefined;
+		}
+		void (last.ok && !last.failed.length ? vscode.window.showInformationMessage(last.message) : vscode.window.showWarningMessage(last.message));
+		return last.ok ? last : undefined;
+	}
+
+	/** Each file the session's live edits touched, with its content before the first of them (null: did not exist). */
+	baselines(sessionId: string): Map<string, string | null> {
+		const first = new Map<string, string | null>();
+		for (const c of this.liveChanges(sessionId)) for (const f of c.files) if (!first.has(f.path)) first.set(f.path, f.before);
+		return first;
+	}
+
+	/** Review Changes: every file the session changed, from before its first edit to now, in VS Code's multi-file diff. */
+	async review(sessionId: string, title: string, snapshots: SnapshotProvider): Promise<void> {
+		const first = this.baselines(sessionId);
+		if (first.size === 0) {
+			void vscode.window.showInformationMessage("This session has not changed any files yet.");
+			return;
+		}
+		const resources = [...first].map(([file, before]) => {
+			const left = snapshots.blobUri(file, sessionId, before, "session start");
+			const right = fs.existsSync(file) ? vscode.Uri.file(file) : snapshots.blobUri(file, sessionId, null, "deleted");
+			return [vscode.Uri.file(file), left, right];
+		});
+		await vscode.commands.executeCommand("vscode.changes", `${title} — ${resources.length} file${resources.length === 1 ? "" : "s"} changed`, resources);
+	}
+
+	/** Diff of one file from before the session's first edit of it to the live file. */
+	async openFileDiff(sessionId: string, file: string, snapshots: SnapshotProvider, chatColumn?: vscode.ViewColumn): Promise<void> {
+		const before = this.baselines(sessionId).get(file);
+		if (before === undefined) return;
+		const left = snapshots.blobUri(file, sessionId, before, "session start");
+		const right = fs.existsSync(file) ? vscode.Uri.file(file) : snapshots.blobUri(file, sessionId, null, "deleted");
+		await vscode.commands.executeCommand("vscode.diff", left, right, `${path.basename(file)} (session changes)`, { preview: true, viewColumn: targetColumn(chatColumn) });
+	}
 }

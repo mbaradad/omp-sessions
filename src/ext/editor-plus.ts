@@ -5,7 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { EMPTY_BLOB, type FileChange, type FileChangeEntry, type SessionMeta, blobPath, sessionDir } from "../shared/protocol";
+import type { SessionMeta } from "../shared/protocol";
+import { EMPTY_BLOB, type FileChange, type FileChangeEntry, aoCheckpointDir, blobFile, changesFile, stateFile } from "../shared/checkpoints";
 import type { OmpApi } from "./api";
 import {
 	CappedOutput,
@@ -477,8 +478,11 @@ export function registerEditorPlus(api: OmpApi): void {
 	}
 
 	function editsFor(sessionId: string, file: string): { stamp: string; edits: FileEdit[] } | undefined {
-		const stamp = stampOf(path.join(sessionDir(sessionId), "changes.jsonl"));
-		if (!stamp) return undefined;
+		// The live edits change with new ones and with /undo, /redo (state.json).
+		const dir = aoCheckpointDir(sessionId);
+		const edited = stampOf(changesFile(dir));
+		if (!edited) return undefined;
+		const stamp = `${edited}|${stampOf(stateFile(dir)) ?? ""}`;
 		let cached = editsCache.get(sessionId);
 		if (cached?.stamp !== stamp) {
 			const byFile = new Map<string, FileEdit[]>();
@@ -498,7 +502,7 @@ export function registerEditorPlus(api: OmpApi): void {
 	function blobText(sessionId: string, hash: string | null): string {
 		if (!hash || hash === EMPTY_BLOB) return "";
 		try {
-			return fs.readFileSync(blobPath(sessionId, hash), "utf8");
+			return fs.readFileSync(blobFile(aoCheckpointDir(sessionId), hash), "utf8");
 		} catch {
 			return "";
 		}

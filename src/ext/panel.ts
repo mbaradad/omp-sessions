@@ -1,30 +1,30 @@
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { diffTexts } from "../shared/diff";
+import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, AoError, unwrap } from "../ao/client";
 import { hermesOrigin } from "../shared/hermes-origin";
+import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
-import { PLAN_PROMPT_PREFIX } from "../shared/permissions";
-import type { FileChange, HostToClient, SessionMeta } from "../shared/protocol";
-import { EMPTY_BLOB, blobPath, sessionDir } from "../shared/protocol";
+import { type PermissionMode, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
+import type { FileChange, QueueOp, SessionMeta, TaskQueue } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
-import { readTranscriptText } from "../shared/transcript-files";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
-import { HostClient } from "./client";
-import { Checkpoints } from "./checkpoints";
+import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
+import { sendResuming } from "./chat-send";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
-import { setSessionPermissionMode } from "../shared/launch";
 import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
-import { type SnapshotProvider, openFile, openTextDiff, openToolDiff } from "./diff";
+import { type SnapshotProvider, openFile, openTextDiff } from "./diff";
 import { exportMarkdown } from "./export";
 import { openLink, openUrlFromOmp } from "./links";
-import type { SessionManager } from "./sessions";
+import { type SessionManager, resolveOmpPath } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
-import { slimFrame, slimMessage, slimRunningTool } from "./slim";
+import { slimFrame, slimMessage } from "./slim";
+import { switchyardHome } from "../ao/native";
 
 const STARRED_MODELS_KEY = "omp.starredModels";
 
@@ -123,60 +123,118 @@ export function viewSurface(view: vscode.WebviewView): ChatSurface {
 	};
 }
 
-/** Files larger than this are not diffed line-by-line in the chat (the editor diff still works). */
-const MAX_INLINE_DIFF_BYTES = 2 * 1024 * 1024;
 const IMAGE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
+/** Messages per history page (AO's maximum). */
+const HISTORY_PAGE = 500;
+/** History pages read when a chat opens; older turns stay in AO. */
+const MAX_HISTORY_PAGES = 20;
+/** Coalesce a burst of change events (AO writes streamed text every 50 ms) into one fetch. */
+const SYNC_DEBOUNCE_MS = 60;
+/** Shell output kept per `!command` for the next prompt's context. */
+const MAX_SHELL_CONTEXT = 20_000;
 
-function rec(v: unknown): Record<string, unknown> | undefined {
-	// JSON objects from omp frames; arrays/primitives excluded.
-	return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
-}
+type ConfigOption = AoSchemas["ConversationConfigOptionResponse"];
+type ApprovalMode = NonNullable<AoSchemas["ConversationTurnSettingsPayload"]["approvalMode"]>;
 
-/** Messages recorded in an omp session file (used to show stopped sessions). */
-function readTranscript(file: string | undefined): unknown[] {
-	if (!file) return [];
-	const raw = readTranscriptText(file);
-	const out: unknown[] = [];
-	for (const line of raw.split("\n")) {
-		if (!line.includes('"type":"message"')) continue;
-		try {
-			const entry = rec(JSON.parse(line));
-			if (entry?.type === "message" && entry.message) out.push(entry.message);
-		} catch {
-			/* torn line */
-		}
-	}
-	return out;
-}
+/** AO's approval mode for each permission mode but plan, which is omp's `mode` config option. */
+const APPROVAL_OF: Record<Exclude<PermissionMode, "plan">, ApprovalMode> = { ask: "default", edits: "accept-edits", auto: "bypass-permissions" };
 
 function mergeCommands(server: SlashCommand[], snippets: PromptSnippet[]): SlashCommand[] {
 	const names = new Set(server.map(c => c.name));
 	return [...server, ...LOCAL_COMMANDS.filter(c => !names.has(c.name)), ...snippetCommands(snippets)];
 }
 
+function errorText(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+let ompDefaultMode: Promise<PermissionMode | undefined> | undefined;
+/** omp's own `tools.approvalMode`: AO launches omp with no approval flag in its `default` mode, so this is what that mode means. */
+function ompDefaultPermissionMode(): Promise<PermissionMode | undefined> {
+	if (ompDefaultMode) return ompDefaultMode;
+	const { promise, resolve } = Promise.withResolvers<PermissionMode | undefined>();
+	ompDefaultMode = promise;
+	const omp = resolveOmpPath();
+	if (!omp) resolve(undefined);
+	else
+		execFile(omp, ["config", "get", "tools.approvalMode", "--json"], { timeout: 15_000, windowsHide: true }, (err, stdout) => {
+			if (err) return resolve(undefined);
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(stdout);
+			} catch {
+				/* not JSON: omp too old for --json */
+			}
+			const value = parsed && typeof parsed === "object" && "value" in parsed ? parsed.value : undefined;
+			// omp's built-in default is yolo.
+			resolve(permissionModeOf(value) ?? "auto");
+		});
+	return promise;
+}
+
+/**
+ * Where the chat's task strip, `/queue` and Alt+Enter go when the planner holds the queues: a lane whose
+ * id is an AO session id continues that session (PLANNER-API.md). The extension adapts its planner
+ * store (ext-tasks' `PlannerStore.queue(id, ops)`: `get` = no ops) to this.
+ */
+export interface ChatQueueSource {
+	get(sessionId: string): Promise<TaskQueue | null>;
+	edit(sessionId: string, ops: QueueOp[]): Promise<TaskQueue | null>;
+	/** The plan changed: the chat re-reads its queue. */
+	onDidChange: vscode.Event<unknown>;
+}
+
+/** The part of the checkpoints extension's client the chat uses (`Checkpoints` in `src/ext/checkpoints.ts` on `ao/checkpoints`). Edits are keyed by omp's tool call ids. */
+export interface ChatCheckpoints {
+	undo(sessionId: string, target?: { turnId: string } | { text: string }): Promise<{ prompt?: string } | undefined>;
+	redo(sessionId: string): Promise<unknown>;
+	redoCount(sessionId: string): number;
+	changes(sessionId: string): FileChange[];
+	toolDiffs(sessionId: string, change: FileChange): DiffsByPath;
+	blob(sessionId: string, hash: string | null): Uint8Array | undefined;
+	/** AO turns to leave out: `undone` (omp rewound them) and `command` (/undo, /redo). */
+	turnStatuses(sessionId: string, conversation: AoConversation): ReadonlyMap<string, string>;
+	onDidChange: vscode.Event<{ sessionId: string; added: FileChange[] }>;
+}
+
+/** The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call (`readMode`/`writeMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). */
+export interface ChatModeGate {
+	read(sessionId: string): PermissionMode | undefined;
+	/** Resolves once the switch is done (the gate's waiting question, if any, is settled). */
+	write(sessionId: string, mode: PermissionMode): Promise<void>;
+}
+
 export class ChatPanel implements vscode.Disposable {
-	private client: HostClient | undefined;
-	private clientSubs: vscode.Disposable[] = [];
+	private ao: AoClient | undefined;
+	private stream: AoEventSubscription | undefined;
+	private streamOpen = false;
 	private readonly subs: vscode.Disposable[] = [];
 	private webviewReady = false;
-	private snapshot: Extract<HostToClient, { t: "snapshot" }> | undefined;
+	private readonly feed = new ChatFeed();
+	/** The feed holds the full history the webview was initialized with. */
+	private loaded = false;
+	private syncTimer: NodeJS.Timeout | undefined;
+	private syncing = false;
+	private syncPending = false;
+	private wantFull = false;
+	private options: ConfigOption[] = [];
+	private defaultMode: PermissionMode | undefined;
 	private state: SlimState | null = null;
+	private postedState = "";
 	private serverCommands: SlashCommand[] = [];
 	/** Prompt snippets offered as `/p:<name>` (settings + the session folder's .omp/prompts). */
 	private snippets: PromptSnippet[] = [];
-	private changes: FileChange[] = [];
-	/** Full edit details (with oldText/newText) by toolCallId, for diffs of history the host did not snapshot. */
-	private readonly editTexts = new Map<string, Array<{ path: string; oldText: string; newText: string }>>();
-	private readonly diffCache = new Map<string, DiffsByPath>();
+	/** `!command` output waiting to go into the next prompt's context. */
+	private shellContext: string[] = [];
+	private shell: ChildProcess | undefined;
+	private switchingMode = false;
+	/** Identifies this chat's keep-awake lease on the AO chat. */
+	private readonly viewId = crypto.randomUUID();
 	private outbox: ToWebview[] = [];
-	/** Notices to show once the host replaces the transcript (fork / new / switch). */
-	private readonly afterReset: ToWebview[] = [];
 	private flushTimer: NodeJS.Timeout | undefined;
 	private disposed = false;
-	private lastStatus: SessionMeta["status"] | undefined;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
-	private readonly checkpoints: Checkpoints;
 
 	constructor(
 		readonly sessionId: string,
@@ -186,32 +244,19 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly extensionUri: vscode.Uri,
 		private readonly globalState: vscode.Memento,
 		private readonly organize: OrganizeStore,
+		/** The extension's AO client (src/ao); rejects while no daemon answers. */
+		private readonly connect: () => Promise<AoClient>,
+		/** The planner's queue for this chat's session; absent: `sessions.queue/editQueue`. */
+		private readonly tasks?: ChatQueueSource,
+		/** Checkpoints (omp extension: undo/redo with files, recorded edits); absent: those buttons say so. */
+		private readonly checkpoints?: ChatCheckpoints,
+		/** The session's permission-mode file (Switchyard omp extension gate); absent: AO-native modes. */
+		private readonly modes?: ChatModeGate,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
-		const panel = this;
-		this.checkpoints = new Checkpoints({
-			sessionId,
-			get client() {
-				return panel.client;
-			},
-			get meta() {
-				return panel.meta;
-			},
-			get state() {
-				return panel.state;
-			},
-			get changes() {
-				return panel.changes;
-			},
-			transcript: () => this.transcriptMessages(),
-			findUserEntry: text => this.findUserEntry(text),
-			insertText: text => this.insertText(text),
-			post: msg => this.post(msg),
-			postAfterReset: msg => this.afterReset.push(msg),
-		});
 		surface.webview.html = this.html();
 		this.subs.push(
-			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m)),
+			surface.webview.onDidReceiveMessage((m: FromWebview) => void this.onWebviewMessage(m).catch(err => this.post({ type: "error", message: errorText(err) }))),
 			surface.onDidDispose(() => this.dispose()),
 			sessions.onDidChange(() => this.onSessionsChanged()),
 			decorationEmitter.event(() => this.updateTitle()),
@@ -220,6 +265,9 @@ export class ChatPanel implements vscode.Disposable {
 				if (e.affectsConfiguration("omp.chat.snippets")) this.reloadSnippets();
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
 			}),
+			{ dispose: () => this.stream?.close() },
+			...(tasks ? [tasks.onDidChange(() => void this.postQueue())] : []),
+			...(checkpoints ? [checkpoints.onDidChange(e => e.sessionId === sessionId && this.onCheckpoints(e.added))] : []),
 		);
 		const cwd = this.meta?.cwd;
 		if (cwd) {
@@ -227,7 +275,6 @@ export class ChatPanel implements vscode.Disposable {
 			this.subs.push(watcher, watcher.onDidCreate(() => this.reloadSnippets()), watcher.onDidChange(() => this.reloadSnippets()), watcher.onDidDelete(() => this.reloadSnippets()));
 		}
 		this.updateTitle();
-		this.lastStatus = this.meta?.status;
 		this.attach();
 	}
 
@@ -236,53 +283,29 @@ export class ChatPanel implements vscode.Disposable {
 		return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string") : [];
 	}
 
-	private async postModels(): Promise<void> {
-		const client = this.client;
-		if (!client) return;
-		const [models, levels] = await Promise.all([client.rpc({ type: "get_available_models" }), client.rpc({ type: "get_available_thinking_levels" })]);
-		const list = rec(models.data)?.models;
-		const lv = rec(levels.data)?.levels;
-		this.post({
-			type: "models",
-			models: (Array.isArray(list) ? list : []).map(x => rec(x) ?? {}).map(x => ({ provider: String(x.provider), id: String(x.id), name: typeof x.name === "string" ? x.name : undefined })),
-			levels: Array.isArray(lv) ? lv.map(String) : [],
-			starred: this.starredModels(),
-		});
-	}
-
-	/** omp's realtime voice (`live_start`): the microphone and speaker of the machine omp runs on. */
-	private async startVoice(): Promise<void> {
-		const client = this.client;
-		if (!client?.connected) {
-			this.post({ type: "notice", level: "warning", text: "Resume the session first: voice talks to the running omp." });
-			return;
-		}
-		if (vscode.env.remoteName) {
-			const ok = await vscode.window.showWarningMessage(
-				"Start voice on the remote machine?",
-				{ modal: true, detail: `omp runs on the ${vscode.env.remoteName} side, so voice uses that machine's microphone and speaker, which a server usually lacks. Voice works best in a local window.` },
-				"Start Anyway",
-			);
-			if (ok !== "Start Anyway") return;
-		}
-		const voice = vscode.workspace.getConfiguration("omp").get<string>("voice.name");
-		const res = await client.rpc({ type: "live_start", ...(voice ? { voice } : {}) }, 60_000);
-		if (res.success) return;
-		const error = String(res.error ?? "live_start failed");
-		if (/already active/i.test(error)) {
-			this.post({ type: "event", ev: { type: "live_phase", phase: "listening" } });
-			return;
-		}
-		const hint = /unknown command|unsupported/i.test(error)
-			? "This omp has no realtime voice: update it (omp: Update omp)."
-			: /auth|login|credential|token|401|403/i.test(error)
-				? "Voice uses OpenAI's realtime model through a ChatGPT login: run /login and pick OpenAI (ChatGPT)."
-				: "";
-		this.post({ type: "notice", level: "error", text: `Voice could not start: ${error}${hint ? `\n${hint}` : ""}` });
-	}
-
+	/** The session as the views know it, with the permission mode this chat reads from AO. */
 	get meta(): SessionMeta | undefined {
-		return this.sessions.get(this.sessionId);
+		const meta = this.sessions.get(this.sessionId);
+		const mode = this.mode;
+		return meta && mode ? { ...meta, permissionMode: mode } : meta;
+	}
+
+	/** omp's permission mode: plan is omp's `mode` option; the others follow the approval mode AO launched omp with. */
+	private get mode(): PermissionMode | undefined {
+		const conv = this.feed.conversation;
+		const gated = this.modes?.read(this.sessionId);
+		if (gated) return gated;
+		if (!conv) return undefined;
+		if (this.option("mode")?.currentValue === "plan") return "plan";
+		switch (conv.settings.approvalMode) {
+			case "accept-edits":
+			case "auto":
+				return "edits";
+			case "bypass-permissions":
+				return "auto";
+			default:
+				return this.defaultMode;
+		}
 	}
 
 	get isVisible(): boolean {
@@ -313,37 +336,392 @@ export class ChatPanel implements vscode.Disposable {
 		for (const m of batch) void this.surface.webview.postMessage(m);
 	}
 
-	/** (Re)connect to the session host if it is running; otherwise show the recorded transcript. */
-	attach(): void {
-		for (const d of this.clientSubs) d.dispose();
-		this.clientSubs = [];
-		this.client?.dispose();
-		this.client = undefined;
-		this.snapshot = undefined;
-		const meta = this.meta;
-		if (!meta) return;
-		if (meta.status === "stopped") {
-			this.sendInit();
-			return;
-		}
-		const client = new HostClient(meta.socket, `vscode:${vscode.env.machineId.slice(0, 8)}`, () => this.meta?.status !== "stopped" && !this.disposed);
-		this.client = client;
-		this.clientSubs.push(
-			client.onMessage(m => this.onHostMessage(m)),
-			client.onConnection(connected => this.post({ type: "connection", connected })),
+	/** Feed output, shrunk for the (possibly remote) webview channel. */
+	private postFeed(msg: ToWebview): void {
+		if (msg.type !== "event") return this.post(msg);
+		const ev = slimFrame(msg.ev);
+		if (ev) this.post({ type: "event", ev });
+	}
+
+	// ---------- AO connection ----------
+
+	/** Connects to AO and follows this session's change events; every change refetches the conversation's tail. */
+	private attach(): void {
+		void this.connect().then(
+			ao => {
+				if (this.disposed) return;
+				this.ao = ao;
+				let opens = 0;
+				this.stream = ao.events({
+					after: "latest",
+					onEvent: ev => {
+						if (ev.sessionId === this.sessionId && ev.type === "session_updated") this.schedule();
+					},
+					onStatus: s => {
+						const open = s.state === "open";
+						if (open !== this.streamOpen) {
+							this.streamOpen = open;
+							this.post({ type: "connection", connected: open && this.loaded });
+						}
+						// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
+						if ((s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) || s.state === "gap") this.schedule(true);
+					},
+				});
+				this.lease(true);
+				this.schedule(true);
+			},
+			err => this.post({ type: "error", message: `AO daemon unreachable: ${errorText(err)}` }),
 		);
 	}
+
+	private async client(): Promise<AoClient> {
+		this.ao ??= await this.connect();
+		return this.ao;
+	}
+
+	/** AO hibernates idle chats nobody watches; an open chat holds a view lease. */
+	private lease(active: boolean): void {
+		void this.ao?.api.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId: this.sessionId } }, body: { viewId: this.viewId, active } }).catch(() => undefined);
+	}
+
+	private schedule(full = false): void {
+		if (full) this.wantFull = true;
+		if (this.syncTimer || this.disposed) return;
+		this.syncTimer = setTimeout(
+			() => {
+				this.syncTimer = undefined;
+				void this.sync();
+			},
+			full ? 0 : SYNC_DEBOUNCE_MS,
+		);
+	}
+
+	/** One fetch at a time; events that arrive meanwhile run one more. */
+	private async sync(): Promise<void> {
+		if (this.syncing) {
+			this.syncPending = true;
+			return;
+		}
+		this.syncing = true;
+		try {
+			do {
+				this.syncPending = false;
+				const full = this.wantFull || !this.loaded;
+				this.wantFull = false;
+				if (!this.webviewReady) return;
+				if (full) await this.reload();
+				else await this.tail();
+			} while (this.syncPending && !this.disposed);
+		} catch (err) {
+			// A chat still connecting answers 409; the next change event retries.
+			if (!(err instanceof AoError && err.status === 409)) this.post({ type: "error", message: `Could not read the conversation from AO: ${errorText(err)}` });
+		} finally {
+			this.syncing = false;
+		}
+	}
+
+	/** Reads the whole history (newest page first, then older pages) and re-initializes the webview. */
+	private async reload(): Promise<void> {
+		const ao = await this.client();
+		const conv = await ao.getConversation(this.sessionId, { limit: HISTORY_PAGE });
+		let oldest = conv.oldestSequence;
+		let more = conv.hasMoreBefore;
+		const merged: AoConversation = { ...conv, turns: [...conv.turns], messages: [...conv.messages], activities: [...conv.activities] };
+		for (let page = 1; more && oldest && page < MAX_HISTORY_PAGES; page++) {
+			const older = await ao.getConversation(this.sessionId, { beforeSequence: oldest, limit: HISTORY_PAGE });
+			const known = new Set(merged.turns.map(t => t.id));
+			merged.turns.push(...older.turns.filter(t => !known.has(t.id)));
+			merged.messages.push(...older.messages);
+			merged.activities.push(...older.activities);
+			oldest = older.oldestSequence;
+			more = older.hasMoreBefore;
+		}
+		if (this.disposed) return;
+		if (this.checkpoints) this.feed.setTurnStatus(this.checkpoints.turnStatuses(this.sessionId, merged));
+		const snap = this.feed.reset(merged);
+		const view = this.checkpointView();
+		this.loaded = true;
+		await this.refreshOptions(ao);
+		this.serverCommands = await this.skills(ao);
+		this.snippets = loadSnippets(this.meta?.cwd);
+		const meta = this.meta;
+		if (!meta || this.disposed) return;
+		this.outbox = [];
+		this.postChatConfig();
+		this.state = this.buildState();
+		this.postedState = JSON.stringify([this.state, this.mode]);
+		this.post({
+			type: "init",
+			meta,
+			messages: snap.messages.map(m => slimMessage(m)),
+			inflight: null,
+			runningTools: [],
+			pendingUi: snap.pendingUi,
+			state: this.state,
+			commands: mergeCommands(this.serverCommands, this.snippets),
+			changes: view.changes,
+			diffs: { ...view.diffs, ...snap.diffs },
+			connected: this.streamOpen,
+			home: os.homedir(),
+			queue: await this.queueView(),
+		});
+		for (const m of snap.live) this.postFeed(m);
+		this.post({ type: "checkpoints", redo: this.checkpoints?.redoCount(this.sessionId) ?? 0 });
+		this.postOrigin(true);
+	}
+
+	/** Reads what changed since the oldest row that may still change and forwards it. */
+	private async tail(): Promise<void> {
+		const ao = await this.client();
+		const floor = this.feed.floor();
+		const page = await ao.getConversation(this.sessionId, { ...(floor > 0 && { afterSequence: floor }), limit: HISTORY_PAGE });
+		if (this.disposed) return;
+		const wasBusy = this.feed.isBusy();
+		for (const m of this.feed.apply(page)) this.postFeed(m);
+		// The model can change inside a turn (omp's /model); config options have no change event.
+		if (wasBusy && !this.feed.isBusy()) {
+			await this.refreshOptions(ao);
+			const skills = await this.skills(ao);
+			if (JSON.stringify(skills) !== JSON.stringify(this.serverCommands)) {
+				this.serverCommands = skills;
+				this.post({ type: "commands", commands: mergeCommands(this.serverCommands, this.snippets) });
+			}
+		}
+		// omp undid or redid a prompt (or ran /undo, /redo): the turns to hide changed, so show the new conversation.
+		const cp = this.checkpoints;
+		const full = this.feed.full();
+		if (cp && full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full))) this.schedule(true);
+		this.postState();
+	}
+
+	private async refreshOptions(ao: AoClient): Promise<void> {
+		try {
+			this.options = (await ao.configOptions(this.sessionId)).options;
+		} catch {
+			// Not connected yet: the footer shows no model until the next turn ends.
+		}
+		this.defaultMode = await ompDefaultPermissionMode();
+	}
+
+	/** omp's slash commands, as AO lists them (skills). */
+	private async skills(ao: AoClient): Promise<SlashCommand[]> {
+		try {
+			const { skills } = await unwrap(ao.api.GET("/api/v1/sessions/{sessionId}/conversation/skills", { params: { path: { sessionId: this.sessionId } } }));
+			return skills.map(s => ({ name: s.name, ...(s.description && { description: s.description }), ...(s.inputHint && { input: { hint: s.inputHint } }) }));
+		} catch {
+			return this.serverCommands;
+		}
+	}
+
+	private option(id: string): ConfigOption | undefined {
+		return this.options.find(o => o.id === id);
+	}
+
+	/** omp's model option: id `model`, else whatever option AO files under the model category. */
+	private modelOption(): ConfigOption | undefined {
+		return this.option("model") ?? this.options.find(o => o.category === "model");
+	}
+
+	private thinkingOption(): ConfigOption | undefined {
+		return this.option("thinking") ?? this.options.find(o => o.category === "thought_level");
+	}
+
+	private buildState(): SlimState {
+		const state = this.feed.state();
+		const model = this.modelOption();
+		const value = model?.currentValue ?? this.feed.conversation?.settings.model;
+		if (value) state.model = { ...splitModel(value), name: model?.choices?.find(c => c.value === value)?.name };
+		const thinking = this.thinkingOption()?.currentValue;
+		if (thinking) state.thinkingLevel = thinking;
+		return state;
+	}
+
+	private postState(): void {
+		this.state = this.buildState();
+		// The mode chip lives in meta; plan mode changes only it.
+		const json = JSON.stringify([this.state, this.mode]);
+		if (json === this.postedState) return;
+		this.postedState = json;
+		this.post({ type: "state", state: this.state });
+		const meta = this.meta;
+		if (meta) this.post({ type: "meta", meta });
+	}
+
+	/** The session's task queue in the old `TaskQueue` shape: the planner's lane when `tasks` is set, else the session manager's. */
+	private async queueView(): Promise<TaskQueue | null> {
+		if (!this.tasks) return this.sessions.queue(this.sessionId);
+		try {
+			return await this.tasks.get(this.sessionId);
+		} catch {
+			return null; // planner unreachable: no strip
+		}
+	}
+
+	private async postQueue(): Promise<void> {
+		const queue = await this.queueView();
+		if (queue) this.post({ type: "queue", queue });
+	}
+
+	private async editQueue(ops: QueueOp[]): Promise<void> {
+		if (!this.tasks) {
+			await this.sessions.editQueue(this.sessionId, ops);
+			if (this.meta?.status === "stopped") await this.postQueue();
+			return;
+		}
+		const queue = await this.tasks.edit(this.sessionId, ops);
+		if (queue) this.post({ type: "queue", queue });
+	}
+
+	// ---------- checkpoints (omp extension) ----------
+
+	private unavailable(what: string): void {
+		this.post({ type: "notice", level: "warning", text: `${what} needs the Switchyard checkpoints extension, which is not loaded in this window.` });
+	}
+
+	/** The recorded edits of this session, keyed by the chat's tool card ids (AO activity ids) instead of omp's tool call ids. */
+	private checkpointView(): { changes: FileChange[]; diffs: Record<string, DiffsByPath> } {
+		const out: { changes: FileChange[]; diffs: Record<string, DiffsByPath> } = { changes: [], diffs: {} };
+		const cp = this.checkpoints;
+		if (!cp) return out;
+		for (const c of cp.changes(this.sessionId)) {
+			const card = this.feed.activityIdOf(c.toolCallId);
+			if (!card) continue;
+			out.changes.push({ ...c, toolCallId: card });
+			out.diffs[card] = cp.toolDiffs(this.sessionId, c);
+		}
+		return out;
+	}
+
+	/** New edits were recorded, or an undo/redo changed the state: show them, and re-read the conversation (hidden turns changed). */
+	private onCheckpoints(added: FileChange[]): void {
+		const cp = this.checkpoints;
+		if (!cp) return;
+		for (const c of added) {
+			const card = this.feed.activityIdOf(c.toolCallId);
+			if (card) this.post({ type: "change", change: { ...c, toolCallId: card }, diffs: cp.toolDiffs(this.sessionId, c) });
+		}
+		this.post({ type: "checkpoints", redo: cp.redoCount(this.sessionId) });
+		this.schedule();
+	}
+
+	/** Undoes the last prompt (or the one named): omp rewinds the conversation and restores the files; the prompt text returns to the composer. */
+	private async undo(target?: { turnId: string } | { text: string }): Promise<void> {
+		if (!this.checkpoints) return this.unavailable("Undo");
+		const done = await this.checkpoints.undo(this.sessionId, target);
+		if (done?.prompt) this.insertText(done.prompt);
+	}
+
+	/** Restores one file to its content right before the given tool call. */
+	private async revertFile(cardId: string, file: string): Promise<void> {
+		const cp = this.checkpoints;
+		if (!cp) return this.unavailable("Revert");
+		const ompId = this.feed.toolCallIdOf(cardId);
+		const changes = cp.changes(this.sessionId);
+		const change = changes.find(c => c.toolCallId === ompId);
+		const entry = change?.files.find(f => f.path === file);
+		if (!change || !entry) return;
+		const name = path.relative(this.meta?.cwd ?? "", file) || file;
+		const later = changes.some(c => c.timestamp > change.timestamp && c.files.some(f => f.path === file));
+		const ok = await vscode.window.showWarningMessage(
+			`Revert ${name} to its content before this edit?`,
+			{ modal: true, detail: later ? "Later edits to this file in this session will be undone too." : entry.before === null ? "The file did not exist before; it will be deleted." : undefined },
+			"Revert",
+		);
+		if (ok !== "Revert") return;
+		const uri = vscode.Uri.file(file);
+		if (entry.before === null) await vscode.workspace.fs.delete(uri, { useTrash: true });
+		else {
+			const content = cp.blob(this.sessionId, entry.before);
+			if (!content) {
+				this.post({ type: "notice", level: "warning", text: `The snapshot of ${name} before that edit is gone; nothing reverted.` });
+				return;
+			}
+			await vscode.workspace.fs.writeFile(uri, content);
+		}
+		this.post({ type: "notice", level: "info", markdown: true, text: `Reverted \`${name}\` to before that ${change.toolName}.` });
+	}
+
+	private async postModels(): Promise<void> {
+		await this.refreshOptions(await this.client());
+		this.post({
+			type: "models",
+			models: (this.modelOption()?.choices ?? []).map(c => ({ ...splitModel(c.value), name: c.name })),
+			levels: (this.thinkingOption()?.choices ?? []).map(c => c.value),
+			starred: this.starredModels(),
+		});
+		this.postState();
+	}
+
+	/** Sets one of omp's config options (model, thinking, mode); AO answers with the whole new list. */
+	private async setOption(id: string, value: string): Promise<void> {
+		const ao = await this.client();
+		this.options = (await ao.setConfigOption(this.sessionId, id, { value })).options;
+		this.postState();
+	}
+
+	/**
+	 * Plan is omp's `mode` option and switches live. The others are the approval mode AO launches omp
+	 * with (GAPS G7): AO stores the new one, then omp restarts on the same transcript to pick it up.
+	 */
+	private async setMode(mode: PermissionMode): Promise<void> {
+		const conv = this.feed.conversation;
+		if (!conv || this.switchingMode) return;
+		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
+			// A Switchyard session: the omp extension's gate reads the mode file on every tool call, so this is live.
+			await this.modes.write(this.sessionId, mode);
+			this.postState();
+			return;
+		}
+		if (mode === "plan") {
+			await this.setOption("mode", "plan");
+			return;
+		}
+		// AO's `default` runs omp with omp's own tools.approvalMode (GAPS G12): that is Ask only if omp's config says so.
+		if (mode === "ask" && (await ompDefaultPermissionMode()) !== "ask") {
+			this.post({
+				type: "notice",
+				level: "warning",
+				markdown: true,
+				text: `AO can't start omp in Ask mode: AO's default approval mode runs omp with your \`tools.approvalMode\` (${this.defaultMode ? PERMISSION_MODE_INFO[this.defaultMode].label : "unknown"} here). Set \`tools.approvalMode: always-ask\` in omp's config.yml (/settings) for Ask, or use Edits (asks before commands).`,
+			});
+			return;
+		}
+		if (this.option("mode")?.currentValue === "plan") await this.setOption("mode", "default");
+		const approval = APPROVAL_OF[mode];
+		const current = conv.settings.approvalMode ?? "default";
+		if (current === approval) {
+			this.postState();
+			return;
+		}
+		const ao = await this.client();
+		// Ask AO, not the feed: a turn that just started may not have reached this chat yet.
+		const now = await ao.getConversation(this.sessionId, { limit: 1 });
+		if (now.controller === "busy" || now.turns.some(t => t.state === "running" || t.state === "queued")) {
+			this.post({ type: "notice", level: "warning", text: `Switching to ${PERMISSION_MODE_INFO[mode].label} restarts omp: wait for this turn to end, or interrupt it (Esc), then switch again.` });
+			return;
+		}
+		this.switchingMode = true;
+		try {
+			this.post({ type: "notice", level: "info", text: `Restarting omp in ${PERMISSION_MODE_INFO[mode].label} mode (same conversation)…` });
+			await ao.setTurnSettings(this.sessionId, { approvalMode: approval });
+			await ao.exitAgent(this.sessionId);
+			await ao.resumeAgent(this.sessionId);
+			this.post({ type: "notice", level: "info", text: `${PERMISSION_MODE_INFO[mode].label} mode: ${PERMISSION_MODE_INFO[mode].detail}.` });
+		} finally {
+			this.switchingMode = false;
+			await this.refreshOptions(ao);
+			this.postState();
+			this.schedule();
+		}
+	}
+
+	// ---------- session chrome ----------
 
 	private onSessionsChanged(): void {
 		const meta = this.meta;
 		if (!meta) return;
 		this.updateTitle();
-		// A restarted host can listen elsewhere (Windows pipes get a fresh name per start).
-		if ((this.lastStatus === "stopped" && meta.status !== "stopped") || (meta.status !== "stopped" && this.client && this.client.socketPath !== meta.socket)) this.attach();
-		else if (meta.status === "stopped" && this.lastStatus !== "stopped" && this.lastStatus !== undefined) {
-			this.post({ type: "meta", meta });
-		}
-		this.lastStatus = meta.status;
+		this.post({ type: "meta", meta });
 	}
 
 	private updateTitle(): void {
@@ -373,167 +751,6 @@ export class ChatPanel implements vscode.Disposable {
 		this.post({ type: "origin", hermes });
 	}
 
-	// ---------- diffs ----------
-	private readBlob(hash: string | null): string | undefined {
-		if (hash === null || hash === EMPTY_BLOB) return "";
-		try {
-			const file = blobPath(this.sessionId, hash);
-			if (fs.statSync(file).size > MAX_INLINE_DIFF_BYTES) return undefined;
-			return fs.readFileSync(file, "utf8");
-		} catch {
-			return undefined;
-		}
-	}
-
-	private diffsForChange(change: FileChange): DiffsByPath {
-		const cached = this.diffCache.get(change.toolCallId);
-		if (cached) return cached;
-		const out: DiffsByPath = {};
-		for (const f of change.files) {
-			const before = this.readBlob(f.before);
-			const after = this.readBlob(f.after);
-			if (before !== undefined && after !== undefined) out[f.path] = diffTexts(before, after);
-		}
-		this.diffCache.set(change.toolCallId, out);
-		return out;
-	}
-
-	private diffsForEditTexts(toolCallId: string): DiffsByPath | undefined {
-		const texts = this.editTexts.get(toolCallId);
-		if (!texts) return undefined;
-		const cached = this.diffCache.get(toolCallId);
-		if (cached) return cached;
-		const out: DiffsByPath = {};
-		for (const t of texts) {
-			if (t.oldText.length + t.newText.length < MAX_INLINE_DIFF_BYTES) out[t.path] = diffTexts(t.oldText, t.newText);
-		}
-		this.diffCache.set(toolCallId, out);
-		return out;
-	}
-
-	private allDiffs(): Record<string, DiffsByPath> {
-		const out: Record<string, DiffsByPath> = {};
-		for (const c of this.changes) out[c.toolCallId] = this.diffsForChange(c);
-		for (const id of this.editTexts.keys()) if (!out[id]) out[id] = this.diffsForEditTexts(id) ?? {};
-		return out;
-	}
-
-	private indexEdits(messages: unknown[]): string[] {
-		const ids: string[] = [];
-		for (const m of messages) {
-			const r = rec(m);
-			if (r?.role !== "toolResult" || typeof r.toolCallId !== "string") continue;
-			const d = rec(r.details);
-			if (!d) continue;
-			const files: Array<{ path: string; oldText: string; newText: string }> = [];
-			const add = (x: Record<string, unknown> | undefined) => {
-				if (x && typeof x.path === "string" && typeof x.oldText === "string" && typeof x.newText === "string") files.push({ path: x.path, oldText: x.oldText, newText: x.newText });
-			};
-			add(d);
-			if (Array.isArray(d.perFileResults)) for (const f of d.perFileResults) add(rec(f));
-			if (files.length) {
-				this.editTexts.set(r.toolCallId, files);
-				ids.push(r.toolCallId);
-			}
-		}
-		return ids;
-	}
-
-	// ---------- host -> webview ----------
-	private onHostMessage(m: HostToClient): void {
-		switch (m.t) {
-			case "snapshot":
-				this.snapshot = m;
-				this.state = (m.state as SlimState) ?? null;
-				this.serverCommands = (m.commands as SlashCommand[]) ?? [];
-				this.changes = [...m.changes];
-				this.indexEdits(m.messages);
-				this.sendInit();
-				return;
-			case "event": {
-				const ev = m.ev;
-				if (ev.type === "message_end") {
-					for (const id of this.indexEdits([ev.message])) {
-						if (this.changes.some(c => c.toolCallId === id)) continue;
-						const diffs = this.diffsForEditTexts(id);
-						if (diffs) this.post({ type: "diffs", toolCallId: id, diffs });
-					}
-				}
-				if (ev.type === "available_commands_update") {
-					this.serverCommands = Array.isArray(ev.commands) ? (ev.commands as SlashCommand[]) : [];
-					this.post({ type: "commands", commands: mergeCommands(this.serverCommands, this.snippets) });
-					return;
-				}
-				if (ev.type === "extension_ui_request" && ev.method === "open_url") {
-					const target = typeof ev.launchUrl === "string" ? ev.launchUrl : typeof ev.url === "string" ? ev.url : undefined;
-					if (target) void openUrlFromOmp(target);
-				}
-				const slim = slimFrame(ev);
-				if (slim) this.post({ type: "event", ev: slim });
-				return;
-			}
-			case "state":
-				this.state = (m.state as SlimState) ?? null;
-				this.post({ type: "state", state: this.state });
-				return;
-			case "meta":
-				this.post({ type: "meta", meta: m.meta });
-				return;
-			case "change":
-				this.changes.push(m.change);
-				this.post({ type: "change", change: m.change, diffs: this.diffsForChange(m.change) });
-				return;
-			case "ui_resolved":
-				this.post({ type: "uiResolved", id: m.id });
-				return;
-			case "queue":
-				this.post({ type: "queue", queue: m.queue });
-				return;
-			case "reset":
-				this.state = (m.state as SlimState) ?? null;
-				this.indexEdits(m.messages);
-				this.post({ type: "reset", messages: m.messages.map(x => slimMessage(x)), state: this.state, diffs: this.allDiffs() });
-				for (const msg of this.afterReset.splice(0)) this.commandContext.post(msg);
-				return;
-			case "response":
-				return;
-		}
-	}
-
-	private sendInit(): void {
-		if (!this.webviewReady) return;
-		const meta = this.meta;
-		if (!meta) return;
-		const snap = this.snapshot;
-		let messages: unknown[];
-		if (snap) messages = snap.messages;
-		else {
-			messages = readTranscript(meta.ompSessionFile);
-			this.changes = this.sessions.changes(this.sessionId);
-			this.indexEdits(messages);
-		}
-		this.outbox = [];
-		this.snippets = loadSnippets(meta.cwd);
-		this.postChatConfig();
-		this.post({
-			type: "init",
-			meta: snap?.meta ?? meta,
-			messages: messages.map(x => slimMessage(x)),
-			inflight: snap?.inflight ? { messageId: snap.inflight.messageId, message: slimMessage(snap.inflight.message, true) } : null,
-			runningTools: (snap?.runningTools ?? []).map(slimRunningTool),
-			pendingUi: snap?.pendingUi ?? [],
-			state: this.state,
-			commands: mergeCommands(this.serverCommands, this.snippets),
-			changes: this.changes,
-			diffs: this.allDiffs(),
-			connected: !!this.client?.connected,
-			home: os.homedir(),
-			queue: snap?.queue ?? this.sessions.queue(this.sessionId),
-		});
-		this.post({ type: "checkpoints", redo: this.checkpoints.redoCount });
-		this.postOrigin(true);
-	}
-
 	/** Send a prompt as if typed in the composer (used by editor integrations). */
 	async sendPrompt(text: string): Promise<void> {
 		this.reveal();
@@ -549,15 +766,15 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	private resolveCandidate(candidate: string): string | undefined {
-		const cwd = this.meta?.cwd ?? os.homedir();
+		const cwd = this.meta?.cwd || os.homedir();
 		const expanded = candidate.startsWith("~/") ? path.join(os.homedir(), candidate.slice(2)) : candidate;
 		const abs = path.resolve(cwd, expanded);
 		return fs.existsSync(abs) ? abs : undefined;
 	}
 
-	/** Writes pasted/dropped files next to the session; returns prompt lines describing every attachment. */
+	/** Writes pasted/dropped files into Switchyard's state dir; returns prompt lines describing every attachment. */
 	private storeAttachments(files: FileAttachment[]): string[] {
-		const dir = path.join(sessionDir(this.sessionId), "attachments");
+		const dir = path.join(switchyardHome(), "sessions", this.sessionId, "attachments");
 		fs.mkdirSync(dir, { recursive: true });
 		const fmt = (n?: number) => (n === undefined ? "" : n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 		return files.map(f => {
@@ -580,27 +797,81 @@ export class ChatPanel implements vscode.Disposable {
 		await Promise.all(dirty.map(d => d.save()));
 	}
 
+	/**
+	 * `!command`: omp runs `!` only in its terminal UI (over ACP it is an ordinary prompt), so the chat runs
+	 * it in the session folder and, like omp, hands the output to the model with the next prompt.
+	 */
+	private async runShell(command: string, keep: boolean): Promise<void> {
+		if (this.shell) {
+			this.post({ type: "notice", level: "warning", text: "A shell command is still running (Esc stops it)." });
+			return;
+		}
+		const cwd = this.meta?.cwd || os.homedir();
+		const win = process.platform === "win32";
+		const child = spawn(win ? process.env.ComSpec || "cmd.exe" : process.env.SHELL || "/bin/sh", win ? ["/d", "/s", "/c", command] : ["-c", command], { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+		this.shell = child;
+		let output = "";
+		const add = (b: Buffer) => {
+			output += b.toString("utf8");
+		};
+		child.stdout?.on("data", add);
+		child.stderr?.on("data", add);
+		const { promise, resolve } = Promise.withResolvers<{ code: number | undefined; cancelled: boolean }>();
+		child.on("error", err => {
+			output += String(err);
+			resolve({ code: 127, cancelled: false });
+		});
+		child.on("close", (c, signal) => resolve({ code: c ?? undefined, cancelled: signal !== null }));
+		const { code, cancelled } = await promise;
+		this.shell = undefined;
+		this.post({ type: "bashResult", command, output, exitCode: code, cancelled });
+		if (keep && !cancelled) {
+			const text = output.length > MAX_SHELL_CONTEXT ? `… [${output.length - MAX_SHELL_CONTEXT} chars cut]\n${output.slice(-MAX_SHELL_CONTEXT)}` : output;
+			this.shellContext.push(`**!${command}** · ran in \`${cwd}\`${code ? ` (exit ${code})` : ""}\n\`\`\`text\n${text.trimEnd()}\n\`\`\``);
+		}
+	}
+
 	private get commandContext(): CommandContext {
 		return {
-			client: this.client,
+			sessionId: this.sessionId,
 			meta: this.meta,
-			state: this.state,
-			post: msg => {
-				this.post(msg);
-				if (msg.type === "notice") this.client?.write({ t: "note", level: msg.level, message: msg.text, markdown: msg.markdown });
-			},
+			feed: this.feed,
+			mode: this.mode,
+			ao: () => this.client(),
+			post: msg => this.post(msg),
 			insertText: text => this.insertText(text),
-			postAfterReset: msg => this.afterReset.push(msg),
+			setMode: mode => this.setMode(mode),
+			runShell: (command, keep) => this.runShell(command, keep),
 		};
 	}
 
-	// ---------- webview -> host ----------
+	/** Sends a prompt: a new turn when omp is idle; while it works, steers the turn or queues behind it (`omp.sendWhileBusy`). */
+	private async send(message: string, images: Array<{ data: string; mimeType: string }>): Promise<void> {
+		const ao = await this.client();
+		const attachments = images.map(i => ({ data: i.data, mimeType: i.mimeType }));
+		const steer = this.feed.isBusy() && (vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer") === "steer";
+		// Images can take long to upload: AO extends the request deadline for this header.
+		const headers = attachments.length ? { "X-AO-Attachment-Upload": "1" } : undefined;
+		const params = { path: { sessionId: this.sessionId } };
+		const body = { text: message, clientMessageId: crypto.randomUUID(), ...(attachments.length && { attachments }) };
+		await sendResuming(
+			ao,
+			this.sessionId,
+			async () => {
+				if (steer) await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params, body, headers }));
+				else await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params, body, headers }));
+			},
+			() => this.post({ type: "notice", level: "info", text: "omp was not running: restarting it on this conversation…" }),
+		);
+		this.schedule();
+	}
+
+	// ---------- webview -> AO ----------
 	private async onWebviewMessage(m: FromWebview): Promise<void> {
-		const client = this.client;
 		switch (m.type) {
 			case "ready":
 				this.webviewReady = true;
-				this.sendInit();
+				this.schedule(true);
 				return;
 			case "prompt": {
 				const images = m.images ?? [];
@@ -609,8 +880,8 @@ export class ChatPanel implements vscode.Disposable {
 				if (queued) {
 					const [first, ...rest] = queued[2].trim().split("\n");
 					const { title, subtasks } = parseTaskInput(first);
-					await this.sessions.editQueue(this.sessionId, [{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
-					this.commandContext.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
+					await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
+					this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
 					return;
 				}
 				if (/^\/tasks\s*$/.test(m.text.trim())) {
@@ -621,37 +892,55 @@ export class ChatPanel implements vscode.Disposable {
 				const snippet = matchSnippetCommand(text, this.snippets);
 				if (snippet) text = [this.fillSnippet(snippet.snippet.prompt), snippet.rest].filter(Boolean).join("\n\n");
 				if (!images.length && !files.length && (await handleComposerInput(text, this.commandContext, name => this.runCommand(name)))) return;
-				if (!client?.connected) {
-					this.post({ type: "error", message: "Session is not running. Resume it first." });
+				if (this.meta?.status === "stopped") {
+					this.post({ type: "error", message: "Session is stopped. Resume it first." });
 					return;
 				}
 				await this.saveDirtyDocuments();
 				const expansion = await expandContextMentions(text, this.meta?.cwd);
 				for (const u of expansion.unavailable) this.post({ type: "notice", level: "warning", text: `@${u.kind}: ${u.reason}` });
-				let message = expansion.text;
+				let message = appendContext(expansion.text, "shell commands run from the chat", this.shellContext);
 				if (files.length) {
 					const listed = this.storeAttachments(files);
 					message = `${message}${message ? "\n\n" : ""}Attached files (read them with your read tool):\n${listed.map(f => `- ${f}`).join("\n")}`;
 				}
 				if (!message.trim() && images.length) message = images.length === 1 ? "(see attached image)" : "(see attached images)";
-				const busy = !!this.state?.isStreaming;
-				this.checkpoints.clearRedo();
-				const behavior = vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer";
-				const res = await client.rpc({
-					type: "prompt",
-					message,
-					...(images.length ? { images: images.map(i => ({ type: "image", data: i.data, mimeType: i.mimeType })) } : {}),
-					...(busy ? { streamingBehavior: behavior } : {}),
-				});
-				if (!res.success) this.post({ type: "error", message: String(res.error ?? "prompt failed") });
+				await this.send(message, images);
+				this.shellContext = [];
 				return;
 			}
 			case "abort":
-				await client?.rpc({ type: "abort" });
+				if (this.shell) {
+					this.shell.kill();
+					return;
+				}
+				try {
+					await (await this.client()).interrupt(this.sessionId);
+				} catch (err) {
+					// The turn ended between the keypress and the call.
+					if (!(err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN")) throw err;
+				}
 				return;
-			case "uiResponse":
-				client?.write({ t: "ui_response", res: m.res });
+			case "uiResponse": {
+				const req = this.feed.request(m.res.id);
+				if (req?.question.url && m.res.value === OPEN_LINK) {
+					await openUrlFromOmp(req.question.url);
+					this.post({ type: "event", ev: { ...req.ui } });
+					return;
+				}
+				const reply = req && replyFor(req, m.res);
+				if (!req || !reply) return;
+				const ao = await this.client();
+				try {
+					if (reply.kind === "approval") await ao.resolveApproval(this.sessionId, req.question.id, reply.decisionId);
+					else await ao.resolveInput(this.sessionId, req.question.id, { action: reply.action, ...(reply.content && { content: reply.content }) });
+				} catch (err) {
+					// Answered elsewhere (another client, AO's timeout): the next refetch drops the dialog.
+					if (!(err instanceof AoError && err.code === "CHAT_REQUEST_NOT_PENDING")) throw err;
+				}
+				this.schedule();
 				return;
+			}
 			case "openFile": {
 				const abs = this.resolveCandidate(m.path) ?? path.resolve(this.meta?.cwd ?? "", m.path);
 				await openFile(abs, m.line, m.column, this.surface.viewColumn);
@@ -673,14 +962,16 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			}
 			case "pickFiles": {
-				const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: "Attach", defaultUri: this.meta ? vscode.Uri.file(this.meta.cwd) : undefined });
+				const cwd = this.meta?.cwd;
+				const picked = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: "Attach", defaultUri: cwd ? vscode.Uri.file(cwd) : undefined });
 				if (!picked?.length) return;
 				const images = [];
 				const files = [];
 				for (const uri of picked) {
 					const mimeType = IMAGE_MIME[path.extname(uri.fsPath).toLowerCase()];
 					const stat = await vscode.workspace.fs.stat(uri);
-					if (mimeType && stat.size < 20 * 1024 * 1024) {
+					// AO takes up to 10 MiB per image.
+					if (mimeType && stat.size < 10 * 1024 * 1024) {
 						const bytes = await vscode.workspace.fs.readFile(uri);
 						images.push({ data: Buffer.from(bytes).toString("base64"), mimeType, name: path.basename(uri.fsPath) });
 					} else files.push({ name: path.basename(uri.fsPath), path: uri.fsPath, size: stat.size });
@@ -715,44 +1006,20 @@ export class ChatPanel implements vscode.Disposable {
 			case "getModels":
 				await this.postModels();
 				return;
-			case "setModel": {
-				const res = await client?.rpc({ type: "set_model", provider: m.provider, modelId: m.id });
-				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
+			case "setModel":
+				await this.setOption(this.modelOption()?.id ?? "model", m.provider ? `${m.provider}/${m.id}` : m.id);
+				return;
+			case "setThinking":
+				await this.setOption(this.thinkingOption()?.id ?? "thinking", m.level);
+				return;
+			case "removeQueued": {
+				const item = this.feed.queued().find(q => q.text === m.text);
+				if (item) await (await this.client()).cancelQueuedTurn(this.sessionId, item.turnId);
+				this.schedule();
 				return;
 			}
-			case "setThinking": {
-				const res = await client?.rpc({ type: "set_thinking_level", level: m.level });
-				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
-				return;
-			}
-			case "removeQueued":
-				await client?.rpc({ type: "remove_queued_message", message: m.text, queue: m.queue });
-				return;
-			case "rewindTo":
-			case "forkFrom": {
-				const entryId = await this.findUserEntry(m.text);
-				if (!client || !entryId) {
-					this.post({ type: "notice", level: "warning", text: "Could not locate that message on the current branch." });
-					return;
-				}
-				if (m.type === "rewindTo") {
-					const res = await client.rpc({ type: "branch", entryId });
-					const data = rec(res.data) ?? {};
-					if (!res.success) this.post({ type: "error", message: String(res.error) });
-					else if (!data.cancelled) this.insertText(String(data.text ?? m.text).replace(PLAN_PROMPT_PREFIX, ""));
-				} else {
-					const res = await client.rpc({ type: "fork", entryId });
-					if (!res.success) this.post({ type: "error", message: String(res.error) });
-					else this.afterReset.push({ type: "notice", level: "info", text: "Forked: continuing from that message in a new transcript." });
-				}
-				return;
-			}
-			case "revertFile":
-				await this.revertFile(m.toolCallId, m.path);
-				return;
 			case "queueOp":
-				await this.sessions.editQueue(this.sessionId, m.ops);
-				if (this.meta?.status === "stopped") this.post({ type: "queue", queue: this.sessions.queue(this.sessionId) });
+				await this.editQueue(m.ops);
 				return;
 			case "focusTasks":
 				await vscode.commands.executeCommand("omp.tasks.focus");
@@ -761,10 +1028,7 @@ export class ChatPanel implements vscode.Disposable {
 				await this.runCommand(m.name);
 				return;
 			case "setMode":
-				if (this.meta && !(await setSessionPermissionMode(this.meta, m.mode))) this.post({ type: "notice", level: "warning", text: "Could not switch the permission mode: the session host is unreachable." });
-				return;
-			case "restoreCheckpoint":
-				await this.checkpoints.restore(m.text);
+				await this.setMode(m.mode);
 				return;
 			case "starModel": {
 				const key = `${m.provider}/${m.id}`;
@@ -773,6 +1037,14 @@ export class ChatPanel implements vscode.Disposable {
 				await this.postModels();
 				return;
 			}
+			case "restoreCheckpoint":
+			case "rewindTo":
+				// Both rewind to before that prompt (files and conversation) and put its text back in the composer.
+				await this.undo(m.turnId ? { turnId: m.turnId } : { text: m.text });
+				return;
+			case "revertFile":
+				await this.revertFile(m.toolCallId, m.path);
+				return;
 		}
 	}
 
@@ -780,37 +1052,10 @@ export class ChatPanel implements vscode.Disposable {
 		if (await runSessionAction(name, this.commandContext)) return;
 		const meta = this.meta;
 		switch (name) {
-			case "undoTurn":
-				await this.checkpoints.restore();
-				return;
-			case "redoTurn":
-				await this.checkpoints.redo();
-				return;
-			case "voiceStart":
-				await this.startVoice();
-				return;
-			case "voiceStop": {
-				const res = await this.client?.rpc({ type: "live_stop" });
-				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
-				return;
-			}
-			case "voiceMute": {
-				const res = await this.client?.rpc({ type: "live_mute" });
-				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
-				return;
-			}
-			case "openTui":
-				await vscode.commands.executeCommand("omp.continueInTerminal", this.sessionId);
-				return;
-			case "openHermesCard":
-				await vscode.commands.executeCommand("omp.hermes.openCard", this.sessionId);
-				return;
-			case "showHermesCard":
-				await vscode.commands.executeCommand("omp.hermes.showCard", this.sessionId);
-				return;
 			case "compact": {
-				const res = await this.client?.rpc({ type: "compact" }, 15 * 60_000);
-				if (res && !res.success) this.post({ type: "error", message: String(res.error) });
+				const ao = await this.client();
+				this.post({ type: "event", ev: { type: "auto_compaction_start" } });
+				await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/compact", { params: { path: { sessionId: this.sessionId } } }));
 				return;
 			}
 			case "newSession":
@@ -831,12 +1076,22 @@ export class ChatPanel implements vscode.Disposable {
 			case "reviewChanges":
 				await vscode.commands.executeCommand("omp.reviewChanges", this.sessionId);
 				return;
-			case "openLog":
-				await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(this.sessionId), "host.log")));
+			case "undoTurn":
+				await this.undo();
+				return;
+			case "redoTurn":
+				if (!this.checkpoints) return this.unavailable("Redo");
+				await this.checkpoints.redo(this.sessionId);
+				return;
+			case "openHermesCard":
+				await vscode.commands.executeCommand("omp.hermes.openCard", this.sessionId);
+				return;
+			case "showHermesCard":
+				await vscode.commands.executeCommand("omp.hermes.showCard", this.sessionId);
 				return;
 			case "exportMarkdownCopy":
 			case "exportMarkdownSave":
-				await exportMarkdown(name === "exportMarkdownCopy" ? "copy" : "save", await this.transcriptMessages(), meta, msg => this.post(msg));
+				await exportMarkdown(name === "exportMarkdownCopy" ? "copy" : "save", this.feed.transcript(), meta, msg => this.post(msg));
 				return;
 		}
 	}
@@ -848,56 +1103,10 @@ export class ChatPanel implements vscode.Disposable {
 		return text;
 	}
 
-	/** Full transcript of the current branch: from omp when running, else the recorded session file. */
-	private async transcriptMessages(): Promise<unknown[]> {
-		if (this.client?.connected) {
-			const res = await this.client.rpc({ type: "get_messages" });
-			const list = rec(res.data)?.messages;
-			if (res.success && Array.isArray(list)) return list;
-		}
-		return this.snapshot?.messages ?? readTranscript(this.meta?.ompSessionFile);
-	}
-
-	private async findUserEntry(text: string): Promise<string | undefined> {
-		const res = await this.client?.rpc({ type: "get_branch_messages" });
-		const msgs = Array.isArray(rec(res?.data)?.messages) ? (rec(res?.data)?.messages as unknown[]).map(x => rec(x) ?? {}) : [];
-		const want = text.trim();
-		const hit = [...msgs].reverse().find(x => String(x.text ?? "").trim() === want) ?? [...msgs].reverse().find(x => String(x.text ?? "").trim().startsWith(want.slice(0, 200)));
-		return hit ? String(hit.entryId) : undefined;
-	}
-
-	/** Restores one file to its content right before the given tool call. */
-	private async revertFile(toolCallId: string, file: string): Promise<void> {
-		const change = this.changes.find(c => c.toolCallId === toolCallId);
-		const entry = change?.files.find(f => f.path === file);
-		if (!change || !entry) return;
-		const name = path.relative(this.meta?.cwd ?? "", file) || file;
-		const later = this.changes.some(c => c.timestamp > change.timestamp && c.files.some(f => f.path === file));
-		const ok = await vscode.window.showWarningMessage(
-			`Revert ${name} to its content before this edit?`,
-			{ modal: true, detail: later ? "Later edits to this file in this session will be undone too." : entry.before === null ? "The file did not exist before; it will be deleted." : undefined },
-			"Revert",
-		);
-		if (ok !== "Revert") return;
-		const uri = vscode.Uri.file(file);
-		if (entry.before === null) await vscode.workspace.fs.delete(uri, { useTrash: true });
-		else {
-			const content = entry.before === EMPTY_BLOB ? new Uint8Array() : fs.readFileSync(blobPath(this.sessionId, entry.before));
-			await vscode.workspace.fs.writeFile(uri, content);
-		}
-		this.commandContext.post({ type: "notice", level: "info", markdown: true, text: `Reverted \`${name}\` to before that ${change.toolName}.` });
-	}
-
+	/** The edit's before/after in VS Code's diff editor, from the texts AO recorded for the tool call. */
 	private async openDiff(toolCallId: string, file?: string): Promise<void> {
-		const change = this.changes.find(c => c.toolCallId === toolCallId);
-		if (change) {
-			const target = file ? (this.resolveCandidate(file) ?? file) : undefined;
-			const entry = change.files.find(f => f.path === target) ?? change.files.find(f => file && f.path.endsWith(file)) ?? change.files[0];
-			await openToolDiff(this.snapshots, this.sessionId, change, entry.path, this.surface.viewColumn);
-			return;
-		}
-		const texts = this.editTexts.get(toolCallId);
-		const t = texts?.find(x => !file || x.path === file || x.path.endsWith(file)) ?? texts?.[0];
+		const texts = this.feed.fileTexts(toolCallId);
+		const t = texts.find(x => !file || x.path === file || x.path.endsWith(file)) ?? texts[0];
 		if (t) {
 			await openTextDiff(this.snapshots, t.path, t.oldText, t.newText, `${path.basename(t.path)} (omp edit)`, this.surface.viewColumn);
 			return;
@@ -934,11 +1143,18 @@ export class ChatPanel implements vscode.Disposable {
 		if (this.disposed) return;
 		this.disposed = true;
 		clearTimeout(this.flushTimer);
-		for (const d of this.clientSubs) d.dispose();
+		clearTimeout(this.syncTimer);
+		this.lease(false);
+		this.shell?.kill();
 		for (const d of this.subs) d.dispose();
-		this.client?.dispose();
 		this.surface.release();
 		this.disposeEmitter.fire();
 		this.disposeEmitter.dispose();
 	}
+}
+
+/** `provider/id` (omp's model option values) → the picker's parts. */
+function splitModel(value: string): { provider: string; id: string } {
+	const slash = value.indexOf("/");
+	return slash > 0 ? { provider: value.slice(0, slash), id: value.slice(slash + 1) } : { provider: "", id: value };
 }
