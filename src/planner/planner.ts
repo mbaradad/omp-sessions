@@ -13,7 +13,7 @@ import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyStat
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
-import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, Task, TaskStatus, TaskView, UsageWindow } from "./types";
+import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, spendUse } from "./usage";
 
 export interface PlannerOptions {
@@ -38,6 +38,13 @@ const BUSY_ACTIVITY: Record<string, true> = { active: true, waiting_input: true,
 /** A spawn AO keeps reporting as not committed after this many tries is given up as lost. */
 const MAX_INCOMPLETE_TRIES = 12;
 const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** What listeners hear: a plan change, a task status transition, or a propagation step. */
+export interface PlannerChange {
+	plan?: true;
+	task?: { task: TaskView; from: TaskStatus };
+	sync?: SyncChange;
+}
 
 export class Planner {
 	state: PlanState;
@@ -64,7 +71,7 @@ export class Planner {
 	private pollTimer: NodeJS.Timeout | undefined;
 	private usageTimer: NodeJS.Timeout | undefined;
 	private readonly retryTimers = new Map<string, NodeJS.Timeout>();
-	private readonly listeners = new Set<(change: { plan?: true; task?: { task: TaskView; from: TaskStatus } }) => void>();
+	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
 	/** omp model ids AO knows, fetched at most every 10 minutes. */
 	private models: { at: number; ids: ReadonlySet<string> } | undefined;
@@ -114,7 +121,7 @@ export class Planner {
 		this.stream?.close();
 	}
 
-	onChange(listener: (change: { plan?: true; task?: { task: TaskView; from: TaskStatus } }) => void): () => void {
+	onChange(listener: (change: PlannerChange) => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
 	}
@@ -201,6 +208,7 @@ export class Planner {
 	private commit(mutate: (s: PlanState) => void): void {
 		if (this.stopped) return;
 		const before = new Map(this.state.tasks.map(t => [t.id, t.status]));
+		const edgesBefore = new Map(this.state.tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, e]) => [`${t.id}\0${parent}`, e.state] as const)));
 		mutate(this.state);
 		this.state.rev++;
 		if (this.opts.file) savePlan(this.opts.file, this.state);
@@ -210,6 +218,12 @@ export class Planner {
 			for (const t of changed) {
 				const view = views.get(t.id);
 				if (view) for (const l of this.listeners) l({ task: { task: view, from: before.get(t.id) as TaskStatus } });
+			}
+		}
+		for (const t of this.state.tasks) {
+			for (const [parent, edge] of Object.entries(t.sync ?? {})) {
+				const from = edgesBefore.get(`${t.id}\0${parent}`);
+				if (from !== edge.state) for (const l of this.listeners) l({ sync: { child: t.id, parent, ...(from ? { from } : {}), to: edge.state, edge: structuredClone(edge) } });
 			}
 		}
 		this.emit();
@@ -232,7 +246,8 @@ export class Planner {
 	}
 
 	/** Old `queue` op: QueueOps on a lane (or on the session lane of an AO session id). */
-	async queue(lane: string, ops: QueueOp[]): Promise<QueueView> {
+	async queue(id: string, ops: QueueOp[]): Promise<QueueView> {
+		const lane = this.resolveLane(id);
 		if (!this.state.lanes.some(l => l.id === lane) && !/^l_[0-9a-f]{10}$/.test(lane)) {
 			// A new session lane must name a session AO knows.
 			if (this.ao && !(await this.ao.session(lane))) throw new PlanError(`unknown session ${lane}`);
@@ -241,8 +256,13 @@ export class Planner {
 		return this.getQueue(lane);
 	}
 
-	getQueue(lane: string): QueueView {
-		return queueView(this.state, this.evaluateNow().views, lane);
+	getQueue(id: string): QueueView {
+		return queueView(this.state, this.evaluateNow().views, this.resolveLane(id));
+	}
+
+	/** A lane by its id, else the lane whose AO session this is (set when its first task is dispatched). */
+	private resolveLane(id: string): string {
+		return this.state.lanes.find(l => l.id === id)?.id ?? this.state.lanes.find(l => l.session === id)?.id ?? id;
 	}
 
 	setConfig(set: Partial<PlannerConfig> | undefined): PlannerStatus {
@@ -275,14 +295,15 @@ export class Planner {
 		return evaluate(this.state, { now: this.now(), busySessions: this.busySessions(), usage: this.usageContext() });
 	}
 
-	view(lane?: string, all = false): PlanView {
+	view(laneOrSession?: string, all = false): PlanView {
+		const lane = laneOrSession && this.resolveLane(laneOrSession);
 		const now = this.now();
 		const { views } = this.evaluateNow();
 		const weekAgo = now - 7 * 86_400_000;
 		const tasks = views
 			.filter(t => (!lane || t.lane === lane) && (all || !((t.state === "done" || t.state === "skipped") && (t.finishedAt ?? now) < weekAgo)))
 			.map(t => (t.waitReason === "starting" && !this.ao ? { ...t, waitReason: `waiting for AO (${this.aoError ?? "not connected"})` } : t));
-		return { rev: this.state.rev, tasks, lanes: laneViews(this.state).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+		return { rev: this.state.rev, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
 	}
 
 	status(views: TaskView[] = this.evaluateNow().views): PlannerStatus {
@@ -552,10 +573,15 @@ export class Planner {
 		if (t.run.via === "spawn" && !t.run.session) {
 			const { session, branch } = await ao.spawn(t.run.spawn ?? {});
 			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
-			this.updateRun(id, x => {
+			// The lane learns its session now (not when the task ends): `show`/`wait` on the lane follow it.
+			this.commit(s => {
+				const x = s.tasks.find(y => y.id === id);
+				if (x?.status !== "running" || !x.run) return;
 				x.run.session = session;
 				x.session = session;
 				delete x.run.tries;
+				const l = laneOf(s, x);
+				if (l) l.session = session;
 			});
 			t = this.task(id);
 			if (!t?.run) return;

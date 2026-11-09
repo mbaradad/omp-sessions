@@ -113,7 +113,7 @@ export async function merge(worktree: string, ref: string, message: string): Pro
 		await git(worktree, [...(await identity(worktree)), "merge", "--no-ff", "--no-edit", "-m", message, ref]);
 		return { ok: true, head: await git(worktree, ["rev-parse", "HEAD"]) };
 	} catch (err) {
-		const conflicts = (await git(worktree, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).split("\n").filter(Boolean);
+		const conflicts = await conflictedFiles(worktree);
 		await abortMerge(worktree);
 		if (!conflicts.length) throw err;
 		return { ok: false, head: await git(worktree, ["rev-parse", "HEAD"]), conflicts };
@@ -129,12 +129,44 @@ export async function mergeInProgress(worktree: string): Promise<boolean> {
 	return !!(await revParse(worktree, "MERGE_HEAD"));
 }
 
-/** Subjects and changed files between two commits (for the follow-up prompt). */
+// Ported from omp/worktrees `src/shared/worktree-git.ts` (`ChangedFile`, `parseNameStatus`, `conflictedFiles`).
+// Its worktree creation and `omp/` branches are not used: AO makes the session worktrees.
+export interface ChangedFile {
+	/** git status letter: A, M, D, R, C, T, U. */
+	status: string;
+	/** Path relative to the worktree root (forward slashes). */
+	path: string;
+	/** Path before a rename/copy. */
+	from?: string;
+}
+
+/** Parses `git diff --name-status -z` output. */
+export function parseNameStatus(out: string): ChangedFile[] {
+	const parts = out.split("\0");
+	const files: ChangedFile[] = [];
+	for (let i = 0; i + 1 < parts.length; ) {
+		const code = parts[i++];
+		if (!code) continue;
+		const status = code[0];
+		if (status === "R" || status === "C") {
+			const from = parts[i++];
+			files.push({ status, from, path: parts[i++] });
+		} else files.push({ status, path: parts[i++] });
+	}
+	return files;
+}
+
+/** Files with unresolved merge conflicts. */
+export async function conflictedFiles(cwd: string): Promise<string[]> {
+	return (await git(cwd, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "")).split("\n").filter(Boolean);
+}
+
+/** Subjects and changed files (`M path`, `A path`, …) between two commits (for the follow-up prompt). */
 export async function changesBetween(repo: string, from: string | undefined, to: string): Promise<{ subjects: string[]; files: string[] }> {
 	const range = from ? `${from}..${to}` : to;
 	const subjects = (await git(repo, ["log", "--format=%s", "-n", "20", range]).catch(() => "")).split("\n").filter(Boolean);
-	const files = from ? (await git(repo, ["diff", "--name-only", from, to]).catch(() => "")).split("\n").filter(Boolean) : [];
-	return { subjects, files };
+	const out = from ? await git(repo, ["-c", "core.quotepath=off", "diff", "--name-status", "-z", "-M", from, to, "--"]).catch(() => "") : "";
+	return { subjects, files: parseNameStatus(out).map(f => (f.from ? `${f.status} ${f.from} → ${f.path}` : `${f.status} ${f.path}`)) };
 }
 
 /**
