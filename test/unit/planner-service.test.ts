@@ -1,152 +1,12 @@
-// The planner service against an in-memory AO that behaves like AO where it matters: spawn dedupes on
-// clientRequestId, messages dedupe on clientMessageId, turns finish when the test says so. Covers the
-// dispatch order of a graph under a concurrency limit, and restarts (crash before AO answered, crash
-// mid-turn, a session killed meanwhile): nothing is dispatched twice, an interrupted task is marked.
+// The planner service against an in-memory AO: dispatch order of a graph under a concurrency limit, and
+// restarts (crash before AO answered, crash mid-turn, a session killed meanwhile): nothing is dispatched
+// twice, an interrupted task is marked.
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { type TestContext, test } from "node:test";
+import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
-import { Planner } from "../../src/planner/planner";
+import { FakeAo, byTitle, running, start, tempPlan, until } from "./planner-fake-ao";
 import { loadPlan } from "../../src/planner/store";
-import type { Task } from "../../src/planner/types";
 
-interface FakeSession {
-	id: string;
-	terminated: boolean;
-	turns: AoTurnInfo[];
-	conv: AoConversationInfo;
-	spawnBody: Record<string, unknown>;
-}
-
-class FakeAo implements AoPort {
-	readonly url = "fake://ao";
-	sessions = new Map<string, FakeSession>();
-	byKey = new Map<string, string>();
-	/** Sessions actually created (a replayed spawn doesn't count). */
-	created = 0;
-	/** While set, spawn calls reach AO (are recorded) but their answers never come back. */
-	dropAnswers = false;
-	private handlers: AoStreamHandlers | undefined;
-	private seq = 0;
-
-	private event(session: string): void {
-		this.handlers?.onEvent(++this.seq, session, "idle");
-	}
-
-	private turn(s: FakeSession, text: string, clientMessageId?: string): string {
-		const id = `${s.id}-t${s.conv.turns.length + 1}`;
-		s.conv.turns.push({ id, state: "running", requestedAt: Date.now() + s.conv.turns.length });
-		s.conv.messages.push({ turnId: id, role: "user", text, streaming: false, ...(clientMessageId ? { clientMessageId } : {}) });
-		return id;
-	}
-
-	async spawn(body: Record<string, unknown>) {
-		const key = String(body.clientRequestId);
-		let id = this.byKey.get(key);
-		if (!id) {
-			id = `s${++this.created}`;
-			const s: FakeSession = { id, terminated: false, turns: [], conv: { turns: [], messages: [], cost: 0 }, spawnBody: body };
-			s.turns = s.conv.turns;
-			this.sessions.set(id, s);
-			this.byKey.set(key, id);
-			if (typeof body.prompt === "string") this.turn(s, body.prompt);
-		}
-		if (this.dropAnswers) return new Promise<never>(() => {});
-		return { session: id };
-	}
-
-	async send(session: string, text: string, clientMessageId: string) {
-		const s = this.sessions.get(session);
-		assert.ok(s && !s.terminated);
-		const dup = s.conv.messages.find(m => m.clientMessageId === clientMessageId);
-		return { turn: dup ? undefined : this.turn(s, text, clientMessageId) } as { turn?: string };
-	}
-
-	async conversation(session: string) {
-		const s = this.sessions.get(session);
-		if (!s) throw Object.assign(new Error("not found"), { status: 404 });
-		return structuredClone(s.conv);
-	}
-
-	async session(id: string) {
-		const s = this.sessions.get(id);
-		return s && { id, terminated: s.terminated };
-	}
-
-	async activeSessions() {
-		return [];
-	}
-
-	async interrupt(session: string) {
-		this.finishTurn(session, "interrupted");
-	}
-
-	async restore(session: string) {
-		const s = this.sessions.get(session);
-		if (s) s.terminated = false;
-	}
-
-	async setModel() {
-		return undefined;
-	}
-
-	async setThinking() {
-		return undefined;
-	}
-
-	async projectFor() {
-		return undefined;
-	}
-
-	subscribe(_after: number | undefined, handlers: AoStreamHandlers) {
-		this.handlers = handlers;
-		setImmediate(() => handlers.onOpen(false));
-		return { close: () => (this.handlers = undefined), lastEventId: undefined };
-	}
-
-	/** Ends the session's running turn. */
-	finishTurn(session: string, state: AoTurnInfo["state"], reply?: string, cost = 0.1): void {
-		const s = this.sessions.get(session);
-		const turn = s?.conv.turns.find(t => t.state === "running");
-		assert.ok(s && turn, `no running turn in ${session}`);
-		turn.state = state;
-		if (reply) s.conv.messages.push({ turnId: turn.id, role: "assistant", text: reply, streaming: false });
-		s.conv.cost = (s.conv.cost ?? 0) + cost;
-		this.event(session);
-	}
-
-	promptOf(session: string): string {
-		return this.sessions.get(session)?.conv.messages.find(m => m.role === "user")?.text ?? "";
-	}
-}
-
-async function until<T>(what: string, fn: () => T | undefined | false, timeoutMs = 5000): Promise<T> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const v = fn();
-		if (v) return v;
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-		await sleep(20);
-	}
-}
-
-function tempPlan(t: TestContext): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-test-"));
-	t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-	return path.join(dir, "plan.json");
-}
-
-function start(file: string, ao: FakeAo): Planner {
-	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50 });
-	p.start();
-	return p;
-}
-
-const byTitle = (p: Planner, title: string): Task => p.state.tasks.find(t => t.title === title) as Task;
-const running = (p: Planner) => p.state.tasks.filter(t => t.status === "running").map(t => t.title);
 
 test("A → (B, C) under a limit of 1, with a planner restart mid-run: each task runs once, in order, with A's result", async t => {
 	const file = tempPlan(t);
@@ -240,7 +100,111 @@ test("abort and timeout interrupt the AO turn; abort pauses, a timeout fails", a
 	p.edit([{ op: "abort", id: byTitle(p, "long").id }]);
 	await until("aborted", () => byTitle(p, "long").status === "pending");
 	assert.equal(byTitle(p, "long").paused, true);
-	await until("timed out", () => byTitle(p, "slow").status === "failed", 8000);
+	await until("timed out", () => byTitle(p, "slow").status === "failed");
 	assert.match(byTitle(p, "slow").summary ?? "", /Timed out/);
 	p.stop();
+});
+
+test("a limit omp gave up retrying arrives as a completed turn: the task is held until the reset, not done (G35)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	const reset = new Date(Date.now() + 2 * 3_600_000).toISOString();
+	p.edit([
+		{ op: "add", task: { title: "limited", options: { model: "anthropic/claude-x", retries: 2 } } },
+		{ op: "add", task: { title: "talks about limits" } },
+	]);
+	const s1 = await until("limited sent", () => byTitle(p, "limited").run?.phase === "sent" && byTitle(p, "limited").run?.session);
+	ao.finishTurn(s1, "completed", `429 You have reached your usage limit. Your limit resets at ${reset}. Please try again in 2 hours.`);
+	await until("held", () => byTitle(p, "limited").status === "pending" && p.state.limits.anthropic);
+	assert.equal(byTitle(p, "limited").attempts, undefined);
+	assert.equal(p.state.limits.anthropic.until, Date.parse(reset));
+	assert.equal(p.view().tasks.find(x => x.title === "limited")?.state, "held");
+	// A normal answer that merely mentions rate limits is a normal answer.
+	const s2 = await until("other sent", () => byTitle(p, "talks about limits").run?.phase === "sent" && byTitle(p, "talks about limits").run?.session);
+	ao.finishTurn(s2, "completed", "I added rate limiting to the API: a token bucket per client, 100 requests a minute; clients above it get 429 and a Retry-After header. Tests cover the bucket refill.");
+	await until("done", () => byTitle(p, "talks about limits").status === "done");
+});
+
+test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in bypass-permissions unless told otherwise", async t => {
+	const ao = new FakeAo();
+	ao.modelIds = ["anthropic/claude-x"];
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { approvalMode: "default" } } }, { op: "add", task: { title: "plain" } }]);
+	await until("typo failed", () => byTitle(p, "typo").status === "failed");
+	assert.match(byTitle(p, "typo").summary ?? "", /doesn't know the model "anthropic\/claude-xx"/);
+	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
+	assert.equal(ao.created, 2);
+	assert.equal(ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody.approvalMode, "default");
+	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.approvalMode, "bypass-permissions");
+	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.prompt, undefined, "the task goes out as a message, not with the spawn");
+});
+
+test("a chat host that dies mid-turn leaves the task interrupted; running it again resumes the agent and continues the session (G39)", async t => {
+	const file = tempPlan(t);
+	const ao = new FakeAo();
+	let p = start(file, ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "lane.add", id: "l_00000000dd" }, { op: "add", task: { title: "long", lane: "l_00000000dd" } }]);
+	const s = await until("sent", () => byTitle(p, "long").run?.phase === "sent" && byTitle(p, "long").run?.session);
+	ao.killHost(s);
+	await until("interrupted", () => byTitle(p, "long").interrupted);
+	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+	assert.equal(p.state.lanes[0].autoRun, false);
+	// Across a planner restart it stays put: nothing is re-sent unattended.
+	p.stop();
+	p = start(file, ao);
+	t.after(() => p.stop());
+	await sleep(300);
+	assert.equal(byTitle(p, "long").status, "pending");
+	assert.deepEqual(ao.resumed, []);
+	p.edit([{ op: "run", id: byTitle(p, "long").id }]);
+	await until("re-sent", () => byTitle(p, "long").run?.phase === "sent");
+	assert.deepEqual(ao.resumed, [s]);
+	assert.equal(ao.created, 1);
+	assert.equal(byTitle(p, "long").run?.session, s);
+});
+
+test("a lane is found by its id and by its AO session; its session is known from dispatch on; the lane reports its state", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	const at = Date.now() + 3_600_000;
+	const { refs } = p.edit([{ op: "lane.add", ref: "l" }, { op: "add", task: { title: "first", lane: "@l" } }, { op: "add", task: { title: "later", startAt: at, lane: "@l" } }, { op: "lane.add", ref: "m", autoRun: false }, { op: "add", task: { title: "parked", lane: "@m" } }]);
+	const session = await until("first sent", () => byTitle(p, "first").run?.phase === "sent" && byTitle(p, "first").run?.session);
+	// Running: the lane already names its session.
+	assert.equal(p.state.lanes.find(l => l.id === refs.l)?.session, session);
+	assert.equal(p.getQueue(session).id, refs.l);
+	assert.equal(p.getQueue(refs.l).state, "running");
+	assert.deepEqual(p.view(session).lanes.map(l => l.id), [refs.l]);
+	assert.equal(p.getQueue(refs.m).state, "paused");
+	ao.finishTurn(session, "completed", "done");
+	await until("later is next", () => byTitle(p, "first").status === "done");
+	const q = p.getQueue(session);
+	assert.equal(q.state, "scheduled");
+	assert.equal(q.waitUntil, at);
+	// Queue ops through the session id land on the same lane.
+	await p.queue(session, [{ op: "add", title: "third" }]);
+	assert.equal(p.getQueue(refs.l).tasks.length, 3);
+	assert.equal(p.state.lanes.length, 2);
+});
+
+test("any provider error omp ends as a completed reply fails the run (retries apply); a host that died with no event is noticed", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "errs" } }, { op: "add", task: { title: "retries", options: { retries: 1 } } }, { op: "add", task: { title: "silent death" } }]);
+	const sErr = await until("errs sent", () => byTitle(p, "errs").run?.phase === "sent" && byTitle(p, "errs").run?.session);
+	const sRetry = await until("retries sent", () => byTitle(p, "retries").run?.phase === "sent" && byTitle(p, "retries").run?.session);
+	const sDead = await until("dead sent", () => byTitle(p, "silent death").run?.phase === "sent" && byTitle(p, "silent death").run?.session);
+	ao.finishTurn(sErr, "completed", "Error: fake provider failure");
+	ao.finishTurn(sRetry, "completed", '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+	ao.killHostSilently(sDead);
+	await until("errs failed", () => byTitle(p, "errs").status === "failed");
+	assert.match(byTitle(p, "errs").summary ?? "", /Error: fake provider failure/);
+	await until("retry scheduled", () => byTitle(p, "retries").status === "pending" && byTitle(p, "retries").attempts === 1);
+	assert.match(byTitle(p, "retries").summary ?? "", /Attempt 1 of 2 failed/);
+	await until("silent death interrupted", () => byTitle(p, "silent death").interrupted);
 });
