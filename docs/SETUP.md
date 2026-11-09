@@ -92,6 +92,8 @@ Limits:
 
 The old server (`omp-sessions server`) and its phone app are gone; uninstall the old login service with `omp-sessions server uninstall` before you remove the old extension.
 
+The old Hermes plugin (`omp-sessions`, tools `omp_*`, cards assigned to `omp`) is a different plugin from `switchyard`, and its settings don't move by themselves. In each profile that has it: install the new one (`switchyard hermes install --all-profiles`), set the lane up again in the profile that ran it (`hermes switchyard lane on --board <board>`, then `hermes switchyard board <board> --folder … --group … --mode …` with the values of `plugins.entries.omp-sessions.settings.lane` in that profile's `config.yaml`), remove the old one (`hermes -p <profile> plugins remove omp-sessions`), and restart the gateway and dashboard (`hermes gateway restart`) so neither keeps the old plugin loaded. Cards still assigned to `omp` stay where they are: reassign them to `switchyard` (`hermes kanban assign <card> switchyard`), or keep the old name with `hermes switchyard lane on --assignee omp`.
+
 ## 2. Hermes Agent (optional)
 
 1. **Hermes** on the same machine, with its gateway running as a service (`hermes gateway install`). Run the web dashboard too (`hermes dashboard`) if you want the browser page or Hermes Desktop in remote mode.

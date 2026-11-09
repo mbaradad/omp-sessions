@@ -141,7 +141,7 @@ export class Checkpoints implements vscode.Disposable {
 		const queued = conversation.turns.filter(t => t.state === "queued").length;
 		const detail = [
 			plan.rewound.length > 1 ? `${plan.rewound.length} prompts are undone: this one and every later one.` : "",
-			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
+			plan.files.length ? `${plan.files.length === 1 ? "1 file goes back to its" : `${plan.files.length} files go back to their`} content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
 			"The conversation rewinds to before the prompt, which goes back into the composer.",
 			plan.merged.length ? `Changed since omp wrote them, without overlapping its edits (kept): ${listNames(plan.merged.map(rel))}.` : "",
 			plan.conflicts.length ? `Changed since omp wrote them, overlapping its edits (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
