@@ -13,9 +13,7 @@ import { aoPort } from "../../src/planner/ao-port";
 import { Planner } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
 let client: AoClient;
@@ -121,4 +119,29 @@ test("a lane continues its session; a scheduled task waits for its time", { skip
 	await until("later done", () => task(p, "later").status === "done");
 	assert.ok((task(p, "later").startedAt ?? 0) >= startAt);
 	p.stop();
+});
+
+test("graph propagation on a real AO daemon: children branch from the parent's commit; a later parent change reaches the finished child", { skip }, async () => {
+	const file = path.join(dir, "propagation.json");
+	const p = startPlanner(file);
+	p.setConfig({ maxConcurrent: 0 });
+	const options = { project: projectId };
+	p.edit([
+		{ op: "add", ref: "a", task: { title: "PA", notes: "write x.txt A1\necho a-done", options } },
+		{ op: "add", task: { title: "PB", notes: "echo b-done", after: ["@a"], options } },
+	]);
+	await until("PB done", () => task(p, "PB").status === "done");
+	const a = task(p, "PA");
+	const b = task(p, "PB");
+	assert.equal(b.git?.branch, `switchyard/${b.id}`);
+	assert.equal(fs.readFileSync(path.join(b.git?.worktree as string, "x.txt"), "utf8").trim(), "A1");
+	assert.equal(b.sync?.[a.id]?.state, "in-sync");
+	// A runs again with a different file content: B (finished) gets it merged and is marked, not re-run.
+	p.edit([{ op: "update", id: a.id, notes: "write x.txt A2\necho a-again" }, { op: "requeue", id: a.id }]);
+	const aFile = path.join(a.git?.worktree as string, "x.txt");
+	await until("A done again", () => task(p, "PA").status === "done" && fs.readFileSync(aFile, "utf8").trim() === "A2");
+	await until("B marked", () => task(p, "PB").sync?.[a.id]?.state === "upstream-changed");
+	assert.equal(fs.readFileSync(path.join(b.git?.worktree as string, "x.txt"), "utf8").trim(), "A2");
+	assert.equal((await userPrompts(task(p, "PB").session as string)).length, 1);
+	assert.equal(task(p, "PB").session, b.session);
 });

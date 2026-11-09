@@ -37,7 +37,7 @@ export function parseOmpUsage(raw: unknown): UsageWindow[] {
 }
 
 /** Runs `omp usage --json`; rejects when omp is missing or fails. */
-export function readOmpUsage(omp = process.env.OMP_PLANNER_OMP || "omp", timeoutMs = 60_000): Promise<UsageWindow[]> {
+export function readOmpUsage(omp = process.env.SWITCHYARD_PLANNER_OMP || "omp", timeoutMs = 60_000): Promise<UsageWindow[]> {
 	const { promise, resolve, reject } = Promise.withResolvers<UsageWindow[]>();
 	execFile(omp, ["usage", "--json"], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
 		if (err) {

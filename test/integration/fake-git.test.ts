@@ -7,7 +7,6 @@ import * as path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AoClient } from "../../src/ao/client";
-import { lastReply } from "../../src/ao/model";
 import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
@@ -35,14 +34,22 @@ function git(cwd: string, ...args: string[]): string {
 	return r.stdout.trim();
 }
 
-/** Polls (real time: the daemon and fake run on it) until the session's `turns`-th turn is final; its reply. */
-async function replyOf(sessionId: string, turns: number): Promise<string | undefined> {
+/**
+ * Polls (real time: the daemon and fake run on it) until the session's `n`-th turn is final and its last
+ * assistant message is too; that message's text. AO can show a turn `completed` a moment before it
+ * flags the last message `streaming: false`, so a client reading the reply must wait for that.
+ */
+async function replyOf(sessionId: string, n: number): Promise<string | undefined> {
 	const deadline = Date.now() + 30_000;
 	for (;;) {
 		const conv = await client.getConversation(sessionId);
-		const turn = conv.turns[turns - 1];
-		if (turn && turn.state !== "queued" && turn.state !== "running") return lastReply(conv);
-		if (Date.now() > deadline) throw new Error(`turn ${turns} of ${sessionId} still ${turn?.state ?? "missing"}`);
+		const turn = conv.turns[n - 1];
+		if (turn && turn.state !== "queued" && turn.state !== "running") {
+			assert.equal(turn.state, "completed", `turn ${n} of ${sessionId}: ${turn.state} ${turn.errorMessage ?? ""}`);
+			const reply = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant" && !m.streaming).at(-1);
+			if (reply) return reply.text;
+		}
+		if (Date.now() > deadline) throw new Error(`turn ${n} of ${sessionId}: ${turn?.state ?? "missing"}, messages ${JSON.stringify(conv.messages.filter(m => m.turnId === turn?.id).map(m => [m.role, m.streaming, m.text]))}`);
 		await sleep(100);
 	}
 }

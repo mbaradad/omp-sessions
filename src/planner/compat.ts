@@ -19,13 +19,16 @@ export function queueOpsToPlanOps(state: PlanState, lane: string, ops: readonly 
 	const exists = state.lanes.some(l => l.id === lane);
 	if (!exists) out.push({ op: "lane.add", id: lane, autoRun: false });
 	const members = () => state.tasks.filter(t => t.lane === lane);
+	/** Refs of the tasks this batch adds, so a later `after` in the same batch reaches them. */
+	const added: string[] = [];
 	for (const raw of ops) {
 		const o = rec(raw) as (QueueOp & Record<string, unknown>) | undefined;
 		if (!o) throw new PlanError("an op must be an object");
 		const opName: unknown = o.op;
 		switch (o.op) {
 			case "add":
-				out.push({ op: "add", task: { title: o.title, notes: o.notes, subtasks: o.subtasks, options: o.options, done: o.done, lane }, ...(typeof o.index === "number" ? { index: o.index } : {}) });
+				added.push(`q${added.length}`);
+				out.push({ op: "add", ref: added[added.length - 1], task: { title: o.title, notes: o.notes, subtasks: o.subtasks, options: o.options, done: o.done, lane }, ...(typeof o.index === "number" ? { index: o.index } : {}) });
 				break;
 			case "update": {
 				if (o.title !== undefined || o.notes !== undefined) out.push({ op: "update", id: o.id, title: o.title, notes: o.notes });
@@ -79,6 +82,7 @@ export function queueOpsToPlanOps(state: PlanState, lane: string, ops: readonly 
 					else ids.push(id);
 				}
 				for (const t of members()) if (t.status === "pending") out.push({ op: "after", id: t.id, ids });
+				for (const ref of added) out.push({ op: "after", id: `@${ref}`, ids });
 				break;
 			}
 			default:
@@ -103,5 +107,7 @@ export function queueView(state: PlanState, views: readonly TaskView[], lane: st
 	};
 	if (l?.startAt) out.startAt = l.startAt;
 	if (l?.session) out.session = l.session;
+	const head = views.find(t => t.lane === lane && (t.status === "pending" || t.status === "running"));
+	if (head) Object.assign(out, { state: head.state, ...(head.waitReason ? { waitReason: head.waitReason } : {}), ...(head.waitUntil ? { waitUntil: head.waitUntil } : {}) });
 	return out;
 }
