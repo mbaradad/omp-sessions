@@ -11,4 +11,8 @@ npx -y playwright screenshot --device "Desktop Chrome HiDPI" --viewport-size 120
 npx -y playwright screenshot --viewport-size 1200,630 "file://$PWD/docs/images/src/og.html" site/assets/og.png
 ```
 
-The viewport height is the `body` height in each file. Fonts: Inter (falls back to the system sans).
+The viewport height is the `body` height in each file. Fonts: Inter (falls back to the system sans). Then shrink the PNGs (about a third of the size, no visible change):
+
+```sh
+npx -y -p pngquant-bin pngquant --quality 85-98 --speed 1 --force --ext .png docs/images/{hero,how-it-works,a-day,phone,setup}.png site/assets/og.png
+```
