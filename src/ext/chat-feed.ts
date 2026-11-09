@@ -8,6 +8,7 @@
 // `apply` for every later page, emitting frames only for rows that changed.
 import type { AoActivity, AoConversation, AoMessage, AoTurn, AoUsage } from "../ao/client";
 import { type AoQuestion, answerFor, questionOf } from "../ao/model";
+import { ompToolCallId } from "../shared/checkpoints";
 import { diffTexts } from "../shared/diff";
 import type { OmpFrame, UiRequest } from "../shared/protocol";
 import type { DiffsByPath, SlimState, ToWebview } from "../shared/webview";
@@ -32,28 +33,11 @@ function isTool(a: AoActivity): boolean {
 	return !!TOOL_KINDS[a.activityKind] || (a.activityKind === "reasoning" && !!rec(a.detail)?.toolKind);
 }
 
-/**
- * The id inside AO's ACP `providerItemId`: `acp:<len>:<scope><len>:<id>`, each part length-prefixed
- * (`acp:41:<conversation uuid>:root30:toolu_01…`). Undefined for anything else (steers, approvals, malformed).
- */
+/** omp's tool call id inside AO's ACP `providerItemId` (decoded by checkpoints' `ompToolCallId`); undefined for any other id (steers, approvals, malformed). */
 export function ompItemId(providerItemId: string | undefined): string | undefined {
 	if (!providerItemId?.startsWith("acp:")) return undefined;
-	// The lengths count UTF-8 bytes, so walk the bytes.
-	const bytes = Buffer.from(providerItemId, "utf8");
-	let at = 4;
-	const part = (): Buffer | undefined => {
-		let colon = bytes.indexOf(0x3a, at);
-		if (colon < 0 || colon === at || !/^\d+$/.test(bytes.toString("latin1", at, colon))) return undefined;
-		const len = Number(bytes.toString("latin1", at, colon));
-		at = colon + 1;
-		if (at + len > bytes.length) return undefined;
-		const out = bytes.subarray(at, at + len);
-		at += len;
-		return out;
-	};
-	if (!part()) return undefined;
-	const id = part();
-	return id && at === bytes.length ? id.toString("utf8") : undefined;
+	const id = ompToolCallId(providerItemId);
+	return id === providerItemId ? undefined : id;
 }
 
 /** omp's tool name for an ACP tool activity: AO keeps only ACP's kind and omp's raw arguments. */
