@@ -131,6 +131,19 @@ export function isLimitError(err: TurnError, now = Date.now()): boolean {
 	return true;
 }
 
+/** How a provider's limit error opens: a status code, JSON, the provider's name, or the limit wording itself. */
+const LIMIT_REPLY_START = /^(?:error:?\s*)?(?:\d{3}\b|[{[]|you(?:'ve| have) (?:reached|hit|exceeded)|(?:claude(?: ai)?|chatgpt|openai|anthropic|gemini|codex)\b[^.\n]{0,40}\b(?:usage|rate)[ _-]?limit|(?:usage|rate)[ _-]?limit(?:s| reached| exceeded)?\b|too many requests|quota|resource[_ ]exhausted)/i;
+
+/**
+ * omp reports a provider limit it gave up retrying as the turn's last assistant message, with the turn
+ * itself `completed` (GAPS G35). A reply counts only when it is short and opens like that error; a
+ * normal answer that happens to discuss rate limits or 429s does not.
+ */
+export function replyIsLimitError(text: string, now = Date.now()): boolean {
+	const t = text.trim();
+	return t.length > 0 && t.length <= 1500 && LIMIT_REPLY_START.test(t) && isLimitError({ message: t }, now);
+}
+
 export function limitBackoffMs(failures: number, base = LIMIT_BACKOFF_BASE_MS): number {
 	return Math.min(LIMIT_BACKOFF_MAX_MS, base * 2 ** Math.max(0, failures - 1));
 }

@@ -46,13 +46,18 @@ export interface AoStreamHandlers {
 
 export interface AoPort {
 	readonly url: string;
-	spawn(body: Record<string, unknown>): Promise<{ session: string }>;
+	/** `branch`: the git branch AO checked out for the session (project sessions). */
+	spawn(body: Record<string, unknown>): Promise<{ session: string; branch?: string }>;
 	send(session: string, text: string, clientMessageId: string): Promise<{ turn?: string }>;
 	conversation(session: string): Promise<AoConversationInfo>;
 	/** Undefined when AO doesn't know the session (deleted). */
 	session(id: string): Promise<AoSessionInfo | undefined>;
 	activeSessions(): Promise<AoSessionInfo[]>;
 	interrupt(session: string): Promise<void>;
+	/** Brings back the agent of an `exited` session (host died or stopped); the transcript continues. */
+	resumeAgent(session: string): Promise<void>;
+	/** omp model ids AO knows (`provider/id`); empty when AO can't say. */
+	models(): Promise<string[]>;
 	restore(session: string): Promise<void>;
 	/** Sets the model for the next turns; returns the one it replaced. */
 	setModel(session: string, model: string): Promise<string | undefined>;
@@ -60,6 +65,8 @@ export interface AoPort {
 	setThinking(session: string, level: string): Promise<string | undefined>;
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
+	/** Folder of an AO project (the repo's main checkout). */
+	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
 }
 
@@ -109,11 +116,27 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async spawn(body) {
 			const res = await ao.spawnSession(body as Parameters<AoClient["spawnSession"]>[0]);
-			return { session: res.session.id };
+			return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}) };
 		},
 		async send(session, text, clientMessageId) {
-			const res = await ao.sendMessage(session, { text, clientMessageId });
+			const attempt = () => ao.sendMessage(session, { text, clientMessageId });
+			let res: Awaited<ReturnType<typeof attempt>>;
+			try {
+				res = await attempt();
+			} catch (err) {
+				// A dead chat host (G39): bring the agent back, then send once more (the clientMessageId dedupes).
+				if (!(err instanceof AoError && err.code === "CHAT_CONTROLLER_NOT_READY")) throw err;
+				await ao.resumeAgent(session);
+				res = await attempt();
+			}
 			return res.turnId ? { turn: res.turnId } : {};
+		},
+		async resumeAgent(session) {
+			await ao.resumeAgent(session);
+		},
+		async models() {
+			const { data } = await ao.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } });
+			return (data?.models ?? []).map(m => (typeof m === "string" ? m : m.id));
 		},
 		async conversation(session) {
 			return conversationInfo(await ao.getConversation(session));
@@ -153,6 +176,9 @@ export function aoPort(ao: AoClient): AoPort {
 			const { error, response } = await ao.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId: session, configId: "thinking" } }, body: { value: level } });
 			if (!response.ok) throw new AoError(`thinking level ${level}: ${JSON.stringify(error)}`, response.status, `HTTP_${response.status}`);
 			return previous || undefined;
+		},
+		async projectPath(id) {
+			return (await ao.listProjects()).find(p => p.id === id)?.path;
 		},
 		async projectFor(cwd) {
 			return (await ao.projectForFolder(cwd))?.id;

@@ -11,6 +11,7 @@ import { type Hold, type TurnError, type UsageContext, holdFor, isLimitError, no
 import { nextOccurrence, normalizeRule } from "./when";
 import {
 	APPROVAL_MODES,
+	type EdgeSync,
 	type Lane,
 	type LaneView,
 	type PlanOp,
@@ -39,6 +40,7 @@ const MAX_AFTER = 50;
 export const MAX_RETRIES = 10;
 export const MAX_TIMEOUT_MINUTES = 24 * 60;
 export const MAX_CONCURRENT = 64;
+const EDGE_STATES: ReadonlyArray<EdgeSync["state"]> = ["in-sync", "pending", "merged", "upstream-changed", "resolving", "conflict"];
 /** Planner-dispatched turns run under these defaults unless a task, lane or config says otherwise. */
 export const DEFAULT_CONFIG: PlannerConfig = { maxConcurrent: 2, paused: false, usage: { holdAtPercent: 95, spareBelowPercent: 60 } };
 
@@ -89,7 +91,9 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	const out: TaskOptions = {};
 	const model = typeof r.model === "string" ? r.model.trim() : "";
 	if (/^[^/\s]+\/\S+$/.test(model)) out.model = model;
-	if (typeof r.thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(r.thinking)) out.thinking = r.thinking;
+	// Old queues and clients say `minimal`; omp's lowest named level above off is `low`.
+	const thinking = r.thinking === "minimal" ? "low" : r.thinking;
+	if (typeof thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(thinking)) out.thinking = thinking;
 	if (r.freshContext === true) out.freshContext = true;
 	const retries = finite(r.retries);
 	if (retries !== undefined && retries >= 1) out.retries = Math.min(MAX_RETRIES, Math.trunc(retries));
@@ -161,7 +165,7 @@ function normalizeRun(raw: unknown): TaskRun | undefined {
 	if (typeof r.provider === "string") run.provider = r.provider;
 	const spawn = rec(r.spawn);
 	if (spawn) run.spawn = spawn;
-	if (r.sendAfterSpawn === true) run.sendAfterSpawn = true;
+	if (typeof r.repo === "string") run.repo = r.repo;
 	for (const k of ["settings", "restore"] as const) {
 		const v = rec(r[k]);
 		if (!v) continue;
@@ -231,6 +235,28 @@ export function normalizeState(raw: unknown): PlanState {
 		if (tr.paused === true) task.paused = true;
 		if (typeof tr.session === "string" && tr.session) task.session = tr.session;
 		if (typeof tr.recur === "string" && tr.recur) task.recur = tr.recur;
+		if (typeof tr.turn === "string" && tr.turn) task.turn = tr.turn;
+		if (typeof tr.followUp === "string" && tr.followUp) task.followUp = tr.followUp.slice(0, MAX_NOTES);
+		if (tr.followUpOnly === true && task.followUp) task.followUpOnly = true;
+		const git = rec(tr.git);
+		if (git && typeof git.repo === "string" && typeof git.branch === "string") {
+			task.git = { repo: git.repo, branch: git.branch };
+			if (typeof git.worktree === "string") task.git.worktree = git.worktree;
+			if (typeof git.head === "string") task.git.head = git.head;
+		}
+		const sync = rec(tr.sync);
+		if (sync) {
+			task.sync = {};
+			for (const [parent, raw] of Object.entries(sync)) {
+				const e = rec(raw);
+				if (!e || typeof e.state !== "string" || !EDGE_STATES.includes(e.state as EdgeSync["state"])) continue;
+				const edge: EdgeSync = { state: e.state as EdgeSync["state"], at: finite(e.at) ?? 0 };
+				for (const k of ["head", "pendingHead", "before", "after"] as const) if (typeof e[k] === "string") edge[k] = e[k] as string;
+				if (e.prompt === true) edge.prompt = true;
+				if (Array.isArray(e.files)) edge.files = e.files.filter((f): f is string => typeof f === "string");
+				task.sync[parent] = edge;
+			}
+		}
 		const run = status === "running" ? normalizeRun(tr.run) : undefined;
 		if (run) task.run = run;
 		else if (status === "running") {
@@ -275,10 +301,18 @@ export function effectivePriority(state: PlanState, task: Task): Priority {
 	return task.priority ?? laneOf(state, task)?.priority ?? "normal";
 }
 
-/** A dependency counts as finished when it is done or skipped; a missing one never does. */
+/**
+ * A dependency counts as finished when it is done or skipped (a missing one never does). A done task
+ * in git counts once its work is committed: children branch from that commit.
+ */
 function resolved(byId: Map<string, Task>, id: string): boolean {
 	const t = byId.get(id);
-	return !!t && (t.status === "done" || t.status === "skipped");
+	return !!t && (t.status === "skipped" || (t.status === "done" && (!t.git || !!t.git.head)));
+}
+
+/** The AO session a run continues: the lane's, else the task's own from an earlier run; none with fresh context. */
+export function targetSession(s: PlanState, t: Task): string | undefined {
+	return effectiveOptions(s, t).freshContext ? undefined : (laneOf(s, t)?.session ?? t.session);
 }
 
 /**
@@ -311,7 +345,7 @@ export function afterError(id: string, after: readonly string[], exists: (id: st
 // ---------- edits ----------
 
 /** Side effects an edit asks the service to carry out in AO. */
-export type Effect = { kind: "interrupt"; task: string; session: string };
+export type Effect = { kind: "interrupt"; task: string; session: string } | { kind: "sync"; task: string };
 
 export interface EditResult {
 	state: PlanState;
@@ -330,6 +364,7 @@ function resetRun(t: Task): void {
 	delete t.interrupted;
 	delete t.holdUntil;
 	delete t.run;
+	delete t.followUpOnly;
 }
 
 /** Positions of `lane`'s tasks (or of free tasks) in the plan array. */
@@ -736,6 +771,10 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 				s.recurring = s.recurring.filter(x => x !== r);
 				break;
 			}
+			case "sync":
+				// Carried out by the service: re-check the task's branch and propagate to its children.
+				effects.push({ kind: "sync", task: task(o.id).id });
+				break;
 			case "recur.fire":
 				fireRecurring(s, recurring(o.id), now);
 				break;
@@ -940,7 +979,7 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 			set("held", { waitReason: hold.reason, ...(hold.until ? { waitUntil: hold.until } : {}) });
 			continue;
 		}
-		const session = !opts.freshContext ? lane?.session : undefined;
+		const session = targetSession(s, t);
 		if (session && busySessions.has(session)) {
 			set("waiting", { waitReason: "its session is busy" });
 			continue;
@@ -956,7 +995,7 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 	const claimed = new Set<string>();
 	let position = 0;
 	for (const t of ready) {
-		const session = !effectiveOptions(s, t).freshContext ? laneOf(s, t)?.session : undefined;
+		const session = targetSession(s, t);
 		// Two lanes on one session: the second waits for the first.
 		if (dispatch.length < free && !(session && claimed.has(session))) {
 			dispatch.push(t);
@@ -980,9 +1019,16 @@ export function laneViews(s: PlanState): LaneView[] {
 
 // ---------- prompts ----------
 
-/** The prompt AO gets for a task: title, notes, subtasks and (by default) the parents' results. */
+/**
+ * The prompt AO gets for a task: title, notes, subtasks and (by default) the parents' results. A
+ * follow-up run (a finished task that must react to an upstream change) gets only the change, in the
+ * session that already holds the work.
+ */
 export function taskPrompt(s: PlanState, task: Task): string {
-	const lines = [`[Task from the plan] ${task.title}`];
+	if (task.followUpOnly && task.followUp) return [`[Follow-up on your task] ${task.title}`, "", task.followUp, "", "Take this into account, fix whatever it breaks, and finish with a short summary of what you did."].join("\n");
+	const lane = task.lane ? s.tasks.filter(t => t.lane === task.lane) : undefined;
+	const lines = [lane ? `[Task ${lane.indexOf(task) + 1}/${lane.length} from the queue] ${task.title}` : `[Task from the plan] ${task.title}`];
+	if (task.followUp) lines.push("", task.followUp);
 	if (task.notes) lines.push("", task.notes);
 	if (task.subtasks.length) {
 		lines.push("", "Subtasks:");
@@ -1026,7 +1072,7 @@ export type Outcome =
 	/** The turn was interrupted (by our abort or timeout, or by someone in AO). */
 	| { kind: "interrupted"; reason?: string; cost?: number }
 	/** The planner can't know whether the prompt reached AO, or the session vanished mid-run. */
-	| { kind: "lost"; reason: string };
+	| { kind: "lost"; reason: string; sessionGone?: boolean };
 
 /** Wait before auto-retry number `attempt` (1-based): base, 2×, 4×… capped at 5 minutes. */
 export function retryDelay(attempt: number, baseMs = 10_000): number {
@@ -1045,7 +1091,12 @@ export function finishRun(s: PlanState, id: string, outcome: Outcome, now: numbe
 	const run = t.run;
 	delete t.run;
 	const lane = laneOf(s, t);
-	if (run?.session) {
+	if (run?.turn) t.turn = run.turn;
+	if (outcome.kind === "lost" && outcome.sessionGone) {
+		// The session is gone for good: the next run starts a new one.
+		if (lane && lane.session === (run?.session ?? t.session)) delete lane.session;
+		delete t.session;
+	} else if (run?.session) {
 		t.session = run.session;
 		// The lane continues where its last task ran.
 		if (lane) lane.session = run.session;
@@ -1069,6 +1120,8 @@ export function finishRun(s: PlanState, id: string, outcome: Outcome, now: numbe
 			for (const st of t.subtasks) st.done = true;
 			if (outcome.summary) t.summary = outcome.summary.slice(0, MAX_SUMMARY);
 			if (run?.provider) delete s.limits[run.provider];
+			delete t.followUp;
+			delete t.followUpOnly;
 			return t;
 		case "interrupted":
 		case "lost": {

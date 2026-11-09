@@ -6,7 +6,8 @@ export const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+/** What omp accepts for its `thinking` option over ACP (`minimal` is read as `low`, see normalizeOptions). */
+export const THINKING_LEVELS = ["off", "auto", "low", "medium", "high", "xhigh", "max"] as const;
 export const APPROVAL_MODES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
 export type WorktreeMode = "auto" | "always" | "never";
@@ -49,8 +50,8 @@ export interface TaskRun {
 	via: "spawn" | "send";
 	/** Exact spawn body (replayed verbatim after a restart; AO answers a replay with the same session). */
 	spawn?: Record<string, unknown>;
-	/** The prompt goes out as a message after the spawn (when settings must apply first). */
-	sendAfterSpawn?: boolean;
+	/** The git repo (AO project folder) a spawned session works in: its branch is recorded once AO answers. */
+	repo?: string;
 	/** AO session (known up front for `send`, after the spawn otherwise). */
 	session?: string;
 	/** AO turn id of this task's prompt, once known. */
@@ -113,6 +114,48 @@ export interface Task {
 	holdUntil?: number;
 	/** In-flight dispatch (status running). */
 	run?: TaskRun;
+	/** AO turn id of the latest run (link from the task to the chat). */
+	turn?: string;
+	/** The task's git branch and worktree (AO project sessions), for graph propagation. */
+	git?: TaskGit;
+	/** Propagation state of each parent edge (parent task id → state). */
+	sync?: Record<string, EdgeSync>;
+	/** Note for the next run's prompt (upstream changes merged, or a merge to resolve). */
+	followUp?: string;
+	/** The next run is only that note (a follow-up in the session that has the work), not the whole task again. */
+	followUpOnly?: boolean;
+}
+
+export interface TaskGit {
+	/** The repo's main checkout (AO project path). */
+	repo: string;
+	branch: string;
+	/** Where the branch is checked out (AO's worktree for the task's session). */
+	worktree?: string;
+	/** Branch head after the task's work was last committed. */
+	head?: string;
+}
+
+/**
+ * One parent → child edge: `in-sync` (the child has the parent's head), `pending` (a newer parent head
+ * waits for the child's turn to end), `merged` (merged and the child told), `upstream-changed` (merged
+ * into a finished child, which was not re-run), `resolving` (the child agent is merging a conflict),
+ * `conflict` (it couldn't: a person decides).
+ */
+export interface EdgeSync {
+	state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict";
+	/** Parent head the child has (merged or branched from). */
+	head?: string;
+	/** Parent head waiting to be merged. */
+	pendingHead?: string;
+	/** The child was working when the change came: it gets a follow-up run after the merge. */
+	prompt?: boolean;
+	/** Conflicted files. */
+	files?: string[];
+	/** Child branch head before and after the last merge (undo with `git reset`). */
+	before?: string;
+	after?: string;
+	at: number;
 }
 
 export interface Lane {
@@ -310,7 +353,9 @@ export type PlanOp =
 	| { op: "recur.add"; recurring: { title?: string; rule: RecurRule; task: TaskInput; lane?: string; skipIfRunning?: boolean; enabled?: boolean }; ref?: string }
 	| { op: "recur.update"; id: string; title?: string; rule?: RecurRule; task?: TaskInput; lane?: string | null; skipIfRunning?: boolean; enabled?: boolean }
 	| { op: "recur.remove"; id: string }
-	| { op: "recur.fire"; id: string };
+	| { op: "recur.fire"; id: string }
+	/** Re-checks the task's branch now and propagates new commits to its children (GRAPH-PROPAGATION.md). */
+	| { op: "sync"; id: string };
 
 // ---------- compatibility with the old per-session queue ----------
 

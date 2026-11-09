@@ -3,9 +3,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { queueOpsToPlanOps, queueView } from "../../src/planner/compat";
-import { type ReadinessContext, advance, applyOps, emptyState, evaluate, finishRun, normalizeState, startRun, taskPrompt } from "../../src/planner/engine";
+import { type ReadinessContext, advance, applyOps, emptyState, evaluate, finishRun, normalizeOptions, normalizeState, startRun, taskPrompt } from "../../src/planner/engine";
 import type { PlanOp, PlanState, TaskView } from "../../src/planner/types";
-import { holdFor, isLimitError, parseResetAt, spendUse } from "../../src/planner/usage";
+import { holdFor, isLimitError, parseResetAt, replyIsLimitError, spendUse } from "../../src/planner/usage";
 import { parseOmpUsage } from "../../src/planner/usage-source";
 import { nextOccurrence, normalizeRule, parseStartTime } from "../../src/planner/when";
 
@@ -313,6 +313,22 @@ describe("usage gating", () => {
 		assert.equal(isLimitError({ message: "Your credit balance is too low to access the Anthropic API." }), false);
 	});
 
+	test("a completed turn whose reply is a provider's limit error counts as one; an answer that discusses limits doesn't (G35)", () => {
+		for (const reply of [
+			"429 You have reached your usage limit. Your limit resets at 2026-11-09T21:00:00Z. Please try again in 4 hours. retry-after-ms=14400000",
+			"Claude AI usage limit reached|1762700000",
+			"You have hit your ChatGPT usage limit (plus plan). Try again in ~120 min.",
+			'429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed the rate limit"}}',
+			"Rate limit reached for gpt-4o in organization org-abc. Please try again in 4.8s.",
+		]) assert.equal(replyIsLimitError(reply, NOW), true, reply);
+		for (const reply of [
+			"I added rate limiting to the API: a token bucket per client; clients above 100 requests a minute get 429 and a Retry-After header.",
+			`${"Summary of the work. ".repeat(100)}Also: 429 You have reached your usage limit.`,
+			"Done. The limit is 429 requests.",
+			"",
+		]) assert.equal(replyIsLimitError(reply, NOW), false, reply.slice(0, 60));
+	});
+
 	test("omp usage --json: the account with most room counts; tier windows don't gate the provider", () => {
 		const limit = (id: string, used: number, extra: object = {}) => ({ id, label: id, scope: { provider: "anthropic", ...extra }, window: { resetsAt: NOW + used }, amount: { usedFraction: used / 100 } });
 		const windows = parseOmpUsage({
@@ -389,5 +405,13 @@ describe("persistence", () => {
 		const lost = normalizeState(raw);
 		assert.equal(lost.tasks[0].status, "pending");
 		assert.ok(lost.tasks[0].interrupted);
+	});
+});
+
+describe("task options", () => {
+	test("thinking levels are omp's own; `minimal` from old queues and clients means low (G42)", () => {
+		assert.equal(normalizeOptions({ thinking: "minimal" })?.thinking, "low");
+		for (const level of ["off", "auto", "low", "medium", "high", "xhigh", "max"]) assert.equal(normalizeOptions({ thinking: level })?.thinking, level);
+		assert.equal(normalizeOptions({ thinking: "extreme" }), undefined);
 	});
 });
