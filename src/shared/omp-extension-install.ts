@@ -10,8 +10,8 @@ import { type OmpPathOptions, ompPaths } from "./omp-paths";
 export const OMP_EXTENSION_PACKAGE = "switchyard";
 /** The package's name before the Switchyard rename; a copy left beside it would load every module twice. */
 const LEGACY_PACKAGE = "omp-sessions";
-/** Folders the VS Code bridge's stand-alone omp extension was installed into before it became a module of the package. */
-const LEGACY_BRIDGE_DIRS = ["omp-vscode-bridge", "switchyard-bridge"];
+/** The VS Code bridge's pre-rename folder. Its current one, `switchyard-bridge`, is the bridge's own live extension (hermes-mcp): not ours to touch. */
+const LEGACY_BRIDGE_DIRS = ["omp-vscode-bridge"];
 
 export function ompExtensionDir(opts?: OmpPathOptions): string {
 	return path.join(ompPaths(opts).agentDir, "extensions", OMP_EXTENSION_PACKAGE);
@@ -30,7 +30,7 @@ function isLegacyBridge(dir: string): boolean {
 
 /**
  * Removes what an earlier layout installed next to `targetDir` and would load every module twice:
- * the pre-rename package (when its package.json says it is ours) and the bridge's own extension
+ * the pre-rename package (when its package.json says it is ours) and the bridge's pre-rename
  * folder. True when something was removed.
  */
 export function removeLegacyOmpExtensions(targetDir: string): boolean {
