@@ -18,6 +18,7 @@ import { registerHermesPlugin } from "./hermes";
 import { registerEditorIntegration } from "./integration";
 import { askLaunchOptions, chooseDefaultMode, chooseDefaultModel } from "./launch-options";
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
+import { registerOmpExtensions } from "./omp-extension";
 import { plain } from "./plain";
 import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
 import { registerPermissions } from "./permissions";
@@ -507,6 +508,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerSessionConfig(api);
 	registerPermissions(api);
 	registerAgentSkill(api);
+	registerOmpExtensions(api);
 	registerHermesPlugin(api);
 	registerVscodeOpen(api);
 	registerRemote(api, server);
