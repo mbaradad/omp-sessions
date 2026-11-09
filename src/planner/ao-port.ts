@@ -76,8 +76,6 @@ export interface AoPort {
 	resumeAgent(session: string): Promise<void>;
 	/** Applies the opt-in `hibernation` setting of config.json (G28); AO forgets it on every daemon boot. Returns what it did, undefined when the user set nothing. */
 	applyHibernation(): Promise<{ enabled: boolean; changed: boolean } | undefined>;
-	/** omp model ids AO knows (`provider/id`); empty when AO can't say. */
-	models(): Promise<string[]>;
 	restore(session: string): Promise<void>;
 	/** Sets the model for the next turns; returns the one it replaced. */
 	setModel(session: string, model: string): Promise<string | undefined>;
@@ -179,14 +177,6 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async applyHibernation() {
 			return ao.applyChatHibernation();
-		},
-		async models() {
-			const { data } = await ao.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } });
-			// AO lists omp's whole catalog; only the providers this machine is configured for can run. A model of any other
-			// provider would pass a plain catalog check and then fail at the session (the helper removes it again).
-			const configured = new Set(data?.configuredProviders ?? []);
-			const usable = (data?.models ?? []).filter(m => configured.size === 0 || (m.provider !== undefined && configured.has(m.provider)));
-			return usable.map(m => m.id);
 		},
 		async conversation(session) {
 			return conversationInfo(await ao.getConversation(session));

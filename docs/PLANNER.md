@@ -148,12 +148,13 @@ interface PlannerConfig {
   `switchyard config set` writes), read at every dispatch; else AO's/omp's default model and mode `auto`. A
   continued session keeps its own model and mode.
 - **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
-  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
-  checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
-  `bypass-permissions` with no prompt; the session's own options are checked and set (model, then thinking);
+  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): spawn in AO's
+  `bypass-permissions` with no prompt and no model; the model is checked against the **session's own**
+  config-options choices (the omp catalog is inexact: 3768 ids, 32 for the configured providers, 53 offered,
+  so the planner has no pre-check of its own), then set, then thinking;
   the permission mode is set (`options.mode`, default `auto`; the mode file is written before the first
-  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task and
-  removes the session. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
+  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task without a retry and
+  removes the session before the prompt. On a continued session the model is set directly and AO's error fails the task. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
   the session as needing input until a person answers through AO.
 - **Continued sessions** (lane or re-run): `resume-agent` first when the session reads `exited`; model and
   thinking are set before the prompt and put back after the turn; `mode` applies to new sessions only. A
@@ -364,6 +365,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: no planner-side model pre-check (the spawn helper checks the session's own choices).
 - 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.
 - 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
 - 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).

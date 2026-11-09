@@ -128,14 +128,14 @@ test("a limit omp gave up retrying arrives as a completed turn: the task is held
 	await until("done", () => byTitle(p, "talks about limits").status === "done");
 });
 
-test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in AO bypass with the mode the task names (D11)", async t => {
+test("a model the spawn helper refuses fails the task without retry and leaves no session (G36); sessions start in AO bypass with the mode the task names (D11)", async t => {
 	const ao = new FakeAo();
 	ao.modelIds = ["anthropic/claude-x"];
 	const p = start(tempPlan(t), ao);
 	t.after(() => p.stop());
 	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { mode: "ask", thinking: "low" } } }, { op: "add", task: { title: "plain" } }]);
 	await until("typo failed", () => byTitle(p, "typo").status === "failed");
-	assert.match(byTitle(p, "typo").summary ?? "", /the model "anthropic\/claude-xx" is not available here/);
+	assert.match(byTitle(p, "typo").summary ?? "", /Unknown omp model "anthropic\/claude-xx"/);
 	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
 	assert.equal(ao.created, 2);
 	const asks = ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody;

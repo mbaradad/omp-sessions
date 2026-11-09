@@ -150,10 +150,6 @@ export class FakeAo implements AoPort {
 		return this.hibernation;
 	}
 
-	async models() {
-		return this.modelIds;
-	}
-
 	/** An AO event for the session with the given activity (someone chatted: active, then idle). */
 	poke(session: string, activity: string): void {
 		this.event(session, activity);

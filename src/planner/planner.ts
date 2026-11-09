@@ -90,7 +90,6 @@ export class Planner {
 	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
 	/** omp model ids AO knows, fetched at most every 10 minutes. */
-	private models: { at: number; ids: ReadonlySet<string> } | undefined;
 
 	constructor(private readonly opts: PlannerOptions) {
 		this.state = opts.initial ?? emptyState();
@@ -502,12 +501,6 @@ export class Planner {
 		return next;
 	}
 
-	/** Refuses a model AO doesn't list (an unknown one leaves a terminated session behind); passes when AO can't say. */
-	private async checkModel(ao: AoPort, model: string): Promise<void> {
-		if (!this.models || this.now() - this.models.at > 10 * 60_000) this.models = { at: this.now(), ids: new Set(await ao.models()) };
-		if (this.models.ids.size && !this.models.ids.has(model)) throw new PlanError(`the model "${model}" is not available here: AO lists ${this.models.ids.size} runnable omp models (configured providers only; see \`omp models\`)`);
-	}
-
 	/** Chooses spawn or send, resolves the project, writes the dispatch record, then drives it. */
 	private async launch(id: string): Promise<void> {
 		const ao = this.ao;
@@ -535,8 +528,6 @@ export class Planner {
 					throw new PlanError(`could not undo the earlier attempt of "${task.title}": ${err instanceof Error ? err.message : String(err)}`);
 				});
 			}
-			// A typo'd model would leave a terminated session behind in AO (G36): check before anything is created.
-			if (opts.model) await this.checkModel(ao, opts.model);
 			// A session that exists already (a client spawned it): the task is tracked in git, and its parents' work is merged into the worktree.
 			if (session) {
 				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string; workspace?: string });
