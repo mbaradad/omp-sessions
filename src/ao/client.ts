@@ -44,7 +44,7 @@ export type AoConversationQuery = NonNullable<paths["/api/v1/sessions/{sessionId
 
 export type { AoDaemon, AoStartOptions } from "./daemon";
 export { defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "./daemon";
-export type { AoEvent, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
+export type { AoEvent, AoEventStreamOptions, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";
@@ -145,10 +145,13 @@ export class AoClient {
 		return this.currentBaseUrl;
 	}
 
-	/** Looks for the daemon again (discovery clients only); returns it, or undefined when none answers. */
+	/**
+	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
+	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 */
 	async rediscover(): Promise<AoDaemon | undefined> {
 		if (!this.discovery) return undefined;
-		const daemon = this.discovery.start ? await ensureDaemon(this.discovery) : await findDaemon(this.discovery);
+		const daemon = await findDaemon(this.discovery);
 		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
 			this.currentBaseUrl = daemon.baseUrl;
 			this.client = this.create();
@@ -207,7 +210,17 @@ export class AoClient {
 		await unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}", { params: { path: { sessionId } }, body: { displayName } }));
 	}
 
-	/** Terminates the session (its agent and host). */
+	/** Stops the agent; the session and its transcript stay (MAPPING.md D4 `stop`). */
+	exitAgent(sessionId: string): Promise<AoSchemas["ExitAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Starts the agent again on its transcript (D4 `resume`); needed after it exited or died ("interrupted"). */
+	resumeAgent(sessionId: string): Promise<AoSchemas["ResumeAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Terminates the session (its agent and host) and releases its workspace. */
 	async killSession(sessionId: string, body: AoSchemas["ControllersKillSessionRequest"] = {}): Promise<AoSchemas["KillSessionResponse"]> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/kill", { params: { path: { sessionId } }, body }));
 	}
@@ -215,6 +228,16 @@ export class AoClient {
 	/** Brings a terminated session back. */
 	restoreSession(sessionId: string): Promise<AoSchemas["RestoreSessionResponse"]> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/restore", { params: { path: { sessionId } } }));
+	}
+
+	/** Deletes a terminated session for good (D4 `rm`: kill first); `cleanup` removes a clean leftover worktree. */
+	async deleteSession(sessionId: string, cleanup = true): Promise<void> {
+		await unwrap(this.client.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId }, query: { cleanup } } }));
+	}
+
+	async setPinned(sessionId: string, pinned: boolean): Promise<void> {
+		const params = { params: { path: { sessionId } } };
+		await unwrap(pinned ? this.client.POST("/api/v1/sessions/{sessionId}/pin", params) : this.client.DELETE("/api/v1/sessions/{sessionId}/pin", params));
 	}
 
 	// ---- conversation ----
@@ -267,6 +290,11 @@ export class AoClient {
 
 	// ---- projects ----
 
+	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
+	async workspacePath(sessionId: string): Promise<string> {
+		return (await unwrap(this.client.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId } } }))).workspacePath;
+	}
+
 	async listProjects(): Promise<AoProject[]> {
 		return (await unwrap(this.client.GET("/api/v1/projects"))).projects;
 	}
@@ -283,5 +311,17 @@ export class AoClient {
 	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
+	}
+
+	// ---- agent accounts (provider limits and usage) ----
+
+	/** Provider accounts AO knows (Claude, Codex devices…) with their limit windows; `refresh` re-reads the providers. */
+	agentAccounts(refresh = false): Promise<AoSchemas["AgentAccountsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts", { params: { query: { refresh } } }));
+	}
+
+	/** Per-account token and cost usage (`costNanos`) over the last `days`. */
+	agentAccountUsage(days?: number): Promise<AoSchemas["AgentAccountUsageResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts/usage", { params: { query: days === undefined ? {} : { days } } }));
 	}
 }
