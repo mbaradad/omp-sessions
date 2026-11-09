@@ -114,6 +114,15 @@ test("omp tool names come back from ACP kind and omp's arguments", () => {
 	assert.equal(name("other", { tasks: [{}] }), "task");
 });
 
+test("omp's todo tool, which AO files as reasoning, renders as a todo card; real reasoning as thinking", () => {
+	const todo = act(1, { activityKind: "reasoning", status: "completed", summary: "Updating todos", detail: { toolKind: "think", input: { ops: [{ op: "init" }] }, output: "" } });
+	const thought = act(2, { activityKind: "reasoning", status: "completed", summary: "Reasoning", detail: { text: "let me think" } });
+	const [card, , thinking] = new ChatFeed().reset(conv({ activities: [todo, thought] })).messages as Array<{ content?: Array<Record<string, unknown>> }>;
+	assert.equal(card.content?.[0].type, "toolCall");
+	assert.equal(card.content?.[0].name, "todo");
+	assert.deepEqual(thinking.content, [{ type: "thinking", thinking: "let me think" }]);
+});
+
 test("truncated output falls back to ACP content without the repeated command header", () => {
 	const a = act(1, { status: "completed", detail: { toolKind: "execute", command: "ls", output: '{"content":[{"te', outputTruncated: true, content: [{ type: "content", content: { type: "text", text: "$ ls" } }, { type: "content", content: { type: "text", text: "a" } }, { type: "content", content: { type: "text", text: "a" } }] } });
 	assert.deepEqual(toolResultOf(a).content, [{ type: "text", text: "a" }]);

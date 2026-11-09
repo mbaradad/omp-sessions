@@ -27,6 +27,11 @@ function rec(v: unknown): Record<string, unknown> | undefined {
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const ms = (iso: string | undefined | null): number | undefined => (iso ? Date.parse(iso) || undefined : undefined);
 
+/** A tool call row. omp's `todo` (ACP kind `think`) lands in AO as `reasoning`; real reasoning carries no tool kind. */
+function isTool(a: AoActivity): boolean {
+	return !!TOOL_KINDS[a.activityKind] || (a.activityKind === "reasoning" && !!rec(a.detail)?.toolKind);
+}
+
 /** omp's tool name for an ACP tool activity: AO keeps only ACP's kind and omp's raw arguments. */
 export function toolNameOf(a: AoActivity): string {
 	const d = rec(a.detail) ?? {};
@@ -391,7 +396,7 @@ export class ChatFeed {
 
 	private render(r: Row, live: boolean): Frame[] {
 		if (r.kind === "message") return this.renderMessage(r, live);
-		if (TOOL_KINDS[r.activityKind]) return this.renderTool(r);
+		if (isTool(r)) return this.renderTool(r);
 		const sig = `${r.revision}|${r.status}`;
 		if (this.shown.get(r.id)?.sig === sig) return [];
 		const first = !this.shown.has(r.id);
@@ -474,7 +479,7 @@ export class ChatFeed {
 		if (a.activityKind !== "approval") return undefined;
 		const input = JSON.stringify(rec(a.detail)?.input ?? null);
 		for (const r of this.rows.values()) {
-			if (r.kind === "activity" && TOOL_KINDS[r.activityKind] && r.turnId === a.turnId && JSON.stringify(rec(r.detail)?.input ?? null) === input) return toolNameOf(r);
+			if (r.kind === "activity" && isTool(r) && r.turnId === a.turnId && JSON.stringify(rec(r.detail)?.input ?? null) === input) return toolNameOf(r);
 		}
 		return undefined;
 	}
