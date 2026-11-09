@@ -187,17 +187,20 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		item.id = `tasks:task:${t.id}`;
 		const attention = syncAttention(t);
 		item.iconPath =
-			attention === "conflict"
+			t.undone
+				? new vscode.ThemeIcon("discard", new vscode.ThemeColor("charts.orange"))
+				: attention === "conflict"
 				? new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"))
 				: attention === "upstream-changed" || attention === "resolving"
 					? new vscode.ThemeIcon("git-merge", new vscode.ThemeColor("charts.orange"))
 					: TASK_ICON[t.status];
-		item.checkboxState = t.status === "done" ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+		item.checkboxState = t.status === "done" && !t.undone ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
 		const results = t.status === "done" || t.status === "failed" ? [t.durationMs ? formatDuration(t.durationMs) : "", t.cost ? `$${t.cost.toFixed(t.cost < 0.01 ? 4 : 2)}` : ""] : [];
 		const retrying = t.status === "pending" && t.attempts ? `↻ retry ${t.attempts}/${t.options?.retries ?? t.attempts}` : "";
 		const titleOf = (id: string) => this.deps.planner.plan?.tasks.find(x => x.id === id)?.title;
 		item.description = [
 			t.state === "waiting" && !t.position ? "" : taskStateText(t, titleOf),
+			t.undone ? "↶ undone: its work is gone" : "",
 			syncText(syncAttention(t)),
 			t.priority && t.priority !== "normal" ? t.priority : "",
 			retrying,

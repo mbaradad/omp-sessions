@@ -155,6 +155,7 @@ describe("undoing a task", () => {
 		assert.equal(isUndoable(ran("a", "s", 1, { status: "pending", state: "waiting" })), false);
 		assert.equal(isUndoable(ran("a", "s", 1, { turn: undefined })), false);
 		assert.equal(isUndoable(ran("a", "s", 1, { session: undefined })), false);
+		assert.equal(isUndoable(ran("a", "s", 1, { undone: true })), false, "the planner already knows it is undone");
 	});
 
 	test("undoing a turn takes the later turns of the same session with it, not earlier ones or other sessions", () => {

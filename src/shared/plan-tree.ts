@@ -161,9 +161,9 @@ export function checkTaskOption(field: TaskOptionField, text: string): string | 
 	}
 }
 
-/** Tasks a person can undo with the checkpoints: they ran, finished, and the planner knows which AO turn did the work. */
-export function isUndoable(task: Pick<TaskView, "status" | "session" | "turn">): boolean {
-	return (task.status === "done" || task.status === "failed") && !!task.session && !!task.turn;
+/** Tasks a person can undo with the checkpoints: they ran, finished, are not undone yet, and the planner knows which AO turn did the work. */
+export function isUndoable(task: Pick<TaskView, "status" | "session" | "turn" | "undone">): boolean {
+	return (task.status === "done" || task.status === "failed") && !task.undone && !!task.session && !!task.turn;
 }
 
 /**

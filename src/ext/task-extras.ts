@@ -171,7 +171,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		const plan = deps.planner.plan;
 		const task = plan?.tasks.find(t => t.id === arg.task.id);
 		if (!plan || !task || !isUndoable(task) || !task.session) {
-			void vscode.window.showInformationMessage("This task has no recorded run to undo.");
+			void vscode.window.showInformationMessage(task?.undone ? "This task is already undone." : "This task has no recorded run to undo.");
 			return;
 		}
 		// Hold the queues of everything the undo takes with it first: while the confirmation is open, and while omp
