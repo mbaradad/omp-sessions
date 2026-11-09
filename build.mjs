@@ -1,5 +1,6 @@
 import * as esbuild from "esbuild";
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 const watch = process.argv.includes("--watch");
 const production = process.argv.includes("--production");
@@ -13,9 +14,12 @@ const builds = [
 	{ ...common, entryPoints: ["src/kanban/main.ts"], outfile: "out/kanban.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/kanban/style.css"], outfile: "out/kanban.css" },
 	{ ...common, entryPoints: ["src/server/main.ts"], outfile: "out/server.js", platform: "node", format: "cjs" },
+	{ ...common, entryPoints: ["src/planner/main.ts"], outfile: "out/planner.js", platform: "node", format: "cjs", define: { PLANNER_VERSION: JSON.stringify(JSON.parse(fs.readFileSync("package.json", "utf8")).version) } },
 	{ ...common, entryPoints: ["src/cli/main.ts"], outfile: "out/cli.js", platform: "node", format: "cjs", banner: { js: "#!/usr/bin/env node" } },
 	{ ...common, entryPoints: ["src/mobile/main.ts"], outfile: "out/mobile.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/mobile/style.css"], outfile: "out/mobile.css" },
+	// omp extensions shipped with Switchyard: every module in src/omp-extension/ (checkpoints, mode, todos, …); src/ext/omp-extension.ts installs them.
+	{ ...common, sourcemap: false, entryPoints: fs.readdirSync("src/omp-extension").filter(f => f.endsWith(".ts")).map(f => `src/omp-extension/${f}`), outdir: "out/omp-extension", platform: "node", format: "esm" },
 ];
 /** Files used next to the bundles as they are: the phone app the server serves, the agent skill. */
 const copies = [
@@ -24,11 +28,16 @@ const copies = [
 	["media/icon.png", "out/mobile-icon.png"],
 	["media/icon.svg", "out/mobile-icon.svg"],
 	["skills/omp-sessions/SKILL.md", "out/omp-sessions.SKILL.md"],
+	// Switchyard's `omp` shim (extra omp flags for AO sessions, G34); src/shared/omp-extension-install.ts installs it.
+	["src/omp-shim/omp", "out/omp-shim/omp"],
 ];
 
 fs.rmSync("out", { recursive: true, force: true });
 fs.mkdirSync("out", { recursive: true });
-for (const [from, to] of copies) fs.copyFileSync(from, to);
+for (const [from, to] of copies) {
+	fs.mkdirSync(path.dirname(to), { recursive: true });
+	fs.copyFileSync(from, to);
+}
 // The Hermes plugin folder is published as is (`hermes plugins install …/integrations/hermes/omp-sessions`
 // fetches only that folder), so it carries a committed copy of the skill; keep it in sync.
 const PLUGIN = "integrations/hermes/omp-sessions";

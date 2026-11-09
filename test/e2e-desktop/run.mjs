@@ -6,7 +6,10 @@
 //
 // Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_KEEP=1 keeps the temp dir,
 // OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log),
-// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI).
+// OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI),
+// SWITCHYARD_E2E_AO=1 also starts an isolated AO daemon with the fake `omp acp` (test/ao-fixture.mjs)
+// and hands the extension host its AO_PORT/AO_DATA_DIR/AO_RUN_FILE plus SWITCHYARD_E2E_AO_URL;
+// SWITCHYARD_E2E_PLANNER=1 also runs the planner service (test/planner-fixture.mjs) on the suite's state dir.
 //
 // VS Code is downloaded once into .vscode-test/. Without a DISPLAY the run is re-executed
 // under `xvfb-run`. All state (user data, extensions, OMP_VSCODE_HOME, HOME, workspace) lives
@@ -73,6 +76,11 @@ const dirs = {
 };
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 const stateFile = path.join(tmp, "e2e-state.json");
+// One Switchyard home for the test VS Code, the AO daemon and the planner (as in a real install), and for this
+// runner's own process: the real ~/.switchyard is locked, anything that reaches it fails with EACCES.
+const switchyardHome = path.join(tmp, "switchyard");
+fs.mkdirSync(switchyardHome, { recursive: true });
+process.env.SWITCHYARD_HOME = switchyardHome;
 const fakeLog = path.join(tmp, "fake-omp.log");
 fs.writeFileSync(path.join(dirs.workspace, "existing.txt"), "original line\n");
 // A git repository (one commit) for the Source Control commands.
@@ -126,6 +134,21 @@ function echo(out) {
 	});
 }
 
+// Canary for CONTRACT.md "Isolated HOME": an e2e run must leave the launchers every slice relies on, the
+// real ~/.switchyard and the shared omp extensions dir as they were (an earlier run overwrote
+// ~/.local/bin/omp-sessions). Compared in `finally`. Only paths no concurrent session legitimately writes.
+const REAL_HOME = fs.realpathSync(os.userInfo().homedir);
+const watchedPaths = [".local/bin/omp-sessions", ".local/bin/switchyard", ".switchyard", ".omp/agent/extensions"].map(p => path.join(REAL_HOME, p));
+function fingerprint(p) {
+	try {
+		const st = fs.lstatSync(p);
+		if (!st.isDirectory()) return `${st.isSymbolicLink() ? `-> ${fs.readlinkSync(p)} ` : ""}${st.size}:${st.mtimeMs}`;
+		return fs.readdirSync(p).sort().map(n => `${n}:${fs.lstatSync(path.join(p, n)).mtimeMs}`).join(",");
+	} catch {
+		return "absent";
+	}
+}
+const realStateBefore = new Map(watchedPaths.map(p => [p, fingerprint(p)]));
 let failed = false;
 const results = [];
 const check = (name, ok, detail = "") => {
@@ -134,7 +157,22 @@ const check = (name, ok, detail = "") => {
 	return ok;
 };
 
+// SWITCHYARD_E2E_AO=1: an isolated AO daemon running the fake `omp acp` (test/ao-fixture.mjs) for the
+// suite; its AO_PORT/AO_DATA_DIR/AO_RUN_FILE reach the extension host, so src/ao discovery finds it.
+// SWITCHYARD_E2E_PLANNER=1 (implies the AO fixture): the planner service too, on the suite's state dir.
+let ao;
+let planner;
 try {
+	if (process.env.SWITCHYARD_E2E_AO === "1" || process.env.SWITCHYARD_E2E_PLANNER === "1") {
+		const { startAoFixture } = await import("../ao-fixture.mjs");
+		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP, switchyardHome });
+		console.log(`AO fixture: ${ao.baseUrl} (${ao.root})`);
+	}
+	if (process.env.SWITCHYARD_E2E_PLANNER === "1") {
+		const { startPlannerFixture } = await import("../planner-fixture.mjs");
+		planner = await startPlannerFixture({ ao });
+		console.log(`planner fixture: pid ${planner.pid}, socket ${planner.socket}`);
+	}
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
 	const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(repo, ".vscode-test") });
 	try {
@@ -154,8 +192,18 @@ try {
 				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 			],
 			extensionTestsEnv: {
+				// CONTRACT.md "Isolated HOME": nothing of the run may touch the user's real home.
 				HOME: dirs.home,
+				USERPROFILE: dirs.home,
+				XDG_CONFIG_HOME: path.join(dirs.home, ".config"),
+				XDG_DATA_HOME: path.join(dirs.home, ".local", "share"),
+				XDG_STATE_HOME: path.join(dirs.home, ".local", "state"),
+				XDG_CACHE_HOME: path.join(dirs.home, ".cache"),
 				OMP_VSCODE_HOME: dirs.ompHome,
+				SWITCHYARD_HOME: switchyardHome,
+				// CONTRACT.md: a test VS Code must not install Switchyard's omp extensions into the shared ~/.omp/agent
+				// (checkpoints' guard honours this; a value inherited from the shell must not turn installs on).
+				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
 				FAKE_OMP_SESSIONS: dirs.fakeSessions,
 				FAKE_OMP_LOG: fakeLog,
 				OMP_E2E_WORKSPACE: dirs.workspace,
@@ -163,6 +211,7 @@ try {
 				FAKE_OMP_DELAY: "5",
 				// The omp-sessions server would outlive the test VS Code; the server has its own host tests.
 				OMP_SESSIONS_NO_SERVER: "1",
+				...(ao ? { ...ao.clientEnv, SWITCHYARD_E2E_AO_URL: ao.baseUrl } : {}),
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),
@@ -178,8 +227,12 @@ try {
 } catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
+	await planner?.stop();
+	await ao?.stop();
 	const leftovers = killLeftovers();
 	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");
+	const touched = watchedPaths.filter(p => fingerprint(p) !== realStateBefore.get(p));
+	check("the real home is untouched (launchers, ~/.switchyard, omp extensions)", touched.length === 0, touched.length ? `CHANGED: ${touched.join(", ")}: restore the launcher as a copy of the pinned one (CONTRACT.md) and tell the coordinator` : "");
 	console.log("\n── desktop e2e summary ──");
 	for (const r of results) console.log(r);
 	const logClosed = Promise.withResolvers();

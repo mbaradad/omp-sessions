@@ -121,8 +121,14 @@ export async function expandMentions(text: string, providers: MentionProviders, 
 		result.expanded.push(kind);
 		blocks.push(`**@${kind}** · ${res.label}\n${fence(capped.text, res.lang ?? "")}${capped.note ? `\n_(${capped.note})_` : ""}`);
 	}
-	result.text = `${text}${SECTION_SEP} (expanded from the @mentions above)\n\n${blocks.join("\n\n")}`;
+	result.text = appendContext(text, "expanded from the @mentions above", blocks);
 	return result;
+}
+
+/** Adds `blocks` to the context section of a prompt, opening the section (with `note`) when the prompt has none yet. */
+export function appendContext(text: string, note: string, blocks: string[]): string {
+	if (!blocks.length) return text;
+	return text.includes(SECTION_SEP) ? `${text}\n\n${blocks.join("\n\n")}` : `${text}${SECTION_SEP} (${note})\n\n${blocks.join("\n\n")}`;
 }
 
 /** Splits a sent prompt into what the user typed and the appended context section (if any). */

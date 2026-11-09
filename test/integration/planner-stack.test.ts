@@ -1,0 +1,102 @@
+// The whole stack as it runs for users: the planner service process (test/planner-fixture.mjs) on an
+// isolated AO daemon (test/ao-fixture.mjs) running the scripted fake omp, driven only over the planner
+// wire. Covers a dependency graph with results passed on, usage-based auto-scheduling (a `spare` task
+// waits for provider usage room, read from `omp usage --json`), a planner crash and an AO restart in
+// the middle of a run, with nothing dispatched twice.
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import type { PlanView, TaskView } from "../../src/planner/types";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
+import { type PlannerFixture, startPlannerFixture } from "../planner-fixture.mjs";
+
+let ao: AoFixture;
+let planner: PlannerFixture;
+let project: string;
+
+before(async () => {
+	if (skip) return;
+	ao = await startAoFixture();
+	// The fake provider is nearly out of usage: `spare` work must wait.
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97, resetsAt: Date.now() + 3_600_000 }]);
+	planner = await startPlannerFixture({ ao, pollMs: 200, usageEveryMs: 500 });
+	project = await ao.createProject(ao.scratchRepo());
+});
+
+after(async () => {
+	await planner?.stop();
+	await ao?.stop();
+});
+
+function byTitle(plan: PlanView, title: string): TaskView {
+	const task = plan.tasks.find(t => t.title === title);
+	assert.ok(task, `task ${title} in the plan`);
+	return task;
+}
+
+/** session/prompt requests the fake received whose text contains `marker`: how often work was dispatched. */
+function prompts(marker: string): number {
+	return ao.fakeOmpFrames().filter(f => f.dir === "in" && f.msg?.method === "session/prompt" && JSON.stringify(f.msg.params.prompt).includes(marker)).length;
+}
+
+test("graph A → B: B runs after A with A's result in its prompt", { skip }, async () => {
+	await planner.call("edit", {
+		ops: [
+			{ op: "add", ref: "a", task: { title: "A", notes: "echo alpha-result", options: { project } } },
+			{ op: "add", ref: "b", task: { title: "B", notes: "prompt", after: ["@a"], options: { project } } },
+		],
+	});
+	const blocked: PlanView = await planner.plan();
+	assert.equal(byTitle(blocked, "B").state, "blocked");
+	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "B").status === "done", { what: "B done" });
+	assert.match(byTitle(done, "A").summary ?? "", /alpha-result/);
+	// The fake echoed B's whole prompt: it carried A's summary.
+	assert.match(byTitle(done, "B").summary ?? "", /alpha-result/);
+	assert.ok(byTitle(done, "A").session && byTitle(done, "B").session);
+	assert.equal(prompts("alpha-result"), 2, "A once, B once (with A's result)");
+});
+
+test("a spare task waits for usage room; a planner crash loses nothing", { skip }, async () => {
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "S", notes: "echo spare-ran", usage: "spare", options: { project, model: "fake/fake-model" } } }] });
+	const held: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "S").state === "held", { what: "S held" });
+	assert.match(byTitle(held, "S").waitReason ?? "", /spare: usage fake 5 Hour 97%/);
+	assert.equal(prompts("spare-ran"), 0);
+	// Usage drops; the planner crashes and comes back (it reads usage on start) and runs S once.
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 10 }]);
+	await planner.restart({ kill: true });
+	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "S").status === "done", { what: "S done" });
+	assert.match(byTitle(done, "S").summary ?? "", /spare-ran/);
+	assert.equal(prompts("spare-ran"), 1);
+});
+
+test("an AO daemon restart mid-turn: the task finishes and is not dispatched again", { skip }, async () => {
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "R", notes: "slow 3000\necho survived-ao-restart", options: { project } } }] });
+	await planner.waitFor((p: PlanView) => byTitle(p, "R").status === "running" && prompts("survived-ao-restart") === 1, { what: "R running" });
+	await ao.restart();
+	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "R").status === "done", { what: "R done after the AO restart" });
+	assert.match(byTitle(done, "R").summary ?? "", /survived-ao-restart/);
+	assert.equal(prompts("survived-ao-restart"), 1);
+});
+
+test("a usage drop releases a spare task without a planner restart", { skip }, async () => {
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97 }]);
+	// The planner reads `omp usage` periodically (usageEveryMs): wait until it has seen the new level.
+	await planner.waitFor((p: PlanView) => p.status.usageWindows?.some(w => w.usedPercent >= 97) ?? false, { what: "the planner to read 97% usage" });
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "S2", notes: "echo spare-two", usage: "spare", options: { project, model: "fake/fake-model" } } }] });
+	await planner.waitFor((p: PlanView) => byTitle(p, "S2").state === "held", { what: "S2 held" });
+	const pid = planner.pid;
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 5 }]);
+	await planner.waitFor((p: PlanView) => byTitle(p, "S2").status === "done", { what: "S2 done after usage dropped" });
+	assert.equal(planner.pid, pid, "no planner restart");
+	assert.equal(prompts("spare-two"), 1);
+});
+
+test("a scheduled start comes due when the clock moves forward", { skip }, async () => {
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "T", notes: "echo clock-ran", startAt: Date.now() + 3_600_000, options: { project } } }] });
+	const scheduled: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "T").state === "scheduled", { what: "T scheduled" });
+	assert.ok((byTitle(scheduled, "T").waitUntil ?? 0) > Date.now());
+	assert.equal(prompts("clock-ran"), 0);
+	planner.advanceClock(2 * 3_600_000);
+	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "T").status === "done", { what: "T done after the clock moved", timeoutMs: 10_000 });
+	assert.match(byTitle(done, "T").summary ?? "", /clock-ran/);
+	assert.equal(prompts("clock-ran"), 1);
+});
