@@ -9,6 +9,7 @@ import { GraphPanel } from "./graph";
 import { NewSessionDialog } from "./newSession";
 import type { RunQueueAction } from "./queue";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
+import { SessionSounds, setSoundMuted, soundMuted } from "./sounds";
 import { ago, cx, icon, logo } from "./util";
 import { openInVscode } from "./vscode";
 
@@ -143,11 +144,15 @@ export function createPage(host: Host): () => ReactElement {
 		const [boardNote, setBoardNote] = useState<{ text: string; error: boolean } | null>(null);
 		const [busyCards, setBusyCards] = useState<ReadonlySet<string>>(new Set());
 		const search = useRef<HTMLInputElement | null>(null);
+		const sounds = useRef<SessionSounds | null>(null);
+		const [muted, setMuted] = useState(soundMuted);
 
 		const loadSessions = async (): Promise<void> => {
 			try {
 				const res = await host.request<{ sessions: Session[] }>("/sessions");
 				setSessions(res.sessions);
+				sounds.current ??= new SessionSounds();
+				sounds.current.observe(res.sessions);
 				setError(null);
 				setRefreshedAt(Date.now());
 			} catch (err) {
@@ -320,6 +325,16 @@ export function createPage(host: Host): () => ReactElement {
 					],
 				}),
 				h("span", { className: "omps-grow" }),
+				h(Button, {
+					kind: "ghost",
+					icon: muted ? "bellOff" : "bell",
+					pressed: !muted,
+					title: muted ? "Session sounds off: click to hear when a session finishes or needs input" : "Session sounds on: click to mute",
+					onClick: () => {
+						setSoundMuted(!muted);
+						setMuted(!muted);
+					},
+				}),
 				h(Button, { kind: "ghost", icon: "refresh", title: "Refresh", onClick: refresh }),
 				h(Button, { kind: "brand", icon: "plus", label: "New session", title: "New session (N)", disabled: Boolean(notInstalled), onClick: () => setCreating(true) }),
 			),
