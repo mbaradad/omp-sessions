@@ -16,27 +16,33 @@ export interface SoundSink {
 	post(msg: PlaySoundMessage): Thenable<boolean>;
 }
 
-const sinks = new Set<SoundSink>();
+/** A registered sink: `acked` takes the webview's `soundPlayed` reply for it. */
+export interface SoundSinkHandle extends vscode.Disposable {
+	acked(msg: SoundPlayedMessage): void;
+}
+
+interface Entry {
+	sink: SoundSink;
+	/** Set while a cue sent to this webview waits for its reply. */
+	awaiting?: (msg: SoundPlayedMessage) => void;
+}
+
+const sinks = new Set<Entry>();
 const playedEmitter = new vscode.EventEmitter<SoundPlayedMessage>();
 /** A webview played (or could not play) a cue: what it reports back. The desktop e2e reads these through `OmpApi.onDidPlaySound`. */
 export const onDidPlaySound = playedEmitter.event;
 
-let toldAboutAutoplay = false;
-
-/** Called with a webview's acknowledgement of a cue. */
-export function reportSoundPlayed(msg: SoundPlayedMessage): void {
-	playedEmitter.fire(msg);
-	// The browser engine holds a page's audio until the person has interacted with the window (autoplay policy): say so once.
-	if (!msg.played && msg.state === "suspended" && !toldAboutAutoplay) {
-		toldAboutAutoplay = true;
-		void vscode.window.showInformationMessage("Switchyard's sound could not play yet: VS Code's webviews stay silent until you have clicked or pressed a key in the window once. It works from then on.");
-	}
-}
-
-/** Offers a webview for playing cues until the returned disposable runs (with the webview). */
-export function addSoundSink(sink: SoundSink): vscode.Disposable {
-	sinks.add(sink);
-	return { dispose: () => sinks.delete(sink) };
+/** Offers a webview for playing cues until the returned handle is disposed (with the webview). */
+export function addSoundSink(sink: SoundSink): SoundSinkHandle {
+	const entry: Entry = { sink };
+	sinks.add(entry);
+	return {
+		dispose: () => sinks.delete(entry),
+		acked: msg => {
+			playedEmitter.fire(msg);
+			entry.awaiting?.(msg);
+		},
+	};
 }
 
 /** A chat (editor tab or side bar) plays cues while it is open. */
@@ -47,8 +53,12 @@ export function addChatSoundSink(panel: ChatPanel): void {
 		},
 		post: msg => panel.surface.webview.postMessage(msg),
 	});
+	panel.onSoundPlayed = sink.acked;
 	panel.onDidDispose(() => sink.dispose());
 }
+
+/** How long a webview has to answer a cue before it counts as having played it (a busy or older webview may not answer). */
+const ACK_WAIT_MS = 1500;
 
 const SETTING: Record<AlertKind, { key: string; fallback: SoundVariant }> = {
 	complete: { key: "sound.completion", fallback: DEFAULT_COMPLETION_SOUND },
@@ -60,12 +70,35 @@ function configured(kind: AlertKind): SoundVariant {
 	return soundVariant(vscode.workspace.getConfiguration("switchyard").get(s.key), s.fallback);
 }
 
-/** Plays in one webview only (two open omp webviews must not both sound): visible ones first. */
+let toldAboutAutoplay = false;
+
+/**
+ * Plays in one webview only (two open omp webviews must not both sound): visible ones first. A webview whose audio the
+ * browser still holds (its frame has had no click or key press yet: each webview is its own frame) answers that it
+ * could not play, and the next webview gets the cue; when none can, the person is told once.
+ */
 async function play(variant: SoundVariant): Promise<boolean> {
 	const volume = soundVolume(vscode.workspace.getConfiguration("switchyard").get("sound.volume"));
-	const ordered = [...sinks].sort((a, b) => Number(b.visible) - Number(a.visible));
-	for (const sink of ordered) {
-		if (await sink.post({ type: "sound", variant, volume }).then(ok => ok, () => false)) return true;
+	const ordered = [...sinks].sort((a, b) => Number(b.sink.visible) - Number(a.sink.visible));
+	let held = false;
+	for (const entry of ordered) {
+		const { promise, resolve } = Promise.withResolvers<SoundPlayedMessage | undefined>();
+		entry.awaiting = resolve;
+		const timer = setTimeout(() => resolve(undefined), ACK_WAIT_MS);
+		try {
+			if (!(await entry.sink.post({ type: "sound", variant, volume }).then(ok => ok, () => false))) continue;
+			const ack = await promise;
+			if (!ack || ack.played || ack.state !== "suspended") return true;
+			held = true;
+		} finally {
+			clearTimeout(timer);
+			entry.awaiting = undefined;
+		}
+	}
+	// The browser engine holds a page's audio until the person has interacted with the window (autoplay policy): say so once.
+	if (held && !toldAboutAutoplay) {
+		toldAboutAutoplay = true;
+		void vscode.window.showInformationMessage("Switchyard's sound could not play yet: VS Code's webviews stay silent until you have clicked or pressed a key in the window once. It works from then on.");
 	}
 	return false;
 }

@@ -11,9 +11,11 @@ import { finishedAt, scheduledStart } from "../shared/session-sort";
 import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
-import { addSoundSink, reportSoundPlayed } from "./sounds";
+import { addSoundSink, type SoundSinkHandle } from "./sounds";
 
 let panel: vscode.WebviewPanel | undefined;
+/** The open board as a sound sink (it takes the webview's replies to cues). */
+let boardSound: SoundSinkHandle | undefined;
 
 function post(msg: ToBoard): void {
 	void panel?.webview.postMessage(msg);
@@ -95,7 +97,7 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 	const store = api.organize;
 	switch (msg.type) {
 		case "soundPlayed":
-			reportSoundPlayed(msg);
+			boardSound?.acked(msg);
 			break;
 		case "ready":
 			refresh(api);
@@ -191,14 +193,15 @@ function openBoard(api: OmpApi): void {
 	const board = panel;
 	board.webview.html = html(api, board.webview);
 	board.webview.onDidReceiveMessage(m => void handle(api, m as FromBoard));
-	const sound = addSoundSink({
+	const sound = (boardSound = addSoundSink({
 		get visible() {
 			return board.visible;
 		},
 		post: msg => board.webview.postMessage(msg),
-	});
+	}));
 	board.onDidDispose(() => {
 		sound.dispose();
+		boardSound = undefined;
 		panel = undefined;
 	});
 	refresh(api);

@@ -34,6 +34,20 @@ function shot(name: string): void {
 	execFileSync("python3", ["-c", "import os,sys; from PIL import ImageGrab; ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(sys.argv[1])", path.join(SHOTS, `${name}.png`)], { timeout: 20_000 });
 }
 
+/** A real key press on the X display (XTEST): the first user gesture in the window, which releases the browser's hold on webview audio. */
+function pressKey(): void {
+	const script = [
+		"import ctypes",
+		"x = ctypes.CDLL('libX11.so.6'); t = ctypes.CDLL('libXtst.so.6')",
+		"x.XOpenDisplay.restype = ctypes.c_void_p; x.XStringToKeysym.restype = ctypes.c_ulong",
+		"x.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]; x.XFlush.argtypes = [ctypes.c_void_p]",
+		"t.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]",
+		"d = x.XOpenDisplay(None); kc = x.XKeysymToKeycode(d, x.XStringToKeysym(b'Pause'))",
+		"t.XTestFakeKeyEvent(d, kc, 1, 0); t.XTestFakeKeyEvent(d, kc, 0, 0); x.XFlush(d)",
+	].join("\n");
+	execFileSync("python3", ["-c", script], { timeout: 20_000 });
+}
+
 type Webview = { onWebviewMessage(m: unknown): Promise<void> };
 
 const config = () => vscode.workspace.getConfiguration("switchyard");
@@ -43,11 +57,14 @@ describe("Session sounds", () => {
 	let api: OmpApi;
 	let id = "";
 	const acks: SoundPlayedMessage[] = [];
+	let lastFinish = 0;
 	const status = () => api.sessions.get(id)?.status;
 
 	/** A prompt for the scripted omp (test/fake-omp-acp.mjs; `slow` keeps the turn open long enough to be seen): returns once the session went working → idle. */
 	async function turn(script: string): Promise<void> {
 		await waitFor("idle before the turn", () => status() === "idle");
+		// A cue of one kind for one session sounds at most once per 5 s (src/ext/sounds.ts SAME_EVENT_MS: a session's finish and its task's finish are one event).
+		await sleep(Math.max(0, lastFinish + 5500 - Date.now()));
 		const ao = await api.ao.client(false);
 		let finished = false;
 		const sub = api.sessions.onDidTransition(({ meta, from }) => {
@@ -56,6 +73,7 @@ describe("Session sounds", () => {
 		try {
 			await ao.sendMessage(id, { text: `slow 700\n${script}` });
 			await waitFor("working → idle", () => finished, 60_000);
+			lastFinish = Date.now();
 		} finally {
 			sub.dispose();
 		}
@@ -103,14 +121,37 @@ describe("Session sounds", () => {
 		assert.deepEqual(got, [], "no webview, no cue");
 	});
 
-	it("a finished turn plays the default completion cue in the open Sessions Board (the play path runs)", async () => {
+	it("the browser holds webview audio until a first gesture: the cue is dropped (not queued) and the person is told once", async () => {
 		await vscode.commands.executeCommand("switchyard.board");
 		await sleep(3000);
+		const told: string[] = [];
+		const real = vscode.window.showInformationMessage;
+		(vscode.window as { showInformationMessage: unknown }).showInformationMessage = async (message: string) => {
+			// The finish notification is an information message too.
+			if (/sound could not play/.test(message)) told.push(message);
+			return undefined;
+		};
+		let got: SoundPlayedMessage[];
+		try {
+			got = await acksDuring(3000, () => turn("echo before any gesture"));
+		} finally {
+			(vscode.window as { showInformationMessage: unknown }).showInformationMessage = real;
+		}
+		assert.equal(got.length, 1, JSON.stringify(got));
+		assert.deepEqual({ played: got[0].played, state: got[0].state, voices: got[0].voices }, { played: false, state: "suspended", voices: 0 }, "no gesture yet in this window: the context is held and nothing is scheduled");
+		assert.equal(told.length, 1, "told once");
+		assert.match(told[0], /clicked or pressed a key in the window once/);
+	});
+
+	it("after a key press in the window, a finished turn plays the default completion cue in the open Sessions Board (the play path runs)", async () => {
+		pressKey();
+		await sleep(1000);
 		const got = await acksDuring(4000, () => turn("echo second turn"));
 		assert.equal(got.length, 1, JSON.stringify(got));
 		assert.equal(got[0].variant, "Two-note comfort");
 		assert.equal(got[0].volume, 1);
 		assert.equal(got[0].played, true, `a running Web Audio context took the cue: ${JSON.stringify(got[0])}`);
+		assert.equal(got[0].state, "running");
 		assert.ok(got[0].voices > 0, `voices started: ${got[0].voices}`);
 		console.log(`      audio context state in the board webview: ${got[0].state}, voices: ${got[0].voices}`);
 		shot("sounds-1-board-visible");
@@ -138,15 +179,33 @@ describe("Session sounds", () => {
 		assert.ok(got[0].voices > 0);
 	});
 
-	it("a chat and the board open together: one cue, not two", async () => {
+	it("a chat and the board open together: one cue, not two; a chat the browser still holds silent hands the cue to the board", async () => {
 		const panel = api.openPanel(id, "editor");
 		assert.ok(panel, "chat opened");
 		await waitFor("chat visible", () => panel.isVisible, 10_000);
 		await sleep(3000);
 		const got = await acksDuring(4000, () => turn("echo fourth turn, chat and board"));
-		assert.equal(got.length, 1, JSON.stringify(got));
-		assert.equal(got[0].played, true, JSON.stringify(got[0]));
+		// The visible chat is tried first; its frame has had no key press of its own, so it answers that its audio is held, and the board plays.
+		assert.deepEqual(
+			got.map(a => ({ played: a.played, state: a.state })),
+			[
+				{ played: false, state: "suspended" },
+				{ played: true, state: "running" },
+			],
+			JSON.stringify(got),
+		);
 		shot("sounds-3-chat-and-board");
+		// Once the chat has had a key press too, it plays and the board stays quiet.
+		panel.reveal();
+		await sleep(1500);
+		pressKey();
+		await sleep(1000);
+		const next = await acksDuring(4000, () => turn("echo fifth turn, chat released"));
+		assert.deepEqual(
+			next.map(a => ({ played: a.played, state: a.state })),
+			[{ played: true, state: "running" }],
+			JSON.stringify(next),
+		);
 	});
 
 	it("settings: None and volume 0 are silent; the volume reaches the webview", async () => {
@@ -172,9 +231,10 @@ describe("Session sounds", () => {
 		assert.ok(panel);
 		const got = await acksDuring(4000, async () => {
 			await waitFor("idle", () => status() === "idle");
-			await ao.sendMessage(id, { text: "ask Which one? | a | b" });
+			await ao.sendMessage(id, { text: "ask Which one? | a | b\nslow 1500" });
 			await waitFor("a question waiting", () => status() === "waiting", 30_000);
 		});
+		console.log(`      question acks: ${JSON.stringify(got)}; claims: ${fs.readdirSync(soundClaimsDir()).join(",")}; turnId: ${api.sessions.get(id)?.turnId}; status: ${status()}`);
 		assert.equal(got.length, 1, JSON.stringify(got));
 		assert.equal(got[0].variant, "Soft marimba", "the input cue");
 		const question = sessionReport(api.sessions.model(id)!).question;
