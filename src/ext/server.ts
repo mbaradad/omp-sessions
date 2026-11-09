@@ -12,7 +12,9 @@ import { type AoClient, defaultRunFile, ensureDaemon, findDaemon, stopDaemon } f
 import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
+import { migrationPending } from "./migration-offer";
 import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { switchyardHome } from "../ao/native";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
 import { ensurePlanner, stopPlanner } from "../planner/client";
@@ -207,6 +209,28 @@ export function registerServer(api: OmpApi): ServerControl {
 	const showError = (err: unknown) =>
 		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
 
+	/** Runs the runtime's CLI in a terminal (the launcher may not be on this terminal's PATH). */
+	const runCliInTerminal = (cliArgs: string[]) => {
+		const args = [getNode().path, path.join(runtime ?? "", "cli.js"), ...cliArgs];
+		const windows = process.platform === "win32";
+		const terminal = vscode.window.createTerminal({ name: COMMAND, env: cliEnv(), shellPath: windows ? "powershell.exe" : undefined });
+		terminal.show();
+		terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : shellQuote(args));
+	};
+
+	/** Once per machine: omp Sessions data exists and `migrate` never ran: offer its dry run (it writes nothing). */
+	const offerMigration = async () => {
+		if (!runtime || context.globalState.get<boolean>("switchyard.migrateOffered") || !migrationPending(stateRoot(), switchyardHome())) return;
+		const pick = await vscode.window.showInformationMessage(
+			plain("Switchyard found data from omp Sessions (groups, board lanes, defaults). See what it would copy over?"),
+			"Preview (dry run)",
+			"Don't ask again",
+		);
+		if (!pick) return;
+		await context.globalState.update("switchyard.migrateOffered", true);
+		if (pick === "Preview (dry run)") runCliInTerminal(["migrate"]);
+	};
+
 	// Off the activation path: finding node and starting the planner take a moment.
 	setTimeout(() => {
 		try {
@@ -215,6 +239,7 @@ export function registerServer(api: OmpApi): ServerControl {
 		} catch (err) {
 			ao.log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
 		}
+		void offerMigration();
 		if (!ao.mayStart()) return;
 		startPlanner().then(
 			msg => ao.log.info(msg),
