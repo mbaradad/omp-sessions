@@ -64,6 +64,8 @@ export interface AoFixture {
 	setUsage(windows: { provider: string; id: string; label?: string; usedPercent: number; resetsAt?: number }[]): void;
 	/** Scripts for prompts the test doesn't write: the first rule whose `match` regex matches runs `script` instead ($1… = groups). */
 	setFakeRules(rules: { match: string; flags?: string; script: string }[]): void;
+	/** Installs a stand-in permission gate into the fixture's own omp agent dir (fake omp only) and returns the `gate` option for spawnSwitchyard / spawnSwitchyardSession (G46: modes other than `auto` need it). */
+	standInGate(): { omp: { home: string; env: Record<string, string> } };
 	/** JSON request against the daemon; throws on non-2xx with the body. */
 	api(method: string, path: string, body?: unknown): Promise<any>;
 	/**
