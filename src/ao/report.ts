@@ -1,6 +1,6 @@
 // What other agents and scripts see of a session (`switchyard show|wait --json`, the agent skill):
 // the same shape src/shared/session-report.ts gives today, built from an AoSessionModel.
-import type { AoTurnSettings } from "./client";
+import type { AoConfigOptions, AoTurnSettings } from "./client";
 import type { AoAgentState, AoQuestion, AoSessionModel } from "./model";
 
 /** The permission modes the CLI and skill speak (src/shared/permissions.ts). */
@@ -47,24 +47,52 @@ export interface AoSessionReport {
 	tags: string[];
 	createdAt: number;
 	updatedAt: number;
+	/** The AO project the session works in (absent for a standalone session). */
+	project?: string;
+	/** The session's own branch: its work lands there. */
+	branch?: string;
 }
 
 /**
- * AO's approval settings as a permission mode: plan mode wins; `default` asks, `accept-edits` allows
- * edits, `auto` and `bypass-permissions` ask nothing. (Whether live switching survives is MAPPING Q4.)
+ * The permission mode of a session as omp runs it, from AO's launch setting (VALIDATION.md §3,
+ * `ompacp/driver.go`): `accept-edits` and `auto` both launch `--approval-mode write` (edits go
+ * through, bash asks) = `edits`; `bypass-permissions` launches `yolo` = `auto`; `default` launches no
+ * flag, so omp's own `tools.approvalMode` decides (G12) and the mode is unknown (undefined).
+ * Plan mode is omp's live `mode` config option, not `settings.planMode` (unset for omp): pass
+ * `plan` from `planModeOf(await client.configOptions(id))`; `settings.planMode` is honoured as well.
  */
-export function permissionModeOf(settings: AoTurnSettings | undefined): AoPermissionMode | undefined {
-	if (settings?.planMode) return "plan";
+export function permissionModeOf(settings: AoTurnSettings | undefined, plan = false): AoPermissionMode | undefined {
+	if (plan || settings?.planMode) return "plan";
 	switch (settings?.approvalMode) {
-		case "default":
-			return "ask";
 		case "accept-edits":
-			return "edits";
 		case "auto":
+			return "edits";
 		case "bypass-permissions":
 			return "auto";
 		default:
 			return undefined;
+	}
+}
+
+/** True when omp's live `mode` config option (`GET /conversation/config-options`) is `plan`. */
+export function planModeOf(options: AoConfigOptions): boolean {
+	return options.options.some(o => o.id === "mode" && o.currentValue === "plan");
+}
+
+/**
+ * The AO `approvalMode` to launch a session with for a permission mode: `auto` = `bypass-permissions`,
+ * `edits` = `accept-edits`, `ask` and `plan` = `default`. omp fixes it at process launch (changing it
+ * on a live session needs exit-agent + resume-agent); `plan` is then switched live with
+ * `setConfigOption(id, "mode", {value: "plan"})` (back: `"default"`).
+ */
+export function approvalModeFor(mode: AoPermissionMode): NonNullable<AoTurnSettings["approvalMode"]> {
+	switch (mode) {
+		case "auto":
+			return "bypass-permissions";
+		case "edits":
+			return "accept-edits";
+		default:
+			return "default";
 	}
 }
 
@@ -85,10 +113,15 @@ const STATUS: Readonly<Record<AoAgentState, AoReportStatus>> = {
  * `input`. Answer it with answerFor/answerQuestion on the AoQuestion.
  */
 export function reportQuestion(q: AoQuestion): AoReportQuestion {
-	const base = { id: q.id, title: q.title, ...(q.message && { message: q.message }) };
+	// omp's dialogs have a one-line title and the rest as the message ("Allow tool: write" / "Path: …").
+	const [title, ...rest] = q.title.split("\n");
+	const message = rest.join("\n").trim() || q.message;
+	const base = { id: q.id, title, ...(message && { message }) };
 	if (q.kind === "approval") return { ...base, kind: "select", options: q.options ?? [] };
 	const fields = q.questions ?? [];
-	if (fields.length > 1 || fields.some(f => f.multi)) return { ...base, kind: "ask", questions: fields.map(f => ({ question: f.question, options: f.options, multi: f.multi })) };
+	// omp's `ask` tool: `ask` whatever the number of questions (one answer per question, separated by |). Its form shape is
+	// one field per question plus a `<key>__other` free-text companion; a form without that is a plain question.
+	if (fields.length > 1 || fields.some(f => f.multi || f.otherKey)) return { ...base, kind: "ask", questions: fields.map(f => ({ question: f.question, options: f.options, multi: f.multi })) };
 	const [field] = fields;
 	if (field?.options.length) return { ...base, kind: "select", options: field.options };
 	if (field?.type === "boolean") return { ...base, kind: "confirm" };
@@ -100,6 +133,10 @@ export interface AoReportExtra {
 	tags?: readonly string[];
 	/** The planner's lane summary, when the session has a lane; default: AO's turn queue (which runs on its own). */
 	queue?: AoReportQueue;
+	/** The live permission mode, when the caller read it (`permissionModeOf(settings, planModeOf(await client.configOptions(id)))`); default: from the conversation settings alone. */
+	mode?: AoPermissionMode;
+	/** The number of changed files, when the caller read it elsewhere; default: the model's (the watcher fills it from the workspace manifest). */
+	changedFiles?: number;
 }
 
 export function sessionReport(model: AoSessionModel, extra: AoReportExtra = {}): AoSessionReport {
@@ -111,18 +148,21 @@ export function sessionReport(model: AoSessionModel, extra: AoReportExtra = {}):
 		cwd: model.cwd ?? "",
 		state: model.state,
 		status,
-		changedFiles: model.changedFiles.length,
+		changedFiles: extra.changedFiles ?? model.changedFiles.length,
 		queue: extra.queue ?? { pending, running, done, total, autoRun: true },
 		tags: [...(extra.tags ?? [])],
 		createdAt: model.createdAt,
 		updatedAt: model.updatedAt,
 	};
-	const mode = permissionModeOf(model.conversation?.settings);
+	const mode = extra.mode ?? permissionModeOf(model.conversation?.settings);
 	if (mode) report.mode = mode;
 	if (model.model) report.model = model.model;
 	if (model.cost) report.cost = model.cost;
 	if (model.question && model.state === "needs_input") report.question = reportQuestion(model.question);
 	if (model.reply) report.reply = model.reply;
 	if (model.exitReason && status === "stopped") report.exitReason = model.exitReason;
+	// Where the work lands: the session's own branch in its AO project's worktree.
+	if (model.projectId) report.project = model.projectId;
+	if (model.branch) report.branch = model.branch;
 	return report;
 }
