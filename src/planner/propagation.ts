@@ -102,6 +102,32 @@ export class Propagation {
 		return { branch, sync, ...(notes.length ? { followUp: notes.join("\n\n") } : {}) };
 	}
 
+	/**
+	 * A task that runs in a session that already exists (a client spawned it, or its lane continues it):
+	 * records the session's branch as the task's and merges its parents' committed work into that worktree
+	 * before the prompt goes out (a branch can't be seeded any more, so the parents are merged in).
+	 */
+	prepareExisting(t: Task, repo: string, branch: string): Promise<void> {
+		return this.serial(async () => {
+			const parents = this.gitParents(t, repo);
+			const live = this.task(t.id);
+			if (!parents.length || !live) return;
+			if (!live.git) {
+				this.host.commit(s => {
+					const x = s.tasks.find(y => y.id === t.id);
+					if (x) x.git = { repo, branch };
+				});
+			} else if (live.git.branch !== branch) return;
+			for (const p of parents) {
+				const head = p.git?.head as string;
+				const edge = this.task(t.id)?.sync?.[p.id];
+				if (edge?.head === head && (edge.state === "in-sync" || edge.state === "merged" || edge.state === "upstream-changed")) continue;
+				this.setEdge(t.id, p.id, { ...edge, state: "pending", pendingHead: head, at: this.host.now() });
+			}
+			await this.applyPending(t.id);
+		});
+	}
+
 	/** After AO created the session: records the task's branch and worktree. */
 	async recordSession(id: string, repo: string, branch: string): Promise<void> {
 		const worktree = await worktreeOf(repo, branch).catch(() => undefined);

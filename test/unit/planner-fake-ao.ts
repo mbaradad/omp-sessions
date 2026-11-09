@@ -141,6 +141,13 @@ export class FakeAo implements AoPort {
 		this.event(session, "exited");
 	}
 
+	/** The host died and no event told anyone (a missed SSE event). */
+	killHostSilently(session: string): void {
+		const s = this.sessions.get(session);
+		assert.ok(s, `no session ${session}`);
+		s.exited = true;
+	}
+
 	async restore(session: string) {
 		const s = this.sessions.get(session);
 		if (s) s.terminated = false;
@@ -166,6 +173,11 @@ export class FakeAo implements AoPort {
 		if (this.registered.has(cwd)) throw new AoError("A project at this path is already registered (/api/v1/projects)", 409, "PROJECT_ALREADY_REGISTERED");
 		this.registered.add(cwd);
 		return "p";
+	}
+
+	async sessionGit(session: string) {
+		const s = this.sessions.get(session);
+		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch } : {};
 	}
 
 	async projectPath(id: string) {
@@ -219,7 +231,7 @@ export function tempPlan(t: TestContext): string {
 }
 
 export function start(file: string, ao: FakeAo): Planner {
-	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50 });
+	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
 	p.start();
 	return p;
 }

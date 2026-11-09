@@ -4,11 +4,12 @@
 //   2. POST /sessions with AO's `bypass-permissions` (the omp extension's gate is then the only one),
 //      no prompt, no model (AO refuses `effort` for omp, and a model it does not know leaves a
 //      terminated session behind);
-//   3. validate `model` and `thinking` against the session's own config options, and write the
-//      session's files: `mode` (the gate reads it on every tool call), `omp-args` (the shim);
-//   4. restart the agent when it has extra arguments (they are read at launch);
-//   5. PATCH the config options: model, thinking, and omp's `plan` mode;
-//   6. send the prompt, with a `clientMessageId` (idempotent).
+//   3. check `model` against the session's own config options;
+//   4. with extra omp arguments, write `omp-args` and restart the agent (they are read at launch);
+//   5. PATCH model, then thinking (checked after the model: the levels depend on it);
+//   6. set the permission mode: the file the gate reads, and omp's `plan` option. After the restart,
+//      which resets omp's live options;
+//   7. send the prompt, with a `clientMessageId` (idempotent).
 // Re-running it with the same `clientRequestId` and `clientMessageId` after a crash is safe: AO returns
 // the same session for the request id and reports the message as a duplicate. A failure before the
 // prompt is sent removes the session it created, so a typo leaves nothing behind.
@@ -38,6 +39,13 @@ export interface SpawnSwitchyardOptions {
 	ompArgs?: readonly string[];
 	/** The first message. Without one the session is left ready and waiting. */
 	prompt?: string;
+	/**
+	 * Sets the session's permission mode: writes the mode file and, for `plan`, omp's own plan option
+	 * (checkpoints' `setSessionMode`; MAPPING D11 says the mode file is never written by hand). Called after
+	 * the agent restart and the model and thinking options, before the prompt. Default: this module does the
+	 * same for a session that has no turns yet (the file, and the plan option).
+	 */
+	setMode?: (sessionId: string, mode: AoSessionMode) => Promise<unknown>;
 	/** Makes the prompt idempotent (retry the helper with the same one). Generated when absent and a prompt is given. */
 	clientMessageId?: string;
 	/** Makes the spawn idempotent. Generated when absent. */
@@ -101,17 +109,16 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 	});
 	const id = spawned.session.id;
 	try {
-		// 3. What the session's own options accept, then the files that configure its agent.
+		// 3. What the session's own options accept.
 		let configOptions = await client.configOptions(id);
 		if (options.model) {
 			const models = choicesOf(configOptions, "model");
 			if (models && !models.includes(options.model)) throw new Error(`Unknown omp model "${options.model}"; this session offers: ${models.join(", ")}`);
 		}
-		writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
-		if (ompArgs.length > 0) writeFileAtomic(sessionStateFile(id, "omp-args", home), `${ompArgs.join(" ")}\n`);
 
-		// 4. Extra arguments are read when omp launches: restart it on the same transcript.
+		// 4. Extra arguments are read when omp launches: write them, restart omp on the same transcript.
 		if (ompArgs.length > 0) {
+			writeFileAtomic(sessionStateFile(id, "omp-args", home), `${ompArgs.join(" ")}\n`);
 			await client.exitAgent(id);
 			await client.resumeAgent(id);
 			const deadline = Date.now() + (options.readyTimeoutMs ?? 90_000);
@@ -122,9 +129,9 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 			configOptions = await client.configOptions(id);
 		}
 
-		// 5. Model, thinking and plan are omp's own options, live before the first message. The thinking
-		// levels a model offers depend on the model (haiku 3 has no `low`), so the model goes first and
-		// the choices are read again before `thinking` is checked.
+		// 5. Model and thinking are omp's own options, live before the first message, and a restart resets
+		// them: so after it. The thinking levels a model offers depend on the model (haiku 3 has no `low`),
+		// so the model goes first and the choices are read again before `thinking` is checked.
 		const current = (key: string) => configOptions.options.find(o => o.id === key)?.currentValue;
 		if (options.model && current("model") !== options.model) {
 			await client.setConfigOption(id, "model", { value: options.model });
@@ -135,7 +142,15 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 			if (levels && !levels.includes(options.thinking)) throw new Error(`Unknown thinking level "${options.thinking}"${options.model ? ` for ${options.model}` : ""}; omp offers: ${levels.join(", ")}`);
 			if (current("thinking") !== options.thinking) await client.setConfigOption(id, "thinking", { value: options.thinking });
 		}
-		if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
+
+		// 6. The permission mode, last for the same reason (omp's `plan` option is one of the live ones).
+		// The caller's setMode writes the mode file and handles plan (MAPPING D11: never write the file
+		// by hand); without one this does both itself, which is all a session with no turns needs.
+		if (options.setMode) await options.setMode(id, mode);
+		else {
+			writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
+			if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
+		}
 	} catch (error) {
 		// Nothing was sent. Remove a session this call made; one that already has turns (a retry after a
 		// crash found the session of an earlier, successful call) is not ours to delete.
@@ -148,7 +163,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		throw error;
 	}
 
-	// 6. The prompt last, so the gate, the model and the arguments are all in place for the first turn.
+	// 7. The prompt last, so the gate, the model and the arguments are all in place for the first turn.
 	const sent = options.prompt ? await client.sendMessage(id, { text: options.prompt, clientMessageId }) : undefined;
 	return { session: spawned.session, ...(project && { project }), ...(sent && { sent }), clientRequestId, ...(clientMessageId && { clientMessageId }) };
 }

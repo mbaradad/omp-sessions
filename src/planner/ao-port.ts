@@ -65,6 +65,8 @@ export interface AoPort {
 	setThinking(session: string, level: string): Promise<string | undefined>;
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
+	/** The git branch and project folder of an existing session (undefined parts: not a git project session). */
+	sessionGit(session: string): Promise<{ repo?: string; branch?: string }>;
 	/** Folder of an AO project (the repo's main checkout). */
 	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
@@ -177,6 +179,11 @@ export function aoPort(ao: AoClient): AoPort {
 			if (!response.ok) throw new AoError(`thinking level ${level}: ${JSON.stringify(error)}`, response.status, `HTTP_${response.status}`);
 			return previous || undefined;
 		},
+		async sessionGit(session) {
+			const view = await ao.getSession(session);
+			const repo = view.projectId ? (await ao.listProjects()).find(p => p.id === view.projectId)?.path : undefined;
+			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}) };
+		},
 		async projectPath(id) {
 			return (await ao.listProjects()).find(p => p.id === id)?.path;
 		},
@@ -190,6 +197,8 @@ export function aoPort(ao: AoClient): AoPort {
 				onStatus: (s: AoStreamStatus) => {
 					if (s.state === "open") handlers.onOpen(s.reset);
 					else if (s.state === "retrying") handlers.onDown(s.error);
+					// Events were skipped (pruned or replaced log): the planner re-checks every running task, as after a reset.
+					else if (s.state === "gap") handlers.onOpen(true);
 				},
 			});
 		},
