@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { AoClient, type AoConversation } from "../../src/ao/client";
 import { ChatFeed, replyFor } from "../../src/ext/chat-feed";
+import { sendResuming } from "../../src/ext/chat-send";
 import type { ToWebview } from "../../src/shared/webview";
 import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
@@ -202,6 +203,26 @@ test("chat feed: a follow-up queued behind the turn is a queue chip until it run
 		assert.ok(said.includes("echo queued one"));
 		assert.ok(!said.includes("echo queued two"), `withdrawn prompt hidden in ${JSON.stringify(said)}`);
 		assert.equal(chat.feed.queued().length, 0);
+	} finally {
+		await chat.close();
+	}
+});
+
+test("chat feed: sending to a chat whose omp died restarts omp and the prompt goes through", { skip }, async () => {
+	const id = await spawn("feed resume", "echo before the crash");
+	const chat = new Follower(id);
+	try {
+		await chat.load();
+		await chat.until("the first reply", () => texts(chat.feed.transcript()).includes("before the crash"));
+		assert.ok(ao.killChatHosts(id) > 0, "a chat host to kill");
+		await chat.until("AO to see the agent gone", () => chat.feed.conversation?.controller === "stopped");
+		// Plain send fails until the agent is resumed...
+		await assert.rejects(client.sendMessage(id, { text: "echo plain" }), { code: "CHAT_CONTROLLER_NOT_READY" });
+		// ...what the chat does for the person.
+		let resumed = 0;
+		await sendResuming(client, id, async () => void (await client.sendMessage(id, { text: "echo after the crash" })), () => resumed++);
+		assert.equal(resumed, 1);
+		await chat.until("the reply after the crash", () => !chat.feed.isBusy() && texts(chat.feed.transcript()).includes("after the crash"));
 	} finally {
 		await chat.close();
 	}

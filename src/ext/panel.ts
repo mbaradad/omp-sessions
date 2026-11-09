@@ -14,6 +14,7 @@ import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../
 import type { FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
+import { sendResuming } from "./chat-send";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
 import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
@@ -745,8 +746,15 @@ export class ChatPanel implements vscode.Disposable {
 		const headers = attachments.length ? { "X-AO-Attachment-Upload": "1" } : undefined;
 		const params = { path: { sessionId: this.sessionId } };
 		const body = { text: message, clientMessageId: crypto.randomUUID(), ...(attachments.length && { attachments }) };
-		if (steer) await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params, body, headers }));
-		else await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params, body, headers }));
+		await sendResuming(
+			ao,
+			this.sessionId,
+			async () => {
+				if (steer) await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params, body, headers }));
+				else await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params, body, headers }));
+			},
+			() => this.post({ type: "notice", level: "info", text: "omp was not running: restarting it on this conversation…" }),
+		);
 		this.schedule();
 	}
 
