@@ -1554,7 +1554,7 @@ async function cmdConfig(args: Args): Promise<number> {
 			if (key === "omp.extraArgs") {
 				// Added to every `omp acp` an AO session starts (the omp shim reads the nested key, G34); `none` or no arguments clears them.
 				const clear = rest.length === 0 || (rest.length === 1 && rest[0] === "none");
-				writeSwitchyardConfig({ omp: clear ? undefined : { extraArgs: rest } });
+				writeSwitchyardConfig({ omp: { extraArgs: clear ? undefined : rest } });
 				break;
 			}
 			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : `config set ${key} <on|off>`);
@@ -1584,7 +1584,7 @@ async function cmdConfig(args: Args): Promise<number> {
 		case "unset":
 			if (key === undefined) throw new UsageError(`config unset <${CONFIG_KEYS.filter(k => k !== "omp.path").join("|")}>`);
 			if (key === "omp.path") throw new Error(NO_OMP_PATH);
-			if (key === "omp.extraArgs") writeSwitchyardConfig({ omp: undefined });
+			if (key === "omp.extraArgs") writeSwitchyardConfig({ omp: { extraArgs: undefined } });
 			else if (key === "model") writeSwitchyardConfig({ model: undefined });
 			else if (key === "mode") writeSwitchyardConfig({ mode: undefined });
 			else writeSwitchyardConfig({ [ON_OFF_KEYS[key]]: undefined });
