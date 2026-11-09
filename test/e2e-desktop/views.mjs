@@ -77,6 +77,13 @@ fs.symlinkSync(path.join(os.homedir(), ".omp", "agent"), path.join(home, ".omp",
 
 // The project: a git repository with one commit (AO gives each session its own worktree of it).
 fs.writeFileSync(path.join(dirs.repo, "README.md"), "# ao-smoke-views\n");
+// Switchyard's omp extensions (gate, checkpoints) load from the project, committed so each session's worktree has them:
+// nothing may be installed into the shared ~/.omp/agent/extensions (CONTRACT.md, Isolated HOME).
+const ompExtensions = path.join(dirs.repo, ".omp", "extensions", "switchyard");
+fs.mkdirSync(ompExtensions, { recursive: true });
+const modules = fs.readdirSync(path.join(repo, "out", "omp-extension")).filter(f => f.endsWith(".js")).sort();
+for (const f of modules) fs.copyFileSync(path.join(repo, "out", "omp-extension", f), path.join(ompExtensions, f));
+fs.writeFileSync(path.join(ompExtensions, "package.json"), `${JSON.stringify({ name: "switchyard", private: true, type: "module", omp: { extensions: modules.map(f => `./${f}`) } }, null, "\t")}\n`);
 for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]]) {
 	const r = spawnSync("git", args, { cwd: dirs.repo, encoding: "utf8" });
 	if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
@@ -161,6 +168,19 @@ const daemonLog = fs.openSync(path.join(dirs.ao, "daemon.log"), "a");
 const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
 const baseUrl = `http://127.0.0.1:${port}`;
 
+// Canary for CONTRACT.md "Isolated HOME": the real ~/.switchyard and the shared omp extensions dir must come out as they went in.
+const realHome = fs.realpathSync(os.userInfo().homedir);
+const watched = [".switchyard", ".omp/agent/extensions", ".local/bin/omp-sessions", ".local/bin/switchyard"].map(p => path.join(realHome, p));
+const fingerprint = p => {
+	try {
+		const st = fs.lstatSync(p);
+		return st.isDirectory() ? fs.readdirSync(p).sort().join(",") : `${st.size}:${st.mtimeMs}`;
+	} catch {
+		return "absent";
+	}
+};
+const realBefore = new Map(watched.map(p => [p, fingerprint(p)]));
+
 try {
 	const deadline = Date.now() + 60_000;
 	let ready = false;
@@ -209,6 +229,7 @@ try {
 } finally {
 	// `ao stop` with the instance's env (POST /shutdown answers DAEMON_OWNER_CHANGED to a client that did not start it).
 	const stop = spawnSync(ao, ["stop"], { env: { ...process.env, ...aoEnv, ...isolatedEnv }, encoding: "utf8", timeout: 30_000 });
+	for (const p of watched) check(`real ${path.relative(realHome, p)} untouched`, fingerprint(p) === realBefore.get(p), `${realBefore.get(p)} → ${fingerprint(p)}`);
 	check("isolated AO daemon stopped", stop.status === 0, (stop.stderr || stop.stdout || "").trim());
 	if (spawnSync("kill", ["-0", String(daemon.pid)]).status === 0) process.kill(daemon.pid, "SIGKILL");
 	// Chat hosts (and their omp) are detached by design and outlive the daemon: end this run's.

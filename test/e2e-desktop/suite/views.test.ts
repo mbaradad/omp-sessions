@@ -180,6 +180,11 @@ describe("AO views", () => {
 		}
 	});
 
+	it("the project's omp extensions load: the agent's edits leave a checkpoint record under the Switchyard home", async () => {
+		const file = path.join(process.env.SWITCHYARD_HOME ?? "", "sessions", id, "checkpoints", "changes.jsonl");
+		await waitFor("checkpoints changes.jsonl", () => fs.existsSync(file) && fs.readFileSync(file, "utf8").trim(), 30_000);
+	});
+
 	it("on the real planner: Dependencies… (after), Mark completed (lane.complete), priority; the task graph shows in the card data", async () => {
 		const planner = await ensurePlanner(path.join(EXT_PATH, "out", "planner.js"));
 		assert.ok(planner, "the planner started (isolated SWITCHYARD_HOME)");
