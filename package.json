@@ -550,6 +550,12 @@
 				"icon": "$(check)"
 			},
 			{
+				"command": "switchyard.tasks.undo",
+				"title": "Undo This Task…",
+				"category": "Switchyard",
+				"icon": "$(discard)"
+			},
+			{
 				"command": "switchyard.tasks.rerun",
 				"title": "Re-run with Parent Changes",
 				"category": "Switchyard",
@@ -1424,6 +1430,11 @@
 					"group": "1_session@5"
 				},
 				{
+					"command": "switchyard.tasks.undo",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"group": "3_status@6"
+				},
+				{
 					"command": "switchyard.tasks.rerun",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
 					"group": "3_status@4"
@@ -1879,6 +1890,10 @@
 				},
 				{
 					"command": "switchyard.tasks.completeLane",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.undo",
 					"when": "false"
 				},
 				{

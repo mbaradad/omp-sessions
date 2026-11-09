@@ -4,7 +4,7 @@
 import * as vscode from "vscode";
 import type { PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { checkTaskOption } from "../shared/plan-tree";
+import { afterUndoOps, checkTaskOption, isUndoable, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
@@ -144,5 +144,30 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		if (!pick) return;
 		const priority: Priority | null = pick.label === "normal" ? null : (pick.label as Priority);
 		await edit([arg.kind === "lane" ? { op: "lane.update", id: arg.lane.id, priority } : { op: "update", id: arg.task.id, priority }]);
+	});
+
+	// Undo a task's work (files and conversation) with the checkpoints of its AO session. The undo itself, its
+	// confirmation and the interruption of a running turn are the `switchyard.undo` command's (checkpoints slice);
+	// here: which turn, and the plan afterwards (the task and every later one of that session are pending again).
+	reg("switchyard.tasks.undo", async (arg?: unknown) => {
+		if (!isNode(arg) || arg.kind !== "task") return;
+		const plan = deps.planner.plan;
+		const task = plan?.tasks.find(t => t.id === arg.task.id);
+		if (!plan || !task || !isUndoable(task) || !task.session) {
+			void vscode.window.showInformationMessage("This task has no recorded run to undo.");
+			return;
+		}
+		let result: { ok?: boolean; message?: string } | undefined;
+		try {
+			result = (await vscode.commands.executeCommand("switchyard.undo", task.session, task.turn)) as typeof result;
+		} catch (err) {
+			void vscode.window.showWarningMessage(`Switchyard: could not undo “${task.title}”: ${err instanceof Error ? err.message : String(err)}`);
+			return;
+		}
+		if (!result?.ok) return; // cancelled, nothing to undo, or refused: that command said why
+		const undone = undoneWith(plan, task);
+		if (await edit(afterUndoOps(undone))) {
+			void vscode.window.showInformationMessage(`Switchyard: undid ${undone.length === 1 ? `“${task.title}”` : `${undone.length} tasks (“${task.title}” and the later ones in that session)`}. They are pending again and held; run them when you want.`);
+		}
 	});
 }

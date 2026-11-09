@@ -1,6 +1,6 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
-import type { BudgetCaps, EdgeSync, LaneView, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
+import type { BudgetCaps, EdgeSync, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
@@ -159,4 +159,36 @@ export function checkTaskOption(field: TaskOptionField, text: string): string | 
 		case "timeout":
 			return Number.isFinite(Number(t)) && Number(t) > 0 && Number(t) <= 24 * 60 ? undefined : "Minutes, more than 0 and at most 1440 (empty clears it).";
 	}
+}
+
+/** Tasks a person can undo with the checkpoints: they ran, finished, and the planner knows which AO turn did the work. */
+export function isUndoable(task: Pick<TaskView, "status" | "session" | "turn">): boolean {
+	return (task.status === "done" || task.status === "failed") && !!task.session && !!task.turn;
+}
+
+/**
+ * What undoing `task`'s turn takes with it: the checkpoint rewinds that prompt AND every later one in the same
+ * AO session, so later tasks that ran in that session are undone too. In the order they ran.
+ */
+export function undoneWith(plan: PlanView, task: TaskView): TaskView[] {
+	const from = task.startedAt ?? 0;
+	return plan.tasks
+		.filter(t => t.session === task.session && (t.status === "done" || t.status === "failed") && (t.id === task.id || (t.startedAt ?? 0) > from))
+		.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+}
+
+/**
+ * Planner edits after an undo: every undone task goes back to pending, held so nothing re-runs by itself
+ * (`requeue` re-arms a queue, so the queue is paused again in the same batch; a task in no queue is paused on its own).
+ */
+export function afterUndoOps(undone: readonly TaskView[]): PlanOp[] {
+	const ops: PlanOp[] = [];
+	const lanes = new Set<string>();
+	for (const t of undone) {
+		ops.push({ op: "requeue", id: t.id });
+		if (t.lane) lanes.add(t.lane);
+		else ops.push({ op: "pause", id: t.id });
+	}
+	for (const lane of lanes) ops.push({ op: "lane.pause", id: lane });
+	return ops;
 }
