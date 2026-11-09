@@ -187,6 +187,36 @@ test("approvals as omp sends them: bare ACP option ids get labels and kinds", ()
 	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
 });
 
+test("write/edit permission prompts arrive as user_input and are approvals too (G12, VALIDATION.md §3)", () => {
+	// As validate read them under omp's always-ask: summary "Allow tool: write\nPath: …", one enum field, resolved through inputs/{id}/resolve.
+	const write = activity({
+		activityKind: "user_input",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: overlay-edit.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: overlay-edit.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const q = questionOf(write);
+	assert.equal(q.kind, "approval");
+	assert.equal(q.title, "Allow tool: write\nPath: overlay-edit.md");
+	assert.deepEqual(q.options, ["Approve", "Approve write for this session", "Deny"]);
+	assert.deepEqual(q.decisions?.map(d => d.kind), ["allow_once", "allow_always", "reject_once"]);
+	// yes/no, number and label all answer it, through the inputs route with the enum value.
+	const accept = (value: string) => ({ kind: "input", body: { action: "accept", content: { value } } });
+	assert.deepEqual(answerFor(q, "yes"), accept("Approve"));
+	assert.deepEqual(answerFor(q, "2"), accept("Approve write for this session"));
+	assert.deepEqual(answerFor(q, "no"), accept("Deny"));
+	assert.deepEqual(answerFor(q, "deny"), accept("Deny"));
+	assert.ok("error" in answerFor(q, "maybe"));
+	// It waits like any approval: needs_input, and the report shows a select.
+	const waiting = conversation({ turns: [turn("t1", "running")], activities: [{ ...write, turnId: "t1" }] });
+	assert.equal(agentState(view(), waiting), "needs_input");
+	assert.equal(sessionModel(view(), waiting).question?.kind, "approval");
+	// omp's `ask` forms are not permission prompts, nor a form that merely has a Yes/No choice.
+	assert.equal(questionOf(ask).kind, "input");
+	const yesNo = activity({ activityKind: "user_input", requestId: "r", detail: { schema: { type: "object", properties: { ok: { type: "string", enum: ["Yes", "No"] } } } } });
+	assert.equal(questionOf(yesNo).kind, "input");
+});
+
 test("answerFor: approvals by number, label or yes/no", () => {
 	const q = questionOf(approval);
 	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "always" });
