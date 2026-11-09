@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { gateStatus } from "../../src/ao/gate";
 import { ensureOmpIntegration } from "../../src/shared/omp-extension-install";
 
 const posix = process.platform !== "win32";
@@ -85,6 +86,23 @@ test("a missing build and an omp that is not the shim are reported, not thrown",
 		assert.deepEqual(foreign.installed, ["gate"]);
 		assert.match(foreign.error ?? "", /not Switchyard's/);
 		assert.match(fs.readFileSync(path.join(s.shimDir, "omp"), "utf8"), /mine/);
+	} finally {
+		fs.rmSync(s.root, { recursive: true, force: true });
+	}
+});
+
+test("what ensureOmpIntegration installs is exactly what foundation's gateStatus() counts as installed", { skip: !posix }, () => {
+	const s = setup();
+	try {
+		const home = path.join(s.root, "userhome");
+		const switchyardHome = path.join(s.root, "sy");
+		const omp = { home, env: {} as NodeJS.ProcessEnv };
+		assert.deepEqual([gateStatus({ omp, home: switchyardHome }).gate, gateStatus({ omp, home: switchyardHome }).shim], [false, false]);
+		const res = ensureOmpIntegration({ bundleRoot: s.bundleRoot, omp, env: { SWITCHYARD_HOME: switchyardHome } });
+		assert.deepEqual([res.installed, res.error], [["gate", "shim"], undefined]);
+		const status = gateStatus({ omp, home: switchyardHome });
+		assert.deepEqual([status.gate, status.shim], [true, true]);
+		assert.ok(status.extensionDir.startsWith(home) && status.shimFile.startsWith(switchyardHome));
 	} finally {
 		fs.rmSync(s.root, { recursive: true, force: true });
 	}
