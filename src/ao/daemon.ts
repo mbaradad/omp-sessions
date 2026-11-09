@@ -311,6 +311,8 @@ export async function ensureDaemon(options: AoStartOptions = {}): Promise<AoDaem
 	const log = options.log ?? (() => undefined);
 	const ao = options.aoPath ?? findAoBinary(env);
 	if (!ao) throw new Error("No AO daemon is running and the `ao` binary was not found (set AO_BIN or put ao on PATH).");
+	// A test run with the real HOME would install and enable the real ao-daemon.service (or leave a daemon on the real data dir).
+	if (process.env.NODE_TEST_CONTEXT && !isolatedHome(env)) throw new Error("refusing to start an AO daemon from a test run with the real HOME: set HOME and SWITCHYARD_HOME to a temp dir (CONTRACT.md, \"Isolated HOME\")");
 	const childEnv = daemonEnv(env, runFile);
 	if (options.port !== undefined) childEnv.AO_PORT = String(options.port);
 	const supervisor = options.supervisor ?? "auto";
