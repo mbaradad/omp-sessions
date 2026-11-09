@@ -1,6 +1,7 @@
 // The planner's socket API: a plan event for a change reaches the client before the response to the request
 // that made it, so a client's cached plan is never older than the answer it just got.
 import assert from "node:assert/strict";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -11,10 +12,15 @@ import { Planner } from "../../src/planner/planner";
 import type { PlannerEvent, PlannerResponse } from "../../src/planner/types";
 import { FakeAo, git, scratchRepo, tempPlan, until } from "./planner-fake-ao";
 
+/** Where a test server listens: a socket beside the plan file, a named pipe on Windows (as the planner's own listenPath). */
+function socketPath(file: string, name: string): string {
+	return process.platform === "win32" ? `\\\\.\\pipe\\switchyard-test-${name}-${crypto.randomBytes(8).toString("hex")}` : path.join(path.dirname(file), `${name}.sock`);
+}
+
 test("the plan event of an edit arrives before the edit's response (rev included), for every quick edit in a row", async t => {
 	const ao = new FakeAo();
 	const planner = new Planner({ connect: async () => ao, file: tempPlan(t), userDefaults: () => ({}) });
-	const sock = path.join(path.dirname(tempPlan(t)), "api.sock");
+	const sock = socketPath(tempPlan(t), "api");
 	const server = createApiServer({ planner, info: () => ({ pid: 0, version: "t", root: "", startedAt: 0, api: 1 }), shutdown: () => {} });
 	await new Promise<void>(resolve => server.listen(sock, resolve));
 	t.after(() => server.close());
@@ -64,7 +70,7 @@ test("branch.clean answers after the cleanup: the plan event with the shrunk lis
 	await new Promise(r => setTimeout(r, 500));
 	assert.equal(planner.view().keptBranches.length, 1, "kept while it has unmerged work");
 	git(repo, "merge", "-q", "--no-edit", "switchyard/work");
-	const sock = path.join(path.dirname(tempPlan(t)), "api2.sock");
+	const sock = socketPath(tempPlan(t), "api2");
 	const server = createApiServer({ planner, info: () => ({ pid: 0, version: "t", root: "", startedAt: 0, api: 1 }), shutdown: () => {} });
 	await new Promise<void>(resolve => server.listen(sock, resolve));
 	t.after(() => server.close());
