@@ -4,7 +4,7 @@
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
-import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
+import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport, turnIdOf } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
 import { readMode } from "../shared/session-mode";
 import type { GraphEdge, LaneSummary } from "./plan";
@@ -295,6 +295,7 @@ export function infoJson(s: Session, order: number) {
 			status: report.status,
 			createdAt: m.createdAt,
 			updatedAt: m.updatedAt,
+			...(turnIdOf(m) && { turnId: turnIdOf(m) }),
 			changedFiles: report.changedFiles,
 			// Tags are on the entry (as before) and in `meta` (SessionMeta.tags): the Hermes lane finds its cards by `hermes:<board>` and `card:<id>`.
 			...(s.tags.length && { tags: s.tags }),

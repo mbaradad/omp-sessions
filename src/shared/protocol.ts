@@ -20,6 +20,8 @@ export interface SessionMeta {
 	socket: string;
 	createdAt: number;
 	updatedAt: number;
+	/** What the status belongs to, the same for every client: the latest turn (a finished turn) or the waiting question's id (a question). The sounds' cross-window dedupe key; `updatedAt` differs between clients that saw the change at different moments. */
+	turnId?: string;
 	ompSessionFile?: string;
 	/** Earlier omp transcripts of this session (a fresh-context task or /new switched files), oldest first. */
 	ompSessionFiles?: string[];

@@ -29,10 +29,20 @@ export function taskAlertFor(from: string | undefined, to: string): AlertKind | 
 	return undefined;
 }
 
+/**
+ * The key every client derives for one alert (the cross-tab and cross-window dedupe): the session, the kind and
+ * what the change belongs to, an AO turn id (a finished turn's, or the planner task's `turn`) or a question's id.
+ * `updatedAt` is only the fallback when no turn is known: clients that saw the change at different moments
+ * read different values, so two of them would both play.
+ */
+export function alertKey(id: string, kind: AlertKind, turnId?: string | null, updatedAt?: number | null): string {
+	return `${id}.${kind}.${turnId || updatedAt || ""}`;
+}
+
 export interface SessionAlert {
 	id: string;
 	kind: AlertKind;
-	/** The session's `updatedAt` when seen: with id and kind, the same key in every page that saw the change. */
+	/** `alertKey` of the change: the same in every page that saw it. */
 	key: string;
 }
 
@@ -41,13 +51,13 @@ export class AlertTracker {
 	private last = new Map<string, string>();
 
 	/** The alerts between the previous snapshot and `sessions` (none for the first snapshot). */
-	observe(sessions: Iterable<{ id: string; state: string; updatedAt?: number | null }>): SessionAlert[] {
+	observe(sessions: Iterable<{ id: string; state: string; turnId?: string | null; updatedAt?: number | null }>): SessionAlert[] {
 		const next = new Map<string, string>();
 		const alerts: SessionAlert[] = [];
 		for (const s of sessions) {
 			next.set(s.id, s.state);
 			const kind = alertFor(this.last.get(s.id), s.state);
-			if (kind) alerts.push({ id: s.id, kind, key: `${s.id}.${kind}.${s.updatedAt ?? ""}` });
+			if (kind) alerts.push({ id: s.id, kind, key: alertKey(s.id, kind, s.turnId, s.updatedAt) });
 		}
 		this.last = next;
 		return alerts;

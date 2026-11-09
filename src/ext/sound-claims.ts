@@ -19,7 +19,7 @@ export function soundClaimsDir(): string {
 }
 
 /**
- * Claims the cue `key` (session, alert kind and the session's `updatedAt`, so all windows derive the same key):
+ * Claims the cue `key` (`alertKey`: session, alert kind and the turn, so all windows derive the same key, whether a session transition or a planner task event announced it):
  * true for exactly one caller, false if another window already claimed it. A claims folder that cannot be
  * written does not silence the cue.
  */

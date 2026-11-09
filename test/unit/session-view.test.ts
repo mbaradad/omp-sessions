@@ -324,3 +324,12 @@ test("asChangedFile: git's letters as AO's manifest words them", () => {
 	assert.deepEqual(asChangedFile({ status: "R", path: "new", from: "old" }), { path: "new", oldPath: "old", status: "renamed", additions: 0, deletions: 0 });
 	assert.equal(asChangedFile({ status: "M", path: "m" }).status, "modified");
 });
+
+test("metaOf: turnId is the latest real turn, or the waiting question's id (the sounds' cross-window dedupe key)", () => {
+	const turns = [{ id: "t1" }, { id: "t2" }, { id: "t3", providerTurnId: "acp-history-turn:x" }];
+	const conversation = { turns } as unknown as AoConversation;
+	assert.equal(metaOf(model({ state: "idle", conversation }), "").turnId, "t2");
+	const question = { id: "req-9" } as AoSessionModel["question"];
+	assert.equal(metaOf(model({ state: "needs_input", question, conversation }), "").turnId, "req-9");
+	assert.equal(metaOf(model({ state: "idle" }), "").turnId, undefined);
+});

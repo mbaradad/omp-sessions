@@ -4,7 +4,7 @@
 // for extensions to play its accessibility signals, so with no omp webview open nothing sounds.
 import * as vscode from "vscode";
 import { DEFAULT_COMPLETION_SOUND, DEFAULT_INPUT_SOUND, type PlaySoundMessage, SOUND_VARIANTS, type SoundVariant, soundVariant, soundVolume } from "../shared/completion-sound";
-import { type AlertKind, alertFor, taskAlertFor } from "../shared/session-alerts";
+import { type AlertKind, alertFor, alertKey, taskAlertFor } from "../shared/session-alerts";
 import type { OmpApi } from "./api";
 import type { ChatPanel } from "./panel";
 import { claimSound, soundClaimsDir } from "./sound-claims";
@@ -118,13 +118,13 @@ export function registerSounds(api: OmpApi): void {
 		vscode.commands.registerCommand("switchyard.testSound", () => audition(api, "complete")),
 		sessions.onDidTransition(({ meta, from }) => {
 			const kind = alertFor(from, meta.status);
-			if (kind && sessions.notifies(meta)) cue(kind, meta.id, `${meta.id}.${kind}.${meta.updatedAt}`);
+			if (kind && sessions.notifies(meta)) cue(kind, meta.id, alertKey(meta.id, kind, meta.turnId, meta.updatedAt));
 		}),
 		// The planner's tasks add what AO's states do not show: a run that failed or was cut short.
 		sessions.onDidTaskTransition(({ task, sessionId, from }) => {
 			const kind = taskAlertFor(from, task.state);
 			const meta = sessionId ? sessions.get(sessionId) : undefined;
-			if (kind && meta && sessions.notifies(meta)) cue(kind, meta.id, `${meta.id}.${kind}.task.${task.id}.${task.finishedAt ?? ""}`);
+			if (kind && meta && sessions.notifies(meta)) cue(kind, meta.id, alertKey(meta.id, kind, task.turn ?? `task.${task.id}.${task.finishedAt ?? ""}`));
 		}),
 	);
 }

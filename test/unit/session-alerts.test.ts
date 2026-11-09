@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import manifest from "../../package.json" with { type: "json" };
 import { DEFAULT_COMPLETION_SOUND, DEFAULT_INPUT_SOUND, SOUND_VARIANTS, playSound, soundVariant, soundVolume } from "../../src/shared/completion-sound";
-import { AlertTracker, alertFor, claimAlerts, cueFor, taskAlertFor } from "../../src/shared/session-alerts";
+import { AlertTracker, alertFor, alertKey, claimAlerts, cueFor, taskAlertFor } from "../../src/shared/session-alerts";
 import { claimSound } from "../../src/ext/sound-claims";
 
 test("alertFor: a working session going idle completes; entering needs input asks; nothing else sounds", () => {
@@ -119,4 +119,28 @@ test("taskAlertFor: a finished run completes; a failed or crash-interrupted run 
 	assert.equal(taskAlertFor("waiting", "running"), undefined);
 	assert.equal(taskAlertFor("waiting", "done"), undefined);
 	assert.equal(taskAlertFor(undefined, "failed"), undefined);
+});
+
+test("alertKey: the turn makes the key, the same for clients that saw the change at different moments; updatedAt only when no turn is known", () => {
+	// Two tabs: the first saw working→idle at updatedAt 5, the second first saw idle at 9 (a later event): same turn, same key.
+	const a = new AlertTracker();
+	const b = new AlertTracker();
+	a.observe([{ id: "s", state: "working", turnId: "t1", updatedAt: 4 }]);
+	b.observe([{ id: "s", state: "working", turnId: "t1", updatedAt: 4 }]);
+	const first = a.observe([{ id: "s", state: "idle", turnId: "t1", updatedAt: 5 }]);
+	const second = b.observe([{ id: "s", state: "idle", turnId: "t1", updatedAt: 9 }]);
+	assert.equal(first[0].key, "s.complete.t1");
+	assert.equal(second[0].key, first[0].key);
+	// With a shared storage only one of the two plays.
+	const storage = memoryStorage();
+	assert.equal(claimAlerts(storage, first, 1000).length, 1);
+	assert.equal(claimAlerts(storage, second, 1500).length, 0);
+	// The next turn is a new event; a question is keyed by its own id.
+	assert.equal(alertKey("s", "complete", "t2", 11), "s.complete.t2");
+	assert.equal(alertKey("s", "input", "req-1", 12), "s.input.req-1");
+	assert.equal(alertKey("s", "complete", undefined, 11), "s.complete.11");
+	assert.equal(alertKey("s", "complete", null, null), "s.complete.");
+	// A planner task event for the same turn derives the session's key: a window that heard the task first and
+	// one that heard the session first claim one key (src/ext/sounds.ts passes task.turn).
+	assert.equal(alertKey("s", taskAlertFor("running", "done")!, "t1"), first[0].key);
 });
