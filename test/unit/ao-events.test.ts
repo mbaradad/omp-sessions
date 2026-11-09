@@ -143,6 +143,34 @@ test("subscribeEvents: a daemon whose log no longer has our cursor reports reset
 	}
 });
 
+test("subscribeEvents: a persisted cursor the daemon pruned past is reported as a gap; each event comes with its sequence", async () => {
+	const daemon = await fakeDaemon();
+	const c = collector();
+	const seqs: number[] = [];
+	const sub = subscribeEvents({ baseUrl: daemon.base, after: 10, onEvent: (e, seq) => (seqs.push(seq), c.onEvent(e)), onStatus: c.onStatus, backoff: { initialMs: 5, maxMs: 5 }, random: () => 0 });
+	try {
+		const first = await daemon.next();
+		assert.equal(first.url, "/api/v1/events?after=10");
+		open(first.res, 10);
+		// 11-13 were pruned: replay starts at 14.
+		first.res.write(frame(14) + frame(15));
+		await c.until(() => c.events.length === 2);
+		assert.deepEqual(seqs, [14, 15]);
+		assert.deepEqual(c.statuses.filter(s => s.state === "gap"), [{ state: "gap", after: 10, next: 14 }]);
+		first.res.destroy();
+		// A contiguous resume reports nothing.
+		const second = await daemon.next();
+		assert.equal(second.lastEventId, "15");
+		open(second.res, 15);
+		second.res.write(frame(16));
+		await c.until(() => c.events.length === 3);
+		assert.equal(c.statuses.filter(s => s.state === "gap").length, 1);
+	} finally {
+		sub.close();
+		await daemon.close();
+	}
+});
+
 test("subscribeEvents: a silent stream is dropped and reopened; HTTP errors retry; close stops it", async () => {
 	const daemon = await fakeDaemon();
 	const c = collector();

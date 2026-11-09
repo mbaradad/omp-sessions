@@ -312,4 +312,16 @@ export class AoClient {
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
 	}
+
+	// ---- agent accounts (provider limits and usage) ----
+
+	/** Provider accounts AO knows (Claude, Codex devices…) with their limit windows; `refresh` re-reads the providers. */
+	agentAccounts(refresh = false): Promise<AoSchemas["AgentAccountsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts", { params: { query: { refresh } } }));
+	}
+
+	/** Per-account token and cost usage (`costNanos`) over the last `days`. */
+	agentAccountUsage(days?: number): Promise<AoSchemas["AgentAccountUsageResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts/usage", { params: { query: days === undefined ? {} : { days } } }));
+	}
 }
