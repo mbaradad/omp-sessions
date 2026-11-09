@@ -42,6 +42,11 @@ after(async () => {
 	if (previousHome === undefined) delete process.env.SWITCHYARD_HOME;
 	else process.env.SWITCHYARD_HOME = previousHome;
 	for (const p of planners) p.stop();
+	// Chat hosts outlive the daemon by design: end every session through the API before the fixture stops it.
+	for (const session of (await client?.listSessions().catch(() => undefined))?.sessions ?? []) {
+		await client.killSession(session.id).catch(() => undefined);
+		await client.deleteSession(session.id).catch(() => undefined);
+	}
 	await ao?.stop();
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
