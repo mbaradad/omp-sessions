@@ -78,6 +78,11 @@ export interface AoPort {
 	/** Applies the opt-in `hibernation` setting of config.json (G28); AO forgets it on every daemon boot. Returns what it did, undefined when the user set nothing. */
 	applyHibernation(): Promise<{ enabled: boolean; changed: boolean } | undefined>;
 	restore(session: string): Promise<void>;
+	/**
+	 * Terminates and deletes a session the planner made, so it cannot be restored later from a branch that is gone.
+	 * AO refuses to delete a worktree with uncommitted changes (it throws; the session then stays terminated).
+	 */
+	removeSession(session: string): Promise<void>;
 	/** Sets the model for the next turns; returns the one it replaced. */
 	setModel(session: string, model: string): Promise<string | undefined>;
 	/** Sets omp's thinking level; returns the one it replaced. */
@@ -202,6 +207,19 @@ export function aoPort(ao: AoClient): AoPort {
 				// Nothing running any more: the turn ended on its own meanwhile.
 				if (!(err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN")) throw err;
 				return { discarded: 0 };
+			}
+		},
+		async removeSession(session) {
+			try {
+				await ao.killSession(session);
+			} catch (err) {
+				// Already terminated or gone: delete it anyway.
+				if (!(err instanceof AoError)) throw err;
+			}
+			try {
+				await ao.deleteSession(session, true);
+			} catch (err) {
+				if (!(err instanceof AoError && err.status === 404)) throw err;
 			}
 		},
 		async restore(session) {

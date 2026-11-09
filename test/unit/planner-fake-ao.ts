@@ -136,6 +136,23 @@ export class FakeAo implements AoPort {
 		return { discarded: 0 };
 	}
 
+	/** Sessions the planner removed (AO: kill, then delete with cleanup, which refuses a worktree with uncommitted changes). */
+	removed: string[] = [];
+
+	async removeSession(session: string) {
+		const s = this.sessions.get(session);
+		if (!s) return;
+		if (s.worktree && this.repo) {
+			try {
+				git(this.repo, "worktree", "remove", s.worktree);
+			} catch {
+				throw new Error("The worktree was kept, so the session was not deleted: workspace has uncommitted changes");
+			}
+		}
+		this.sessions.delete(session);
+		this.removed.push(session);
+	}
+
 	async resumeAgent(session: string) {
 		const s = this.sessions.get(session);
 		if (s) s.exited = false;
