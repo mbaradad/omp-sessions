@@ -550,6 +550,18 @@
 				"icon": "$(check)"
 			},
 			{
+				"command": "switchyard.tasks.rerun",
+				"title": "Re-run with Parent Changes",
+				"category": "Switchyard",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "switchyard.tasks.sync",
+				"title": "Sync Branch (propagate to dependent tasks)",
+				"category": "Switchyard",
+				"icon": "$(sync)"
+			},
+			{
 				"command": "switchyard.tasks.showGraph",
 				"title": "Show Task Graph",
 				"category": "Switchyard",
@@ -1412,6 +1424,16 @@
 					"group": "1_session@5"
 				},
 				{
+					"command": "switchyard.tasks.rerun",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"group": "3_status@4"
+				},
+				{
+					"command": "switchyard.tasks.sync",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "3_status@5"
+				},
+				{
 					"command": "omp.tasks.add",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(free|ompSession)$/",
 					"group": "inline@1"
@@ -1857,6 +1879,14 @@
 				},
 				{
 					"command": "switchyard.tasks.completeLane",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.rerun",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.sync",
 					"when": "false"
 				},
 				{

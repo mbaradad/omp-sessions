@@ -53,6 +53,24 @@ export function syncAttention(task: Pick<TaskView, "sync">): EdgeSync["state"] |
 	return ATTENTION.find(s => states.has(s));
 }
 
+/** A merge of a parent's changes that a person has to decide (it counts as needs-input). */
+export interface SyncConflict {
+	/** Stable per conflict (task, parent, when it arose): notify once. */
+	key: string;
+	task: TaskView;
+	parentId: string;
+	files: string[];
+}
+
+/** Every edge of the plan in the `conflict` state. */
+export function syncConflicts(plan: PlanView): SyncConflict[] {
+	return plan.tasks.flatMap(task =>
+		Object.entries(task.sync ?? {})
+			.filter(([, edge]) => edge.state === "conflict")
+			.map(([parentId, edge]) => ({ key: `${task.id}\n${parentId}\n${edge.at}`, task, parentId, files: edge.files ?? [] })),
+	);
+}
+
 const SYNC_TEXT: Record<EdgeSync["state"], string> = {
 	"in-sync": "",
 	merged: "",

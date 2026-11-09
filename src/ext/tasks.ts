@@ -4,9 +4,9 @@
 // checkboxes to complete, inline run/pause. Being a regular view, it can be moved to the panel or
 // the secondary side bar.
 import * as vscode from "vscode";
-import type { LaneView, PlanOp, Subtask, TaskStatus, TaskView } from "../planner/types";
+import type { LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { laneSummary, orderedLanes, syncAttention, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
+import { laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -185,7 +185,13 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		const subsDone = t.subtasks.filter(s => s.done).length;
 		const item = new vscode.TreeItem(t.title, t.subtasks.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
 		item.id = `tasks:task:${t.id}`;
-		item.iconPath = TASK_ICON[t.status];
+		const attention = syncAttention(t);
+		item.iconPath =
+			attention === "conflict"
+				? new vscode.ThemeIcon("warning", new vscode.ThemeColor("charts.red"))
+				: attention === "upstream-changed" || attention === "resolving"
+					? new vscode.ThemeIcon("git-merge", new vscode.ThemeColor("charts.orange"))
+					: TASK_ICON[t.status];
 		item.checkboxState = t.status === "done" ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
 		const results = t.status === "done" || t.status === "failed" ? [t.durationMs ? formatDuration(t.durationMs) : "", t.cost ? `$${t.cost.toFixed(t.cost < 0.01 ? 4 : 2)}` : ""] : [];
 		const retrying = t.status === "pending" && t.attempts ? `↻ retry ${t.attempts}/${t.options?.retries ?? t.attempts}` : "";
@@ -305,12 +311,33 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	registerTaskExtras(api, deps, provider);
 	registerTaskGraph(api, deps, provider, ops => editOrWarn(deps, ops));
 
+	// A merge of a parent's changes that conflicted is needs-input: say so once, when it arises (not for ones already there at start-up; the tree keeps showing them).
+	const seenConflicts = new Set<string>();
+	let primed = false;
+	const announceConflicts = (plan: PlanView) => {
+		const fresh = syncConflicts(plan).filter(c => !seenConflicts.has(c.key));
+		for (const c of fresh) seenConflicts.add(c.key);
+		if (!primed) return;
+		for (const c of fresh) {
+			const parent = plan.tasks.find(t => t.id === c.parentId)?.title ?? c.parentId;
+			const files = c.files.length ? ` (${c.files.slice(0, 3).join(", ")}${c.files.length > 3 ? ` and ${c.files.length - 3} more` : ""})` : "";
+			void vscode.window.showWarningMessage(`Switchyard: merging “${parent}” into “${c.task.title}” conflicted${files}. It needs a person.`, "Open chat", "Show Task Graph").then(pick => {
+				if (pick === "Open chat") void vscode.commands.executeCommand("omp.tasks.openChat", { kind: "task", task: c.task, index: 0 } satisfies TaskNode);
+				else if (pick === "Show Task Graph") void vscode.commands.executeCommand("switchyard.tasks.showGraph");
+			});
+		}
+	};
 	const update = () => {
 		provider.refresh();
 		const plan = deps.planner.plan;
 		const open = plan ? plan.tasks.filter(t => t.status === "pending" || t.status === "running").length : 0;
-		view.badge = open ? { value: open, tooltip: `${open} queued task(s)` } : undefined;
+		const conflicts = plan ? syncConflicts(plan).length : 0;
+		view.badge = open || conflicts ? { value: open + conflicts, tooltip: `${open} queued task(s)${conflicts ? `, ${conflicts} merge conflict(s) need a person` : ""}` } : undefined;
 		view.message = plan ? undefined : `The planner is not reachable${deps.planner.error ? ` (${deps.planner.error})` : ""}. Retrying…`;
+		if (plan) {
+			announceConflicts(plan);
+			primed = true;
+		}
 	};
 	context.subscriptions.push(deps.planner.onDidChange(update), deps.plans.onDidChange(() => provider.refresh()));
 	const stopWatching = deps.aoSessions.onChange(() => provider.refresh());
@@ -444,6 +471,14 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		}
 		const lane = laneArg(arg);
 		if (lane) await edit([{ op: "lane.clearDone", id: lane }]);
+	});
+
+	// Graph propagation (planner `rerun` / `sync`): the same actions as in the Task Graph, from the tree.
+	reg("switchyard.tasks.rerun", async (arg?: unknown) => {
+		if (isNode(arg) && arg.kind === "task") await edit([{ op: "rerun", id: arg.task.id }]);
+	});
+	reg("switchyard.tasks.sync", async (arg?: unknown) => {
+		if (isNode(arg) && arg.kind === "task") await edit([{ op: "sync", id: arg.task.id }]);
 	});
 
 	// The "completed" marker of a queue (the old per-session completed mark, now the planner's `lane.complete`).

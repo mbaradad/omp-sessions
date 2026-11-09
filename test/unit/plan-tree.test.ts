@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { holdLines, laneSummary, orderedLanes, parseBudget, syncAttention, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { holdLines, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -110,5 +110,13 @@ describe("sync state", () => {
 		assert.equal(laneSummary(lane("q", { autoRun: true, pending: 1, total: 1, state: "held", waitReason: "rate-limit anthropic", waitUntil: at }), NOW), "1 pending · 0/1 done · ▶ auto-run · ✋ rate-limit anthropic until 14:30");
 		assert.equal(laneSummary(lane("q", { autoRun: true, pending: 1, total: 1, state: "blocked" }), NOW), "1 pending · 0/1 done · ▶ auto-run · ⛓ blocked");
 		assert.equal(laneSummary(lane("q", { pending: 1, total: 1, state: "paused" }), NOW), "1 pending · 0/1 done · ⏸ paused", "paused shows only as the arm state");
+	});
+
+	test("conflicts are the edges in the conflict state, one entry each with their files; the key changes when a new conflict arises on the same edge", () => {
+		const t = task("c", { sync: { a: { state: "conflict", files: ["x.txt", "y.txt"], at: 5 }, b: edge("merged"), d: { state: "conflict", at: 6 } } });
+		const found = syncConflicts(plan([], [t, task("ok", { sync: { a: edge("pending") } })]));
+		assert.deepEqual(found.map(c => [c.task.id, c.parentId, c.files]), [["c", "a", ["x.txt", "y.txt"]], ["c", "d", []]]);
+		const later = syncConflicts(plan([], [task("c", { sync: { a: { state: "conflict", at: 9 } } })]));
+		assert.notEqual(later[0].key, found[0].key);
 	});
 });
