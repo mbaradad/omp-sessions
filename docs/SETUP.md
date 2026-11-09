@@ -86,6 +86,26 @@ Limits:
 - An argument that contains whitespace goes in as a JSON array of strings; plain words split on whitespace. An empty argument is refused.
 - `switchyard status` says whether the launcher is in effect: it reports the launcher as installed and current, and raises a problem when it is not first on the running daemon's PATH. `switchyard new … -- <flags>` is refused in that case rather than silently ignoring the flags.
 
+### AO's own dashboard (optional)
+
+AO's desktop app has its own UI: the board of a project's sessions, the session list, a session's conversation, artifacts and automations. Switchyard can serve that UI from the machine, so you see it in VS Code and on the Hermes page without the desktop app and without opening ports.
+
+```bash
+switchyard dashboard install            # AO's UI from AO's latest official release (about 180 MB download, keeps ~30 MB)
+switchyard dashboard install --release v0.14.10   # a given release
+switchyard dashboard install --from ~/Downloads/agent-orchestrator-linux-x64.deb   # or an app.asar, or a built frontend
+switchyard dashboard status             # installed version, and whether it is served
+```
+
+- The planner serves it on `http://127.0.0.1:3012/` (loopback only), with AO's API behind it on the same address. A planner that was already running serves it after `switchyard server restart`. Another port: `switchyard config set dashboard.port <n>`; not at all: `switchyard config set dashboard off` (both take effect when the planner restarts).
+- **VS Code**: **Switchyard: Open AO Dashboard** (also in the Sessions view's `…` menu) opens it in an editor tab. Over Remote-SSH and WSL, VS Code forwards the port by itself.
+- **Hermes**: the Switchyard page's **AO dashboard** tab, through the Hermes dashboard and its sign-in ([details](HERMES.md#ao-dashboard)). Hermes Desktop opens it in your browser instead, and AO's terminal panes don't connect through Hermes.
+- `install` takes the renderer (plain web files) out of AO's Linux package, whatever the machine; the package is not installed. Re-run it after updating AO's daemon so the UI matches the daemon's API.
+- What needs AO's desktop app itself stays unavailable here: the built-in browser panel, opening folders and editors on your computer, desktop notifications, and cloud sign-in. Switchyard keeps AO's chat hibernation as `switchyard config set hibernation` says; the UI's Developer Mode doesn't change it.
+- Each open dashboard holds several event streams, and browsers allow six HTTP/1.1 connections per address: keep one dashboard tab open per browser (a second one on the same address stalls on its splash screen).
+- Browser-based VS Code (`code serve-web`, vscode.dev tunnels, Codespaces) frames webviews from a public origin; Chrome then asks before letting it reach a local address, and a forwarded address that isn't `localhost`/`127.0.0.1` is refused. Use desktop VS Code with Remote-SSH or WSL, or open `switchyard dashboard url` in a browser on the machine.
+- Anyone who can reach the machine's loopback can use it, as they can AO's API itself. It refuses requests from other web pages (another `Origin`, cross-site requests) and from names other than `localhost`/`127.0.0.1`.
+
 ### Coming from omp Sessions
 
 `switchyard migrate` moves your settings: default model, permission mode, the concurrency limit, and the group and board-lane definitions. It is a dry run until you add `--apply`, copies `~/.omp/vscode` to `~/.switchyard/backups/` before it writes anything, and never deletes old data. **Sessions are not carried over**: the dry run lists each old session with the command that continues it in omp's terminal (`omp --resume <id>`), and each unfinished queued task, so you can queue it again with `switchyard new <dir> --task …`.
@@ -167,5 +187,6 @@ If the machine reboots overnight, the omp processes are gone: a turn that was ru
 | Lane reachable | `hermes -p <profile> switchyard status` | a dispatcher tick in the last minute, no `!` lines |
 | Hermes page | the dashboard or Desktop sidebar | **Switchyard** listed and showing your sessions |
 | Phone | `switchyard remote status` | `on`, with the addresses the phone will try |
+| AO dashboard (optional) | `switchyard dashboard status` | `AO <version>` installed, `serving http://127.0.0.1:3012/` |
 
 When something is off, start with `switchyard status`, `hermes switchyard status` and **Switchyard: Run Doctor**; [the Hermes guide](HERMES.md#troubleshooting) lists the usual causes. AO's own logs: `journalctl --user -u ao-daemon`.
