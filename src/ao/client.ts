@@ -51,6 +51,8 @@ export { applyChatHibernation, defaultRunFile, ensureDaemon, findDaemon, getChat
 export type { AoEvent, AoEventStreamOptions, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
+export type { AoGateStatus } from "./gate";
+export { gateStatus } from "./gate";
 export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
 export { nativeSessionFile, readHibernationSetting, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";

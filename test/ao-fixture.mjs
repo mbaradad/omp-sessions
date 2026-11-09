@@ -127,6 +127,53 @@ function freePort() {
 	});
 }
 
+/**
+ * Processes belonging to a fixture (Linux): chat hosts whose command line names its data dir (they are
+ * detached with setsid, so they outlive the daemon), and anything whose working directory is inside its
+ * root (omp runs in the session worktrees under it). Never this process.
+ */
+function fixtureProcesses(root, dataDir) {
+	if (process.platform !== "linux") return chatHostPids(dataDir);
+	const under = (p, dir) => p === dir || p.startsWith(dir + path.sep);
+	const pids = [];
+	for (const entry of fs.readdirSync("/proc")) {
+		if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+		let hit = false;
+		try {
+			const argv = fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");
+			hit = argv.includes("chat-host") && argv.some(a => under(a, dataDir));
+			if (!hit) hit = under(fs.readlinkSync(`/proc/${entry}/cwd`), root);
+		} catch {
+			continue;
+		}
+		if (hit) pids.push(Number(entry));
+	}
+	return pids;
+}
+
+/** Kills (SIGTERM, then SIGKILL) every process of the fixture until none is left; the pids that survived. */
+async function reapFixtureProcesses(root, dataDir) {
+	for (const signal of ["SIGTERM", "SIGKILL", "SIGKILL"]) {
+		const pids = fixtureProcesses(root, dataDir);
+		if (pids.length === 0) return [];
+		for (const pid of pids) killGroup(pid, signal);
+		const deadline = Date.now() + (signal === "SIGTERM" ? 5000 : 3000);
+		while (fixtureProcesses(root, dataDir).length > 0 && Date.now() < deadline) await sleep(50);
+	}
+	return fixtureProcesses(root, dataDir);
+}
+
+/** Kills every session the daemon knows, through its API (best effort, bounded): the hosts then end their omp themselves. */
+async function killSessions(baseUrl, proc) {
+	if (proc.exitCode !== null || proc.signalCode !== null) return;
+	try {
+		const res = await fetch(`${baseUrl}/api/v1/sessions`, { signal: AbortSignal.timeout(5000) });
+		if (!res.ok) return;
+		const { sessions = [] } = await res.json();
+		await Promise.allSettled(sessions.map(s => fetch(`${baseUrl}/api/v1/sessions/${encodeURIComponent(s.id)}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(5000) })));
+	} catch {}
+}
+
 /** Detached chat hosts (`ao chat-host <session> <dataDir> ...`, own process group) of one daemon, or of one of its sessions. */
 function chatHostPids(dataDir, sessionId) {
 	if (process.platform === "win32") return [];
@@ -163,15 +210,6 @@ function killGroup(pid, signal) {
 		try {
 			process.kill(target, signal);
 		} catch {}
-	}
-}
-
-function alive(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
 	}
 }
 
@@ -422,7 +460,7 @@ export async function startAoFixture(opts = {}) {
 		},
 		killNow() {
 			killGroup(child.pid, "SIGKILL");
-			for (const pid of chatHostPids(dataDir)) killGroup(pid, "SIGKILL");
+			for (const pid of fixtureProcesses(root, dataDir)) killGroup(pid, "SIGKILL");
 		},
 		/**
 		 * Restarts the daemon on the same port and data dir, like `systemctl restart`: chat hosts (and
@@ -445,17 +483,19 @@ export async function startAoFixture(opts = {}) {
 				await sleep(250);
 			}
 		},
-		/** Stops the daemon (SIGTERM, then SIGKILL after 10 s), its chat hosts and their omp, and removes the temp dir. */
+		/**
+		 * Tears everything down and asserts nothing of the fixture survives: (1) kills every session through the
+		 * API while the daemon is up, (2) stops the daemon (SIGTERM, SIGKILL after 10 s), (3) kills every process
+		 * still referencing the fixture (detached chat hosts and the omp in their groups, anything running in its
+		 * tree), (4) removes the temp dir, (5) throws if a process of the fixture is still alive.
+		 */
 		async stop() {
 			if (!live.delete(fx)) return;
+			await killSessions(baseUrl, child);
 			await stopDaemon(child);
-			// Chat hosts are setsid'd: their process group holds the omp they run.
-			const hosts = chatHostPids(dataDir);
-			for (const pid of hosts) killGroup(pid, "SIGTERM");
-			const deadline = Date.now() + 5000;
-			while (hosts.some(alive) && Date.now() < deadline) await sleep(50);
-			for (const pid of hosts) killGroup(pid, "SIGKILL");
+			const survivors = await reapFixtureProcesses(root, dataDir);
 			if (!keep) await removeTree(root);
+			if (survivors.length > 0) throw new Error(`ao-fixture: ${survivors.length} process(es) of ${root} survived teardown: ${survivors.join(", ")}`);
 		},
 	};
 	live.add(fx);

@@ -6,7 +6,8 @@ import { AoSessionWatcher, replyPending, sessionModel, turnReply } from "../../s
 const T = "2026-11-09T15:00:00Z";
 const turn = (id: string, state: AoTurn["state"]): AoTurn => ({ id, state, requestedAt: T });
 const assistant = (sequence: number, turnId: string, text: string, streaming: boolean): AoMessage => ({ kind: "message", id: `m${sequence}`, sequence, revision: 0, role: "assistant", origin: "provider", text, editAvailable: false, streaming, createdAt: T, turnId });
-const conv = (turns: AoTurn[], messages: AoMessage[]): AoConversation => ({
+/** `bare` lists the turns with no user prompt (a compaction turn; a replayed history turn): every other turn gets the prompt a real one has. */
+const conv = (turns: AoTurn[], messages: AoMessage[], bare: string[] = []): AoConversation => ({
 	activities: [],
 	branchedFromEarlierMessage: false,
 	continueTurnId: "",
@@ -14,7 +15,10 @@ const conv = (turns: AoTurn[], messages: AoMessage[]): AoConversation => ({
 	conversationId: "c",
 	hasMoreBefore: false,
 	latestSequence: 9,
-	messages,
+	messages: [
+		...turns.filter(t => !bare.includes(t.id)).map((t, i): AoMessage => ({ ...assistant(-1 - i, t.id, `prompt ${t.id}`, false), role: "user", origin: "human" })),
+		...messages,
+	],
 	mode: "chat",
 	nativeForkAvailableAfterSequence: 0,
 	sessionId: "repo-1",
@@ -156,4 +160,22 @@ test("AoSessionWatcher: a turn that never gets a reply is re-read a few times, n
 	} finally {
 		watcher.close();
 	}
+});
+
+test("replyPending: a compaction turn (no messages) and a replayed history turn are not 'the last turn' (G33 repro, live shapes)", () => {
+	const history = { ...turn("hist", "recovered"), providerTurnId: "acp-history-turn:41:abc:root36:def" };
+	// Live: the prompt turn answered "2999"; POST /compact added a completed turn with no messages at all; a restart
+	// replayed the 2999 reply as a history turn holding only an assistant message.
+	const bare = ["compact", "hist"];
+	const afterCompaction = conv([turn("ask", "completed"), turn("compact", "completed"), history], [assistant(2, "ask", "2999", false), assistant(3, "hist", "2999", false)], bare);
+	assert.equal(replyPending(afterCompaction), false);
+	assert.equal(sessionModel(view(), afterCompaction).replyPending, undefined);
+	assert.equal(sessionModel(view(), afterCompaction).reply, "2999");
+	// The same conversation while the prompted turn's reply really is not final: still pending, whatever follows it.
+	const streaming = conv([turn("ask", "completed"), turn("compact", "completed"), history], [assistant(2, "ask", "29", true), assistant(3, "hist", "2999", false)], bare);
+	assert.equal(replyPending(streaming), true);
+	// A prompted turn that ended with no assistant text is still pending (it has its user message); the empty compaction turn does not change that.
+	assert.equal(replyPending(conv([turn("ask", "completed"), turn("compact", "completed")], [], ["compact"])), true);
+	// Nothing but a compaction turn: nothing was asked.
+	assert.equal(replyPending(conv([turn("compact", "completed")], [], ["compact"])), false);
 });
