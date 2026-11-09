@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type AoClient, AoError, type AoSchemas, findDaemon, switchyardHome, unwrap } from "../ao/client";
 // Two `permissionModeOf`s: src/ao's reads AO turn settings; src/shared/permissions' parses a typed word.
-import { SETTLED_STATES, answerFor, permissionModeOf as aoPermissionMode } from "../ao/model";
+import { SETTLED_STATES, answerFor, approvalModeFor, permissionModeOf as aoPermissionMode } from "../ao/model";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
 import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, findHermes, hermesLookup, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin, updatePlugin } from "../shared/hermes-plugin";
 import { ORG_COLORS, OrganizeStore, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
@@ -19,7 +19,7 @@ import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } 
 import { attach } from "./attach";
 import { type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
 import { itemLines, timeline } from "./render";
-import { type AgentState, APPROVAL_OF, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, loadSession, loadSessions, ompModeOption, orderOf, reportOf, resolveSession } from "./sessions";
+import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
 
 function readVersion(): string {
@@ -263,7 +263,7 @@ async function cmdNew(args: Args): Promise<number> {
 	const defaults = readSwitchyardConfig();
 	const effectiveMode = mode ?? defaults.mode;
 	// No mode anywhere: omp's own `tools.approvalMode` (AO's `default`; leaving it out would launch omp in `write`).
-	const approvalMode = effectiveMode ? APPROVAL_OF[effectiveMode] : "default";
+	const approvalMode = effectiveMode ? approvalModeFor(effectiveMode) : "default";
 	const model = value(args, "model") ?? defaults.model;
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
@@ -367,8 +367,9 @@ async function cmdTail(args: Args): Promise<number> {
 async function reportFor(id: string): Promise<CliReport> {
 	const client = await ao();
 	const s = await fresh(id, 200);
-	const [ompMode, changedFiles] = await Promise.all([s.model.conversation && s.state !== "stopped" ? ompModeOption(client, id) : undefined, changedFileCount(client, id)]);
-	return reportOf(s, { ...(ompMode && { ompMode }), ...(changedFiles !== undefined && { changedFiles }) });
+	const live = s.model.conversation && s.state !== "stopped";
+	const [plan, changedFiles] = await Promise.all([live ? livePlanMode(client, id) : undefined, changedFileCount(client, id)]);
+	return reportOf(s, { ...(s.model.conversation && { mode: aoPermissionMode(s.model.conversation.settings, plan === true) }), ...(changedFiles !== undefined && { changedFiles }) });
 }
 
 function printReport(r: CliReport): void {
@@ -760,7 +761,7 @@ async function cmdAbort(args: Args): Promise<number> {
 
 /** omp's own `mode` option (default/plan): live, also mid-turn. */
 async function setOmpMode(client: AoClient, id: string, value: "default" | "plan"): Promise<void> {
-	await unwrap(client.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId: id, configId: "mode" } }, body: { value } }));
+	await client.setConfigOption(id, "mode", { value });
 }
 
 /**
@@ -769,7 +770,7 @@ async function setOmpMode(client: AoClient, id: string, value: "default" | "plan
  * level, which needs the session idle.
  */
 async function switchMode(client: AoClient, s: Session, mode: PermissionMode): Promise<"live" | "restarted" | "next-resume"> {
-	const approval = APPROVAL_OF[mode];
+	const approval = approvalModeFor(mode);
 	const current = s.model.conversation?.settings.approvalMode;
 	const live = !s.model.view.isTerminated && s.model.view.activity.state !== "exited";
 	if (live) await setOmpMode(client, s.id, mode === "plan" ? "plan" : "default").catch(err => {
@@ -790,8 +791,8 @@ async function cmdMode(args: Args): Promise<void> {
 	const s = await findSession(ref);
 	const client = await ao();
 	if (!want) {
-		const ompMode = await ompModeOption(client, s.id);
-		const current = ompMode === "plan" ? "plan" : aoPermissionMode(s.model.conversation?.settings);
+		const plan = (await livePlanMode(client, s.id)) === true;
+		const current = aoPermissionMode(s.model.conversation?.settings, plan);
 		process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("omp's own approval setting (tools.approvalMode)")}\n`);
 		for (const m of PERMISSION_MODES) process.stdout.write(`  ${m === current ? c.green("●") : c.dim("·")} ${pad(m, 6)} ${c.dim(PERMISSION_MODE_INFO[m].detail)}\n`);
 		return;

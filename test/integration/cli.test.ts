@@ -1,4 +1,4 @@
-// The `omp-sessions` command (the bundled cli.js, with planner.js beside it) against an isolated AO
+// The CLI (the bundled cli.js; still `omp-sessions` until the rename pass, with planner.js beside it) against an isolated AO
 // daemon running the scripted ACP fake (test/ao-fixture.mjs): the skills/omp-sessions/SKILL.md
 // contract — `new --json`, `wait` exit codes 0/3/4/5/124, `show --json`, `answer [--question]`,
 // `send [--steer]`, `stop`/`resume`, `ls` filters, queued and scheduled tasks through the planner.

@@ -3,10 +3,9 @@
 // (queue, waiting for a slot, scheduled, interrupted: MAPPING D3). Builds what `ls/board/show/wait --json`
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
-import { AoClient, AoError, type AoConversation, type AoProject, type AoSchemas, type AoSessionView, unwrap } from "../ao/client";
-import { type AoAgentState, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, sessionModel, sessionReport } from "../ao/model";
+import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
+import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
-import type { PermissionMode } from "../shared/permissions";
 import type { LaneSummary } from "./plan";
 import { oneLine } from "./term";
 
@@ -21,7 +20,7 @@ let clientPromise: Promise<AoClient> | undefined;
 
 /** The AO daemon's client; starts `ao daemon` when none runs (like the old CLI started its server on demand). */
 export function ao(): Promise<AoClient> {
-	clientPromise ??= AoClient.connect({ start: true, log: message => process.stderr.write(`omp-sessions: ${message}\n`) });
+	clientPromise ??= AoClient.connect({ start: true, log: message => process.stderr.write(`switchyard: ${message}\n`) });
 	return clientPromise;
 }
 
@@ -33,17 +32,6 @@ export async function aoIfRunning(): Promise<AoClient | undefined> {
 		return undefined;
 	}
 }
-
-// ---------- permission modes (MAPPING G7: AO fixes omp's approval mode at launch) ----------
-
-export type AoApprovalMode = NonNullable<AoSchemas["ConversationTurnSettingsPayload"]["approvalMode"]>;
-
-/**
- * How each Switchyard mode launches omp under AO (`ompacp/driver.go`: bypass → `--approval-mode yolo`,
- * accept-edits → `write`, default → no flag). AO has no `always-ask`: `ask` runs omp on its own
- * `tools.approvalMode` (MAPPING G12), so it asks only where omp's config does.
- */
-export const APPROVAL_OF: Record<PermissionMode, AoApprovalMode> = { auto: "bypass-permissions", edits: "accept-edits", ask: "default", plan: "default" };
 
 // ---------- sessions ----------
 
@@ -251,22 +239,18 @@ export function queueSummary(s: Session): AoReportQueue {
 }
 
 /**
- * `show`/`wait --json`: src/ao's report, plus the session's AO project and branch (where its work lands),
- * the completed marker (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
+ * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
+ * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = AoSessionReport & { project?: string; branch?: string; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number };
+export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number };
 
 /**
- * `live`: what only the running agent or the workspace can say. omp's plan mode is its own `mode`
- * option, not AO's settings, and omp's turns carry no diff (GAPS G31), so the workspace manifest
- * counts the changed files.
+ * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
+ * plan mode (`permissionModeOf(settings, plan)`), and the changed files (omp's turns carry no diff,
+ * GAPS G31, so the workspace manifest counts them).
  */
-export function reportOf(s: Session, live: { ompMode?: string; changedFiles?: number } = {}): CliReport {
-	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s) }), completed: s.lane?.completed !== undefined };
-	if (live.ompMode === "plan") report.mode = "plan";
-	if (live.changedFiles !== undefined) report.changedFiles = live.changedFiles;
-	if (s.project) report.project = s.project.id;
-	if (s.model.branch) report.branch = s.model.branch;
+export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFiles?: number } = {}): CliReport {
+	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live }), completed: s.lane?.completed !== undefined };
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
@@ -312,12 +296,10 @@ export function infoJson(s: Session, order: number) {
 	};
 }
 
-/** omp's live `mode` config option (`default`/`plan`); undefined when no agent runs to say. */
-export async function ompModeOption(client: AoClient, sessionId: string): Promise<string | undefined> {
+/** True when omp's live `mode` option says plan; undefined when no agent runs to say. */
+export async function livePlanMode(client: AoClient, sessionId: string): Promise<boolean | undefined> {
 	try {
-		const res = await unwrap<AoSchemas["ConversationConfigOptionsResponse"]>(client.api.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId } } }));
-		const opt = (res.options ?? []).find(o => o.id === "mode");
-		return typeof opt?.currentValue === "string" ? opt.currentValue : undefined;
+		return planModeOf(await client.configOptions(sessionId));
 	} catch {
 		return undefined;
 	}
@@ -326,8 +308,7 @@ export async function ompModeOption(client: AoClient, sessionId: string): Promis
 /** Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say. */
 export async function changedFileCount(client: AoClient, sessionId: string): Promise<number | undefined> {
 	try {
-		const res = await unwrap<AoSchemas["WorkspaceManifestResponse"]>(client.api.GET("/api/v1/sessions/{sessionId}/workspace/manifest", { params: { path: { sessionId } } }));
-		return res.files.length;
+		return (await client.workspaceManifest(sessionId)).files.length;
 	} catch {
 		return undefined;
 	}

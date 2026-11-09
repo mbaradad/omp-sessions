@@ -1,11 +1,11 @@
 // The CLI's side of the planner (PLANNER-API.md): connecting to it (starting it, and installing it as a
 // user service the first time, unless `config set service off`), each session lane's summary for
-// `ls`/`show`/`wait` (MAPPING D3), and managing the planner service (`omp-sessions server …`).
+// `ls`/`show`/`wait` (MAPPING D3), and managing the planner service (`switchyard server …`).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PlannerClient, ensurePlanner, stopPlanner } from "../planner/client";
 import { logPath, socketPath } from "../planner/paths";
-import { type ServiceKind, installService, serviceKind, serviceUnitPath, uninstallService } from "../planner/service";
+import { SYSTEMD_UNIT, type ServiceKind, installService, serviceKind, serviceUnitPath, uninstallService } from "../planner/service";
 import type { PlanView, PlannerOpName, PlannerOps, QueueOp as PlannerQueueOp, QueueView } from "../planner/types";
 import type { Priority } from "../shared/organize";
 import { readSwitchyardConfig } from "../shared/switchyard-config";
@@ -17,7 +17,7 @@ export type { PlannerConfig, PlannerStatus } from "../planner/types";
 /** `out/planner.js`, next to `out/cli.js` (resolved on use: `__dirname` exists only in the CommonJS bundle). */
 function plannerScript(): string {
 	const script = path.join(__dirname, "planner.js");
-	if (!fs.existsSync(script)) throw new Error(`the planner is missing next to the CLI (${script}); reinstall omp-sessions`);
+	if (!fs.existsSync(script)) throw new Error(`the planner is missing next to the CLI (${script}); reinstall switchyard`);
 	return script;
 }
 
@@ -51,7 +51,7 @@ export async function connectPlanner(opts: { start: boolean }): Promise<Planner 
 	const vscodeRuntime = !!process.env.ELECTRON_RUN_AS_NODE || !!process.versions.electron;
 	if (!installedUnit() && readSwitchyardConfig().service !== "off" && !vscodeRuntime) {
 		const r = installService(script);
-		if (r) process.stderr.write(`omp-sessions: installed the planner as a ${r.kind} user service (${r.file})${r.ok ? "" : "; it couldn't be started"}. Opt out: omp-sessions server uninstall && omp-sessions config set service off\n`);
+		if (r) process.stderr.write(`switchyard: installed the planner as a ${r.kind} user service (${r.file})${r.ok ? "" : "; it couldn't be started"}. Opt out: switchyard server uninstall && switchyard config set service off\n`);
 	}
 	const client = await ensurePlanner(script);
 	return client ? wrap(client) : undefined;
@@ -135,7 +135,7 @@ async function ping(): Promise<PlannerInfo | undefined> {
 	}
 }
 
-/** `omp-sessions server …`: the planner process and its user service. */
+/** `switchyard server …`: the planner process and its user service. */
 export function plannerService() {
 	return {
 		status: ping,
@@ -160,7 +160,7 @@ export function plannerService() {
 			await stopPlanner();
 			const r = installService(script);
 			if (!r) throw new Error("server install supports Linux (systemd) and macOS (launchd); on Windows the planner starts on demand");
-			return { ok: r.ok, file: r.file, hint: r.kind === "systemd" ? "systemctl --user enable --now omp-sessions-planner.service" : "launchctl bootstrap" };
+			return { ok: r.ok, file: r.file, hint: r.kind === "systemd" ? `systemctl --user enable --now ${SYSTEMD_UNIT}` : "launchctl bootstrap" };
 		},
 		async uninstall(): Promise<string | undefined> {
 			const unit = installedUnit();
