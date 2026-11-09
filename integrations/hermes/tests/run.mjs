@@ -58,6 +58,15 @@ if (!aoAvailable()) {
 	process.exit(0);
 }
 const ao = await startAoFixture();
+// Isolated HOME rule (CONTRACT.md): everything the suite spawns runs under the fixture's temp root, with
+// SWITCHYARD_HOME set (the CLI's spawn writes <SWITCHYARD_HOME>/sessions/<id>/mode client-side).
+for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
+	const value = ao.stackEnv[key];
+	if (!value || !path.resolve(value).startsWith(path.resolve(os.tmpdir()) + path.sep)) {
+		await ao.stop();
+		throw new Error(`test:hermes refuses to run: ${key} is ${value ?? "unset"}, not under ${os.tmpdir()}`);
+	}
+}
 let status = 1;
 try {
 	console.log(`Hermes Python: ${python} · AO ${ao.baseUrl}`);
