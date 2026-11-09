@@ -4,7 +4,7 @@
 import * as vscode from "vscode";
 import type { PermissionMode, PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PERMISSION_MODES, PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, isUndoable, undoneWith } from "../shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
@@ -45,7 +45,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 			{ id: "thinking", label: `Thinking level${o.thinking ? ` — ${o.thinking}` : ""}`, detail: `${THINKING_LEVELS.join(" / ")}` },
 			{ id: "clearThinking", label: "Clear thinking level" },
 			{ id: "fresh", label: o.freshContext ? "Fresh context: ON" : "Fresh context: OFF", detail: "run the task in a new session (clean context)" },
-			{ id: "mode", label: `Permission mode${o.mode ? ` — ${o.mode}` : ""}`, detail: "ask / edits / plan / auto (default auto): for a session this task STARTS; ignored when the task continues a session" },
+			{ id: "mode", label: `Permission mode${o.mode ? ` — ${o.mode}` : ""}`, detail: `ask / edits / plan / auto (default auto): for a session this task STARTS; ignored when the task continues a session${continuesSession(deps.planner.plan, task, o.freshContext) ? ". Right now it would continue its queue's session, so the mode is ignored (unless that session ends or fresh context is on)" : ""}` },
 			{ id: "retries", label: `Automatic retries${o.retries ? ` — ${o.retries}` : ""}`, detail: "1–10, with backoff; 0 = none" },
 			{ id: "timeout", label: `Time limit${o.timeoutMinutes ? ` — ${o.timeoutMinutes} min` : ""}`, detail: "minutes; 0 = none" },
 			{ id: "clearAll", label: "Clear all options" },

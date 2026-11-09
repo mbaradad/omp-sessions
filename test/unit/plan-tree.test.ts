@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -12,7 +12,7 @@ function task(id: string, extra: Partial<TaskView> = {}): TaskView {
 	return { id, title: `task ${id}`, subtasks: [], status: "pending", createdAt: 0, state: "waiting", ...extra };
 }
 function plan(lanes: LaneView[], tasks: TaskView[]): PlanView {
-	return { rev: 1, lanes, tasks, recurring: [], edges: [], status: {} as PlanView["status"] };
+	return { rev: 1, lanes, tasks, recurring: [], edges: [], keptBranches: [], status: {} as PlanView["status"] };
 }
 
 describe("orderedLanes / tasksOf", () => {
@@ -184,5 +184,28 @@ describe("undoing a task", () => {
 		const tasks = [task("a", { lane: "run" }), task("b", { lane: "run" }), task("c", { lane: "paused" }), task("d", { lane: "timed" }), task("free")];
 		assert.deepEqual(armedLanes(p, tasks, "s"), ["run", "cont"], "the queue continuing the session counts even without an undone task in it");
 		assert.deepEqual(armedLanes(p, [], "nothing"), []);
+	});
+});
+
+describe("continuesSession", () => {
+	test("a task in a queue whose session exists continues it, a task in a queue with no session starts one", () => {
+		const p = plan([lane("q", { session: "proj-1" }), lane("fresh")], []);
+		assert.equal(continuesSession(p, { lane: "q" }), true);
+		assert.equal(continuesSession(p, { lane: "fresh" }), false);
+		assert.equal(continuesSession(p, { lane: "unknown" }), false);
+		assert.equal(continuesSession(undefined, { lane: "q" }), false);
+	});
+
+	test("a separate task continues its own session when it ran before; fresh context always starts a new one", () => {
+		assert.equal(continuesSession(plan([], []), { session: "proj-2" }), true);
+		assert.equal(continuesSession(plan([], []), {}), false);
+		assert.equal(continuesSession(plan([lane("q", { session: "proj-1" })], []), { lane: "q" }, true), false);
+		assert.equal(continuesSession(plan([], []), { session: "proj-2" }, true), false);
+	});
+});
+
+describe("keptBranchText", () => {
+	test("says whose branch it was and why the planner kept it", () => {
+		assert.equal(keptBranchText({ task: "Write release notes", why: "holds 2 commits no other branch has" }), "of “Write release notes” — holds 2 commits no other branch has");
 	});
 });

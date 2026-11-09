@@ -11,7 +11,7 @@ function task(id: string, laneId: string): TaskView {
 	return { id, title: `task ${id}`, subtasks: [], status: "pending", createdAt: 1, state: "waiting", lane: laneId };
 }
 function plan(lanes: LaneView[], tasks: TaskView[]): PlanView {
-	return { rev: 1, lanes, tasks, recurring: [], edges: [], status: {} as PlanView["status"] };
+	return { rev: 1, lanes, tasks, recurring: [], edges: [], keptBranches: [], status: {} as PlanView["status"] };
 }
 
 /** A planner that keeps its plan in memory; `queue` records the call and applies `add` to the named lane (creating it, as the real one does). */
