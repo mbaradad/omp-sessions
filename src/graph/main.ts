@@ -128,9 +128,12 @@ function render(): void {
 		const info = edgeInfo.get(`${r.from}\n${r.to}`);
 		const pending = info?.pending === true;
 		const highlight = selected !== undefined && (r.from === selected || r.to === selected);
-		const sync = info?.sync && SYNC_CLASS[info.sync];
-		const cls = ["gedge", info?.kind === "lane" ? "lane" : "", pending ? "pending" : "", sync ?? "", highlight ? "hl" : ""].filter(Boolean).join(" ");
-		edgeLayer.append(svgEl("path", { class: cls, d, "marker-end": `url(#${pending ? "graph-arrow-pending" : "graph-arrow"})` }, ...(info?.sync && SYNC_TITLE[info.sync] ? [svgEl("title", {}, SYNC_TITLE[info.sync])] : [])));
+		const syncClass = info?.sync ? SYNC_CLASS[info.sync] : undefined;
+		const syncTitle = info?.sync ? SYNC_TITLE[info.sync] : undefined;
+		const cls = ["gedge", info?.kind === "lane" ? "lane" : "", pending ? "pending" : "", syncClass ?? "", highlight ? "hl" : ""].filter(Boolean).join(" ");
+		const path = svgEl("path", { class: cls, d, "marker-end": `url(#${pending ? "graph-arrow-pending" : "graph-arrow"})` });
+		if (syncTitle) path.append(svgEl("title", {}, syncTitle));
+		edgeLayer.append(path);
 	}
 
 	const nodeLayer = svgEl("g", { class: "graph-nodes" });

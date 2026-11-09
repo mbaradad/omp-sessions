@@ -93,7 +93,8 @@ export class PlannerStore implements vscode.Disposable {
 				if (ev.event === "plan") {
 					this.current = ev.plan;
 					this.planEmitter.fire(ev.plan);
-				} else this.taskEmitter.fire({ task: ev.task, from: ev.from });
+				} else if (ev.event === "task") this.taskEmitter.fire({ task: ev.task, from: ev.from });
+				// `sync` events (graph propagation steps) are also in the plan snapshot's TaskView.sync.
 			});
 		} catch (err) {
 			client?.close();
