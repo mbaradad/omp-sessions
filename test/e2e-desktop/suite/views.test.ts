@@ -234,6 +234,17 @@ describe("AO views", () => {
 
 			await api.sessions.setPriority([id], "high");
 			assert.equal(plan?.lanes.find(l => l.id === id)?.priority, "high");
+			// The chat's task strip API (queue/editQueue) is the window's own planner connection (SessionQueues): it finds the planner started above.
+			await waitFor("the extension's planner connection", async () => {
+				try {
+					await api.sessions.editQueue(other, [{ op: "add", title: "from the strip" }]);
+					return true;
+				} catch {
+					return false;
+				}
+			}, 30_000);
+			await waitFor("queue read back", () => api.sessions.queue(other).tasks.some(t => t.title === "from the strip"), 10_000);
+			await assert.rejects(api.sessions.editQueue(other, [{ op: "remove", id: "no-such-task" }]), /./, "a refused edit rejects with the planner's reason");
 			await source.edit([{ op: "lane.remove", id }, { op: "lane.remove", id: other }]);
 		} finally {
 			sub.dispose();

@@ -490,7 +490,23 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		sessionsView: treeView,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
-	const tasksDeps = createTasksDeps(context);
+	// One planner connection per window: the Tasks view, the session queues and the views' plan summaries share it.
+	const taskSession = (m: SessionMeta) => ({ id: m.id, title: m.title, state: m.status });
+	const tasksDeps = createTasksDeps(context, {
+		ao: () => ao.client(),
+		sessions: {
+			get: id => {
+				const m = sessions.get(id);
+				return m && taskSession(m);
+			},
+			all: () => sessions.all().map(taskSession),
+			onChange: listener => {
+				const sub = sessions.onDidChange(listener);
+				return () => sub.dispose();
+			},
+		},
+	});
+	context.subscriptions.push(sessions.usePlan(tasksDeps.planner), sessions.useQueues(tasksDeps.queues));
 	registerTasks(api, tasksDeps);
 	// Feature modules: one `register*(api)` line each.
 	const server = registerServer(api);

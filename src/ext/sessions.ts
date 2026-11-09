@@ -4,17 +4,18 @@ import * as vscode from "vscode";
 import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView, TaskState } from "../planner/types";
-import { findOmp, sendToHost } from "../shared/launch";
+import { findOmp } from "../shared/launch";
 import { readSwitchyardConfig } from "../shared/switchyard-config";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
 import { readMode } from "../shared/session-mode";
 import { setSessionMode } from "../shared/session-mode-ops";
-import { type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
+import { type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue } from "../shared/protocol";
 import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpoints";
-import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
+import { queueOf } from "../shared/plan-queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
+import type { SessionQueues } from "./session-queues";
 import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, parentBranches, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
@@ -118,6 +119,8 @@ export class SessionManager implements vscode.Disposable {
 	loaded = false;
 	/** The planner's plan (task queues of sessions), when a planner connection was handed over (`usePlan`). */
 	private planSource: PlanSource | undefined;
+	private planSub: vscode.Disposable | undefined;
+	private queues: SessionQueues | undefined;
 
 	constructor(
 		private readonly ao: AoConnection,
@@ -132,6 +135,8 @@ export class SessionManager implements vscode.Disposable {
 	 * from the planner's plan, now and whenever it changes. The Tasks view's planner connection provides it.
 	 */
 	usePlan(source: PlanSource): vscode.Disposable {
+		// One plan source at a time: a new one replaces the old one's subscription.
+		this.planSub?.dispose();
 		this.planSource = source;
 		const apply = () => {
 			const tasks = taskTransitions(this.taskStates, source.plan);
@@ -153,6 +158,7 @@ export class SessionManager implements vscode.Disposable {
 		};
 		apply();
 		const sub = source.onDidChange(apply);
+		this.planSub = sub;
 		return {
 			dispose: () => {
 				sub.dispose();
@@ -438,31 +444,27 @@ export class SessionManager implements vscode.Disposable {
 		await this.refreshSession(id);
 	}
 
-	queue(id: string): TaskQueue {
-		return readQueueFile(path.join(sessionDir(id), "queue.json"));
+	/** Where the session task queues live: the planner's lanes (ext-tasks' SessionQueues over the window's PlannerStore). */
+	useQueues(queues: SessionQueues): vscode.Disposable {
+		this.queues = queues;
+		const sub = queues.onDidChange(() => this.emitter.fire());
+		return {
+			dispose: () => {
+				sub.dispose();
+				if (this.queues === queues) this.queues = undefined;
+			},
+		};
 	}
 
-	/**
-	 * Edits a session's task queue: through the host when it runs (so it can dispatch), else on
-	 * disk — the host picks the file up when the session is resumed.
-	 */
+	/** The session's task queue in the old shape (the chat's strip); empty until the planner connection is handed over. */
+	queue(id: string): TaskQueue {
+		return this.queues?.get(id) ?? queueOf(undefined, id);
+	}
+
+	/** Edits the session's task queue through the planner; rejects with the planner's reason when it refuses (a cycle, a running task…). */
 	async editQueue(id: string, ops: QueueOp[]): Promise<void> {
-		const meta = this.get(id);
-		if (!meta) return;
-		if (meta.status !== "stopped" && (await sendToHost(meta, { t: "queue", ops }))) return;
-		const file = path.join(sessionDir(id), "queue.json");
-		const next = applyQueueOps(readQueueFile(file), ops);
-		writeQueueFile(file, next);
-		const metaFile = path.join(sessionDir(id), "meta.json");
-		try {
-			const onDisk = JSON.parse(fs.readFileSync(metaFile, "utf8")) as SessionMeta;
-			const tmp = `${metaFile}.ext.tmp`;
-			fs.writeFileSync(tmp, JSON.stringify({ ...onDisk, queue: queueSummary(next), updatedAt: Date.now() }, null, 1));
-			fs.renameSync(tmp, metaFile);
-		} catch {
-			/* meta unreadable: the tree still re-reads queue.json */
-		}
-		this.refresh();
+		if (!this.queues) throw new Error("the planner is not connected");
+		await this.queues.edit(id, ops);
 	}
 
 	dispose(): void {
