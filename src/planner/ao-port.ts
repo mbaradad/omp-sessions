@@ -157,6 +157,10 @@ export function aoPort(ao: AoClient): AoPort {
 					...(opts.model ? { model: opts.model } : {}),
 					...(opts.thinking ? { thinking: opts.thinking } : {}),
 					...(opts.mode ? { mode: opts.mode as AoSessionMode } : {}),
+					// The record is the whole choice (replayed verbatim): no second look at config.json for the harness or model.
+					...(opts.harness ? { harness: opts.harness } : {}),
+					defaultHarness: null,
+					defaultModel: opts.defaultModel ?? null,
 					// The mode file is written by checkpoints' setSessionMode only (G40), never by hand.
 					setMode: (sessionId, mode) => setSessionMode(ao, sessionId, mode),
 				});

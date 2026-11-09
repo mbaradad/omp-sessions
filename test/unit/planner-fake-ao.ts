@@ -103,7 +103,7 @@ export class FakeAo implements AoPort {
 	async startSession(opts: StartSession) {
 		if (this.modelIds.length && opts.model && !this.modelIds.includes(opts.model)) throw new DispatchRefused(`Unknown omp model "${opts.model}"`);
 		const { prompt, key, ...rest } = opts;
-		const res = await this.spawn({ ...rest, harness: "omp", approvalMode: "bypass-permissions", clientRequestId: key });
+		const res = await this.spawn({ harness: "omp", ...rest, approvalMode: "bypass-permissions", clientRequestId: key });
 		const s = this.sessions.get(res.session);
 		assert.ok(s);
 		let turn = s.conv.messages.find(m => m.clientMessageId === key)?.turnId;

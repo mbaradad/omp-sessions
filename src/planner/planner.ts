@@ -32,7 +32,7 @@ export interface PlannerOptions {
 	version?: string;
 	retryBaseMs?: number;
 	/** Model and mode for a NEW session whose task, lane and planner defaults name none (config.json, MAPPING D7); read at every dispatch. */
-	userDefaults?: () => Pick<SwitchyardConfig, "model" | "mode">;
+	userDefaults?: () => Pick<SwitchyardConfig, "model" | "mode" | "harness">;
 	/** Whether a person undid this finished task's turn (checkpoints); asked when its session shows activity. */
 	undone?: (task: Task) => Promise<boolean>;
 	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
@@ -537,8 +537,10 @@ export class Planner {
 			if (session && !(await ao.session(session))) session = undefined;
 			// Lowest fallback for a session the planner STARTS: the user's own defaults (config.json). A continued session keeps its model and mode.
 			const user = session ? {} : (this.opts.userDefaults ?? readSwitchyardConfig)();
-			const opts = { ...base, ...(base.model || !user.model ? {} : { model: user.model }), ...(base.mode || !user.mode ? {} : { mode: user.mode }) };
-			const provider = providerOf(opts.model);
+			// The user's model names an omp model: it goes along as `defaultModel`, which the start sequence applies to omp sessions only.
+			const opts = { ...base, ...(base.mode || !user.mode ? {} : { mode: user.mode }), ...(base.harness || !user.harness ? {} : { harness: user.harness }) };
+			const defaultModel = base.model ? undefined : user.model;
+			const provider = providerOf(opts.model ?? defaultModel);
 			let spawn: SessionStart | undefined;
 			let repo: string | undefined;
 			let seeded: SeedResult = {};
@@ -570,8 +572,10 @@ export class Planner {
 					...(projectId ? { projectId } : {}),
 					...(seeded.branch ? { branch: seeded.branch } : {}),
 					...(opts.model ? { model: opts.model } : {}),
+					...(defaultModel ? { defaultModel } : {}),
 					...(opts.thinking ? { thinking: opts.thinking } : {}),
 					...(opts.mode ? { mode: opts.mode } : {}),
+					...(opts.harness ? { harness: opts.harness } : {}),
 				};
 			}
 			const donor = session ? this.state.tasks.find(x => x.id !== id && x.session === session && x.git) : undefined;

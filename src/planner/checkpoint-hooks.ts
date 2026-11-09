@@ -5,7 +5,7 @@
 //   from the files and the conversation as they were before the failed attempt.
 // Both read AO through a lazily connected client (the planner's own process has the AO env); main.ts passes
 // `...checkpointHooks()` in the Planner options.
-import { type AoClient, AoClient as AoClientClass } from "../ao/client";
+import { type AoClient, AoClient as AoClientClass, isOmpHarness } from "../ao/client";
 import { interruptAndWait, isBusy, planUndo, runCheckpointCommand } from "../shared/checkpoint-ops";
 import { aoCheckpointDir, aoTurns, readState, turnStatuses } from "../shared/checkpoints";
 import type { Task } from "./types";
@@ -41,6 +41,7 @@ export function checkpointHooks(connect: () => Promise<AoClient> = () => AoClien
 			const sessionId = task.session;
 			const client = await ao();
 			const [view, conversation] = await Promise.all([client.getSession(sessionId), client.getConversation(sessionId)]);
+			if (!isOmpHarness(view.harness)) throw new Error(`a clean retry undoes the earlier attempt with /undo checkpoints, which are omp-only (Switchyard's omp extension); this session runs ${view.harness}`);
 			const state = readState(aoCheckpointDir(sessionId));
 			if (!state) throw new Error("the session has no checkpoints (the Switchyard omp extension was not loaded when it started)");
 			// Already undone (by a person, or by an earlier clean retry that failed later): nothing left to rewind.
