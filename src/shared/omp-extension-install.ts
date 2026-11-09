@@ -17,10 +17,13 @@ const LEGACY_BRIDGE_DIRS = ["omp-vscode-bridge", "switchyard-bridge"];
 /**
  * Whether the VS Code extension may write the global install (`~/.omp/agent/extensions/switchyard/` and
  * `~/.switchyard/bin/omp`): only when it runs as an installed extension, so a development host or an
- * e2e instance never changes the machine's real omp. `SWITCHYARD_INSTALL_OMP_EXTENSIONS=1` overrides.
+ * e2e instance never changes the machine's real omp. `SWITCHYARD_INSTALL_OMP_EXTENSIONS=1` allows it
+ * anyway; `=0` (what the e2e runner pins) forbids it even for an installed extension.
  */
 export function globalInstallAllowed(production: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
-	return production || env.SWITCHYARD_INSTALL_OMP_EXTENSIONS === "1";
+	const setting = env.SWITCHYARD_INSTALL_OMP_EXTENSIONS;
+	if (setting === "0") return false;
+	return production || setting === "1";
 }
 
 export function ompExtensionDir(opts?: OmpPathOptions): string {

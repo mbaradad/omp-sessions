@@ -69,4 +69,6 @@ test("the global install is for an installed extension only; the env var overrid
 	assert.equal(globalInstallAllowed(false, {}), false);
 	assert.equal(globalInstallAllowed(false, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "1" }), true);
 	assert.equal(globalInstallAllowed(false, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0" }), false);
+	assert.equal(globalInstallAllowed(true, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0" }), false, "0 forbids it even for an installed extension");
+	assert.equal(globalInstallAllowed(false, { SWITCHYARD_INSTALL_OMP_EXTENSIONS: "yes" }), false, "anything but 1 is not an opt-in");
 });

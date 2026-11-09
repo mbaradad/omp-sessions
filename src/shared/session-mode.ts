@@ -4,11 +4,12 @@
 //   <Switchyard state folder>/sessions/<AO session id>/mode      `ask` | `edits` | `plan` | `auto`
 // Switching is rewriting that file; the gate reads it on every tool call, so it is live and works
 // with no client open. No file = the session is not Switchyard-managed (started from AO's own UI):
-// the gate does nothing and AO's mode applies. Node-only, no omp or AO imports (the omp bundle uses it).
+// the gate does nothing and AO's mode applies. Node-only. Self-contained on purpose: with session-mode-ops.ts it can
+// be taken without the rest of the checkpoints code; it imports only src/ao/native.ts and ./permissions.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { sessionStateFile, switchyardHome } from "../ao/native";
-import { writeFileAtomic } from "./checkpoints";
 import { EDIT_TOOLS, PERMISSION_MODES, type PermissionMode, isPermissionMode } from "./permissions";
 
 export { PERMISSION_MODES, type PermissionMode, isPermissionMode };
@@ -25,6 +26,13 @@ export function readMode(aoSessionId: string, home = switchyardHome()): Permissi
 	} catch {
 		return undefined;
 	}
+}
+
+/** Temp file + rename, so the gate (reading on every tool call) never sees a half-written mode. */
+function writeFileAtomic(file: string, content: string): void {
+	const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+	fs.writeFileSync(tmp, content);
+	fs.renameSync(tmp, file);
 }
 
 export function writeMode(aoSessionId: string, mode: PermissionMode, home = switchyardHome()): void {

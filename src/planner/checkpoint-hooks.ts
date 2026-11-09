@@ -51,7 +51,8 @@ export function checkpointHooks(connect: () => Promise<AoClient> = () => AoClien
 			if (isBusy(view, conversation) && !(await interruptAndWait(client, sessionId))) throw new Error("omp did not stop");
 			const result = await runCheckpointCommand(client, sessionId, plan.command);
 			if (!result) throw new Error("omp did not answer /undo in time");
-			if (!result.ok) throw new Error(result.message);
+			// Never --force: overlapping later changes are for a person to decide. Name every file, not only the first few of the message.
+			if (!result.ok) throw new Error(result.conflicts.length ? `${result.message} Conflicting files: ${result.conflicts.join(", ")}` : result.message);
 		},
 	};
 }
