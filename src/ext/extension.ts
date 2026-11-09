@@ -220,8 +220,12 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		try {
 			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "omp: resuming the session" : "omp: starting a session in AO" }, () => sessions.launch(opts));
 		} catch (err) {
-			void vscode.window.showErrorMessage(plain(`omp session did not start: ${err instanceof Error ? err.message : String(err)}`), "Show AO Log").then(a => {
-				if (a) ao.log.show();
+			const message = err instanceof Error ? err.message : String(err);
+			// G46: a mode other than auto is refused while the permission gate is not installed; the message is shown as it is, with the fix.
+			const needsGate = /needs the Switchyard permission gate/.test(message);
+			void vscode.window.showErrorMessage(plain(`omp session did not start: ${message}`), ...(needsGate ? ["Install Gate and Shim"] : []), "Show AO Log").then(a => {
+				if (a === "Install Gate and Shim") void vscode.commands.executeCommand("switchyard.installOmpIntegration");
+				else if (a) ao.log.show();
 			});
 			return undefined;
 		}
