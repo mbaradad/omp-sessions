@@ -284,7 +284,7 @@ test("someone resumes a dead host: AO fails the stuck turn with 'controller ende
 	ao.poke(s, "idle");
 	await until("interrupted", () => byTitle(p, "long").interrupted);
 	assert.equal(byTitle(p, "long").attempts, undefined, "no attempt used, nothing retried");
-	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+	assert.match(byTitle(p, "long").summary ?? "", /the agent stopped before the turn completed/);
 });
 
 test("a person's Stop cancels the running turn at the ACP level (-32800 'Request cancelled'): the task is interrupted and the lane paused, not failed and retried", async t => {
