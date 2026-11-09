@@ -3,7 +3,7 @@ import type { AoFixture } from "./ao-fixture.mjs";
 
 export interface PlannerFixtureOptions {
 	ao: AoFixture;
-	/** SWITCHYARD_HOME to use (e.g. the one a VS Code under test already has); must be under the temp dir. Default: a temp dir. */
+	/** SWITCHYARD_HOME to use; must be under the temp dir. Default: the AO fixture's (`ao.switchyardHome`), shared with the daemon. */
 	stateRoot?: string;
 	/** Bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, else built from src/planner/main.ts). */
 	plannerJs?: string;

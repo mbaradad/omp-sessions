@@ -76,6 +76,11 @@ const dirs = {
 };
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 const stateFile = path.join(tmp, "e2e-state.json");
+// One Switchyard home for the test VS Code, the AO daemon and the planner (as in a real install), and for this
+// runner's own process: the real ~/.switchyard is locked, anything that reaches it fails with EACCES.
+const switchyardHome = path.join(tmp, "switchyard");
+fs.mkdirSync(switchyardHome, { recursive: true });
+process.env.SWITCHYARD_HOME = switchyardHome;
 const fakeLog = path.join(tmp, "fake-omp.log");
 fs.writeFileSync(path.join(dirs.workspace, "existing.txt"), "original line\n");
 // A git repository (one commit) for the Source Control commands.
@@ -160,12 +165,12 @@ let planner;
 try {
 	if (process.env.SWITCHYARD_E2E_AO === "1" || process.env.SWITCHYARD_E2E_PLANNER === "1") {
 		const { startAoFixture } = await import("../ao-fixture.mjs");
-		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP });
+		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP, switchyardHome });
 		console.log(`AO fixture: ${ao.baseUrl} (${ao.root})`);
 	}
 	if (process.env.SWITCHYARD_E2E_PLANNER === "1") {
 		const { startPlannerFixture } = await import("../planner-fixture.mjs");
-		planner = await startPlannerFixture({ ao, stateRoot: dirs.ompHome });
+		planner = await startPlannerFixture({ ao });
 		console.log(`planner fixture: pid ${planner.pid}, socket ${planner.socket}`);
 	}
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
@@ -195,7 +200,7 @@ try {
 				XDG_STATE_HOME: path.join(dirs.home, ".local", "state"),
 				XDG_CACHE_HOME: path.join(dirs.home, ".cache"),
 				OMP_VSCODE_HOME: dirs.ompHome,
-				SWITCHYARD_HOME: path.join(tmp, "switchyard"),
+				SWITCHYARD_HOME: switchyardHome,
 				// CONTRACT.md: a test VS Code must not install Switchyard's omp extensions into the shared ~/.omp/agent
 				// (checkpoints' guard honours this; a value inherited from the shell must not turn installs on).
 				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
