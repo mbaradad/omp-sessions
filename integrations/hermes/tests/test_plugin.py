@@ -32,20 +32,23 @@ WORK = Path(os.environ["OMP_TEST_REPO"])
 # The temp homes must be set before Hermes modules are imported.
 TMP = Path(tempfile.mkdtemp(prefix="omp-hermes-test-"))
 HERMES_HOME = TMP / "hermes"
-for d in (HERMES_HOME / "plugins", TMP / "home", TMP / "switchyard"):
+# The fixture's Switchyard folder (test/ao-fixture.mjs: the daemon, its omp extensions, the CLI and the planner
+# all read it); a folder of our own when run without it.
+SWITCHYARD_HOME = Path(os.environ.get("SWITCHYARD_HOME") or TMP / "switchyard")
+for d in (HERMES_HOME / "plugins", TMP / "home", SWITCHYARD_HOME):
     d.mkdir(parents=True, exist_ok=True)
 OMP_HOME = TMP / "omp"
 os.environ.update(
     HOME=str(TMP / "home"),
     HERMES_HOME=str(HERMES_HOME),
     OMP_VSCODE_HOME=str(OMP_HOME),
-    SWITCHYARD_HOME=str(TMP / "switchyard"),
+    SWITCHYARD_HOME=str(SWITCHYARD_HOME),
     NO_COLOR="1",
 )
 os.environ.pop("HERMES_KANBAN_DB", None)
 os.environ.pop("HERMES_KANBAN_BOARD", None)
 # Never install the planner as a systemd/launchd service (it starts on demand instead).
-(TMP / "switchyard" / "config.json").write_text(json.dumps({"service": "off"}))
+(SWITCHYARD_HOME / "config.json").write_text(json.dumps({"service": "off"}))
 shutil.copytree(PLUGIN_SRC, HERMES_HOME / "plugins" / "omp-sessions")
 (HERMES_HOME / "config.yaml").write_text(
     "plugins:\n"
