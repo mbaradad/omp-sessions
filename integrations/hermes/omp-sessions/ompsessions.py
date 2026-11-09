@@ -26,12 +26,18 @@ SYNC_STATES = ("in-sync", "pending", "merged", "conflict", "upstream-changed")
 # Question kinds answered with text; select/confirm dialogs grant something (tool approvals, plan
 # approval) and are left to the user.
 TEXT_QUESTION_KINDS = ("ask", "input", "editor")
+# Title of the question the Switchyard omp extension's permission-mode gate asks before a tool runs.
+GATE_PREFIX = "Allow tool: "
 
 
 def is_approval(question: dict) -> bool:
     """True for a dialog that approves or denies something (omp's `select`/`confirm` dialogs: tool
-    permissions, plan approval) rather than a plain question answered with text or a choice."""
-    return str(question.get("kind") or "") not in TEXT_QUESTION_KINDS
+    permissions, plan approval) rather than a plain question answered with text or a choice. The
+    permission-mode gate of the Switchyard omp extension asks "Allow tool: …" as an ordinary AO
+    input question (kind ask/input): it is an approval all the same."""
+    if str(question.get("kind") or "") not in TEXT_QUESTION_KINDS:
+        return True
+    return any(str(question.get(k) or "").startswith(GATE_PREFIX) for k in ("title", "message"))
 
 
 def short(session_id: str) -> str:

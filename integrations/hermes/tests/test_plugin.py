@@ -652,6 +652,15 @@ class PureTest(unittest.TestCase):
         self.assertTrue(self.settings.board_lane(s, "a").trusts("anyone-at-all"))
         self.assertFalse(self.settings.parse_settings({}).agent_approvals)
 
+    def test_the_mode_gates_question_is_an_approval(self) -> None:
+        from hermes_plugins.omp_sessions.ompsessions import is_approval
+
+        gate = {"id": "q1", "kind": "input", "title": "Allow tool: bash ls", "options": ["Approve", "Approve for this session", "Deny"]}
+        self.assertTrue(is_approval(gate), "asked as an AO input question, but it grants a tool: the user's, not the agent's")
+        self.assertTrue(is_approval({"kind": "ask", "title": "ask", "message": "Allow tool: write x"}))
+        self.assertFalse(is_approval({"kind": "ask", "title": "Pick one"}))
+        self.assertTrue(is_approval({"kind": "approval", "title": "$ ls"}))
+
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
         link = {"session": "s1", "state": "active", "asked": []}
