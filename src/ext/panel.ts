@@ -201,7 +201,7 @@ export interface ChatCheckpoints {
 export interface ChatModeGate {
 	read(sessionId: string): PermissionMode | undefined;
 	/** Resolves once the switch is done (the gate's waiting question, if any, is settled). */
-	write(sessionId: string, mode: PermissionMode): Promise<void>;
+	set(sessionId: string, mode: PermissionMode): Promise<void>;
 }
 
 export class ChatPanel implements vscode.Disposable {
@@ -668,7 +668,7 @@ export class ChatPanel implements vscode.Disposable {
 		if (!conv || this.switchingMode) return;
 		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
 			// A Switchyard session: the omp extension's gate reads the mode file on every tool call, so this is live.
-			await this.modes.write(this.sessionId, mode);
+			await this.modes.set(this.sessionId, mode);
 			this.postState();
 			return;
 		}

@@ -57,7 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// Checkpoints send `/undo` and `/redo` through AO; `connectAo` (below) connects on first use.
 	const checkpoints = new Checkpoints(() => connectAo());
 	// The permission-mode gate (Switchyard omp extension): a switch rewrites the session's mode file.
-	const modes = { read: readMode, write: async (id: string, mode: PermissionMode) => void (await setSessionMode(await connectAo(), id, mode)) };
+	const modes = { read: readMode, set: (id: string, mode: PermissionMode) => connectAo().then(ao => setSessionMode(ao, id, mode)) };
 	// Sessions that finished or asked something while their chat was not in view.
 	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
 	const setUnread = (id: string, value: boolean) => {
