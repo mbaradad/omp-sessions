@@ -84,6 +84,8 @@ test("spawn an omp chat session, prompt it, read state, reply, cost and events",
 	const first = await until(id, m => m.state === "idle" && (m.reply ?? "").includes("PONG"), "idle with PONG");
 	assert.equal(first.title, "src/ao contract");
 	assert.equal(first.projectId, project.id);
+	// The session's own worktree, not the repo it came from.
+	assert.ok(first.cwd?.endsWith(`/${id}`) && fs.existsSync(first.cwd), `cwd ${first.cwd}`);
 	assert.equal(first.queue.done, 1);
 	assert.equal(first.question, undefined);
 	assert.equal(typeof first.cost, "number", "omp reports cost through ACP usage");

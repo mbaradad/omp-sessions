@@ -87,6 +87,8 @@ export interface AoSessionModel {
 	id: string;
 	title: string;
 	projectId?: string;
+	/** The folder the agent works in: its worktree, or its standalone scratch dir. Set by AoSessionWatcher (AoClient.workspacePath). */
+	cwd?: string;
 	harness?: string;
 	model?: string;
 	mode: AoSessionView["mode"];
@@ -445,6 +447,7 @@ export class AoSessionWatcher {
 	private readonly listeners = new Set<(change: AoWatcherChange) => void>();
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly cwds = new Map<string, string>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -551,14 +554,25 @@ export class AoSessionWatcher {
 	}
 
 	private async build(view: AoSessionView): Promise<AoSessionModel> {
-		if (this.options.conversations === false || view.mode !== "chat") return sessionModel(view);
+		const cwd = await this.cwdOf(view.id);
+		const withCwd = (m: AoSessionModel): AoSessionModel => (cwd ? { ...m, cwd } : m);
+		if (this.options.conversations === false || view.mode !== "chat") return withCwd(sessionModel(view));
 		try {
 			const conversation = await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 });
-			return sessionModel(view, conversation);
+			return withCwd(sessionModel(view, conversation));
 		} catch {
 			// Not ready yet (409 while the controller starts), or gone with a terminated session.
-			return sessionModel(view);
+			return withCwd(sessionModel(view));
 		}
+	}
+
+	/** A session's workspace never moves: read it once (a failed read is retried on the next build). */
+	private async cwdOf(sessionId: string): Promise<string | undefined> {
+		const known = this.cwds.get(sessionId);
+		if (known) return known;
+		const cwd = await this.client.workspacePath(sessionId).catch(() => undefined);
+		if (cwd) this.cwds.set(sessionId, cwd);
+		return cwd;
 	}
 
 	private emit(change: AoWatcherChange): void {

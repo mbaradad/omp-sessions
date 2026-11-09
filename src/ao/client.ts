@@ -290,6 +290,11 @@ export class AoClient {
 
 	// ---- projects ----
 
+	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
+	async workspacePath(sessionId: string): Promise<string> {
+		return (await unwrap(this.client.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId } } }))).workspacePath;
+	}
+
 	async listProjects(): Promise<AoProject[]> {
 		return (await unwrap(this.client.GET("/api/v1/projects"))).projects;
 	}
