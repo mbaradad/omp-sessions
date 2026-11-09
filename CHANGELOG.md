@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Hermes graph shows what Switchyard does with each card.** A graph node shows the planner's state of the card's session next to the omp session state: *blocked* (queued after sessions that have not finished), *scheduled* (with the time), *held* (the provider limit, usage window, budget or backoff) and *paused*, *waiting for a slot* or *interrupted*. Selecting a card lists the cards its session is queued after (the lane queues a card after the sessions of its parent cards) and the state of the parents' merged work; a thicker edge marks a link the planner enforces too. `switchyard ls --json` entries carry `planState`, `after` and `blockedBy` (session ids); the dashboard's `/boards` cards carry them as `plan`.
+- **Hermes graph layout.** An edge that skips a column runs between the cards of the columns it passes (or above or below them), not through them, with parallel edges on separate rows; a title is cut by its rendered width with an ellipsis, not by character count, and the node's tooltip shows the whole title.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.

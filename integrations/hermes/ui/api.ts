@@ -184,6 +184,22 @@ export interface LinkedCard extends Partial<CardLinks> {
 	error?: string | null;
 }
 
+/** What Switchyard's planner says about a card's session (plugin_api.card_plan). */
+export interface CardPlan {
+	/** blocked, scheduled, held, paused, waiting, interrupted or running; null once the work is done. */
+	state: string | null;
+	/** Why the work is held (provider limit, usage window, budget, backoff). */
+	reason?: string;
+	/** Epoch ms the wait ends. */
+	until?: number;
+	/** Cards whose sessions this one is queued after (the planner's mirror of the card's parents). */
+	after: string[];
+	/** The unfinished ones of those. */
+	blockedBy: string[];
+	/** The worst propagation state of the merges from the parents' work (in-sync, merged, pending, upstream-changed, resolving, conflict). */
+	upstream?: string;
+}
+
 /** A card of the board (archived ones aside) for the dependency graph. */
 export interface GraphCard extends CardLinks {
 	id: string;
@@ -197,6 +213,8 @@ export interface GraphCard extends CardLinks {
 	/** The kanban lane runs this card. */
 	lane: boolean;
 	laneState?: string | null;
+	/** The planner's view of that session (absent from an older backend, null without a session). */
+	plan?: CardPlan | null;
 }
 
 export interface Board {

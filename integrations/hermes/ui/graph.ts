@@ -5,27 +5,45 @@
 import { type BoardsView, errorMessage, type GraphCard, type Host } from "./api";
 import { SESSION_STATE } from "./boards";
 import { Button, Empty, ErrorBox } from "./components";
-import { layoutGraph, NODE_H, NODE_W } from "./graph-layout";
+import { clipToWidth, layoutGraph, NODE_H, NODE_W, planNote } from "./graph-layout";
 import { h, type ReactElement, useEffect, useMemo, useState } from "./react";
 import { cx, icon, shortId } from "./util";
 
 const POLL_MS = 8000;
-const TITLE_CHARS = 30;
+/** Room for text inside a node: left padding 14, right padding 10. */
+const TEXT_W = NODE_W - 24;
 const STATUSES = ["triage", "todo", "ready", "running", "blocked", "done"] as const;
 /** A parent in these states no longer holds its children back. */
 const MET: Record<string, true> = { done: true, archived: true };
 
 const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
+/** Rendered width of text in the node's fonts, from a canvas (the same font stack the SVG text uses); a width estimate where there is no canvas. */
+let canvas: CanvasRenderingContext2D | null | undefined;
+function measure(font: string): (text: string) => number {
+	if (canvas === undefined) canvas = typeof document === "undefined" ? null : (document.createElement("canvas").getContext("2d") ?? null);
+	const ctx = canvas;
+	if (!ctx) return text => text.length * 7;
+	ctx.font = `${font} ${typeof document === "undefined" ? "sans-serif" : getComputedStyle(document.body).fontFamily}`;
+	return text => ctx.measureText(text).width;
+}
+const TITLE_FONT = "600 12.5px";
+const SMALL_FONT = "600 11px";
+const NOTE_FONT = "11px";
+
 function hasLinks(cards: readonly GraphCard[]): boolean {
 	const ids = new Set(cards.map(c => c.id));
 	return cards.some(c => c.parents.some(p => ids.has(p)) || c.children.some(ch => ids.has(ch)));
 }
 
-function CardNode(p: { card: GraphCard; x: number; y: number; selected: boolean; faded: boolean; onOpen: (c: GraphCard) => void }): ReactElement {
-	const { card } = p;
+function CardNode(p: { card: GraphCard; note: ReturnType<typeof planNote>; x: number; y: number; selected: boolean; faded: boolean; onOpen: (c: GraphCard) => void }): ReactElement {
+	const { card, note } = p;
 	const session = card.sessionState ? (SESSION_STATE[card.sessionState] ?? card.sessionState) : null;
-	const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""})`;
+	// What the right of the second row says: the planner's wait (blocked, held, scheduled…) over the session's state.
+	const right = note ? note.label : session ? (card.lane ? `lane · ${session}` : session) : null;
+	const tone = note ? note.tone : card.sessionState;
+	const statusW = measure(SMALL_FONT)(card.status);
+	const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
 	return h(
 		"g",
 		{
@@ -44,24 +62,25 @@ function CardNode(p: { card: GraphCard; x: number; y: number; selected: boolean;
 				}
 			},
 		},
-		h("title", null, `${card.title}\n${card.id} · ${card.status}${card.assignee ? ` · ${card.assignee}` : ""}${session ? `\nomp session: ${session}` : ""}`),
+		h("title", null, `${card.title}\n${card.id} · ${card.status}${card.assignee ? ` · ${card.assignee}` : ""}${session ? `\nomp session: ${session}` : ""}${note ? `\n${note.detail}` : ""}`),
 		h("rect", { className: "omps-gnode-box", width: NODE_W, height: NODE_H, rx: 8 }),
 		h("rect", { className: "omps-gnode-bar", width: 4, height: NODE_H - 12, x: 0, y: 6, rx: 2 }),
-		h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clip(card.title, TITLE_CHARS)),
+		h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clipToWidth(card.title, TEXT_W, measure(TITLE_FONT))),
 		h("text", { className: "omps-gnode-status", x: 14, y: 44 }, card.status),
-		session
+		right
 			? h(
 					"g",
-					{ className: cx("omps-gnode-session", card.sessionState && `tone-${card.sessionState}`), transform: `translate(${NODE_W - 12} 40)` },
+					{ className: cx("omps-gnode-session", tone && `tone-${tone}`), transform: `translate(${NODE_W - 12} 40)` },
 					h("circle", { className: "omps-gnode-dot", cx: 0, cy: 0, r: 4 }),
-					h("text", { x: -10, y: 4, textAnchor: "end" }, card.lane ? `lane · ${session}` : session),
+					h("text", { x: -10, y: 4, textAnchor: "end" }, clipToWidth(right, Math.max(40, TEXT_W - statusW - 28), measure(NOTE_FONT))),
 				)
 			: null,
 	);
 }
 
-function CardInfo(p: { card: GraphCard; byId: Map<string, GraphCard>; onSelect: (id: string) => void; onOpenSession: (id: string) => void; onClose: () => void }): ReactElement {
-	const { card } = p;
+function CardInfo(p: { card: GraphCard; note: ReturnType<typeof planNote>; byId: Map<string, GraphCard>; onSelect: (id: string) => void; onOpenSession: (id: string) => void; onClose: () => void }): ReactElement {
+	const { card, note } = p;
+	const planned = card.plan?.after ?? [];
 	const chips = (ids: string[]): ReactElement[] =>
 		ids.map(id => {
 			const c = p.byId.get(id);
@@ -105,6 +124,17 @@ function CardInfo(p: { card: GraphCard; byId: Map<string, GraphCard>; onSelect: 
 			h("span", { className: "omps-section-label" }, "Unblocks"),
 			card.children.length ? chips(card.children) : h("span", { className: "omps-muted" }, "nothing"),
 		),
+		card.session
+			? h(
+					"div",
+					{ className: "omps-gcard-links" },
+					h("span", { className: "omps-section-label" }, "Switchyard"),
+					h("span", { className: cx("omps-gplan", note && `tone-${note.tone}`) }, note ? note.detail : card.plan?.state === "running" ? "Its task is running" : "No task waiting"),
+					planned.length ? h("span", { className: "omps-muted" }, "queued after") : card.parents.length ? h("span", { className: "omps-muted", title: "The lane queues a card after its parents' sessions when they ran in the lane; parents handled by someone else only gate the card in Hermes." }, "not queued after its parents") : null,
+					...(planned.length ? chips(planned) : []),
+					card.plan?.upstream && card.plan.upstream !== "in-sync" ? h("span", { className: cx("omps-gplan", `omps-sync-${card.plan.upstream}`) }, `parents' work: ${card.plan.upstream}`) : null,
+				)
+			: null,
 	);
 }
 
@@ -137,6 +167,7 @@ export function GraphPanel(p: { host: Host; onOpenSession: (id: string) => void 
 	const cards = board?.cards;
 	const layout = useMemo(() => layoutGraph(cards ?? [], showAll), [cards, showAll]);
 	const byId = useMemo(() => new Map((cards ?? []).map(c => [c.id, c])), [cards]);
+	const titleOf = (id: string): string => byId.get(id)?.title ?? id;
 
 	if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
 	if (!board) return h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." });
@@ -169,7 +200,7 @@ export function GraphPanel(p: { host: Host; onOpenSession: (id: string) => void 
 					h("path", {
 						key: `${e.from}>${e.to}`,
 						d: e.d,
-						className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
+						className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", byId.get(e.to)?.plan?.after.includes(e.from) && "is-planned", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
 						markerEnd: "url(#omps-graph-arrow)",
 					}),
 				),
@@ -177,6 +208,7 @@ export function GraphPanel(p: { host: Host; onOpenSession: (id: string) => void 
 					h(CardNode, {
 						key: n.card.id,
 						card: n.card,
+						note: planNote(n.card, titleOf),
 						x: n.x,
 						y: n.y,
 						selected: n.card.id === selected,
@@ -213,11 +245,16 @@ export function GraphPanel(p: { host: Host; onOpenSession: (id: string) => void 
 				onClick: () => setShowAll(!showAll),
 			}),
 			h("span", { className: "omps-grow" }),
-			h("span", { className: "omps-glegend", "aria-label": "Card status colours" }, ...STATUSES.map(s => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s))),
+			h(
+				"span",
+				{ className: "omps-glegend", "aria-label": "Card status colours" },
+				...STATUSES.map(s => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s)),
+				h("span", { className: "omps-glegend-edge", title: "A thick line: Switchyard's planner also queues the child's session after the parent's" }, "planned link"),
+			),
 		),
 		error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 		board.error ? h(ErrorBox, { message: board.error }) : null,
-		picked ? h(CardInfo, { card: picked, byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
+		picked ? h(CardInfo, { card: picked, note: planNote(picked, titleOf), byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
 		body,
 	);
 }

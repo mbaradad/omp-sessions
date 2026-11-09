@@ -1407,6 +1407,9 @@ var GAP_Y = 14;
 var PAD = 12;
 var LOOSE_GAP = 36;
 var SWEEPS = 4;
+var ROUTE_CLEAR = 4;
+var ROUTE_STEP = 6;
+var ROUTE_TURN = 0.6;
 function graphLinks(cards) {
   const ids = new Set(cards.map((c) => c.id));
   const seen = /* @__PURE__ */ new Set();
@@ -1475,9 +1478,12 @@ function layoutGraph(cards, showAll) {
   const nodes = [];
   const at = /* @__PURE__ */ new Map();
   const tallest = Math.max(0, ...layers2.map((cs) => cs.length));
-  const graphH = tallest ? tallest * (NODE_H + GAP_Y) - GAP_Y : 0;
+  const cardsH = tallest ? tallest * (NODE_H + GAP_Y) - GAP_Y : 0;
+  const skipping = links.filter(({ from, to }) => (layerOf.get(to) ?? 0) - (layerOf.get(from) ?? 0) > 1).length;
+  const reserve = skipping ? Math.min(skipping, 6) * ROUTE_STEP + ROUTE_CLEAR * 2 : 0;
+  const graphH = cardsH ? cardsH + reserve * 2 : 0;
   layers2.forEach((cs, l) => {
-    const top = PAD + (graphH - (cs.length * (NODE_H + GAP_Y) - GAP_Y)) / 2;
+    const top = PAD + reserve + (cardsH - (cs.length * (NODE_H + GAP_Y) - GAP_Y)) / 2;
     cs.forEach((card, row) => {
       const node = { card, layer: l, x: PAD + l * (NODE_W + GAP_X), y: top + row * (NODE_H + GAP_Y) };
       nodes.push(node);
@@ -1487,6 +1493,7 @@ function layoutGraph(cards, showAll) {
   const looseTop = PAD + (graphH ? graphH + LOOSE_GAP : 0);
   const cols = Math.max(layers2.length, 4);
   loose.forEach((card, i) => nodes.push({ card, layer: -1, x: PAD + i % cols * (NODE_W + GAP_X), y: looseTop + Math.floor(i / cols) * (NODE_H + GAP_Y) }));
+  const used = [];
   const edges = links.map(({ from, to }) => {
     const a = at.get(from);
     const b = at.get(to);
@@ -1494,6 +1501,14 @@ function layoutGraph(cards, showAll) {
     const y1 = a.y + NODE_H / 2;
     const x2 = b.x;
     const y2 = b.y + NODE_H / 2;
+    if (b.layer - a.layer > 1) {
+      const y = routeRow(nodes.filter((n) => n.layer > a.layer && n.layer < b.layer), (y1 + y2) / 2, PAD, PAD + graphH, x1, x2, used);
+      used.push({ y, from: x1, to: x2 });
+      const t1 = x1 + GAP_X * ROUTE_TURN;
+      const t2 = x2 - GAP_X * ROUTE_TURN;
+      const h2 = GAP_X * ROUTE_TURN * 0.5;
+      return { from, to, routeY: y, d: `M${x1} ${y1} C${x1 + h2} ${y1} ${t1 - h2} ${y} ${t1} ${y} L${t2} ${y} C${t2 + h2} ${y} ${x2 - h2} ${y2} ${x2} ${y2}` };
+    }
     const bend = Math.max(GAP_X / 2, Math.abs(x2 - x1) / 2);
     return { from, to, d: `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}` };
   });
@@ -1507,21 +1522,93 @@ function layoutGraph(cards, showAll) {
     hidden: showAll ? 0 : cards.length - linked.length
   };
 }
+function routeRow(passed, target, lo, hi, x1, x2, used) {
+  const blocked = passed.map((n) => [n.y - ROUTE_CLEAR, n.y + NODE_H + ROUTE_CLEAR]);
+  const free = (y) => blocked.every(([top, bottom]) => y < top || y > bottom);
+  let best = hi;
+  let bestCost = Number.POSITIVE_INFINITY;
+  for (let y = lo; y <= hi; y += 1) {
+    if (!free(y)) continue;
+    const crowd = used.filter((u) => u.from < x2 && u.to > x1 && Math.abs(u.y - y) < ROUTE_STEP).length;
+    const cost = Math.abs(y - target) + crowd * 1e3;
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = y;
+    }
+  }
+  return best;
+}
+function clipToWidth(text, maxWidth, measure2) {
+  if (measure2(text) <= maxWidth) return text;
+  const chars = Array.from(text);
+  let fit = 0;
+  let low = 0;
+  let high = chars.length;
+  while (low <= high) {
+    const mid = low + high >> 1;
+    if (measure2(`${chars.slice(0, mid).join("").trimEnd()}…`) <= maxWidth) {
+      fit = mid;
+      low = mid + 1;
+    } else high = mid - 1;
+  }
+  return `${chars.slice(0, fit).join("").trimEnd()}…`;
+}
+function shortTime(ms2, now = Date.now()) {
+  const d = new Date(ms2);
+  const clock2 = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date(now).toDateString() ? clock2 : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${clock2}`;
+}
+function planNote(card, titleOf, clock2 = shortTime) {
+  const plan = card.plan;
+  if (!plan?.state) return null;
+  const names = (ids) => ids.map(titleOf).join(", ");
+  const until2 = plan.until !== void 0 ? ` until ${clock2(plan.until)}` : "";
+  switch (plan.state) {
+    case "blocked":
+      return { label: plan.blockedBy.length ? `blocked · ${plan.blockedBy.length} to finish` : "blocked", tone: "blocked", detail: `Switchyard holds this card's task until ${plan.blockedBy.length ? names(plan.blockedBy) : "its dependencies"} finish${plan.blockedBy.length === 1 ? "es" : ""}${plan.reason ? ` (${plan.reason})` : ""}` };
+    case "held":
+      return { label: plan.reason ? `held · ${plan.reason.replace(/ until .*/, "")}` : "held", tone: "held", detail: `Held by Switchyard${plan.reason ? `: ${plan.reason}` : ""}${plan.reason?.includes(" until ") ? "" : until2}` };
+    case "scheduled":
+      return { label: plan.until !== void 0 ? `scheduled · ${clock2(plan.until)}` : "scheduled", tone: "scheduled", detail: `Scheduled${until2}` };
+    case "paused":
+      return { label: "paused", tone: "held", detail: "Paused in Switchyard (the task, its queue or the planner)" };
+    case "waiting":
+      return { label: "waiting for a slot", tone: "queued", detail: "Ready; waiting for a free concurrency slot or for its queue" };
+    case "interrupted":
+      return { label: "interrupted", tone: "interrupted", detail: "Cut short by a crash or restart: it needs a person to run it again" };
+    default:
+      return null;
+  }
+}
 
 // integrations/hermes/ui/graph.ts
 var POLL_MS2 = 8e3;
-var TITLE_CHARS = 30;
+var TEXT_W = NODE_W - 24;
 var STATUSES = ["triage", "todo", "ready", "running", "blocked", "done"];
 var MET = { done: true, archived: true };
 var clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}…` : text;
+var canvas;
+function measure(font) {
+  if (canvas === void 0) canvas = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d") ?? null;
+  const ctx2 = canvas;
+  if (!ctx2) return (text) => text.length * 7;
+  ctx2.font = `${font} ${typeof document === "undefined" ? "sans-serif" : getComputedStyle(document.body).fontFamily}`;
+  return (text) => ctx2.measureText(text).width;
+}
+var TITLE_FONT = "600 12.5px";
+var SMALL_FONT = "600 11px";
+var NOTE_FONT = "11px";
 function hasLinks(cards) {
   const ids = new Set(cards.map((c) => c.id));
   return cards.some((c) => c.parents.some((p) => ids.has(p)) || c.children.some((ch) => ids.has(ch)));
 }
 function CardNode(p) {
-  const { card } = p;
+  const { card, note } = p;
   const session = card.sessionState ? SESSION_STATE[card.sessionState] ?? card.sessionState : null;
-  const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""})`;
+  const right = note ? note.label : session ? card.lane ? `lane · ${session}` : session : null;
+  const tone = note ? note.tone : card.sessionState;
+  const statusW = measure(SMALL_FONT)(card.status);
+  const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
   return h(
     "g",
     {
@@ -1542,21 +1629,23 @@ function CardNode(p) {
     },
     h("title", null, `${card.title}
 ${card.id} · ${card.status}${card.assignee ? ` · ${card.assignee}` : ""}${session ? `
-omp session: ${session}` : ""}`),
+omp session: ${session}` : ""}${note ? `
+${note.detail}` : ""}`),
     h("rect", { className: "omps-gnode-box", width: NODE_W, height: NODE_H, rx: 8 }),
     h("rect", { className: "omps-gnode-bar", width: 4, height: NODE_H - 12, x: 0, y: 6, rx: 2 }),
-    h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clip(card.title, TITLE_CHARS)),
+    h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clipToWidth(card.title, TEXT_W, measure(TITLE_FONT))),
     h("text", { className: "omps-gnode-status", x: 14, y: 44 }, card.status),
-    session ? h(
+    right ? h(
       "g",
-      { className: cx("omps-gnode-session", card.sessionState && `tone-${card.sessionState}`), transform: `translate(${NODE_W - 12} 40)` },
+      { className: cx("omps-gnode-session", tone && `tone-${tone}`), transform: `translate(${NODE_W - 12} 40)` },
       h("circle", { className: "omps-gnode-dot", cx: 0, cy: 0, r: 4 }),
-      h("text", { x: -10, y: 4, textAnchor: "end" }, card.lane ? `lane · ${session}` : session)
+      h("text", { x: -10, y: 4, textAnchor: "end" }, clipToWidth(right, Math.max(40, TEXT_W - statusW - 28), measure(NOTE_FONT)))
     ) : null
   );
 }
 function CardInfo(p) {
-  const { card } = p;
+  const { card, note } = p;
+  const planned = card.plan?.after ?? [];
   const chips = (ids) => ids.map((id) => {
     const c = p.byId.get(id);
     return h(
@@ -1596,7 +1685,16 @@ function CardInfo(p) {
       { className: "omps-gcard-links" },
       h("span", { className: "omps-section-label" }, "Unblocks"),
       card.children.length ? chips(card.children) : h("span", { className: "omps-muted" }, "nothing")
-    )
+    ),
+    card.session ? h(
+      "div",
+      { className: "omps-gcard-links" },
+      h("span", { className: "omps-section-label" }, "Switchyard"),
+      h("span", { className: cx("omps-gplan", note && `tone-${note.tone}`) }, note ? note.detail : card.plan?.state === "running" ? "Its task is running" : "No task waiting"),
+      planned.length ? h("span", { className: "omps-muted" }, "queued after") : card.parents.length ? h("span", { className: "omps-muted", title: "The lane queues a card after its parents' sessions when they ran in the lane; parents handled by someone else only gate the card in Hermes." }, "not queued after its parents") : null,
+      ...planned.length ? chips(planned) : [],
+      card.plan?.upstream && card.plan.upstream !== "in-sync" ? h("span", { className: cx("omps-gplan", `omps-sync-${card.plan.upstream}`) }, `parents' work: ${card.plan.upstream}`) : null
+    ) : null
   );
 }
 function GraphPanel(p) {
@@ -1625,6 +1723,7 @@ function GraphPanel(p) {
   const cards = board?.cards;
   const layout = useMemo(() => layoutGraph(cards ?? [], showAll), [cards, showAll]);
   const byId = useMemo(() => new Map((cards ?? []).map((c) => [c.id, c])), [cards]);
+  const titleOf = (id) => byId.get(id)?.title ?? id;
   if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
   if (!board) return h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." });
   const open = (c) => {
@@ -1654,7 +1753,7 @@ function GraphPanel(p) {
           (e) => h("path", {
             key: `${e.from}>${e.to}`,
             d: e.d,
-            className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
+            className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", byId.get(e.to)?.plan?.after.includes(e.from) && "is-planned", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
             markerEnd: "url(#omps-graph-arrow)"
           })
         ),
@@ -1662,6 +1761,7 @@ function GraphPanel(p) {
           (n) => h(CardNode, {
             key: n.card.id,
             card: n.card,
+            note: planNote(n.card, titleOf),
             x: n.x,
             y: n.y,
             selected: n.card.id === selected,
@@ -1697,11 +1797,16 @@ function GraphPanel(p) {
         onClick: () => setShowAll(!showAll)
       }),
       h("span", { className: "omps-grow" }),
-      h("span", { className: "omps-glegend", "aria-label": "Card status colours" }, ...STATUSES.map((s) => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s)))
+      h(
+        "span",
+        { className: "omps-glegend", "aria-label": "Card status colours" },
+        ...STATUSES.map((s) => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s)),
+        h("span", { className: "omps-glegend-edge", title: "A thick line: Switchyard's planner also queues the child's session after the parent's" }, "planned link")
+      )
     ),
     error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
     board.error ? h(ErrorBox, { message: board.error }) : null,
-    picked ? h(CardInfo, { card: picked, byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
+    picked ? h(CardInfo, { card: picked, note: planNote(picked, titleOf), byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
     body
   );
 }
@@ -3058,6 +3163,7 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-graph { display: block; font-family: inherit; }
 .omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-planned { stroke-width: 2.25; }
 .omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
 .omps-gedge-head { fill: var(--o-border-strong); }
 .omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
@@ -3076,6 +3182,11 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
 .omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
 .omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.tone-blocked { --tone: var(--o-pink); }
+.tone-held { --tone: var(--o-yellow); }
+.omps-glegend-edge { font-size: 11px; color: var(--o-muted); display: inline-flex; align-items: center; margin-left: 6px; }
+.omps-glegend-edge::before { content: ""; display: inline-block; width: 18px; height: 0; border-top: 2.25px solid var(--o-border-strong); margin-right: 5px; }
+.omps-gplan { font-size: 12px; color: var(--tone, var(--o-fg2)); }
 .omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
 .omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
 .omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }

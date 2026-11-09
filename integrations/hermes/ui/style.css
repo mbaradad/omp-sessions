@@ -459,6 +459,7 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-graph { display: block; font-family: inherit; }
 .omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-planned { stroke-width: 2.25; }
 .omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
 .omps-gedge-head { fill: var(--o-border-strong); }
 .omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
@@ -477,6 +478,11 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
 .omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
 .omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.tone-blocked { --tone: var(--o-pink); }
+.tone-held { --tone: var(--o-yellow); }
+.omps-glegend-edge { font-size: 11px; color: var(--o-muted); display: inline-flex; align-items: center; margin-left: 6px; }
+.omps-glegend-edge::before { content: ""; display: inline-block; width: 18px; height: 0; border-top: 2.25px solid var(--o-border-strong); margin-right: 5px; }
+.omps-gplan { font-size: 12px; color: var(--tone, var(--o-fg2)); }
 .omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
 .omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
 .omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
