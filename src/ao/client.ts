@@ -145,10 +145,13 @@ export class AoClient {
 		return this.currentBaseUrl;
 	}
 
-	/** Looks for the daemon again (discovery clients only); returns it, or undefined when none answers. */
+	/**
+	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
+	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 */
 	async rediscover(): Promise<AoDaemon | undefined> {
 		if (!this.discovery) return undefined;
-		const daemon = this.discovery.start ? await ensureDaemon(this.discovery) : await findDaemon(this.discovery);
+		const daemon = await findDaemon(this.discovery);
 		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
 			this.currentBaseUrl = daemon.baseUrl;
 			this.client = this.create();
