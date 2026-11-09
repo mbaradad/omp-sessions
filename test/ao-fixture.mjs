@@ -16,12 +16,13 @@
 // if an override (opts.env) points any of them elsewhere. `ao.stackEnv` carries the same variables, so a
 // CLI, planner or Hermes process started with it stays isolated too. Never run `install CLI/skill/service`
 // outside such an env.
-// Options: { aoBin, realOmp, env, fakeOmpEnv, readyTimeoutMs, keep }
+// Options: { aoBin, realOmp, env, fakeOmpEnv, pathPrepend, readyTimeoutMs, keep }
 //   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
 //   realOmp      run the real omp (from PATH) instead of the fake, for smoke tests. Still isolated: HOME is
 //                the fixture's, with home/.omp/agent linked to the real agent dir (the login lives there)
 //   env          extra daemon env (e.g. AO_* overrides)
 //   fakeOmpEnv   extra env for the fake (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...)
+//   pathPrepend  dirs put first on the daemon's PATH (in front of the fake `omp`): an `omp` shim goes here
 //   keep         leave the temp dir after stop (default $SWITCHYARD_TEST_KEEP_AO=1), for post-mortems
 //
 // Env read here: SWITCHYARD_TEST_AO_BIN, SWITCHYARD_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs
@@ -90,6 +91,9 @@ export async function removeTree(dir) {
 	}
 }
 
+/** Set by a parent omp session for its tools; must not reach the omp processes of a test daemon. */
+export const PARENT_OMP_ENV = new Set(["PI_SESSION_FILE", "PI_SESSION_ID", "PI_NO_TITLE", "PI_NO_PTY", "PI_NOTIFICATIONS", "OMPCODE"]);
+
 /** The user's real home (from the password database: HOME may already be an isolated one). */
 function realHome() {
 	return fs.realpathSync(os.userInfo().homedir);
@@ -121,6 +125,53 @@ function freePort() {
 			srv.close(() => resolve(port));
 		});
 	});
+}
+
+/**
+ * Processes belonging to a fixture (Linux): chat hosts whose command line names its data dir (they are
+ * detached with setsid, so they outlive the daemon), and anything whose working directory is inside its
+ * root (omp runs in the session worktrees under it). Never this process.
+ */
+function fixtureProcesses(root, dataDir) {
+	if (process.platform !== "linux") return chatHostPids(dataDir);
+	const under = (p, dir) => p === dir || p.startsWith(dir + path.sep);
+	const pids = [];
+	for (const entry of fs.readdirSync("/proc")) {
+		if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+		let hit = false;
+		try {
+			const argv = fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");
+			hit = argv.includes("chat-host") && argv.some(a => under(a, dataDir));
+			if (!hit) hit = under(fs.readlinkSync(`/proc/${entry}/cwd`), root);
+		} catch {
+			continue;
+		}
+		if (hit) pids.push(Number(entry));
+	}
+	return pids;
+}
+
+/** Kills (SIGTERM, then SIGKILL) every process of the fixture until none is left; the pids that survived. */
+async function reapFixtureProcesses(root, dataDir) {
+	for (const signal of ["SIGTERM", "SIGKILL", "SIGKILL"]) {
+		const pids = fixtureProcesses(root, dataDir);
+		if (pids.length === 0) return [];
+		for (const pid of pids) killGroup(pid, signal);
+		const deadline = Date.now() + (signal === "SIGTERM" ? 5000 : 3000);
+		while (fixtureProcesses(root, dataDir).length > 0 && Date.now() < deadline) await sleep(50);
+	}
+	return fixtureProcesses(root, dataDir);
+}
+
+/** Kills every session the daemon knows, through its API (best effort, bounded): the hosts then end their omp themselves. */
+async function killSessions(baseUrl, proc) {
+	if (proc.exitCode !== null || proc.signalCode !== null) return;
+	try {
+		const res = await fetch(`${baseUrl}/api/v1/sessions`, { signal: AbortSignal.timeout(5000) });
+		if (!res.ok) return;
+		const { sessions = [] } = await res.json();
+		await Promise.allSettled(sessions.map(s => fetch(`${baseUrl}/api/v1/sessions/${encodeURIComponent(s.id)}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(5000) })));
+	} catch {}
 }
 
 /** Detached chat hosts (`ao chat-host <session> <dataDir> ...`, own process group) of one daemon, or of one of its sessions. */
@@ -162,15 +213,6 @@ function killGroup(pid, signal) {
 	}
 }
 
-function alive(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 const live = new Set();
 let exitHookInstalled = false;
 function installExitHook() {
@@ -207,8 +249,11 @@ export async function startAoFixture(opts = {}) {
 	const binDir = path.join(root, "bin");
 	for (const d of [dataDir, home, agentDir, binDir]) fs.mkdirSync(d, { recursive: true });
 
-	// The daemon inherits nothing AO-specific from a test run that itself happens to be an AO session.
-	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_")));
+	// The daemon inherits nothing AO-specific, and nothing of an omp session the test itself may be running in:
+	// the daemon hands its whole env to every `omp acp` it spawns, so PI_SESSION_FILE & co would point them at the
+	// caller's session (same list as validate's IsolatedDaemon). HOME and XDG_* below are for the daemon process
+	// itself: its readiness probes for other harnesses (claude, codex, kiro…) write into $HOME.
+	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !PARENT_OMP_ENV.has(k)));
 	// CONTRACT.md "Isolated HOME": every run, fake or real omp, gets its own HOME, XDG dirs and Switchyard
 	// state dirs under the fixture root. There is no switch for the real HOME.
 	const isolation = {
@@ -244,6 +289,8 @@ export async function startAoFixture(opts = {}) {
 			...opts.fakeOmpEnv,
 		});
 	}
+	// Dirs first on the daemon's PATH, before the fake: how an `omp` shim (G34) is put in front of the omp it wraps.
+	if (opts.pathPrepend?.length) env.PATH = [...opts.pathPrepend, env.PATH ?? ""].join(path.delimiter);
 	Object.assign(env, {
 		AO_DATA_DIR: dataDir,
 		AO_RUN_FILE: runFile,
@@ -308,7 +355,7 @@ export async function startAoFixture(opts = {}) {
 	/** What a process needs to run the same omp AO runs: the isolated HOME/XDG/state dirs, and the fake with its store, log and usage file. */
 	const ompEnv = {
 		...isolation,
-		...(opts.realOmp ? {} : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
+		...(opts.realOmp ? (opts.pathPrepend?.length ? { PATH: env.PATH } : {}) : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
 	};
 
 	const fx = {
@@ -362,11 +409,19 @@ export async function startAoFixture(opts = {}) {
 			if (!res.ok) throw new Error(`${method} ${urlPath} → ${res.status}: ${text}`);
 			return text ? JSON.parse(text) : undefined;
 		},
-		/** A fresh git repo (one commit on main) under the fixture root. */
-		scratchRepo(name = "repo") {
+		/**
+		 * A fresh git repo (one commit on main) under the fixture root. `extensions` ({ "name.ts": "/path/to/source" })
+		 * are copied into the repo's `.omp/extensions/` and committed, so every AO worktree of it has them: how a smoke
+		 * with real omp loads Switchyard's omp extensions (CONTRACT.md: nothing installs into the shared ~/.omp/agent).
+		 */
+		scratchRepo(name = "repo", { extensions = {} } = {}) {
 			const dir = path.join(root, "repos", name);
 			fs.mkdirSync(dir, { recursive: true });
 			fs.writeFileSync(path.join(dir, "README.md"), `# ${name}\n`);
+			for (const [file, source] of Object.entries(extensions)) {
+				fs.mkdirSync(path.join(dir, ".omp", "extensions"), { recursive: true });
+				fs.copyFileSync(source, path.join(dir, ".omp", "extensions", file));
+			}
 			gitIn(dir, "init", "-q", "-b", "main");
 			gitIn(dir, "add", "-A");
 			gitIn(dir, "commit", "-q", "-m", "init");
@@ -405,7 +460,7 @@ export async function startAoFixture(opts = {}) {
 		},
 		killNow() {
 			killGroup(child.pid, "SIGKILL");
-			for (const pid of chatHostPids(dataDir)) killGroup(pid, "SIGKILL");
+			for (const pid of fixtureProcesses(root, dataDir)) killGroup(pid, "SIGKILL");
 		},
 		/**
 		 * Restarts the daemon on the same port and data dir, like `systemctl restart`: chat hosts (and
@@ -428,17 +483,19 @@ export async function startAoFixture(opts = {}) {
 				await sleep(250);
 			}
 		},
-		/** Stops the daemon (SIGTERM, then SIGKILL after 10 s), its chat hosts and their omp, and removes the temp dir. */
+		/**
+		 * Tears everything down and asserts nothing of the fixture survives: (1) kills every session through the
+		 * API while the daemon is up, (2) stops the daemon (SIGTERM, SIGKILL after 10 s), (3) kills every process
+		 * still referencing the fixture (detached chat hosts and the omp in their groups, anything running in its
+		 * tree), (4) removes the temp dir, (5) throws if a process of the fixture is still alive.
+		 */
 		async stop() {
 			if (!live.delete(fx)) return;
+			await killSessions(baseUrl, child);
 			await stopDaemon(child);
-			// Chat hosts are setsid'd: their process group holds the omp they run.
-			const hosts = chatHostPids(dataDir);
-			for (const pid of hosts) killGroup(pid, "SIGTERM");
-			const deadline = Date.now() + 5000;
-			while (hosts.some(alive) && Date.now() < deadline) await sleep(50);
-			for (const pid of hosts) killGroup(pid, "SIGKILL");
+			const survivors = await reapFixtureProcesses(root, dataDir);
 			if (!keep) await removeTree(root);
+			if (survivors.length > 0) throw new Error(`ao-fixture: ${survivors.length} process(es) of ${root} survived teardown: ${survivors.join(", ")}`);
 		},
 	};
 	live.add(fx);
