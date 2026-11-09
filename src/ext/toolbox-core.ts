@@ -158,7 +158,6 @@ export const GROUPS = ["Sessions", "Chat", "Tasks", "Review & git", "omp account
 export type CommandGroup = (typeof GROUPS)[number];
 
 const EXPLICIT: Record<string, CommandGroup> = {
-	"omp.showLog": "Sessions",
 	"omp.refresh": "Sessions",
 	"omp.toggleGrouping": "Sessions",
 	"omp.exportHtml": "Sessions",
@@ -167,7 +166,6 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.setPermissionMode": "Sessions",
 	"omp.importClaude": "Sessions",
 	"omp.importCodex": "Sessions",
-	"omp.resumeFromHistory": "Sessions",
 	"omp.remote.connectPhone": "Sessions",
 	"omp.remote.disable": "Sessions",
 	"omp.remote.rotateToken": "Sessions",

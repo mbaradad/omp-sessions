@@ -9,7 +9,7 @@ import { plain } from "./plain";
 import { resolveOmpPath } from "./sessions";
 
 /** Commands that `command:` links in the chat may run (see openLink). */
-const SAFE_LINK_COMMANDS: Record<string, true> = { "omp.login": true, "omp.doctor": true, "omp.installOmp": true, "omp.setOmpPath": true };
+const SAFE_LINK_COMMANDS: Record<string, true> = { "omp.login": true, "omp.doctor": true, "omp.installOmp": true };
 
 /** `<session>.jsonl` → `<session>/`: where omp keeps artifacts and the `local://` root. */
 function artifactsDir(meta: SessionMeta | undefined): string | undefined {

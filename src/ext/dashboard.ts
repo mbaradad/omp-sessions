@@ -9,7 +9,7 @@ import * as vscode from "vscode";
 import { TranscriptUsage, type UsageRecord, sessionTranscripts } from "../shared/cost";
 import { locateTranscript } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
-import { listTranscripts } from "../shared/transcript-files";
+import { listTranscripts, readTranscriptHead } from "../shared/transcript-files";
 import type { OmpApi } from "./api";
 import { searchHistory } from "./history-search";
 import { configuredOmpPaths, projectRoot } from "./sessions";
@@ -66,18 +66,29 @@ class UsageService {
 	private async collect(includeAll: boolean): Promise<UsageRow[]> {
 		const rows: UsageRow[] = [];
 		const claimed = new Set<string>();
-		for (const meta of this.api.sessions.all()) {
-			const files = sessionTranscripts(meta);
+		const metas = this.api.sessions.all();
+		const transcripts = includeAll || metas.some(m => !m.ompSessionFile) ? await listTranscripts(configuredOmpPaths()) : [];
+		// AO sessions whose omp session the Switchyard omp extension didn't record (GAPS G9): each runs in its
+		// own AO workspace folder, so the transcripts omp wrote with that cwd are the session's.
+		const byCwd = new Map<string, string[]>();
+		if (metas.some(m => !m.ompSessionFile)) {
+			for (const { file } of transcripts) {
+				const cwd = readTranscriptHead(file)?.cwd;
+				if (cwd) byCwd.set(cwd, [...(byCwd.get(cwd) ?? []), file]);
+			}
+		}
+		for (const meta of metas) {
+			const files = meta.ompSessionFile ? sessionTranscripts(meta) : meta.cwd ? (byCwd.get(meta.cwd) ?? []) : [];
 			for (const f of files) {
 				claimed.add(path.resolve(f));
 				const found = locateTranscript(f);
 				if (found) claimed.add(path.resolve(found));
 			}
-			const file = meta.ompSessionFile ?? "";
+			const file = meta.ompSessionFile ?? files.at(-1) ?? "";
 			rows.push({ key: `s:${meta.id}`, title: meta.title, cwd: meta.cwd, project: projectRoot(meta.cwd).root, file, meta, records: files.length ? await this.usage.records(files) : [] });
 		}
 		if (!includeAll) return rows;
-		for (const { file } of await listTranscripts(configuredOmpPaths())) {
+		for (const { file } of transcripts) {
 			if (claimed.has(path.resolve(file))) continue;
 			const records = await this.usage.records([file]);
 			if (records.length === 0) continue;
@@ -169,7 +180,6 @@ export function registerDashboard(api: OmpApi): void {
 		if (msg.type === "open" && meta) return vscode.commands.executeCommand("omp.openSession", meta.id);
 		if (msg.type === "resume") {
 			if (meta) return vscode.commands.executeCommand(meta.status === "stopped" ? "omp.resumeSession" : "omp.openSession", meta.id);
-			if (!row.meta && row.file && row.cwd) return api.launchAndOpen({ cwd: row.cwd, resumeFile: row.file, title: row.title.slice(0, 80) });
 		}
 	};
 

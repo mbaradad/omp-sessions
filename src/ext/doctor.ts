@@ -1,39 +1,25 @@
-// Self-help for novices and experts: missing-omp and not-logged-in guidance, the omp Doctor
-// report (with fixes), diagnostics for bug reports, host upgrades and crash recovery prompts.
+// Self-help for novices and experts: missing-omp and not-logged-in guidance, the omp Doctor report (omp,
+// the AO daemon and its view of omp, the planner, sessions; with fixes) and diagnostics for bug reports.
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { HOST_CRASHED, isOutdated, settleDeadHost } from "../shared/health";
+import { type AoClient, findDaemon } from "../ao/client";
+import { PlannerClient } from "../planner/client";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
-import { canConnect, hostAlive as hostIsAlive, sendToHost } from "../shared/launch";
+import { hostAlive as hostIsAlive } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import type { AoFacts, PlannerFacts } from "./doctor-ao";
 import type { HermesFacts } from "./doctor-hermes";
-import {
-	type DoctorFacts,
-	type Report,
-	type SessionFacts,
-	abnormalStop,
-	buildReport,
-	cleanupCandidates,
-	formatBytes,
-	installCommand,
-	issueUrl,
-	reportCommands,
-	reportToHtml,
-	reportToMarkdown,
-	tail,
-} from "./doctor-report";
+import { type DoctorFacts, type Report, type SessionFacts, buildReport, cleanupCandidates, formatBytes, installCommand, issueUrl, reportCommands, reportToHtml, reportToMarkdown } from "./doctor-report";
 import { plain } from "./plain";
-import type { ServerControl } from "./server";
+import { installedUnit } from "./server";
 import { resolveOmpPath } from "./sessions";
 
 const HIDE_MISSING_KEY = "omp.doctor.hideOmpMissing";
-const SEEN_VERSION_KEY = "omp.doctor.seenVersion";
 const LEARN_MORE = "https://omp.sh";
 const IS_WINDOWS = process.platform === "win32";
 
@@ -64,13 +50,12 @@ function findExecutable(name: string): string | undefined {
 	return undefined;
 }
 
-/** omp executable state: `exists` is false for an `omp.path` that points nowhere. */
-function ompStatus(): { configured?: string; resolved?: string; exists: boolean } {
-	const configured = vscode.workspace.getConfiguration("omp").get<string>("path")?.trim() || undefined;
+/** omp executable state, as AO finds it: on the daemon's PATH or in the usual install folders. */
+function ompStatus(): { resolved?: string; exists: boolean } {
 	const resolved = resolveOmpPath();
 	// A bare command name (`omp`) is looked up on PATH at spawn time.
 	const exists = !!resolved && (!path.isAbsolute(resolved) || fs.existsSync(resolved));
-	return { configured, resolved, exists };
+	return { resolved, exists };
 }
 
 /** `omp --version`, with the PATH additions the session host also uses (omp runs on Bun). */
@@ -117,25 +102,8 @@ async function dirBytes(dir: string): Promise<number> {
 	return sizes.reduce((a, b) => a + b, 0);
 }
 
-/** Last lines of a session's host.log (only the final 64 KiB are read). */
-function logTail(id: string, lines = 20): string | undefined {
-	const file = path.join(sessionDir(id), "host.log");
-	let fd: number | undefined;
-	try {
-		fd = fs.openSync(file, "r");
-		const size = fs.fstatSync(fd).size;
-		const len = Math.min(size, 64 * 1024);
-		const buf = Buffer.alloc(len);
-		fs.readSync(fd, buf, 0, len, size - len);
-		return tail(buf.toString("utf8"), lines) || undefined;
-	} catch {
-		return undefined;
-	} finally {
-		if (fd !== undefined) fs.closeSync(fd);
-	}
-}
-
-async function gatherSessions(): Promise<SessionFacts[]> {
+/** Session folders of the old session host that still hold file snapshots (Disk section, Clean Up File Snapshots). */
+async function gatherSnapshots(): Promise<SessionFacts[]> {
 	let ids: string[] = [];
 	try {
 		ids = fs.readdirSync(sessionsRoot());
@@ -146,14 +114,49 @@ async function gatherSessions(): Promise<SessionFacts[]> {
 		ids.map(async (id): Promise<SessionFacts | undefined> => {
 			const meta = readMetaFile(id);
 			if (!meta) return undefined;
-			const hostAlive = meta.status !== "stopped" && hostIsAlive(meta);
-			const socketOk = hostAlive ? await canConnect(meta.socket) : undefined;
-			const blobBytes = await dirBytes(path.join(sessionDir(id), "blobs"));
-			const troubled = settleDeadHost(meta, hostAlive) !== meta || abnormalStop(meta) || socketOk === false;
-			return { meta, hostAlive, socketOk, blobBytes, logTail: troubled ? logTail(id) : undefined };
+			return { meta, hostAlive: meta.status !== "stopped" && hostIsAlive(meta), blobBytes: await dirBytes(path.join(sessionDir(id), "blobs")) };
 		}),
 	);
 	return facts.filter((f): f is SessionFacts => !!f);
+}
+
+/** The AO daemon as this window reaches it (never starts it), and its readiness report on omp. */
+async function gatherAo(api: OmpApi): Promise<AoFacts> {
+	const serviceAvailable = process.platform === "linux";
+	let client: AoClient;
+	try {
+		client = await api.ao.client(false);
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : String(err), serviceAvailable };
+	}
+	const [daemon, readiness, list] = await Promise.all([
+		findDaemon().catch(() => undefined),
+		client.api.GET("/api/v1/agents/readiness").then(r => r.data, () => undefined),
+		client.listSessions().catch(() => undefined),
+	]);
+	const omp = readiness?.agents.find(a => a.id === "omp");
+	const unit = installedUnit();
+	return {
+		url: client.baseUrl,
+		...(daemon && { pid: daemon.pid }),
+		...(unit && { unit }),
+		...(omp && { omp: { installation: omp.installation.state, installationReason: omp.installation.reason, authentication: omp.authentication.state, authenticationReason: omp.authentication.reason } }),
+		...(list && { sessions: list.sessions.length }),
+		serviceAvailable,
+	};
+}
+
+async function gatherPlanner(): Promise<PlannerFacts> {
+	const planner = await PlannerClient.connect();
+	if (!planner) return { error: "No planner answers on its socket." };
+	try {
+		const info = await planner.request("ping", {}, 3000);
+		return { version: info.version, pid: info.pid };
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : String(err) };
+	} finally {
+		planner.close();
+	}
 }
 
 /** `hermes -p <profile> omp status --json`, parsed; `error` when it fails. */
@@ -202,14 +205,12 @@ function bugsUrl(api: OmpApi): string | undefined {
 // would be re-encoded (`&`/`=` escaped), dropping the prefilled issue title and body.
 const openExternalString = vscode.env.openExternal as unknown as (target: string) => Thenable<boolean>;
 
-export function registerDoctor(api: OmpApi, server: ServerControl): void {
+export function registerDoctor(api: OmpApi): void {
 	const { context, sessions } = api;
 	const reg = (id: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 	let missingShown = false;
 	let installWatch: NodeJS.Timeout | undefined;
 	let doctorPanel: vscode.WebviewPanel | undefined;
-	/** Busy sessions to restart on the current host as soon as they are idle. */
-	const upgradeWhenIdle = new Set<string>();
 	const authNotified = new Set<string>();
 	context.subscriptions.push({ dispose: () => clearInterval(installWatch) });
 
@@ -217,16 +218,11 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 	async function showOmpMissing(automatic: boolean): Promise<void> {
 		if (automatic && (missingShown || context.globalState.get<boolean>(HIDE_MISSING_KEY))) return;
 		missingShown = true;
-		const st = ompStatus();
-		const message =
-			st.configured && !st.exists
-				? `The omp executable set in omp.path does not exist: ${st.resolved}`
-				: "omp is not installed (or not on PATH). omp Sessions runs the omp coding agent CLI in the background.";
-		const actions = ["Install omp", "Set Path…", "Learn More"];
+		const message = "omp is not installed (or not on PATH). Switchyard runs the omp coding agent CLI in the background, through Agent Orchestrator.";
+		const actions = ["Install omp", "Learn More"];
 		if (automatic) actions.push("Don't Show Again");
 		const pick = await vscode.window.showWarningMessage(plain(message), ...actions);
 		if (pick === "Install omp") await vscode.commands.executeCommand("omp.installOmp");
-		else if (pick === "Set Path…") await vscode.commands.executeCommand("omp.setOmpPath");
 		else if (pick === "Learn More") await vscode.env.openExternal(vscode.Uri.parse(LEARN_MORE));
 		else if (pick === "Don't Show Again") await context.globalState.update(HIDE_MISSING_KEY, true);
 	}
@@ -271,16 +267,6 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 		}
 	});
 
-	reg("omp.setOmpPath", async () => {
-		const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, openLabel: "Use this omp", title: "Select the omp executable", defaultUri: vscode.Uri.file(os.homedir()) });
-		const file = picked?.[0]?.fsPath;
-		if (!file) return;
-		await vscode.workspace.getConfiguration("omp").update("path", file, vscode.ConfigurationTarget.Global);
-		const v = await ompVersion(file);
-		if (v.error) void vscode.window.showWarningMessage(plain(`omp.path is set, but \`omp --version\` failed: ${v.error}`), "Run Doctor").then(a => a && vscode.commands.executeCommand("omp.doctor"));
-		else void vscode.window.showInformationMessage(plain(`Using omp ${v.version} at ${file}.`));
-	});
-
 	// ---------- not logged in ----------
 	function checkAuth(): void {
 		for (const m of sessions.all()) {
@@ -295,139 +281,6 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 	}
 	context.subscriptions.push(sessions.onDidChange(checkAuth));
 	checkAuth();
-
-	// ---------- crash recovery ----------
-	context.subscriptions.push(
-		sessions.onDidTransition(({ meta, from }) => {
-			if (upgradeWhenIdle.has(meta.id) && meta.status === "idle") {
-				upgradeWhenIdle.delete(meta.id);
-				void restartOnCurrentHost(meta);
-			}
-			if (meta.status !== "stopped" || from === "stopped" || meta.exitReason !== HOST_CRASHED || !sessions.notifies(meta)) return;
-			void vscode.window.showWarningMessage(plain(`The omp session "${meta.title}" stopped unexpectedly mid-turn (its host process died).`), "Resume and Continue", "Show Log").then(a => {
-				if (a === "Resume and Continue") void api.launchAndOpen({ cwd: meta.cwd, id: meta.id });
-				else if (a === "Show Log") void vscode.commands.executeCommand("omp.showLog", meta.id);
-			});
-		}),
-	);
-
-	reg("omp.doctor.markStopped", async (arg?: unknown) => {
-		const id = api.idFrom(arg);
-		const raw = id ? readMetaFile(id) : undefined;
-		if (!id || !raw || raw.status === "stopped") return;
-		if (hostIsAlive(raw)) {
-			void vscode.window.showWarningMessage("That session's host is running; stop it instead.");
-			return;
-		}
-		const file = path.join(sessionDir(id), "meta.json");
-		const tmp = `${file}.doctor.tmp`;
-		try {
-			fs.writeFileSync(tmp, JSON.stringify({ ...settleDeadHost(raw, false), updatedAt: Date.now() }, null, 1));
-			fs.renameSync(tmp, file);
-		} catch (err) {
-			void vscode.window.showErrorMessage(plain(`Could not update ${file}: ${(err as Error).message}`));
-		}
-		sessions.refresh();
-		if (doctorPanel) await runDoctor();
-	});
-
-	// ---------- host upgrades ----------
-	/** Stops the session's host and resumes it on this extension's host. */
-	async function restartOnCurrentHost(meta: SessionMeta): Promise<boolean> {
-		return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: restarting "${meta.title}" on host ${sessions.version}` }, async () => {
-			if (!(await sendToHost(meta, { t: "stop" }))) {
-				try {
-					process.kill(meta.pid, "SIGTERM");
-				} catch {
-					/* already gone */
-				}
-			}
-			const deadline = Date.now() + 15_000;
-			while (Date.now() < deadline) {
-				sessions.refresh();
-				if (sessions.get(meta.id)?.status !== "stopped") await sleep(200);
-				else break;
-			}
-			if (sessions.get(meta.id)?.status !== "stopped") {
-				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not stop within 15 s; it still runs on the old host.`), "Show Log").then(a => a && vscode.commands.executeCommand("omp.showLog", meta.id));
-				return false;
-			}
-			try {
-				sessions.launch({ cwd: meta.cwd, id: meta.id });
-			} catch (err) {
-				void vscode.window.showErrorMessage(plain(`Could not restart "${meta.title}": ${(err as Error).message}`));
-				return false;
-			}
-			const ok = await sessions.waitForSocket(meta.id);
-			if (!ok) {
-				const reason = sessions.get(meta.id)?.exitReason;
-				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not come back up${reason ? `: ${reason}` : ""}.`), "Show Log").then(a => a && vscode.commands.executeCommand("omp.showLog", meta.id));
-			}
-			return ok;
-		});
-	}
-
-	reg("omp.upgradeSession", async (arg?: unknown) => {
-		const id = api.idFrom(arg) ?? (await api.pickSession("Upgrade which session's host?", m => isOutdated(m, sessions.version)));
-		const meta = id ? sessions.get(id) : undefined;
-		if (!meta) {
-			if (!id) void vscode.window.showInformationMessage(`All running sessions use the current host (${sessions.version}).`);
-			return;
-		}
-		if (meta.status === "stopped") {
-			void vscode.window.showInformationMessage(plain(`"${meta.title}" is stopped; resuming it starts the current host.`));
-			return;
-		}
-		if (!isOutdated(meta, sessions.version)) {
-			const again = await vscode.window.showInformationMessage(plain(`"${meta.title}" already runs the current host (${sessions.version}). Restart it anyway?`), "Restart");
-			if (!again) return;
-		}
-		if (meta.status === "idle") {
-			if (await restartOnCurrentHost(meta)) void vscode.window.showInformationMessage(plain(`"${meta.title}" now runs host ${sessions.version}.`));
-			return;
-		}
-		const pick = await vscode.window.showWarningMessage(
-			`"${meta.title}" is ${meta.status === "waiting" ? "waiting for input" : meta.status}.`,
-			{ modal: true, detail: "Upgrading restarts its host. Wait until it is idle, or restart now: the current turn stops, and you continue it on the new host by sending a message." },
-			"Upgrade When Idle",
-			"Restart Now",
-		);
-		if (pick === "Upgrade When Idle") {
-			upgradeWhenIdle.add(meta.id);
-			void vscode.window.showInformationMessage(plain(`"${meta.title}" will restart on the current host when it is idle.`));
-		} else if (pick === "Restart Now") await restartOnCurrentHost(meta);
-	});
-
-	async function upgradeAll(includeBusy: boolean): Promise<void> {
-		const outdated = sessions.all().filter(m => isOutdated(m, sessions.version));
-		if (outdated.length === 0) {
-			void vscode.window.showInformationMessage(`All running sessions use the current host (${sessions.version}).`);
-			return;
-		}
-		const idle = outdated.filter(m => m.status === "idle");
-		const busy = outdated.filter(m => m.status !== "idle");
-		if (includeBusy) for (const m of busy) upgradeWhenIdle.add(m.id);
-		const results = await Promise.all(idle.map(m => restartOnCurrentHost(m)));
-		const done = results.filter(Boolean).length;
-		const parts = [`Upgraded ${done} of ${idle.length} idle session(s) to host ${sessions.version}.`];
-		if (busy.length) parts.push(includeBusy ? `${busy.length} busy session(s) will restart when idle.` : `${busy.length} busy session(s) left as they are.`);
-		void vscode.window.showInformationMessage(parts.join(" "));
-		if (doctorPanel) await runDoctor();
-	}
-	reg("omp.upgradeAllSessions", () => upgradeAll(true));
-
-	// One-time offer after the extension was updated while sessions kept running on the old host.
-	const seen = context.globalState.get<string>(SEEN_VERSION_KEY);
-	if (sessions.version !== "unknown" && seen !== sessions.version) {
-		void context.globalState.update(SEEN_VERSION_KEY, sessions.version);
-		const outdated = sessions.all().filter(m => isOutdated(m, sessions.version));
-		if (outdated.length) {
-			const names = outdated.slice(0, 3).map(m => `"${m.title}"`).join(", ") + (outdated.length > 3 ? ` and ${outdated.length - 3} more` : "");
-			void vscode.window.showInformationMessage(plain(`omp Sessions was updated to ${sessions.version}. ${outdated.length} running session(s) still use the previous host: ${names}.`), "Upgrade Idle Sessions", "Later").then(a => {
-				if (a === "Upgrade Idle Sessions") void upgradeAll(false);
-			});
-		}
-	}
 
 	// ---------- report ----------
 	async function gatherFacts(): Promise<DoctorFacts> {
@@ -445,7 +298,7 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 			writable = false;
 			writeError = (err as Error).message;
 		}
-		const [sessionFacts, serverStatus, hermes] = await Promise.all([gatherSessions(), server.status(), gatherHermes(context.extensionPath)]);
+		const [snapshots, aoFacts, planner, hermes] = await Promise.all([gatherSnapshots(), gatherAo(api), gatherPlanner(), gatherHermes(context.extensionPath)]);
 		const now = Date.now();
 		return {
 			now,
@@ -456,21 +309,22 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 			arch: process.arch,
 			osRelease: os.release(),
 			remoteName: vscode.env.remoteName,
-			omp: { configured: st.configured, resolved: st.resolved, exists: st.exists, version: version.version, versionError: version.error },
+			omp: { resolved: st.resolved, exists: st.exists, version: version.version, versionError: version.error },
 			bun: findExecutable("bun"),
 			stateDir: root,
 			writable,
 			writeError,
-			socket: { platform: process.platform, sessionsRoot: root, tmpdir: os.tmpdir() },
-			sessions: sessionFacts,
+			ao: aoFacts,
+			planner,
+			sessions: sessions.all(),
+			snapshots,
 			cleanupDays: retentionDays(),
-			server: { ...serverStatus, extensionVersion: sessions.version, now },
 			hermes,
 		};
 	}
 
 	async function makeReport(): Promise<Report> {
-		return buildReport(await gatherFacts(), path.join);
+		return buildReport(await gatherFacts());
 	}
 
 	async function runDoctor(): Promise<void> {
@@ -525,7 +379,7 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 		});
 		if (input === undefined) return;
 		const days = Number(input.trim());
-		const candidates = cleanupCandidates(await gatherSessions(), days, Date.now());
+		const candidates = cleanupCandidates(await gatherSnapshots(), days, Date.now());
 		if (candidates.length === 0) {
 			void vscode.window.showInformationMessage(`No stopped session older than ${days} day(s) has snapshots.`);
 			return;

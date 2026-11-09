@@ -34,6 +34,7 @@ import {
 	writeTestsPrompt,
 } from "./editor-plus-core";
 import type { ChatPanel } from "./panel";
+import { checkoutRoot, inCheckout } from "./checkout";
 import { plain } from "./plain";
 
 const HISTORY_KEY = "omp.editWithOmp.history";
@@ -249,7 +250,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		}
 		const before = doc.getText();
 		const edit: PendingEdit = { sessionId: meta.id, file: doc.uri.fsPath, label: where, sentAt: Date.now(), before, sawBusy: meta.status === "working" || meta.status === "waiting", lastText: meta.lastText, column: editor.viewColumn };
-		await panel.sendPrompt(editPrompt(codeRef(doc, target, meta.cwd), instruction));
+		await panel.sendPrompt(inCheckout(editPrompt(codeRef(doc, target, undefined), instruction), doc.uri.fsPath));
 		pendingEdits.add(edit);
 		updateEditStatus();
 		// sendPrompt reveals the chat; keep the user in the code they are editing.
@@ -267,7 +268,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		}
 		const panel = await panelFor(folderOf(editor.document.uri));
 		if (!panel) return;
-		await panel.sendPrompt(build(codeRef(editor.document, target, panel.meta?.cwd)));
+		await panel.sendPrompt(inCheckout(build(codeRef(editor.document, target, undefined)), editor.document.uri.fsPath));
 	}
 
 	reg("omp.writeTests", () => sendUnitPrompt(writeTestsPrompt, "write tests"));
@@ -278,7 +279,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		if (!uri || uri.scheme !== "file") return;
 		const panel = await panelFor(folderOf(uri));
 		if (!panel) return;
-		await panel.sendPrompt(explainFilePrompt(displayPath(uri.fsPath, panel.meta?.cwd)));
+		await panel.sendPrompt(inCheckout(explainFilePrompt(uri.fsPath), uri.fsPath));
 	});
 
 	// ---------- problems ----------
@@ -322,8 +323,8 @@ export function registerEditorPlus(api: OmpApi): void {
 		}
 		const panel = await panelFor(folderOf(uri));
 		if (!panel) return;
-		const prompt = fixFilePrompt({ path: displayPath(uri.fsPath, panel.meta?.cwd), diagnostics, lineText: lineReader(uri) }, FILE_DIAGNOSTICS_CAP);
-		if (prompt) await panel.sendPrompt(prompt);
+		const prompt = fixFilePrompt({ path: uri.fsPath, diagnostics, lineText: lineReader(uri) }, FILE_DIAGNOSTICS_CAP);
+		if (prompt) await panel.sendPrompt(inCheckout(prompt, uri.fsPath));
 	});
 
 	reg("omp.fixWorkspaceProblems", async () => {
@@ -339,13 +340,13 @@ export function registerEditorPlus(api: OmpApi): void {
 		const hint = active?.scheme === "file" ? folderOf(active) : folderOf(withErrors[0][0]);
 		const panel = await panelFor(hint);
 		if (!panel) return;
-		const cwd = panel.meta?.cwd;
-		// The session's folder only, when it has errors there; the active file first.
-		const inside = cwd ? withErrors.filter(([uri]) => isWithin(uri.fsPath, cwd)) : [];
+		const cwd = checkoutRoot(hint);
+		// The checkout's files only, when it has errors there; the active file first.
+		const inside = withErrors.filter(([uri]) => isWithin(uri.fsPath, cwd));
 		const chosen = (inside.length > 0 ? inside : withErrors).sort(([a], [b]) => Number(b.toString() === active?.toString()) - Number(a.toString() === active?.toString()));
-		const files: FileDiagnostics[] = chosen.map(([uri, diags]) => ({ path: displayPath(uri.fsPath, cwd), diagnostics: diags.map(diagnosticInfo), lineText: lineReader(uri) }));
+		const files: FileDiagnostics[] = chosen.map(([uri, diags]) => ({ path: uri.fsPath, diagnostics: diags.map(diagnosticInfo), lineText: lineReader(uri) }));
 		const prompt = fixWorkspacePrompt(files, WORKSPACE_ERRORS_CAP);
-		if (prompt) await panel.sendPrompt(prompt);
+		if (prompt) await panel.sendPrompt(inCheckout(prompt, hint));
 	});
 
 	// ---------- failed terminal commands ----------
@@ -442,14 +443,16 @@ export function registerEditorPlus(api: OmpApi): void {
 		hideHint();
 		const panel = await panelFor(failure.cwd);
 		if (!panel) return;
-		const cwd = panel.meta?.cwd;
 		await panel.sendPrompt(
-			failedCommandPrompt({
-				commandLine: failure.commandLine || "(command line not reported by the shell)",
-				cwd: cwd && isWithin(failure.cwd, cwd) ? (displayPath(failure.cwd, cwd) === "." ? "the session folder" : displayPath(failure.cwd, cwd)) : failure.cwd,
-				exitCode: failure.exitCode,
-				output: failure.output,
-			}),
+			inCheckout(
+				failedCommandPrompt({
+					commandLine: failure.commandLine || "(command line not reported by the shell)",
+					cwd: failure.cwd,
+					exitCode: failure.exitCode,
+					output: failure.output,
+				}),
+				failure.cwd,
+			),
 		);
 	});
 

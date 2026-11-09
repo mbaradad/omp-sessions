@@ -1,9 +1,9 @@
-// "New Session with Options…": the omp CLI flags that shape a session, as a short wizard; and the omp
-// Sessions default model (launcher.json `model`, shared with `omp-sessions config set model` and Hermes).
+// "New Session with Options…": model, thinking, permission mode and a first prompt for the AO spawn; and
+// the omp Sessions defaults for new sessions (launcher.json `model`/`mode`, shared with `omp-sessions config`).
 import * as vscode from "vscode";
 import { readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { type ModelList, listModels } from "../shared/models";
-import { PERMISSION_MODE_INFO } from "../shared/permissions";
+import { PERMISSION_MODE_INFO, type PermissionMode } from "../shared/permissions";
 import { pickPermissionMode } from "./permissions";
 import { plain } from "./plain";
 
@@ -59,26 +59,21 @@ export async function chooseDefaultMode(): Promise<void> {
 	void vscode.window.showInformationMessage(mode ? `New omp sessions start in ${PERMISSION_MODE_INFO[mode].label} mode unless another mode is picked.` : "New omp sessions start in omp's tools.approvalMode (Auto when unset).");
 }
 
-/** Shell-like split honoring single/double quotes. */
-export function splitArgs(text: string): string[] {
-	const out: string[] = [];
-	for (const m of text.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3]);
-	return out;
+/** What the wizard picked; absent fields keep the defaults. */
+export interface LaunchChoices {
+	model?: string;
+	effort?: string;
+	mode?: PermissionMode;
+	prompt?: string;
 }
 
-const FLAGS = [
-	{ label: "Plan first", description: "--plan-yolo: read-only plan, auto-approved, then implement", flag: "--plan-yolo" },
-	{ label: "Advisor", description: "--advisor: passive reviewer that injects notes each turn", flag: "--advisor" },
-	{ label: "Prewalk", description: "--prewalk: switch to a cheaper model once the plan exists", flag: "--prewalk" },
-	{ label: "No LSP", description: "--no-lsp", flag: "--no-lsp" },
-	{ label: "No extensions", description: "--no-extensions", flag: "--no-extensions" },
-	{ label: "No skills", description: "--no-skills", flag: "--no-skills" },
-	{ label: "No rules", description: "--no-rules", flag: "--no-rules" },
-];
-
-export async function askLaunchOptions(cwd: string): Promise<{ ompArgs: string[]; goal?: string } | undefined> {
-	const args: string[] = [];
-	const step = (n: number) => `New omp session (${n}/6)`;
+/**
+ * Asks for model, thinking, permission mode and a first prompt. omp's other launch flags (plan-first,
+ * advisor, prewalk, extra arguments) can't be passed to `omp acp` (GAPS G10).
+ */
+export async function askLaunchOptions(cwd: string): Promise<LaunchChoices | undefined> {
+	const out: LaunchChoices = {};
+	const step = (n: number) => `New omp session (${n}/4)`;
 
 	const modelPick = vscode.window.createQuickPick<vscode.QuickPickItem & { selector?: string }>();
 	modelPick.title = step(1);
@@ -100,34 +95,22 @@ export async function askLaunchOptions(cwd: string): Promise<{ ompArgs: string[]
 	const model = await picked.promise;
 	modelPick.dispose();
 	if (!model) return undefined;
-	if (model.selector) args.push("--model", model.selector);
+	if (model.selector) out.model = model.selector;
 
 	const thinking = await vscode.window.showQuickPick(
-		["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
+		["default", "off", "minimal", "low", "medium", "high", "xhigh"].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
 		{ title: step(2), placeHolder: "Thinking level" },
 	);
 	if (!thinking) return undefined;
-	if (thinking.value !== "default") args.push("--thinking", thinking.value);
+	if (thinking.value !== "default") out.effort = thinking.value;
 
-	const mode = await pickPermissionMode(undefined, step(3), "from omp's tools.approvalMode");
+	const defaultMode = readLauncherSettings().mode;
+	const mode = await pickPermissionMode(undefined, step(3), defaultMode ? `the default, ${PERMISSION_MODE_INFO[defaultMode].label}` : "omp's tools.approvalMode");
 	if (mode === undefined) return undefined;
-	if (mode) args.push("--approval-mode", mode);
+	if (mode) out.mode = mode;
 
-	const flags = await vscode.window.showQuickPick(FLAGS, { title: step(4), placeHolder: "Options (Enter to continue)", canPickMany: true });
-	if (!flags) return undefined;
-	for (const f of flags) args.push(f.flag);
-
-	const goal = await vscode.window.showInputBox({ title: step(5), prompt: "Goal objective (optional) — omp keeps working until it is achieved", ignoreFocusOut: true });
-	if (goal === undefined) return undefined;
-
-	const defaults = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
-	const extra = await vscode.window.showInputBox({
-		title: step(6),
-		prompt: "Extra omp arguments (e.g. --tools read,grep --max-time 1h --add-dir ../lib)",
-		value: defaults.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(" "),
-		ignoreFocusOut: true,
-	});
-	if (extra === undefined) return undefined;
-	args.push(...splitArgs(extra));
-	return { ompArgs: args, goal: goal.trim() || undefined };
+	const prompt = await vscode.window.showInputBox({ title: step(4), prompt: "First prompt (optional): the session starts working on it right away", ignoreFocusOut: true });
+	if (prompt === undefined) return undefined;
+	if (prompt.trim()) out.prompt = prompt.trim();
+	return out;
 }

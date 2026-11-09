@@ -5,5 +5,6 @@ node_modules/
 .dev-state/
 .vscode-test/
 test/e2e-desktop/out/
+test/e2e-desktop/out-views/
 .test-out/
 __pycache__/

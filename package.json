@@ -58,7 +58,7 @@
 	"capabilities": {
 		"untrustedWorkspaces": {
 			"supported": false,
-			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts the binary named by the workspace-overridable `omp.path`/`omp.extraArgs` settings. Trust the folder to use it."
+			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts sessions through the AO daemon. Trust the folder to use it."
 		},
 		"virtualWorkspaces": {
 			"supported": false,
@@ -109,7 +109,7 @@
 		"viewsWelcome": [
 			{
 				"view": "omp.sessions",
-				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\n[Resume an omp transcript](command:omp.resumeFromHistory)\nSessions keep running on this machine when VS Code disconnects."
+				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\nSessions keep running on this machine when VS Code disconnects."
 			},
 			{
 				"view": "omp.tasks",
@@ -141,26 +141,9 @@
 				"icon": "$(cloud-download)"
 			},
 			{
-				"command": "omp.setOmpPath",
-				"title": "Set omp Executable Path…",
-				"category": "omp"
-			},
-			{
 				"command": "omp.showOmpMissing",
 				"title": "omp Is Not Installed",
 				"category": "omp"
-			},
-			{
-				"command": "omp.upgradeSession",
-				"title": "Upgrade Session Host",
-				"category": "omp",
-				"icon": "$(sync)"
-			},
-			{
-				"command": "omp.upgradeAllSessions",
-				"title": "Upgrade All Session Hosts",
-				"category": "omp",
-				"icon": "$(sync)"
 			},
 			{
 				"command": "omp.cleanUpSnapshots",
@@ -188,7 +171,7 @@
 			},
 			{
 				"command": "omp.newWorktreeSession",
-				"title": "New Session in Git Worktree…",
+				"title": "New Session on Branch…",
 				"category": "omp",
 				"icon": "$(git-branch)"
 			},
@@ -227,12 +210,6 @@
 				"title": "Open Sessions Board",
 				"category": "omp",
 				"icon": "$(layout)"
-			},
-			{
-				"command": "omp.sessionSettings",
-				"title": "Session Settings…",
-				"category": "omp",
-				"icon": "$(settings-gear)"
 			},
 			{
 				"command": "omp.setPermissionMode",
@@ -323,21 +300,9 @@
 				"category": "omp"
 			},
 			{
-				"command": "omp.resumeFromHistory",
-				"title": "Resume omp Transcript in Background…",
-				"category": "omp",
-				"icon": "$(history)"
-			},
-			{
 				"command": "omp.sendSelection",
 				"title": "Send Selection to omp",
 				"category": "omp"
-			},
-			{
-				"command": "omp.showLog",
-				"title": "Show Session Host Log",
-				"category": "omp",
-				"icon": "$(output)"
 			},
 			{
 				"command": "omp.refresh",
@@ -904,11 +869,6 @@
 				"icon": "$(debug-pause)"
 			},
 			{
-				"command": "omp.doctor.markStopped",
-				"title": "Mark Session Stopped",
-				"category": "omp"
-			},
-			{
 				"command": "omp.installCli",
 				"title": "Install omp-sessions Command (Terminal CLI)",
 				"category": "omp",
@@ -916,30 +876,30 @@
 			},
 			{
 				"command": "omp.server.start",
-				"title": "Start omp-sessions Server",
+				"title": "Start Planner and AO Daemon",
 				"category": "omp",
 				"icon": "$(play)"
 			},
 			{
 				"command": "omp.server.restart",
-				"title": "Restart omp-sessions Server",
+				"title": "Restart Planner",
 				"category": "omp",
 				"icon": "$(debug-restart)"
 			},
 			{
 				"command": "omp.server.showLog",
-				"title": "Show omp-sessions Server Log",
+				"title": "Show Planner or AO Daemon Log",
 				"category": "omp",
 				"icon": "$(output)"
 			},
 			{
 				"command": "omp.server.install",
-				"title": "Install omp-sessions Login Service",
+				"title": "Install Planner and AO Daemon Login Services",
 				"category": "omp"
 			},
 			{
 				"command": "omp.server.statusInTerminal",
-				"title": "Show omp-sessions Status in Terminal",
+				"title": "Show Status in Terminal",
 				"category": "omp",
 				"icon": "$(terminal)"
 			},
@@ -1103,11 +1063,6 @@
 					"command": "omp.newSession",
 					"when": "view == omp.sessions",
 					"group": "navigation@1"
-				},
-				{
-					"command": "omp.resumeFromHistory",
-					"when": "view == omp.sessions",
-					"group": "navigation@2"
 				},
 				{
 					"command": "omp.refresh",
@@ -1280,11 +1235,6 @@
 					"command": "omp.organize.deleteGroup",
 					"when": "view == omp.sessions && viewItem == orgGroup",
 					"group": "9_delete@1"
-				},
-				{
-					"command": "omp.upgradeSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
-					"group": "2_lifecycle@9"
 				},
 				{
 					"command": "omp.newWorktreeSession",
@@ -1467,11 +1417,6 @@
 					"group": "1_session@0"
 				},
 				{
-					"command": "omp.sessionSettings",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "1_session@9"
-				},
-				{
 					"command": "omp.setPermissionMode",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@8"
@@ -1485,11 +1430,6 @@
 					"command": "omp.renameSession",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@2"
-				},
-				{
-					"command": "omp.showLog",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "1_session@3"
 				},
 				{
 					"command": "omp.hermes.openCard",
@@ -1704,10 +1644,6 @@
 					"when": "omp.sessions.showArchived"
 				},
 				{
-					"command": "omp.doctor.markStopped",
-					"when": "false"
-				},
-				{
 					"command": "omp.tasks.addSubtask",
 					"when": "false"
 				},
@@ -1861,12 +1797,24 @@
 			{
 				"id": "omp.gettingStarted",
 				"title": "omp: background coding agent",
-				"description": "Run omp sessions that keep working while VS Code is closed, review their changes, and queue work.",
+				"description": "Run omp sessions on Agent Orchestrator: they keep working while VS Code is closed, each in its own git worktree; review their changes, queue work, follow them from your phone.",
 				"steps": [
+					{
+						"id": "daemon",
+						"title": "Agent Orchestrator runs the sessions",
+						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:omp.server.start)",
+						"media": {
+							"markdown": "media/walkthrough/daemon.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.server.start",
+							"onCommand:omp.newSession"
+						]
+					},
 					{
 						"id": "start",
 						"title": "Start a background session",
-						"description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)",
+						"description": "Sessions survive VS Code, sleep and SSH drops, each in its own git worktree.\n[Start a session](command:omp.newSession)",
 						"media": {
 							"markdown": "media/walkthrough/start.md"
 						},
@@ -1921,6 +1869,17 @@
 							"onCommand:omp.addToChat",
 							"onCommand:omp.scm.commit"
 						]
+					},
+					{
+						"id": "phone",
+						"title": "Follow sessions from your phone",
+						"description": "Pair the Orchestrator mobile app with this machine.\n[Connect Phone](command:omp.remote.connectPhone)",
+						"media": {
+							"markdown": "media/walkthrough/phone.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.remote.connectPhone"
+						]
 					}
 				]
 			}
@@ -1967,12 +1926,6 @@
 					"default": 14,
 					"minimum": 0,
 					"markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
-				},
-				"omp.path": {
-					"type": "string",
-					"default": "",
-					"scope": "machine",
-					"markdownDescription": "Path to the omp executable on the machine omp runs on: an absolute path, `~/…`, or a command name on PATH. Every omp session on that machine uses it (VS Code, `omp-sessions`, the phone app, Hermes); it can't be set per workspace. Empty: search PATH, ~/.local/bin, ~/.bun/bin."
 				},
 				"omp.extraArgs": {
 					"type": "array",
@@ -2061,13 +2014,13 @@
 				"omp.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Start the per-user `omp-sessions` server when VS Code opens (clients also start it whenever they need it; it keeps running until `omp-sessions server stop`). It starts stopped sessions whose task queue has work when a concurrency slot is free, stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command, the phone app and Hermes."
+					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **omp: Start Planner and AO Daemon** starts both."
 				},
 				"omp.server.installService": {
 					"type": "boolean",
 					"default": true,
 					"scope": "machine",
-					"markdownDescription": "Install the `omp-sessions` server as a user service (systemd user unit, launchd agent) the first time it starts, so it comes back after a crash or reboot. Off: the server still starts on demand but not at login. Same as `omp-sessions config set service on|off`; removing an installed service is `omp-sessions server uninstall` (the install notice's **Turn Off** does both). Never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
+					"markdownDescription": "Run the planner and the AO daemon as user services the first time they start (systemd user units, a launchd agent for the planner), so they come back after a crash or reboot. Off: they still start on demand but not at login; AO then runs as a detached process. The planner service is never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
 				},
 				"omp.sessionScope": {
 					"type": "string",
@@ -2183,6 +2136,7 @@
 		"install-local": "npm run package && sh scripts/install-local.sh",
 		"publish:ovsx": "npx --yes ovsx publish --no-dependencies",
 		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
+		"test:e2e:views": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/views.mjs",
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",

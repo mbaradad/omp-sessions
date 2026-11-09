@@ -13,11 +13,13 @@ import {
 	type OrgColor,
 	PRIORITIES,
 	PRIORITY_LABEL,
+	SYNC_LABEL,
 	type Priority,
 	type SchedulerInfo,
 	type ToBoard,
 	adjacentTarget,
 	buildColumns,
+	canRerunWithParent,
 	cyclePriority,
 	filterCards,
 	findCard,
@@ -96,6 +98,7 @@ const ICONS: Record<string, string> = {
 	chat: '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	stop: '<rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/>',
 	play: '<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor"/>',
+	rerun: '<path d="M13 8a5 5 0 11-1.6-3.7M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
 	archive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	unarchive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M8 12V8.5M6.5 10 8 8.5 9.5 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	palette: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="6.3" r="1" fill="currentColor"/><circle cx="9.8" cy="6.3" r="1" fill="currentColor"/><circle cx="6.5" cy="10" r="1" fill="currentColor"/>',
@@ -410,6 +413,11 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 
 	const meta = el("div", "card-meta", statusPill(c), el("span", "project", icon("folder"), c.project));
 	meta.title = c.cwd;
+	if (c.sync && c.sync.state !== "in-sync") {
+		const sync = el("span", `pill sync sync-${c.sync.state}`, icon(c.sync.state === "conflict" ? "bell" : "clock"), SYNC_LABEL[c.sync.state]);
+		sync.title = `${SYNC_LABEL[c.sync.state]}${c.sync.parents.length ? ` (from ${c.sync.parents.join(", ")})` : ""}`;
+		meta.append(sync);
+	}
 
 	const parts: Node[] = [top, meta];
 	if (c.lastText) parts.push(el("div", "excerpt", plainExcerpt(c.lastText)));
@@ -437,6 +445,7 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		"div",
 		"actions",
 		button("icon-btn", "Open chat (Enter)", [icon("chat")], () => post({ type: "open", id: c.id })),
+		canRerunWithParent(c) ? button("icon-btn", "Re-run with parent changes", [icon("rerun")], () => post({ type: "rerunWithParent", ids: targets(c.id) })) : null,
 		stopped ? button("icon-btn", "Resume", [icon("play")], () => post({ type: "resume", ids: targets(c.id) })) : button("icon-btn", "Stop", [icon("stop")], () => post({ type: "stop", ids: targets(c.id) })),
 		button("icon-btn", "Color…", [icon("palette")], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id))),
 		c.archived ? button("icon-btn", "Unarchive", [icon("unarchive")], () => setArchived(targets(c.id), false)) : button("icon-btn", "Archive", [icon("archive")], () => setArchived(targets(c.id), true)),
@@ -866,6 +875,7 @@ document.addEventListener("keydown", ev => {
 			{ label: "Open chat", run: () => post({ type: "open", id }) },
 			{ label: "Priority…", run: () => priorityMenu(anchor, targets(id)) },
 			{ label: "Color…", run: () => colorMenu(anchor, targets(id)) },
+			...(card && canRerunWithParent(card) ? [{ label: "Re-run with parent changes", run: () => post({ type: "rerunWithParent", ids: targets(id) }) }] : []),
 			card?.archived ? { label: "Unarchive", run: () => setArchived(targets(id), false) } : { label: "Archive", run: () => setArchived(targets(id), true) },
 			card?.status === "stopped" ? { label: "Resume", run: () => post({ type: "resume", ids: targets(id) }) } : { label: "Stop", run: () => post({ type: "stop", ids: targets(id) }) },
 		]);

@@ -3,7 +3,7 @@
 // No DOM, vscode or node imports (type-only): it is bundled into the webview too.
 
 import type { OrgColor, OrgGroup, OrgLane, Priority } from "../shared/organize";
-import type { SessionStatus } from "../shared/protocol";
+import type { SessionStatus, SyncState } from "../shared/protocol";
 
 export type { OrgColor, Priority };
 export type BoardMode = "status" | "lane" | "group" | "priority";
@@ -26,6 +26,8 @@ export interface BoardCard {
 	queue?: { pending: number; running: number; done: number; total: number };
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
+	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */
+	sync?: { state: SyncState; parents: string[] };
 	createdAt: number;
 	updatedAt: number;
 	unread: boolean;
@@ -104,9 +106,25 @@ export const STATUS_COLUMNS = [
 ] as const;
 export type StatusKey = (typeof STATUS_COLUMNS)[number]["key"];
 
+/** Worst first: what the user must look at before what merely happened. */
+const SYNC_SEVERITY: Record<SyncState, number> = { conflict: 5, "upstream-changed": 4, resolving: 3, pending: 2, merged: 1, "in-sync": 0 };
+
+/** The most urgent of several edge states; undefined for none. */
+export function worstSync(states: readonly SyncState[]): SyncState | undefined {
+	return states.reduce<SyncState | undefined>((worst, s) => (worst === undefined || SYNC_SEVERITY[s] > SYNC_SEVERITY[worst] ? s : worst), undefined);
+}
+
+export const SYNC_LABEL: Record<SyncState, string> = { "in-sync": "In sync", pending: "Parent change pending", merged: "Parent change merged", resolving: "Resolving merge", conflict: "Merge conflict", "upstream-changed": "Upstream changed" };
+
+/** Whether "Re-run with parent changes" applies: a finished child whose parent moved on. */
+export function canRerunWithParent(c: BoardCard): boolean {
+	return c.sync?.state === "upstream-changed" || c.sync?.state === "conflict";
+}
+
 export function statusKey(c: BoardCard): StatusKey {
 	if (c.status === "stopped") return "stopped";
-	if (c.status === "waiting") return "waiting";
+	// A merge the child agent could not resolve needs a person: it sits with the questions.
+	if (c.status === "waiting" || c.sync?.state === "conflict") return "waiting";
 	if (c.status === "working" || c.status === "starting") return "working";
 	if (c.waiting) return "queued";
 	return "idle";
@@ -336,6 +354,8 @@ export type FromBoard =
 	| { type: "open"; id: string }
 	| { type: "stop"; ids: string[] }
 	| { type: "resume"; ids: string[] }
+	/** "Re-run with parent changes": the planner re-runs these tasks on top of their parents' current work. */
+	| { type: "rerunWithParent"; ids: string[] }
 	/** Moves (drag & drop, keyboard): lane/group/priority/rank patches applied in one store write. */
 	| { type: "apply"; updates: CardUpdate[] }
 	| { type: "setPriority"; ids: string[]; priority: Priority }

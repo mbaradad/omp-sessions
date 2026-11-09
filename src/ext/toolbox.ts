@@ -4,9 +4,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { sendToHost } from "../shared/launch";
 import { prepareResume } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
@@ -495,24 +493,10 @@ export function registerToolbox(api: OmpApi): void {
 			if (ok !== "Continue in Terminal") return;
 		}
 		if (meta.status !== "stopped") {
-			const stopped = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: plain(`Moving "${meta.title}" to the terminal…`) }, async () => {
-				if (!(await sendToHost(meta, { t: "stop" }))) {
-					try {
-						process.kill(meta.pid, "SIGTERM");
-					} catch {
-						/* already gone */
-					}
-				}
-				const deadline = Date.now() + 20_000;
-				while (Date.now() < deadline) {
-					api.sessions.refresh();
-					if (api.sessions.get(meta.id)?.status === "stopped") return true;
-					await sleep(200);
-				}
-				return false;
-			});
-			if (!stopped) {
-				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not stop; not opening it in a terminal to avoid two omp processes on one transcript.`));
+			try {
+				await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: plain(`Moving "${meta.title}" to the terminal…`) }, () => api.sessions.stop(meta.id));
+			} catch (err) {
+				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not stop (${err instanceof Error ? err.message : String(err)}); not opening it in a terminal to avoid two omp processes on one transcript.`));
 				return;
 			}
 		}
@@ -530,12 +514,7 @@ export function registerToolbox(api: OmpApi): void {
 		const cwd = workspaceCwd();
 		const terminal = runInTerminal(`import ${source}`, [`--from-${source}`], cwd);
 		if (!terminal) return;
-		void vscode.window.showInformationMessage(`Pick a ${name} session in the terminal; omp imports it and continues it there. Exit omp to resume the imported transcript in the background.`);
-		onTerminalClosed(terminal, () => {
-			void vscode.window.showInformationMessage(`Resume an imported ${name} session in the background?`, "Resume omp Transcript…").then(a => {
-				if (a) void vscode.commands.executeCommand("omp.resumeFromHistory", cwd);
-			});
-		});
+		void vscode.window.showInformationMessage(`Pick a ${name} session in the terminal; omp imports it and continues it there.`);
 	};
 	reg("omp.importClaude", importFrom("claude", "Claude Code"));
 	reg("omp.importCodex", importFrom("codex", "Codex"));

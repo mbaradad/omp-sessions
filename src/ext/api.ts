@@ -1,21 +1,23 @@
 import type * as vscode from "vscode";
-import type { LaunchOptions } from "../shared/launch";
 import type { OrganizeStore } from "../shared/organize";
 import type { SessionMeta } from "../shared/protocol";
+import type { AoConnection } from "./ao-connection";
 import type { SnapshotProvider } from "./diff";
 import type { ChatPanel } from "./panel";
-import type { SessionManager } from "./sessions";
+import type { NewSessionOptions, SessionManager } from "./sessions";
 import type { Node, SessionTree } from "./tree";
 
 /** What feature modules (`register*(context, api)`) get from extension.ts. */
 export interface OmpApi {
 	readonly context: vscode.ExtensionContext;
+	/** The AO daemon connection (the only way to AO's API; `client()` connects or starts it). */
+	readonly ao: AoConnection;
 	readonly sessions: SessionManager;
 	readonly snapshots: SnapshotProvider;
 	/** Open (or reveal) a session's chat; `where` overrides `omp.chatLocation`. */
 	openPanel(id: string, where?: "editor" | "sidebar"): ChatPanel | undefined;
-	/** Start a session, wait until it listens, open its chat. Shows errors itself. */
-	launchAndOpen(opts: LaunchOptions): Promise<ChatPanel | undefined>;
+	/** Start a session in AO (or resume `opts.id`), open its chat. Shows errors itself. */
+	launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined>;
 	/** Quick pick over sessions; undefined if cancelled or none match. */
 	pickSession(placeHolder: string, filter?: (m: SessionMeta) => boolean): Promise<string | undefined>;
 	/** Folder for a new session from a command argument (Uri, project node, path) or by asking. */
