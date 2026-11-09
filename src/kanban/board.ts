@@ -27,7 +27,7 @@ export interface BoardCard {
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
 	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */
-	sync?: { state: SyncState; parents: string[] };
+	sync?: { state: SyncState; parents: string[]; edges?: Record<string, SyncState> };
 	createdAt: number;
 	updatedAt: number;
 	unread: boolean;
@@ -40,6 +40,10 @@ export interface BoardCard {
 	tags: string[];
 	lane?: string;
 	group?: string;
+	/** Sessions this one waits for (its task queue's `after`). */
+	after?: string[];
+	/** The unfinished subset of `after`. */
+	blockedBy?: string[];
 }
 
 export type BoardLane = OrgLane;
@@ -122,6 +126,8 @@ export function canRerunWithParent(c: BoardCard): boolean {
 }
 
 export function statusKey(c: BoardCard): StatusKey {
+	// Pending tasks held back by unfinished dependencies: queued, even when the session is stopped.
+	if (c.blockedBy?.length && (c.queue?.pending ?? 0) > 0 && (c.status === "stopped" || c.status === "idle")) return "queued";
 	if (c.status === "stopped") return "stopped";
 	// A merge the child agent could not resolve needs a person: it sits with the questions.
 	if (c.status === "waiting" || c.sync?.state === "conflict") return "waiting";
@@ -319,7 +325,7 @@ export function filterCards(cards: BoardCard[], f: BoardFilter): BoardCard[] {
 	const tokens = f.text.toLowerCase().split(/\s+/).filter(Boolean);
 	return cards.filter(c => {
 		if (c.archived && !f.showArchived) return false;
-		if (c.status === "stopped" && !f.showStopped) return false;
+		if (statusKey(c) === "stopped" && !f.showStopped) return false;
 		const tags = c.tags.map(t => t.toLowerCase());
 		const hay = `${c.title}\n${c.lastText ?? ""}\n${c.project}\n${c.cwd}\n${tags.map(t => `#${t}`).join(" ")}`.toLowerCase();
 		return tokens.every(t => {
@@ -368,4 +374,6 @@ export type FromBoard =
 	/** New global limit (0 = unlimited); undefined = ask with an input box. */
 	| { type: "concurrency"; max?: number }
 	| { type: "newSession" }
+	/** Ask the extension to pick the sessions `id` waits for. */
+	| { type: "setDeps"; id: string }
 	| { type: "maximize" };

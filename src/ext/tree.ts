@@ -177,6 +177,10 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.after?.length) {
+			const names = m.queue.after.map(id => `“${(this.sessions.get(id)?.title ?? `${id.slice(0, 8)} (deleted)`).replace(/[*_`[\]]/g, "\\$&")}”`);
+			tip.appendMarkdown(`$(type-hierarchy) Queued tasks wait for ${names.join(", ")} to finish  \n`);
+		}
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
 		item.contextValue = `${m.status === "stopped" ? "session.stopped" : "session.running"}${worktree ? ".worktree" : ""}`;

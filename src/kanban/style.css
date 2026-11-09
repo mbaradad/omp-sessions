@@ -210,6 +210,19 @@ input {
 .spacer { flex: 1; }
 .cost { font-variant-numeric: tabular-nums; }
 .when { white-space: nowrap; }
+.deps-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	margin-top: 5px;
+	padding: 0 7px 0 4px;
+	border: 1px dashed var(--c-yellow);
+	border-radius: 8px;
+	color: var(--c-yellow);
+	font-size: 11px;
+}
+.deps-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .actions {
 	position: absolute;
 	top: 4px;
@@ -236,6 +249,32 @@ input {
 	font-size: 12px;
 	pointer-events: none;
 }
+
+/* ---------- dependency graph ---------- */
+.graph { padding: 10px; }
+.graph-svg { display: block; overflow: visible; font-family: var(--vscode-font-family); }
+.gedge { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1.4; opacity: 0.8; }
+.gedge.pending { stroke: var(--c-yellow); stroke-dasharray: 5 4; opacity: 1; }
+.gedge.changed { stroke: var(--c-orange); opacity: 1; }
+.gedge.conflict { stroke: var(--c-red); stroke-width: 2; opacity: 1; }
+.gedge.merged { stroke: var(--c-green); opacity: 1; }
+.graph-arrow path { fill: var(--vscode-descriptionForeground); }
+.graph-arrow-pending path { fill: var(--c-yellow); }
+.graph-arrow-changed path { fill: var(--c-orange); }
+.graph-arrow-conflict path { fill: var(--c-red); }
+.graph-arrow-merged path { fill: var(--c-green); }
+.gnode { cursor: pointer; outline: none; --s: var(--vscode-panel-border); }
+.gnode-box { fill: var(--vscode-sideBar-background, var(--vscode-editor-background)); stroke: var(--s); stroke-width: 1.2; }
+.gnode-stripe { fill: var(--s); }
+.gnode:hover .gnode-box, .gnode:focus-visible .gnode-box { stroke: var(--vscode-focusBorder); stroke-width: 2; }
+.gnode.s-working { --s: var(--c-blue); }
+.gnode.s-waiting, .gnode.s-queued { --s: var(--c-yellow); }
+.gnode.s-idle { --s: var(--c-green); }
+.gnode.s-stopped { --s: var(--c-gray); }
+.gnode.blocked .gnode-box { stroke-dasharray: 5 3; }
+.gnode-title { fill: var(--vscode-foreground); font-size: 12px; font-weight: 600; }
+.gnode-state { fill: var(--vscode-descriptionForeground); font-size: 11px; }
+.gnode.blocked .gnode-state { fill: var(--c-yellow); }
 
 /* ---------- menus ---------- */
 .menu {

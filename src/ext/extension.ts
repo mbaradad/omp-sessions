@@ -24,6 +24,7 @@ import { plain } from "./plain";
 import { AoConnection } from "./ao-connection";
 import { inCheckout } from "./checkout";
 import { type NewSessionOptions, SessionManager, projectRoot } from "./sessions";
+import { registerDependencies } from "./dependencies";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
@@ -491,6 +492,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerScheduler(api);
 	registerOrganize(api);
 	registerWorktrees(api);
+	registerDependencies(api);
 	registerDoctor(api);
 	registerEditorPlus(api);
 	registerToolbox(api);

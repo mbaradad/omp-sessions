@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
+import { dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -187,7 +187,7 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 		recurring: [],
 		status: {} as PlanView["status"],
 	} satisfies PlanView;
-	assert.deepEqual(laneQueue(plan, "repo-3")?.sync, { state: "conflict", parents: ["repo-2"] });
+	assert.deepEqual(laneQueue(plan, "repo-3")?.sync, { state: "conflict", parents: ["repo-2"], edges: { "repo-1": "upstream-changed", "repo-2": "conflict" } });
 	assert.equal(laneQueue(plan, "repo-1")?.sync, undefined);
 	const clean: PlanView = { ...plan, tasks: plan.tasks.map(t => (t.id === "c" ? { ...t, sync: { a: { state: "in-sync" as const, at: 1 }, b: { state: "in-sync" as const, at: 1 } } } : t)) };
 	assert.equal(laneQueue(clean, "repo-3")?.sync, undefined);
@@ -209,4 +209,26 @@ test("priorityOps: update the lane that continues a session, else add one named 
 		{ op: "lane.add", id: "repo-3", session: "repo-3" },
 	]);
 	assert.deepEqual(priorityOps(undefined, ["repo-3"], "low"), [{ op: "lane.add", id: "repo-3", session: "repo-3", priority: "low" }]);
+});
+
+test("dependencyOps: pending tasks wait for every task of the picked sessions; other after entries stay; nothing pending = undefined", () => {
+	const lane = (id: string) => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1 });
+	const plan = {
+		rev: 1,
+		lanes: [lane("a"), lane("b"), lane("c")],
+		tasks: [
+			{ id: "ta1", lane: "a", status: "done", state: "done" },
+			{ id: "ta2", lane: "a", status: "pending", state: "waiting", after: ["ta1", "tx"] },
+			{ id: "tb1", lane: "b", status: "pending", state: "waiting", after: ["tc1"] },
+			{ id: "tc1", lane: "c", status: "pending", state: "waiting" },
+			{ id: "tc2", lane: "c", status: "skipped", state: "skipped" },
+		],
+	} as unknown as PlanView;
+	// A waits for C: ta2 keeps its same-lane and non-session entries (ta1, tx), gains C's live tasks.
+	assert.deepEqual(dependencyOps(plan, "A", ["C"]), [{ op: "after", id: "ta2", ids: ["ta1", "tx", "tc1"] }]);
+	// B drops its wait for C.
+	assert.deepEqual(dependencyOps(plan, "B", []), [{ op: "after", id: "tb1", ids: [] }]);
+	assert.equal(dependencyOps(plan, "C", ["A"])?.length, 1);
+	assert.equal(dependencyOps({ ...plan, tasks: plan.tasks.filter(t => t.lane !== "b") }, "B", ["A"]), undefined);
+	assert.equal(dependencyOps(undefined, "A", ["B"]), undefined);
 });

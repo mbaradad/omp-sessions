@@ -301,6 +301,12 @@
 				"icon": "$(edit)"
 			},
 			{
+				"command": "switchyard.setDependencies",
+				"title": "Dependencies…",
+				"category": "omp",
+				"icon": "$(type-hierarchy)"
+			},
+			{
 				"command": "omp.showChanges",
 				"title": "Show Changed Files…",
 				"category": "omp",
@@ -1452,6 +1458,11 @@
 					"command": "omp.renameSession",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@2"
+				},
+				{
+					"command": "switchyard.setDependencies",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@3"
 				},
 				{
 					"command": "omp.hermes.openCard",

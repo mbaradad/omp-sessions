@@ -119,12 +119,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const startAt = Math.min(...lanes.flatMap(l => (l.startAt ? [l.startAt] : [])), ...tasks.flatMap(t => (t.state === "scheduled" && t.waitUntil ? [t.waitUntil] : [])));
 	const interrupted = tasks.filter(t => t.state === "interrupted").length;
 	const waiting = tasks.find(t => t.state === "waiting" && t.position !== undefined);
-	// Dependencies are task ids in the planner; the views (cards, graph) show sessions: the AO session each task runs in or its lane continues.
-	const laneOf = new Map(plan.lanes.map(l => [l.id, l]));
-	const sessionOf = (taskId: string): string | undefined => {
-		const t = plan.tasks.find(x => x.id === taskId);
-		return t && (t.session ?? (t.lane !== undefined ? (laneOf.get(t.lane)?.session ?? t.lane) : undefined));
-	};
+	const sessionOf = taskSessionOf(plan);
 	const sessionsOf = (taskIds: Iterable<string>) => [...new Set([...taskIds].flatMap(id => sessionOf(id) ?? []))].filter(s => s !== sessionId);
 	const after = sessionsOf(tasks.flatMap(t => t.after ?? []));
 	const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []));
@@ -132,7 +127,12 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	// Propagation (GRAPH-PROPAGATION.md): the worst state over every parent edge of the session's tasks, and the parent sessions in it.
 	const edges = tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, edge]) => ({ parent, state: edge.state })));
 	const syncState = edges.reduce<SyncState | undefined>((worst, e) => (worst === undefined || SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worst] ? e.state : worst), undefined);
-	const sync = syncState && syncState !== "in-sync" ? { state: syncState, parents: sessionsOf(edges.filter(e => e.state === syncState).map(e => e.parent)) } : undefined;
+	const worstByParent = new Map<string, SyncState>();
+	for (const e of edges) {
+		const parent = sessionOf(e.parent);
+		if (parent && parent !== sessionId && e.state !== "in-sync" && SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worstByParent.get(parent) ?? "in-sync"]) worstByParent.set(parent, e.state);
+	}
+	const sync = syncState && syncState !== "in-sync" ? { state: syncState, parents: sessionsOf(edges.filter(e => e.state === syncState).map(e => e.parent)), edges: Object.fromEntries(worstByParent) } : undefined;
 	return {
 		pending: total("pending"),
 		running: total("running"),
@@ -147,6 +147,36 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(blockedBy.length && { blockedBy }),
 		...(waiting?.position !== undefined && { waiting: { position: waiting.position, since: waiting.createdAt } }),
 	};
+}
+
+/** The session (or lane id, before the task has one) a task of the plan runs in. */
+function taskSessionOf(plan: PlanView): (taskId: string) => string | undefined {
+	const laneOf = new Map(plan.lanes.map(l => [l.id, l]));
+	return taskId => {
+		const t = plan.tasks.find(x => x.id === taskId);
+		return t && (t.session ?? (t.lane !== undefined ? (laneOf.get(t.lane)?.session ?? t.lane) : undefined));
+	};
+}
+
+/**
+ * "Dependencies…": the plan edits that make a session's pending tasks wait for the given sessions (every task of
+ * theirs, finished ones count as done). The tasks' other `after` entries (tasks of the same lane, anything that is
+ * not another session) are kept. `undefined` when the session has no pending task to hold back; a cycle or an
+ * unknown task is the planner's to refuse.
+ */
+export function dependencyOps(plan: PlanView | undefined, sessionId: string, dependsOn: readonly string[]): PlanOp[] | undefined {
+	if (!plan) return undefined;
+	const lanes = plan.lanes.filter(l => l.id === sessionId || l.session === sessionId);
+	const own = new Set(lanes.map(l => l.id));
+	const pending = plan.tasks.filter(t => (t.lane !== undefined && own.has(t.lane) || t.session === sessionId) && t.status === "pending");
+	if (!pending.length) return undefined;
+	const sessionOf = taskSessionOf(plan);
+	const wanted = new Set(dependsOn);
+	const theirs = plan.tasks.filter(t => t.status !== "skipped" && wanted.has(sessionOf(t.id) ?? "")).map(t => t.id);
+	return pending.map(t => {
+		const kept = (t.after ?? []).filter(id => sessionOf(id) === sessionId || sessionOf(id) === undefined);
+		return { op: "after", id: t.id, ids: [...new Set([...kept, ...theirs])] };
+	});
 }
 
 /**

@@ -165,6 +165,7 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.cleanse": "Review & git",
 	"omp.gitUi": "Review & git",
 	"omp.commitInTerminal": "Review & git",
+	"switchyard.setDependencies": "Sessions",
 	"omp.openConfig": "Help",
 	"omp.openDocs": "Help",
 	"omp.keyboardShortcuts": "Help",

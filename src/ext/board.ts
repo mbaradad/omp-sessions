@@ -49,6 +49,8 @@ function buildData(api: OmpApi): BoardData {
 			tags: e.tags ?? [],
 			lane: e.lane,
 			group: e.groupId,
+			...(m.queue?.after && { after: m.queue.after }),
+			...(m.queue?.blockedBy && { blockedBy: m.queue.blockedBy }),
 		};
 	});
 	return { cards, lanes: store.lanes(), groups: store.data.groups };
@@ -90,6 +92,9 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			break;
 		case "open":
 			api.openPanel(msg.id);
+			break;
+		case "setDeps":
+			await vscode.commands.executeCommand("switchyard.setDependencies", msg.id);
 			break;
 		case "stop":
 			for (const id of msg.ids) await vscode.commands.executeCommand("omp.stopSession", id);

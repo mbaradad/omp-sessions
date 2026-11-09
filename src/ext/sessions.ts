@@ -15,7 +15,7 @@ import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpo
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import { dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -231,6 +231,18 @@ export class SessionManager implements vscode.Disposable {
 		const source = this.planSource;
 		if (!source || ids.length === 0) return;
 		await source.edit(priorityOps(source.plan, ids, priority));
+	}
+
+	/**
+	 * Makes the session's pending tasks wait for `dependsOn` (sessions; empty = no waiting). Resolves with how many
+	 * tasks were edited: 0 when it has none to hold back. The planner refuses a cycle (the error says so).
+	 */
+	async setDependencies(id: string, dependsOn: readonly string[]): Promise<number> {
+		const source = this.planSource;
+		const ops = source && dependencyOps(source.plan, id, dependsOn);
+		if (!source || !ops) return 0;
+		await source.edit(ops);
+		return ops.length;
 	}
 
 	/** Relists every session from AO. */
