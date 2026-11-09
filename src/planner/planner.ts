@@ -826,7 +826,9 @@ export class Planner {
 			const live = this.task(id);
 			if ((live?.run?.timedOut || live?.run?.aborted) && !this.interruptSent.has(id)) {
 				this.interruptSent.add(id);
-				await ao.interrupt(session);
+				const { discarded } = await ao.interrupt(session);
+				// AO throws away what a person queued behind the turn; the planner never queues, so it is not ours to re-send.
+				if (discarded) this.log("interrupt discarded", discarded, "queued prompt(s) in", session);
 			}
 			// Look again before the deadline (the periodic poll and AO's events cover the rest).
 			if (timeout) this.follow(id, Math.max(500, Math.min(30_000, (t.startedAt ?? this.now()) + timeout * 60_000 - this.now())));

@@ -133,6 +133,7 @@ export class FakeAo implements AoPort {
 
 	async interrupt(session: string) {
 		this.finishTurn(session, "interrupted");
+		return { discarded: 0 };
 	}
 
 	async resumeAgent(session: string) {
