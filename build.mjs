@@ -1,5 +1,6 @@
 import * as esbuild from "esbuild";
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 const watch = process.argv.includes("--watch");
 const production = process.argv.includes("--production");
@@ -27,11 +28,16 @@ const copies = [
 	["media/icon.png", "out/mobile-icon.png"],
 	["media/icon.svg", "out/mobile-icon.svg"],
 	["skills/omp-sessions/SKILL.md", "out/omp-sessions.SKILL.md"],
+	// Switchyard's `omp` shim (extra omp flags for AO sessions, G34); src/shared/omp-extension-install.ts installs it.
+	["src/omp-shim/omp", "out/omp-shim/omp"],
 ];
 
 fs.rmSync("out", { recursive: true, force: true });
 fs.mkdirSync("out", { recursive: true });
-for (const [from, to] of copies) fs.copyFileSync(from, to);
+for (const [from, to] of copies) {
+	fs.mkdirSync(path.dirname(to), { recursive: true });
+	fs.copyFileSync(from, to);
+}
 // The Hermes plugin folder is published as is (`hermes plugins install …/integrations/hermes/omp-sessions`
 // fetches only that folder), so it carries a committed copy of the skill; keep it in sync.
 const PLUGIN = "integrations/hermes/omp-sessions";

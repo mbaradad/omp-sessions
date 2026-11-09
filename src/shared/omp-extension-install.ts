@@ -5,6 +5,7 @@
 // folder is ours: modules no longer shipped are removed. Node-only.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { switchyardHome } from "../ao/native";
 import { type OmpPathOptions, ompPaths } from "./omp-paths";
 
 export const OMP_EXTENSION_PACKAGE = "switchyard";
@@ -85,4 +86,54 @@ export function installOmpExtensions(sourceDir: string, targetDir: string): bool
 		changed = true;
 	}
 	return changed;
+}
+
+// ---------- the `omp` shim (GAPS.md G34) ----------
+
+/** First line after the shebang that marks the shim as ours; a file of that name without it is never replaced. */
+const SHIM_MARKER = "switchyard-omp-shim";
+
+/** Where the shim lives; the AO daemon's PATH must list this folder before the real omp's (src/ao/daemon.ts). */
+export function ompShimDir(home = switchyardHome()): string {
+	return path.join(home, "bin");
+}
+
+export type ShimInstall = "installed" | "updated" | "unchanged" | "skipped";
+
+/**
+ * Installs `sourceFile` (out/omp-shim/omp) as `<binDir>/omp`, executable. A file there that is not the
+ * shim is left alone ("skipped"). The shim is a POSIX shell script: on Windows nothing is installed.
+ */
+export function installOmpShim(sourceFile: string, binDir = ompShimDir()): ShimInstall {
+	if (process.platform === "win32") return "skipped";
+	const content = fs.readFileSync(sourceFile);
+	const target = path.join(binDir, "omp");
+	let current: Buffer | undefined;
+	try {
+		current = fs.readFileSync(target);
+	} catch {
+		current = undefined;
+	}
+	if (current && !current.toString("utf8", 0, 400).includes(SHIM_MARKER)) return "skipped";
+	if (current?.equals(content)) {
+		fs.chmodSync(target, 0o755);
+		return "unchanged";
+	}
+	fs.mkdirSync(binDir, { recursive: true });
+	const tmp = `${target}.${process.pid}.tmp`;
+	fs.writeFileSync(tmp, content, { mode: 0o755 });
+	fs.renameSync(tmp, target);
+	return current ? "updated" : "installed";
+}
+
+/** Removes the shim when it is ours; true when removed. */
+export function removeOmpShim(binDir = ompShimDir()): boolean {
+	const target = path.join(binDir, "omp");
+	try {
+		if (!fs.readFileSync(target, "utf8").slice(0, 400).includes(SHIM_MARKER)) return false;
+		fs.rmSync(target);
+		return true;
+	} catch {
+		return false;
+	}
 }
