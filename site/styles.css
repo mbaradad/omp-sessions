@@ -1853,37 +1853,16 @@ h2 .grad {
 	text-align: left;
 }
 
-.phones {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: clamp(14px, 2vw, 26px);
-	align-items: start;
-}
-
-.phone {
-	margin: 0;
-}
-
-.phone img {
-	display: block;
+.shot--pair {
+	justify-self: center;
 	width: 100%;
-	height: auto;
-	padding: 7px;
-	border-radius: 30px;
-	background: #05030a;
-	border: 1px solid var(--line-2);
-	box-shadow: var(--shadow-shot);
+	max-width: 520px;
 }
 
-.phone figcaption {
-	margin-top: 12px;
-	text-align: center;
-	color: var(--text-2);
-	font-size: 14.5px;
-}
-
-.phone--up {
-	transform: translateY(-18px);
+.shot--pair img {
+	aspect-ratio: auto;
+	padding: 10px 6px 4px;
+	background: #121314;
 }
 
 .cmds dd {

@@ -29,7 +29,7 @@ Switchyard plans work for [oh-my-pi](https://omp.sh) (`omp`) coding agents and h
 
 ### A chat that lives in your editor
 
-![Chat in an editor tab: an inline diff, a bash call, a Markdown answer with file links, and the footer with model, permission mode, context, cost and tokens per second](docs/images/chat.png)
+![Chat in an editor tab: an inline diff, a bash call, a Markdown answer with file links and a table, and the footer with model, thinking level, permission mode, context and cost](docs/images/chat.png)
 
 Streaming answers, tool cards with live durations, syntax-highlighted inline diffs, clickable `file:line` links, `@` file mentions, `/` commands, image and file attachments. The footer holds the model picker (star your favorites), thinking level, permission mode, context use, cost, tokens per second and your provider's usage limit. Open it in an editor tab or the side bar, or continue the same session in omp's own terminal UI.
 
@@ -41,7 +41,7 @@ Streaming answers, tool cards with live durations, syntax-highlighted inline dif
 
 ### Undo any turn
 
-![Restoring a checkpoint: the two files that go back are listed, the conversation rewinds, redo brings everything back](docs/images/checkpoints.png)
+![Undoing the last prompt: the two files that go back are listed, the conversation rewinds, redo brings everything back](docs/images/checkpoints.png)
 
 Every prompt is a checkpoint. Undo puts back the files omp changed since then and rewinds the conversation; the prompt returns to the composer so you can rephrase. Redo brings it all back.
 
@@ -53,7 +53,7 @@ Each session snapshots the files it edits. Review them in VS Code's own diff edi
 
 ### Many sessions, one overview
 
-![The Sessions Board: columns for needs input, working, queued, idle and stopped](docs/images/board.png)
+![The Sessions Board: columns for needs input, working, queued, idle and completed](docs/images/board.png)
 
 The Sessions view groups sessions by project with working and needs-input counts; the Board shows them as a kanban by status, your own lanes, groups or priority. Groups, colors, priorities, pins, tags and filters keep dozens of sessions manageable. Sessions that finished or asked something while you were away are marked **● new**.
 

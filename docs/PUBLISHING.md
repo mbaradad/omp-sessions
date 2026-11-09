@@ -52,21 +52,23 @@ The Marketplace needs no secret (Trusted Publishing, step 2). The workflow uses 
 
 ### 5. Marketplace listing assets
 
-The README and the website (`site/assets/shots/`) use the same seven PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-sessions/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`).
+The README and the website (`site/assets/shots/`) use the same PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-sessions/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`). The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
 
-Capture guidelines: 1600×1000 (16:10; the website crops with `object-fit: cover` anchored top-left), Dark Modern, zoom level 1, a real VS Code with the released VSIX installed in an isolated profile (`--user-data-dir`/`--extensions-dir`) so the title bar shows no *Extension Development Host*, and no OS window chrome. Drive omp with `test/fake-omp.mjs` (`FAKE_OMP_DEMO=1` gives real-looking model names, prices and tok/s; `FAKE_OMP_REPLIES` scripts the answers) in a throwaway `SWITCHYARD_HOME`, so no personal paths, keys or costs appear. The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
+`node scripts/screenshots/run.mjs` retakes them: it packages the VSIX, installs it into a real VS Code (Dark Modern, zoom 0, isolated profile, so no *Extension Development Host*) under Xvfb, starts an isolated AO daemon and planner with two demo projects, builds the demo through the extension's API (`scripts/screenshots/driver`) with `test/fake-omp-acp.mjs` in demo mode answering from `scripts/screenshots/scenario.mjs`, and grabs each view. The review and undo session runs one short real omp turn (checkpoints come from Switchyard's omp extension, which only real omp loads; `--no-real` skips it). With Hermes Agent installed it then opens the same sessions in the Hermes dashboard (`hermes.mjs`). Everything lives in `/tmp/switchyard-shots` with its own HOME; no personal paths, keys or costs appear. VS Code's window is 1440×900 inside the 1600×1000 screen (no window manager), so the VS Code shots are 1440×900 (16:10; the website crops with `object-fit: cover` anchored top-left). Afterwards shrink them with pngquant, copy them to `site/assets/shots/`, and re-render the README graphics (`docs/images/src/README.md`).
 
-| # | File | What it shows |
-| --- | --- | --- |
-| 1 | `chat.png` | A chat tab with the Sessions view: inline diff, tool call, Markdown answer with `file:line` links, and the footer (model, thinking, permission mode, context, cost, tok/s) |
-| 2 | `sessions.png` | Sessions across two projects (working, needs input, idle, stopped) and a pending tool approval card in Ask mode |
-| 3 | `board.png` | The Sessions Board by status |
-| 4 | `review.png` | *Review Changes*: the session's edits in VS Code's multi-file diff |
-| 5 | `tasks.png` | The Tasks view with a running queue, subtasks and pending tasks |
-| 6 | `checkpoints.png` | The *Restore the checkpoint before this prompt?* confirmation listing the files that go back |
-| 7 | `dashboard.png` | The usage dashboard: spend cards, per-day chart, projects and models |
+| File | What it shows |
+| --- | --- |
+| `chat.png` | A chat tab with the Sessions and Tasks views: inline diff, tool call, Markdown answer with `file:line` links and a table, and the footer (model, thinking, permission mode, context, cost) |
+| `sessions.png` | Sessions across two projects (working, needs input, idle, stopped, unread) and a pending bash approval in Ask mode |
+| `board.png` | The Sessions Board by status |
+| `review.png` | *Review Changes*: the session's edits in VS Code's multi-file diff |
+| `tasks.png` | The Tasks view with a running queue, subtasks, pending tasks and a scheduled one |
+| `checkpoints.png` | The *Undo the last prompt?* confirmation listing the files that go back |
+| `dashboard.png` | The usage dashboard: spend cards, per-day chart, projects, models and sessions |
+| `hermes-dashboard.png`, `hermes-detail.png` | The Switchyard page in the Hermes dashboard, and a session's detail panel with its approval |
+| `hermes-desktop.png` | The page in Hermes Desktop (taken by hand: the script doesn't drive the Desktop app) |
 
-Phone screenshots (`docs/images/phone/*.png`, copied to `site/assets/shots/phone-*.png`) are 390×844 at 3× from AO's mobile app against the same demo state (`switchyard remote on`, then open the pairing URL in a mobile browser viewport). The Switchyard planner's queues and schedules are not in that app, so retake them only if they show AO's own screens. The README graphics (`hero.png`, `a-day.png`, `how-it-works.png`, `phone.png`) are rendered from HTML in `docs/images/src/`, which embeds these screenshots: re-render them after a retake (commands in `docs/images/src/README.md`).
+There are no phone screenshots: the phone is AO's mobile app, shown on the website and in `phone.png` through the *Connect Phone* panel (`connect-phone.png`, QR code blurred).
 
 Optional: a 10–20 s GIF of starting a session, closing VS Code, reopening and finding the finished work (keep it under about 5 MB).
 

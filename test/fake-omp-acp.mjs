@@ -36,6 +36,9 @@
 //   plan <a>; <b>; ...      plan update (first entry in_progress, the rest pending)
 //   title <text>            session_info_update with a title (persisted, listed by session/list)
 //   cost <usd>              add <usd> to this turn's cost (usage_update carries the session total, as omp)
+//   approval <mode>         this session's bash approval from now on, over --approval-mode: default (asks
+//                           through session/request_permission), yolo (never asks) or always-ask (asks through
+//                           elicitation/create, "Allow tool: bash" + the command, as Switchyard's omp gate does)
 //   fail [message]          provider error after omp's own retries: the message as one assistant
 //                           chunk, stopReason end_turn (as omp: AO records a *completed* turn); ends the script
 //   limited <secs> [key]    first time per key (marker file in PI_CODING_AGENT_DIR): `fail` with a 429
@@ -67,6 +70,8 @@
 //                         windows [{provider, id, label?, usedPercent, resetsAt?}]; read on every call
 //   FAKE_OMP_RULES        JSON file [{match, flags?, script}]: `script` replaces a prompt that `match`
 //                         (a regex) matches, `$1`…`$9` = its groups; read on every prompt
+//   FAKE_OMP_DEMO=1       screenshots (scripts/screenshots): real-looking models (Claude Sonnet 4.5 first), `\n` in
+//                         echo/think text, and each turn also writes omp's `model_usage` line (the usage dashboard counts it)
 
 import { spawn, spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
@@ -77,6 +82,7 @@ import * as readline from "node:readline";
 
 const VERSION = process.env.FAKE_OMP_VERSION || "18.12.6";
 const DELAY = Number(process.env.FAKE_OMP_DELAY ?? 10);
+const DEMO = process.env.FAKE_OMP_DEMO === "1";
 const logFile = process.env.FAKE_OMP_LOG;
 const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.tmpdir(), "fake-omp-acp-agent");
 const sessionsRoot = path.join(agentDir, "sessions");
@@ -93,10 +99,16 @@ function debug(entry) {
 // ---------- models ----------
 const MODELS = process.env.FAKE_OMP_NO_MODELS === "1"
 	? []
-	: [
-			{ provider: "fake", id: "fake-model", name: "Fake Model", contextWindow: 200000, maxTokens: 32000, reasoning: true, input: ["text", "image"] },
-			{ provider: "fake", id: "fake-mini", name: "Fake Mini", contextWindow: 100000, maxTokens: 8000, reasoning: false, input: ["text"] },
-		];
+	: process.env.FAKE_OMP_DEMO === "1"
+		? [
+				{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+				{ provider: "anthropic", id: "claude-opus-4-5", name: "Claude Opus 4.5", contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+				{ provider: "openai", id: "gpt-5.1-codex", name: "GPT-5.1 Codex", contextWindow: 400000, maxTokens: 128000, reasoning: true, input: ["text", "image"] },
+			]
+		: [
+				{ provider: "fake", id: "fake-model", name: "Fake Model", contextWindow: 200000, maxTokens: 32000, reasoning: true, input: ["text", "image"] },
+				{ provider: "fake", id: "fake-mini", name: "Fake Mini", contextWindow: 100000, maxTokens: 8000, reasoning: false, input: ["text"] },
+			];
 const selector = m => `${m.provider}/${m.id}`;
 function findModel(value) {
 	return MODELS.find(m => selector(m) === value || m.id === value);
@@ -451,7 +463,7 @@ async function toolCall(s, turn, { name, kind, title, rawInput, locations, gate,
 	// `--approval-mode always-ask`: tools above the read tier that omp doesn't gate through
 	// session/request_permission (write, edit…) ask through elicitation/create, as a single-value form
 	// "Allow tool: <name>" with enum [Approve, Approve <name> for this session, Deny] (AO: a `user_input` activity).
-	if (uiApproval && alwaysAsk && !s.allowAlways.has(`ui:${name}`)) {
+	if (uiApproval && (alwaysAsk || s.approvalMode === "always-ask") && !s.allowAlways.has(`ui:${name}`)) {
 		const sessionLabel = `Approve ${name} for this session`;
 		let res;
 		try {
@@ -528,7 +540,8 @@ function shellTool(s, turn, command) {
 		kind: "execute",
 		title: `$ ${command}`.slice(0, 82),
 		rawInput: { command },
-		gate: approvalMode === "yolo" ? undefined : "bash",
+		gate: (s.approvalMode ?? approvalMode) === "yolo" || s.approvalMode === "always-ask" ? undefined : "bash",
+		uiApproval: s.approvalMode === "always-ask" ? command : undefined,
 		run: async () => {
 			const { code, output } = await runShell(command, s.cwd, turn.signal);
 			const text = `${output.slice(-4000)}${code === 0 ? "" : `\nexit code ${code}`}`.trim() || "(no output)";
@@ -576,7 +589,7 @@ function resolveTool(s, turn, strategy) {
 		kind: "execute",
 		title: `$ git commit --no-edit  # resolve conflicts (${strategy})`,
 		rawInput: { command: `resolve conflicts (${strategy}) && git commit --no-edit` },
-		gate: approvalMode === "yolo" ? undefined : "bash",
+		gate: (s.approvalMode ?? approvalMode) === "yolo" ? undefined : "bash",
 		run: async () => {
 			const files = git("diff", "--name-only", "--diff-filter=U").stdout.split("\n").filter(Boolean);
 			if (files.length === 0) return { text: "no conflicted files", failed: true };
@@ -639,9 +652,9 @@ async function runStep(s, turn, line) {
 	const rest = line.slice(cmd.length).trim();
 	switch (cmd) {
 		case "echo":
-			return streamMessage(s, turn, rest);
+			return streamMessage(s, turn, DEMO ? unescapeText(rest) : rest);
 		case "think":
-			return streamMessage(s, turn, rest, "agent_thought_chunk");
+			return streamMessage(s, turn, DEMO ? unescapeText(rest) : rest, "agent_thought_chunk");
 		case "bash":
 			await shellTool(s, turn, rest);
 			return;
@@ -750,6 +763,9 @@ async function runStep(s, turn, line) {
 		case "cost":
 			turn.extraCost += Number(rest) || 0;
 			return;
+		case "approval":
+			s.approvalMode = rest;
+			return;
 		case "error":
 			throw internal(rest || "fake internal error");
 		case "crash":
@@ -758,7 +774,7 @@ async function runStep(s, turn, line) {
 	}
 }
 
-const COMMAND_RE = /^(echo|think|bash|commit|resolve|slow|write|append|edit|delete|ask|plan|title|fail|limited|refuse|prompt|cost|error|crash)(\s|$)/;
+const COMMAND_RE = /^(echo|think|bash|commit|resolve|slow|write|append|edit|delete|ask|plan|title|fail|limited|refuse|prompt|cost|approval|error|crash)(\s|$)/;
 
 /**
  * FAKE_OMP_RULES (read on every prompt): [{match, flags?, script}]. The first rule whose regex matches
@@ -847,6 +863,9 @@ async function prompt(params) {
 	// usage_update carries the session's cumulative cost, like omp (getUsageStatistics().cost).
 	const amount = usage.totalTokens * 1e-6 + turn.extraCost;
 	append(s, { type: "cost", amount });
+	if (process.env.FAKE_OMP_DEMO === "1" && s.model) {
+		append(s, { type: "model_usage", provider: s.model.provider, model: s.model.id, usage: { input: usage.inputTokens, output: usage.outputTokens, totalTokens: usage.totalTokens, cost: { total: amount } }, timestamp: new Date().toISOString() });
+	}
 	s.cost += amount;
 	const ctx = s.model?.contextWindow ?? 200000;
 	const used = s.entries.reduce((n, e) => n + Math.ceil(JSON.stringify(e).length / 4), 0);
