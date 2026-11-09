@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { after, before, test } from "node:test";
 import { type AoEvent, AoClient, AoError } from "../../src/ao/client";
+import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
 
 const REPO = "/tmp/ao-smoke-foundation/repo";
@@ -48,6 +49,8 @@ function until(id: string, done: (m: AoSessionModel) => boolean, what: string): 
 }
 
 before(async () => {
+	// CONTRACT.md "Isolated HOME": run through `npm run test:ao`, which sets one up.
+	assert.ok(isolatedHome(), "run this test with an isolated HOME (npm run test:ao), never the real one");
 	ao = await AoClient.connect();
 	scratchRepo();
 	watcher = new AoSessionWatcher(ao, { query: { active: true } });
