@@ -3,7 +3,7 @@
 // vscode), so the CLI and tests can use it too.
 import * as path from "node:path";
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
-import type { AoAgentState, AoChangedFile, AoSessionModel } from "../ao/model";
+import { type AoAgentState, type AoChangedFile, type AoSessionModel, turnIdOf } from "../ao/model";
 import type { PlanOp, PlanView, TaskState, TaskView } from "../planner/types";
 import type { FileChange } from "../shared/checkpoints";
 import type { Priority } from "../shared/organize";
@@ -64,6 +64,7 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 		socket: "",
 		createdAt: model.createdAt,
 		updatedAt: model.updatedAt,
+		...(turnIdOf(model) && { turnId: turnIdOf(model) }),
 		changedFiles: model.changedFiles.length,
 		...(model.model && { model: model.model }),
 		...(model.cost !== undefined && { cost: model.cost }),

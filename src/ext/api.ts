@@ -1,5 +1,6 @@
 import type * as vscode from "vscode";
 import type { OrganizeStore } from "../shared/organize";
+import type { SoundPlayedMessage } from "../shared/completion-sound";
 import type { SessionMeta } from "../shared/protocol";
 import type { AoConnection } from "./ao-connection";
 import type { SnapshotProvider } from "./diff";
@@ -37,4 +38,6 @@ export interface OmpApi {
 	/** Sessions view data provider and view (selection, description, reveal). */
 	readonly sessionTree: SessionTree;
 	readonly sessionsView: vscode.TreeView<Node>;
+	/** A Switchyard webview reports it played a session cue (src/ext/sounds.ts); for tests and diagnostics. */
+	readonly onDidPlaySound: vscode.Event<SoundPlayedMessage>;
 }

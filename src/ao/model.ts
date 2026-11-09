@@ -232,6 +232,12 @@ export function questionsOf(conversation: AoConversation): AoQuestion[] {
 /** providerTurnId of a turn AO imported from omp's recorded history after exit-agent + resume-agent (G33). */
 const HISTORY_TURN_PREFIX = "acp-history-turn:";
 
+/** The turn or question a status belongs to (SessionMeta.turnId): a waiting question's id, else the conversation's latest real turn. */
+export function turnIdOf(model: AoSessionModel): string | undefined {
+	if (model.state === "needs_input" && model.question) return model.question.id;
+	return model.conversation?.turns ? realTurns(model.conversation).at(-1)?.id : undefined;
+}
+
 /**
  * The turns that ran in this conversation: those AO replays from omp's history on resume (prompts
  * already recorded, steered or with images; after a compaction, an assistant-only copy of the last

@@ -1,5 +1,5 @@
 // Extension <-> webview postMessage contract.
-import type { PlaySoundMessage } from "./completion-sound";
+import type { PlaySoundMessage, SoundPlayedMessage } from "./completion-sound";
 import type { FileDiff } from "./diff";
 import type { HermesOrigin } from "./hermes-origin";
 import type { PermissionMode } from "./permissions";
@@ -123,6 +123,7 @@ export type PanelCommand =
 	| "showHermesCard";
 
 export type FromWebview =
+	| SoundPlayedMessage
 	| { type: "ready" }
 	| { type: "prompt"; text: string; images?: ImageAttachment[]; files?: FileAttachment[] }
 	| { type: "abort" }

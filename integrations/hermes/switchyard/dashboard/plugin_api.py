@@ -324,6 +324,7 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "changedFiles": meta.get("changedFiles") or 0,
         "createdAt": meta.get("createdAt"),
         "updatedAt": meta.get("updatedAt"),
+        "turnId": meta.get("turnId"),
         "group": info.get("group"),
         "color": info.get("color"),
         "priority": info.get("priority"),

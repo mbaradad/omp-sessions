@@ -11,6 +11,7 @@ import type { OrganizeStore } from "../shared/organize";
 import { type PermissionMode, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import type { FileChange, QueueOp, SessionMeta, TaskQueue } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
+import type { SoundPlayedMessage } from "../shared/completion-sound";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { askSideQuestion, sideRecords } from "./chat-btw";
@@ -219,6 +220,8 @@ export interface ChatModeGate {
 }
 
 export class ChatPanel implements vscode.Disposable {
+	/** Takes the webview's reply to a cue (set by src/ext/sounds.ts while the chat is a sound sink). */
+	onSoundPlayed?: (msg: SoundPlayedMessage) => void;
 	private ao: AoClient | undefined;
 	private stream: AoEventSubscription | undefined;
 	private streamOpen = false;
@@ -936,6 +939,9 @@ export class ChatPanel implements vscode.Disposable {
 	// ---------- webview -> AO ----------
 	private async onWebviewMessage(m: FromWebview): Promise<void> {
 		switch (m.type) {
+			case "soundPlayed":
+				this.onSoundPlayed?.(m);
+				return;
 			case "ready":
 				this.webviewReady = true;
 				this.schedule(true);

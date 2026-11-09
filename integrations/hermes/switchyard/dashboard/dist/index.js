@@ -2066,6 +2066,7 @@ ${note.detail}` : ""}`),
   function unlockAudioOnGesture() {
     if (unlockInstalled || typeof window === "undefined") return;
     unlockInstalled = true;
+    audioContext();
     const events = ["pointerdown", "keydown", "touchend"];
     const unlock = () => {
       const ac = audioContext();
@@ -2280,6 +2281,7 @@ ${note.detail}` : ""}`),
     if (variant === "None" || volume <= 0) return false;
     const ac = audioContext();
     if (!ac) return false;
+    if (ac.state !== "running") return false;
     const now = ac.currentTime;
     const master = ac.createGain();
     const tone = ac.createBiquadFilter();
@@ -2310,6 +2312,9 @@ ${note.detail}` : ""}`),
     if (to === "idle" && from === "working") return "complete";
     return void 0;
   }
+  function alertKey(id, kind, turnId, updatedAt) {
+    return `${id}.${kind}.${turnId || updatedAt || ""}`;
+  }
   var AlertTracker = class {
     last = /* @__PURE__ */ new Map();
     /** The alerts between the previous snapshot and `sessions` (none for the first snapshot). */
@@ -2319,7 +2324,7 @@ ${note.detail}` : ""}`),
       for (const s of sessions) {
         next.set(s.id, s.state);
         const kind = alertFor(this.last.get(s.id), s.state);
-        if (kind) alerts.push({ id: s.id, kind, key: `${s.id}.${kind}.${s.updatedAt ?? ""}` });
+        if (kind) alerts.push({ id: s.id, kind, key: alertKey(s.id, kind, s.turnId, s.updatedAt) });
       }
       this.last = next;
       return alerts;

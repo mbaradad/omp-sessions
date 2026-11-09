@@ -2482,6 +2482,7 @@
 		"test:unit": "node test/run.mjs unit",
 		"test:integration": "node test/run.mjs integration",
 		"test:hermes": "node integrations/hermes/tests/run.mjs",
+		"test:hermes:sounds": "node integrations/hermes/tests/sounds-browser.mjs",
 		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs",
 		"ao:schema": "node scripts/ao-schema.mjs",
 		"test:ao": "node scripts/test-ao.mjs"

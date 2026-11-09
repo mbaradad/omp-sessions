@@ -1,7 +1,7 @@
 // Chat UI for one omp session: transcript, tool cards with structured diffs, omp dialogs,
 // attachments, and a composer with slash-command / @file completion.
 import { Marked, type Tokens } from "marked";
-import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
+import { playRequested, unlockAudioOnGesture } from "../shared/completion-sound";
 import { type FileDiff, diffTexts, parseOmpDiff } from "../shared/diff";
 import { type HermesOrigin, originLabel } from "../shared/hermes-origin";
 import { CONTEXT_MENTIONS, findMentions, splitContext } from "../shared/mentions";
@@ -1771,7 +1771,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 	const msg = event.data;
 	switch (msg.type) {
 		case "sound":
-			playSound(msg.variant, msg.volume);
+			post(playRequested(msg));
 			return;
 		case "init": {
 			meta = msg.meta;

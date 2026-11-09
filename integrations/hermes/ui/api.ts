@@ -101,6 +101,8 @@ export interface Session {
 	changedFiles: number;
 	createdAt?: number;
 	updatedAt?: number;
+	/** What the state belongs to (the latest turn, or the waiting question): the sounds' dedupe key. */
+	turnId?: string | null;
 	group?: string | null;
 	color?: string | null;
 	priority?: string | null;
