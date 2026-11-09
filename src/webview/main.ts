@@ -1045,6 +1045,7 @@ function renderHeader(): void {
 			["Collapse / expand all tool cards", toggleAllCards, "Alt+T"],
 			["Find in conversation", () => findBar.open(), "Ctrl/⌘+F"],
 			["Permission mode…", () => showModeMenu(menuBtn), "Shift+Tab"],
+			["Continue in omp's terminal UI", cmd("openTui"), "/tui"],
 			null,
 			["Copy last response", cmd("copyLast"), "/copy"],
 			["Session stats", cmd("stats"), "/cost"],

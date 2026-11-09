@@ -25,7 +25,7 @@ import { openLink, openUrlFromOmp } from "./links";
 import { type SessionManager, resolveOmpPath } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage } from "./slim";
-import { switchyardHome } from "../ao/native";
+import { readNativeSession, switchyardHome } from "../ao/native";
 
 const STARRED_MODELS_KEY = "omp.starredModels";
 
@@ -588,6 +588,42 @@ export class ChatPanel implements vscode.Disposable {
 		}
 	}
 
+	/**
+	 * `/tui`: hands the session to omp's own terminal UI. AO stops the agent (the conversation stays), omp
+	 * resumes the same omp session in a terminal, and closing the terminal gives the session back to AO.
+	 * The omp session id is what the Switchyard omp extension recorded (GAPS G9); `AO_SESSION_ID` keeps its
+	 * checkpoints and mode gate on in the terminal.
+	 */
+	private async openTui(): Promise<void> {
+		const native = readNativeSession(this.sessionId);
+		const omp = resolveOmpPath();
+		const warn = (text: string) => this.post({ type: "notice", level: "warning", text });
+		if (!native?.ompSessionId) return warn("omp's session id is not known yet: the Switchyard omp extension records it when the session starts. Send a message first, or check that the extension is installed.");
+		if (!omp) return warn("Could not find the `omp` executable.");
+		if (this.feed.isBusy()) return warn("omp is working: interrupt it (Esc), or wait for it to finish, before continuing in the terminal.");
+		const ao = await this.client();
+		await ao.exitAgent(this.sessionId);
+		this.post({ type: "notice", level: "info", text: "Continuing in omp's terminal UI. The session returns to the background when you close that terminal." });
+		const terminal = vscode.window.createTerminal({
+			name: `omp · ${this.meta?.title ?? this.sessionId}`,
+			cwd: native.cwd ?? this.meta?.cwd,
+			shellPath: omp,
+			shellArgs: ["--resume", native.ompSessionId],
+			env: { AO_SESSION_ID: this.sessionId },
+			location: { viewColumn: vscode.ViewColumn.Beside },
+		});
+		terminal.show();
+		const closed = vscode.window.onDidCloseTerminal(t => {
+			if (t !== terminal) return;
+			closed.dispose();
+			ao.resumeAgent(this.sessionId).then(
+				() => this.schedule(true),
+				err => this.post({ type: "notice", level: "error", text: `Could not give the session back to AO: ${errorText(err)}. Use Resume session.` }),
+			);
+		});
+		this.subs.push(closed);
+	}
+
 	/** `/btw`: asks in a forked side chat; the webview draws the card as it fills. */
 	private async askSide(typed: string): Promise<void> {
 		const question = typed || (await vscode.window.showInputBox({ prompt: "Side question (answered without interrupting the agent)" })) || "";
@@ -1072,6 +1108,9 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			case "undoTurn":
 				await this.undo();
+				return;
+			case "openTui":
+				await this.openTui();
 				return;
 			case "redoTurn":
 				if (!this.checkpoints) return this.unavailable("Redo");

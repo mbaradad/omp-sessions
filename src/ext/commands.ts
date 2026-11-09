@@ -35,6 +35,7 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 	{ name: "undo", description: "Undo the last turn: revert its file edits and rewind the conversation", local: true },
 	{ name: "redo", description: "Bring back what the last undo / checkpoint restore removed", local: true },
 	{ name: "btw", description: "Ask a side question without interrupting the agent (answered in a fork of this conversation)", input: { hint: "<question>" }, local: true },
+	{ name: "tui", description: "Continue this session in omp's terminal UI; it returns to the background when you close the terminal", local: true },
 	{ name: "login", description: "Log in to a model provider (in omp's terminal UI)", local: true },
 	{ name: "logout", description: "Remove a stored provider credential (in omp's terminal UI)", local: true },
 	{ name: "queue", description: "Add a task to this session's background queue (Title :: sub; sub)", input: { hint: "<task>" }, local: true },
@@ -69,6 +70,7 @@ const SLASH_TO_PANEL: Record<string, PanelCommand> = {
 	quit: "stopSession",
 	undo: "undoTurn",
 	redo: "redoTurn",
+	tui: "openTui",
 };
 
 /**

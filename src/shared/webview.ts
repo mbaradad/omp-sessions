@@ -113,6 +113,7 @@ export type PanelCommand =
 	| "settings"
 	| "undoTurn"
 	| "redoTurn"
+	| "openTui"
 	| "openHermesCard"
 	| "showHermesCard";
 
