@@ -139,7 +139,13 @@ test("changed files come from the session's workspace", async () => {
 	const id = sessionId;
 	// Real omp (the shared dev daemon). omp's chat turns carry no `diff`, so this only passes through the manifest.
 	await ao.sendMessage(id, { text: "Create the file hello.txt containing the word hi using your write tool, then reply DONE." });
-	const done = await until(id, m => m.state === "idle" && (m.reply ?? "").includes("DONE") && m.changedFiles.some(f => f.path === "hello.txt"), "idle with hello.txt changed");
+	const done = await until(id, m => m.state === "idle" && (m.reply ?? "").includes("DONE") && m.changedFiles.some(f => f.path === "hello.txt"), "idle with hello.txt changed").catch(async (error: Error) => {
+		// Tell "omp did not write it" from "the model missed it": the disk, AO's manifest and the model's own list.
+		const cwd = watcher.get(id)?.cwd;
+		const onDisk = cwd ? fs.existsSync(`${cwd}/hello.txt`) : "unknown";
+		const manifest = (await ao.workspaceManifest(id).catch(() => undefined))?.files.map(f => `${f.path}:${f.status}`);
+		throw new Error(`${error.message}; hello.txt on disk: ${onDisk}; manifest: ${JSON.stringify(manifest)}; model changedFiles: ${JSON.stringify(watcher.get(id)?.changedFiles.map(f => f.path))}`);
+	});
 	assert.deepEqual(done.changedFiles.find(f => f.path === "hello.txt")?.status, "added");
 });
 
