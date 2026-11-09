@@ -269,7 +269,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		report.config = { set, written };
 		const text = Object.entries(set).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(" ") : String(v)}`).join(", ") || "nothing new";
 		log(`launcher.json → ${configFile}: ${text}${opts.apply ? "" : " (dry run)"}`);
-		if (extraArgs) log("  omp.extraArgs is applied by the omp shim once it is installed (G34)");
+		if (extraArgs) log(`  omp.extraArgs is the nested key {"omp": {"extraArgs": [...]}} in ${configFile}; the omp shim applies it once installed (docs/SETUP.md#extra-omp-arguments)`);
 	}
 
 	if (state.scheduler) {
