@@ -137,6 +137,8 @@ export type QueueOp =
 	| { op: "duplicate"; id: string }
 	/** Every failed task back to pending. */
 	| { op: "retryFailed" }
+	/** Failed tasks back to pending; else a paused or interrupted queue restarts; else the last finished task runs again. The queue is re-armed unless it has a scheduled start (the planner's `lane.requeue`). */
+	| { op: "requeue" }
 	/** Start the queue at this time (epoch ms); null cancels. */
 	| { op: "schedule"; at: number | null };
 

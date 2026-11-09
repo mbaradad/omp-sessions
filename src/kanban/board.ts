@@ -4,7 +4,7 @@
 
 import type { PlaySoundMessage } from "../shared/completion-sound";
 import type { OrgColor, OrgGroup, OrgLane, Priority } from "../shared/organize";
-import type { SessionStatus, SyncState } from "../shared/protocol";
+import type { QueueOp, SessionStatus, SyncState } from "../shared/protocol";
 import { type SessionSort, type SortFields, sortBy } from "../shared/session-sort";
 
 export type { OrgColor, Priority };
@@ -25,7 +25,8 @@ export interface BoardCard {
 	status: SessionStatus;
 	lastText?: string;
 	cost?: number;
-	queue?: { pending: number; running: number; done: number; total: number; state?: string; waitReason?: string };
+	/** Task queue summary: `failed`/`interrupted` counts, `autoRun` on, what the next task waits for. */
+	queue?: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number; autoRun?: boolean; state?: string; waitReason?: string };
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
 	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */
@@ -390,6 +391,59 @@ export function projectsOf(cards: BoardCard[]): string[] {
 	return [...new Set(cards.map(c => c.project))].sort((a, b) => a.localeCompare(b));
 }
 
+// ---------- queue actions ----------
+
+export interface QueueActions {
+	/** Pending tasks that aren't already running on their own: start the queue now. */
+	run: boolean;
+	/** Failed or interrupted tasks, or a finished queue: put them back to pending and re-arm (requeueOps). */
+	requeue: boolean;
+	/** Pending work (or a start already set) that can get a start time. */
+	schedule: boolean;
+	unschedule: boolean;
+}
+
+/** Which queue actions a card offers (hover buttons, context menu, drop on Queued). */
+export function queueActions(c: Pick<BoardCard, "queue" | "startAt">): QueueActions {
+	const q = c.queue;
+	if (!q || q.total === 0) return { run: false, requeue: false, schedule: false, unschedule: false };
+	const finished = q.pending === 0 && q.running === 0;
+	return {
+		run: q.pending > 0 && (!q.autoRun || c.startAt !== undefined),
+		requeue: (q.failed ?? 0) > 0 || (q.interrupted ?? 0) > 0 || finished,
+		schedule: q.pending > 0 || (q.failed ?? 0) > 0 || c.startAt !== undefined,
+		unschedule: c.startAt !== undefined,
+	};
+}
+
+/**
+ * Status board: cards dropped on Queued from another column that have queue work to (re)start; the
+ * extension requeues them (requeueOps, else runs their pending tasks). Undefined when the drop isn't one.
+ */
+export function requeueDrop(mode: BoardMode, columns: BoardColumn[], movingIds: string[], target: DropTarget): string[] | undefined {
+	const col = columns.find(c => c.id === target.columnId);
+	if (mode !== "status" || !col?.queued || movingIds.length === 0) return undefined;
+	for (const id of movingIds) {
+		const at = findCard(columns, id);
+		const card = at?.section.cards.find(c => c.id === id);
+		if (!at || !card || at.column.id === col.id) return undefined;
+		const actions = queueActions(card);
+		if (!actions.run && !actions.requeue) return undefined;
+	}
+	return movingIds;
+}
+
+/**
+ * The queue ops a card's Run now / Requeue (or a drop on Queued) sends to the planner. Requeue (`lane.requeue`:
+ * failed tasks back to pending, else a paused or interrupted queue restarts, else the last finished task runs
+ * again, a scheduled start kept) falls back to run for a queue with only pending work; run (`run`: the first
+ * pending task goes ahead and a scheduled start is dropped) needs a pending task. Empty: nothing to do.
+ */
+export function queueOpsFor(action: "run" | "requeue", c: Pick<BoardCard, "queue" | "startAt">, hasPending: boolean): QueueOp[] {
+	if (action === "requeue" && queueActions(c).requeue) return [{ op: "requeue" }];
+	return hasPending ? [{ op: "run" }] : [];
+}
+
 // ---------- extension <-> board webview ----------
 
 export interface SchedulerInfo {
@@ -411,6 +465,12 @@ export type FromBoard =
 	| { type: "resume"; ids: string[] }
 	/** "Re-run with parent changes": the planner re-runs these tasks on top of their parents' current work. */
 	| { type: "rerunWithParent"; ids: string[] }
+	/** Start the queue now (`run` op). */
+	| { type: "runNow"; ids: string[] }
+	/** requeueOps, else run the pending tasks (drop on Queued). */
+	| { type: "requeue"; ids: string[] }
+	/** Queue start time (epoch ms); null unschedules, undefined asks for a typed time. */
+	| { type: "schedule"; ids: string[]; at?: number | null }
 	/** Moves (drag & drop, keyboard): lane/group/priority/rank patches applied in one store write. */
 	| { type: "apply"; updates: CardUpdate[] }
 	| { type: "setPriority"; ids: string[]; priority: Priority }

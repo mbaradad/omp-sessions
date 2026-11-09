@@ -5,7 +5,8 @@ import * as vscode from "vscode";
 import type { PermissionMode, PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PERMISSION_MODES, PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, modeGateNote, spareNote, undoneWith } from "../shared/plan-tree";
-import { formatStartTime, parseStartTime } from "../shared/task-text";
+import { START_TIME_HELP, parseStartTime } from "../planner/when";
+import { formatStartTime } from "../shared/task-text";
 import { gateStatus } from "../ao/client";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
@@ -26,7 +27,19 @@ const MODE_HELP: Record<PermissionMode, string> = {
 	auto: "no questions",
 };
 
-const TIME_HELP = "HH:MM (today or tomorrow), YYYY-MM-DD HH:MM, +30m / +2h, tomorrow 9:00";
+/** The start time the user types (planner/when.ts: the parser the CLI and Hermes share); undefined when cancelled. */
+export async function askStartTime(title: string): Promise<number | undefined> {
+	const check = (v: string): string | undefined => {
+		try {
+			parseStartTime(v);
+			return undefined;
+		} catch (err) {
+			return err instanceof Error ? err.message : String(err);
+		}
+	};
+	const input = await vscode.window.showInputBox({ title, prompt: START_TIME_HELP, ignoreFocusOut: true, validateInput: check });
+	return input === undefined || check(input) ? undefined : parseStartTime(input);
+}
 
 export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: TasksProvider): void {
 	const { context } = api;
@@ -134,13 +147,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 				return;
 			}
 		}
-		const input = await vscode.window.showInputBox({
-			title: node.kind === "lane" ? `Start the queue “${name}” at` : `Start “${name}” not before`,
-			prompt: TIME_HELP,
-			ignoreFocusOut: true,
-			validateInput: v => (v.trim() && parseStartTime(v) === undefined ? `Couldn't read that time. Use ${TIME_HELP}.` : undefined),
-		});
-		const time = input === undefined ? undefined : parseStartTime(input);
+		const time = await askStartTime(node.kind === "lane" ? `Start the queue “${name}” at` : `Start “${name}” not before`);
 		if (time === undefined) return;
 		if (await edit([set(time)])) void vscode.window.setStatusBarMessage(`Switchyard: “${name}” starts ${formatStartTime(time)}`, 5000);
 	});

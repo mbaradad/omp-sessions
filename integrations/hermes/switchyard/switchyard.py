@@ -288,12 +288,9 @@ class Switchyard:
         return self.json(["queue", free_text_ok(session), "run", "--json"])
 
     def queue_retry(self, session: str) -> Any:
-        """Requeues a failed (or interrupted) task, `queue retry`, and turns the queue on unless it waits for a
-        scheduled start, which is kept; returns the queue. Fails when there is nothing to retry."""
-        queue = self.json(["queue", free_text_ok(session), "retry", "--json"])
-        if isinstance(queue, dict) and not queue.get("startAt") and queue.get("autoRun") is not True:
-            queue = self.json(["queue", free_text_ok(session), "start", "--json"])
-        return queue
+        """`queue requeue`: failed tasks, else a paused or interrupted queue, else the last finished task back to
+        pending and the queue on (a scheduled start is kept); returns the queue. Fails when there is nothing to requeue."""
+        return self.json(["queue", free_text_ok(session), "requeue", "--json"])
 
     def queue_get(self, session: str) -> Any:
         """The session's queue (queue.json: tasks, autoRun, startAt)."""

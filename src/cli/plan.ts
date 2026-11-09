@@ -15,6 +15,19 @@ export type QueueOp = PlannerQueueOp;
 export type PlannerQueue = QueueView;
 export type { PlannerConfig, PlannerStatus } from "../planner/types";
 
+/**
+ * Whether `queue requeue` would change anything (the planner's `lane.requeue` is silent when not): failed tasks, an
+ * interrupted one, a paused queue, or a finished queue whose last task can run again. Not: no tasks, a running task
+ * with nothing failed, or pending tasks that already wait to run (armed, or scheduled: `queue run` starts those now).
+ */
+export function canRequeue(q: PlannerQueue): boolean {
+	if (q.tasks.length === 0) return false;
+	if (q.tasks.some(t => t.status === "failed")) return true;
+	if (q.tasks.some(t => t.status === "running")) return false;
+	if (q.tasks.some(t => t.status === "pending")) return q.tasks.some(t => t.status === "pending" && t.interrupted !== undefined) || (!q.autoRun && q.startAt === undefined);
+	return true;
+}
+
 /** `out/planner.js`, next to `out/cli.js` (resolved on use: `__dirname` exists only in the CommonJS bundle). */
 function plannerScript(): string {
 	const script = path.join(__dirname, "planner.js");
@@ -66,6 +79,8 @@ export interface LaneSummary {
 	total: number;
 	autoRun: boolean;
 	startAt?: number;
+	/** Failed tasks (`queue requeue` and the cards' Requeue bring them back). */
+	failed?: number;
 	/** When a task was cut short by a crash or restart (epoch ms): it waits for a person. */
 	interrupted?: number;
 	/** The next task waits for its start time. */
@@ -109,6 +124,7 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		const tasks = plan.tasks.filter(t => t.lane === lane.id);
 		const next = tasks.find(t => t.status === "pending" || t.status === "running");
 		const summary: LaneSummary = { pending: lane.pending, running: lane.running, done: lane.done, total: lane.total, autoRun: lane.autoRun };
+		if (lane.failed) summary.failed = lane.failed;
 		if (lane.startAt !== undefined) summary.startAt = lane.startAt;
 		if (lane.priority) summary.priority = lane.priority;
 		const cut = tasks.find(t => t.state === "interrupted");

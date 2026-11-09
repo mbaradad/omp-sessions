@@ -177,6 +177,7 @@ select {
 .pinned { color: var(--c-gray); display: inline-flex; }
 .card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px; color: var(--vscode-descriptionForeground); }
 .project { display: inline-flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched { display: inline-flex; align-items: center; gap: 3px; flex: none; margin-left: auto; color: var(--c-yellow); white-space: nowrap; }
 .pill {
 	display: inline-flex;
 	align-items: center;
@@ -219,6 +220,7 @@ select {
 .progress { width: 44px; height: 4px; border-radius: 2px; background: var(--vscode-badge-background); display: inline-block; overflow: hidden; }
 .progress-fill { display: block; height: 100%; background: var(--c-green); }
 .queue { display: inline-flex; align-items: center; gap: 4px; }
+.queue.failed { color: var(--c-red); }
 .tag { border: 1px solid var(--vscode-panel-border); border-radius: 5px; padding: 0 5px; }
 .spacer { flex: 1; }
 .cost { font-variant-numeric: tabular-nums; }

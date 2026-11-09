@@ -1,4 +1,5 @@
 // Argument parsing for `switchyard` (no side effects, unit-tested).
+import { parseStartTime } from "../planner/when";
 
 export class UsageError extends Error {}
 
@@ -69,24 +70,11 @@ export function value(args: Args, name: string): string | undefined {
 	return typeof v === "string" ? v : undefined;
 }
 
-/** "+30m", "+2h", "14:30" (next occurrence), or an ISO date/time → epoch ms; throws a UsageError on anything else or a past time. */
+/** planner/when.ts parseStartTime (+30m, in 2h, 14:30, 9pm, tomorrow 9:00, ISO) → epoch ms; anything unreadable or past is a UsageError. */
 export function parseWhen(text: string, now = Date.now()): number {
-	const t = text.trim();
-	const rel = /^\+(\d+)\s*([smhd])$/.exec(t);
-	const unit: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-	if (rel) return now + Number(rel[1]) * (unit[rel[2]] ?? 0);
-	const hm = /^(\d{1,2}):(\d{2})$/.exec(t);
-	if (hm) {
-		const hours = Number(hm[1]);
-		const minutes = Number(hm[2]);
-		if (hours > 23 || minutes > 59) throw new UsageError(`${t} is not a time of day (00:00-23:59)`);
-		const d = new Date(now);
-		d.setHours(hours, minutes, 0, 0);
-		if (d.getTime() <= now) d.setDate(d.getDate() + 1);
-		return d.getTime();
+	try {
+		return parseStartTime(text, now);
+	} catch (err) {
+		throw new UsageError(err instanceof Error ? err.message : String(err));
 	}
-	const at = /^\d{4}-\d{2}-\d{2}/.test(t) ? Date.parse(t) : Number.NaN;
-	if (!Number.isFinite(at)) throw new UsageError(`can't read "${t}" as a time: use +30m, +2h, 14:30 or an ISO time like 2025-01-31T08:00`);
-	if (at <= now) throw new UsageError(`${t} is in the past`);
-	return at;
 }

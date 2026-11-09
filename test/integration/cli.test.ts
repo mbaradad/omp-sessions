@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { AoClient } from "../../src/ao/client";
 import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
 
@@ -290,6 +291,61 @@ test("cli: complete/uncomplete mark a session (✓ in ls and show); queue requeu
 	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
 	const startedAfter = json<Queue>("queue", id, "--json").data.tasks[0].startedAt ?? 0;
 	assert.ok(startedAfter > startedBefore, "the task ran again");
+});
+
+test("cli: queue at schedules, reschedules (forms the board and Hermes also send) and unschedules; run drops the start; requeue reruns a failed task and keeps a schedule", { skip, timeout: 240_000 }, async () => {
+	type Queue = { startAt?: number; autoRun: boolean; tasks: Array<{ status: string; startedAt?: number; summary?: string }> };
+	const queue = (id: string) => json<Queue>("queue", id, "--json").data;
+	// Real AO and a real planner: poll their state, as the other tests here do.
+	const until = async (what: string, ok: () => boolean) => {
+		for (let i = 0; i < 600 && !ok(); i++) await sleep(200);
+		assert.ok(ok(), what);
+	};
+	// A task that fails (the fake's JSON-RPC error), scheduled two hours out.
+	const created = json("new", repo, "--task", "boom", "--notes", "error internal requeue-boom", "--at", "+2h", "--mode", "auto", "--json");
+	assert.equal(created.status, 0, created.stderr);
+	const id = created.data.id;
+	const first = queue(id).startAt as number;
+	assert.ok(first > Date.now() + 90 * 60_000);
+	assert.equal(json("show", id, "--json").data.state, "scheduled");
+	// Reschedule: relative, time of day and the typed forms the board's input box takes.
+	assert.equal(cli("queue", id, "at", "+30m").status, 0);
+	const soon = queue(id).startAt as number;
+	assert.ok(soon < first && soon > Date.now() + 20 * 60_000, "moved earlier");
+	assert.equal(cli("queue", id, "at", "tomorrow", "9:00").status, 0);
+	assert.equal(new Date(queue(id).startAt as number).getHours(), 9);
+	assert.equal(cli("queue", id, "at", "in 2 hours").status, 0);
+	assert.ok((queue(id).startAt as number) > Date.now() + 100 * 60_000);
+	const bad = cli("queue", id, "at", "whenever");
+	assert.equal(bad.status, 2);
+	assert.match(bad.stderr, /can't read "whenever" as a time/);
+	assert.equal(cli("queue", id, "at", "2020-01-01 08:00").status, 2, "the past");
+	// Unschedule: the task stays, the queue is paused, nothing runs.
+	assert.equal(cli("queue", id, "at", "off").status, 0);
+	const paused = queue(id);
+	assert.deepEqual([paused.startAt, paused.autoRun, paused.tasks[0].status], [undefined, false, "pending"]);
+	assert.notEqual(json("show", id, "--json").data.state, "scheduled");
+	// Schedule again, then Run now: the start is dropped and the task runs (and fails).
+	assert.equal(cli("queue", id, "at", "+3h").status, 0);
+	assert.equal(cli("queue", id, "run").status, 0);
+	await until("the task failed", () => queue(id).tasks[0].status === "failed");
+	const failed = queue(id);
+	assert.deepEqual([failed.startAt, failed.autoRun], [undefined, false], "a failure stops the queue");
+	assert.match(failed.tasks[0].summary ?? "", /requeue-boom/);
+	assert.equal(json<{ queue: { failed?: number } }>("show", id, "--json").data.queue.failed, 1);
+	// Requeue: the failed task goes back to pending, the queue is re-armed, it runs again and fails again.
+	const ranAt = failed.tasks[0].startedAt ?? 0;
+	assert.equal(cli("queue", id, "requeue").status, 0);
+	await until("the task ran again", () => (queue(id).tasks[0].startedAt ?? 0) > ranAt && queue(id).tasks[0].status === "failed");
+	// Requeue with a schedule set keeps it: the task waits for that time.
+	assert.equal(cli("queue", id, "at", "+3h").status, 0);
+	assert.equal(cli("queue", id, "requeue").status, 0);
+	const waiting = queue(id);
+	assert.deepEqual([waiting.tasks[0].status, waiting.autoRun, typeof waiting.startAt], ["pending", false, "number"]);
+	assert.equal(json("show", id, "--json").data.state, "scheduled");
+	await sleep(1500); // a negative check against the real planner clock: the task must not start before its time
+	assert.equal(queue(id).tasks[0].status, "pending", "not run before its time");
+	assert.equal(cli("queue", id, "at", "off").status, 0);
 });
 
 test("cli: sched budget, usage and limits are set through the planner; --usage spare needs --task", { skip }, () => {
