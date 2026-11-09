@@ -57,6 +57,16 @@ The editor actions that work on what you are looking at (*Fix with omp*, *Commit
 
 A repository without a remote needs a default branch for AO: `git remote set-head origin main`, or Switchyard sets `defaultBranch` on the AO project for you.
 
+### Idle sessions and chat hibernation
+
+A finished session keeps its omp process (and its memory) until AO hibernates it. AO does that only when its chat-hibernation setting is on, and a daemon started without AO's desktop app starts with it **off**, so idle omp processes stay up. To turn it on:
+
+```sh
+curl -X PATCH http://127.0.0.1:$(jq -r .port ~/.ao/running.json)/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'
+```
+
+About 100 seconds after a turn settles, an unwatched chat then stops its omp process and keeps its transcript; the next message wakes it (the first turn after a wake takes about 10 seconds). It is a daemon-wide AO setting that also affects your other AO sessions, so Switchyard does not change it for you; `switchyard status` tells you when it is off. Whether the setting survives a restart of the daemon is not verified: check `GET /api/v1/settings` (`chatHibernationEnabled`) after one.
+
 ### Extra omp arguments
 
 AO starts omp as `omp acp` with a fixed set of flags and has no setting for more. Switchyard adds a small `omp` launcher in `~/.switchyard/bin/` and puts that folder first on the PATH of the AO daemon it starts. For `omp acp` inside an AO session the launcher appends your extra arguments and runs the real omp; for everything else it just runs omp. Set them with `switchyard config set omp.extraArgs --profile work` (machine-wide), in VS Code with *New Session with Options…* or `switchyard new … -- <flags>` (one session; applied by a restart before the first prompt), or per project through the AO project's environment variable `SWITCHYARD_OMP_ARGS`.
