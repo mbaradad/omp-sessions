@@ -52,6 +52,10 @@ SUMMARY_MAX = 4_000
 MAX_NEW_PER_TICK = 4
 # Lane passes that try to pass a card's comments to its session before giving up on them.
 MAX_SEND_TRIES = 5
+# Lane passes a finished session may wait for its reply to become final (`replyPending`: AO flags the last
+# assistant message a moment after the turn ends) before the card completes without one: a tool-only or failed
+# turn never gets a reply, so this is bounded.
+REPLY_WAIT_PASSES = 3
 # Session states in which card comments wait: the card's queued task hasn't (re)started yet.
 HOLD_STATES = ("queued", "scheduled", "starting", "interrupted")
 # `omp-sessions answer` failures that only mean the dialog changed meanwhile (look again next pass).
@@ -192,7 +196,7 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
     ("block_input", text, question_id, approval), ("comment_input", text, question_id, approval),
-    ("block_conflict", text, mark), ("unblock",), ("complete",), ("block_transient", reason), ("retry",),
+    ("block_conflict", text, mark), ("unblock",), ("wait_reply",), ("complete",), ("block_transient", reason), ("retry",),
     ("recreate",)."""
     if card.status is None:
         return [("drop", "the card was deleted")]
@@ -216,6 +220,10 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     done, pending, running, total = (int(q.get(k) or 0) for k in ("done", "pending", "running", "total"))
     finished = done >= 1 and pending == 0 and running == 0
     if state in ("idle", "stopped") and finished:
+        # The CLI omits `reply` while the last turn's reply is not final (`replyPending`) rather than giving the
+        # previous turn's text: completing now would record no result, or a half one.
+        if report.get("replyPending") is True and not str(report.get("reply") or "").strip() and int(link.get("reply_waits") or 0) < REPLY_WAIT_PASSES:
+            return [("wait_reply",)]
         return [("complete",)]
     if link.get("state") == "failed":
         return [("claim",), ("retry",)] if card.status == "ready" else []
@@ -779,6 +787,9 @@ class Lane:
         elif kind == "claim":
             if kb.claim_task(conn, card_id, ttl_seconds=CLAIM_TTL_S, claimer=claimer_id()) is not None:
                 link["heartbeat_at"] = time.time()
+        elif kind == "wait_reply":
+            link["reply_waits"] = int(link.get("reply_waits") or 0) + 1
+            kb.heartbeat_claim(conn, card_id, ttl_seconds=CLAIM_TTL_S, claimer=claimer_id())
         elif kind == "heartbeat":
             kb.heartbeat_claim(conn, card_id, ttl_seconds=CLAIM_TTL_S, claimer=claimer_id())
             if time.time() - float(link.get("heartbeat_at") or 0) >= WORKER_HEARTBEAT_S:

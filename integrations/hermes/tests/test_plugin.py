@@ -891,6 +891,18 @@ class PureTest(unittest.TestCase):
         self.assertEqual(d(Card("ready", "omp"), gone, rep("idle"), "omp"), [("claim",), ("retry",)])
         self.assertEqual(d(Card("blocked", "omp"), gone, rep("idle"), "omp"), [])
 
+    def test_a_card_waits_for_a_pending_reply_but_not_forever(self) -> None:
+        d, Card = self.lane.decide, self.lane.Card
+        link = {"session": "s1", "state": "active", "asked": []}
+        done = {"state": "idle", "queue": {"pending": 0, "running": 0, "done": 1, "total": 1}}
+        # The reply is not final yet (the CLI leaves it out): completing now would record the wrong result.
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "replyPending": True}, "omp"), [("wait_reply",)])
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "replyPending": True, "reply": "ok"}, "omp"), [("complete",)], "a reply that is there is used")
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "reply": "ok"}, "omp"), [("complete",)])
+        # A tool-only or failed turn never gets one: after a few passes the card completes without a reply.
+        waited = {**link, "reply_waits": self.lane.REPLY_WAIT_PASSES}
+        self.assertEqual(d(Card("running", "omp"), waited, {**done, "replyPending": True}, "omp"), [("complete",)])
+
     def test_decide_merge_conflict_blocks_once_per_parent_head(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
         link = {"session": "s1", "state": "active", "asked": []}
