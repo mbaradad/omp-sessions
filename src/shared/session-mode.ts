@@ -44,15 +44,39 @@ export type GateDecision = "allow" | "ask" | "block";
  * through, commands ask; `plan`: edits are refused, commands ask; `auto`: everything goes through.
  * Subagents (`sub`) can't ask anyone: in `plan` their edits are refused too, otherwise they run.
  */
-export function gateDecision(mode: PermissionMode, tool: string, sub = false): GateDecision {
+export function gateDecision(mode: PermissionMode, tool: string, sub = false, internalOnly = false): GateDecision {
 	if (mode === "auto") return "allow";
 	if (EDIT_TOOLS[tool]) {
-		if (mode === "plan") return "block";
+		// omp's own plan file (`local://…`) and its propose step (`xd://propose`) are how it presents a plan: plan mode lets them through.
+		if (mode === "plan") return internalOnly ? "allow" : "block";
 		if (mode === "edits" || sub) return "allow";
 		return "ask";
 	}
 	if (COMMAND_TOOLS[tool] && !sub) return "ask";
 	return "allow";
+}
+
+const INTERNAL_TARGET = /^(local|xd):\/\//;
+
+/** Every path an edit call names: path arguments, and the headers of hashline edits and patches. */
+function namedPaths(input: Record<string, unknown>): string[] {
+	const out: string[] = [];
+	for (const key of ["path", "file", "file_path", "notebook_path", "notebook"]) if (typeof input[key] === "string" && input[key]) out.push(input[key]);
+	if (Array.isArray(input.paths)) for (const v of input.paths) if (typeof v === "string") out.push(v);
+	const text = input.input ?? input.patch;
+	if (typeof text === "string") {
+		for (const m of text.matchAll(/^\[([^\]\n#]+)#[0-9A-Za-z]{2,8}\]/gm)) out.push(m[1].trim());
+		for (const m of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) out.push(m[1].trim());
+		for (const m of text.matchAll(/^\*\*\* Move to: (.+)$/gm)) out.push(m[1].trim());
+		for (const m of text.matchAll(/^MV\s+"?([^"\n]+)"?\s*$/gm)) out.push(m[1].trim());
+	}
+	return out;
+}
+
+/** The call writes only omp's internal `local://` and `xd://` targets (and names at least one). */
+export function targetsOnlyInternal(input: Record<string, unknown>): boolean {
+	const paths = namedPaths(input);
+	return paths.length > 0 && paths.every(p => INTERNAL_TARGET.test(p));
 }
 
 /** What a tool call does, for the question's text: the command, or the path(s) an edit touches. */
