@@ -15,17 +15,17 @@ Switchyard works the same whether everything runs on the computer in front of yo
 
 | Piece | What it does | Runs as |
 | --- | --- | --- |
-| **omp** | the coding agent | one `omp acp` process per session, started by AO |
+| **The coding agents** | AO's harnesses: omp, Claude Code, Codex, … (which one a session runs: [Which harness](#which-harness)) | one process per session, started by AO (`omp acp` for omp) |
 | **Agent Orchestrator (AO)** | runs the sessions: per-session hosts that outlive every client, the chat history, approvals, worktrees, the phone listener, notifications | `ao daemon`, a user service |
 | **The Switchyard planner** | holds your plans (task graphs, queues, schedules, priorities, the concurrency limit) and sends each ready task to AO | `switchyard-planner`, a user service |
-| **Switchyard omp extension** | per-session checkpoints (undo and redo of a turn, files included), permission modes, the todo list, the link from an AO session to its omp transcript | loaded by omp inside each AO session |
+| **Switchyard omp extension** | omp sessions only: per-session checkpoints (undo and redo of a turn, files included), permission modes, the todo list, the link from an AO session to its omp transcript | loaded by omp inside each AO session |
 | **Clients** | VS Code, the `switchyard` command, the MCP bridge, the Hermes plugin, the agent skill | where you use them |
 
 Sessions never depend on the planner or on a client. If the planner is down, running sessions keep working; queued and scheduled work waits until it is back.
 
 ## 1. omp, AO and Switchyard
 
-1. **omp** on the machine: `curl -fsSL https://omp.sh/install | sh`, then sign in to a model provider (run `omp`, then `/login`). AO needs omp 15.0.0 or newer.
+1. **A coding agent** on the machine, signed in, that AO can run in Chat mode: omp (`curl -fsSL https://omp.sh/install | sh`, then run `omp` and `/login`; AO needs omp 15.0.0 or newer), Claude Code, Codex, … Several are fine: [Which harness](#which-harness) says which one a session gets.
 2. **Agent Orchestrator** on the machine, one of:
    - **The AO desktop app** from [orchestrator.inc](https://orchestrator.inc/download/) (macOS, Windows, Linux). It owns the daemon and starts it for you; Switchyard finds it. Use this on a computer with a screen.
    - **Headless** (a server or a WSL 2 distribution): AO publishes no bare binary yet, so build it. You need Git and Go 1.27 or newer (`GOTOOLCHAIN=auto` downloads the right toolchain):
@@ -42,18 +42,26 @@ Sessions never depend on the planner or on a client. If the planner is down, run
    - **Only the command** (a headless server, or no VS Code): with Node 22+, `npm install -g <the switchyard package>` and `switchyard omp-extension install`.
 4. **Check it**, in a terminal on the machine:
    ```sh
-   switchyard status          # AO daemon, omp, the planner, default model, sessions, problems (exit 1 if any)
-   switchyard config set model anthropic/claude-sonnet-4-5   # optional: default model of new sessions (one `switchyard models` lists)
+   switchyard status          # AO daemon, default harness, omp, the planner, default model, sessions, problems (exit 1 if any)
+   switchyard harnesses       # AO's chat harnesses, their auth status, and the one new sessions get
+   switchyard config set harness claude-code   # optional: default harness of new sessions (none: AO decides)
+   switchyard config set model anthropic/claude-sonnet-4-5   # optional: default model of new omp sessions (one `switchyard models` lists)
    ```
    `switchyard status` says what is missing. The planner is started on demand and installed as a login service the first time (a systemd user unit `switchyard-planner.service` on Linux, a launchd agent `dev.switchyard.planner` on macOS), so queued and scheduled work keeps running after a crash or reboot. It needs Node 22+ on PATH; with only VS Code's own runtime (as over Remote-SSH without Node installed), the planner still starts on demand but isn't installed as a service, and `switchyard status` says why. `switchyard server install` does it by hand, `switchyard config set service off` stops it from happening by itself, `switchyard server uninstall` removes it. On a Linux server, run `loginctl enable-linger $USER` so user services keep running when nobody is logged in.
 
 That is all Switchyard needs. The rest is optional.
 
+### Which harness
+
+A session runs one of AO's chat harnesses (`switchyard harnesses` lists them with AO's auth status). Resolved for every session, from every client: the harness asked for (`switchyard new --harness <id>`, a planner task's or lane's `harness`, the Hermes tool's `harness` or a board's `harness`, VS Code's pick); else Switchyard's default (`switchyard config set harness <id>|none`, or VS Code's `switchyard.defaultHarness`, both in `~/.switchyard/config.json`); else the AO project's worker harness (`worker.agent`); else AO's default: the only authorized one, or with several `omp` when it is authorized, else the most used one. A harness AO can't chat with is refused with the list.
+
+On another harness the permission modes become AO approval modes (Ask → `default`, Edits → `accept-edits`, Auto → `bypass-permissions`; a mode the harness can't run is refused when asked for, a default one gives way to the nearest it can). Plan mode, `/undo` and `/redo` checkpoints, the todo mirror, extra omp flags and the default model of `config set model` are omp-only; Switchyard says so when one is asked of another harness.
+
 ### Every session gets its own worktree
 
 AO runs each session in its own git worktree, on a branch `ao/<session>/root` made from the repository's default branch, under `~/.ao/data/worktrees/<project>/<session>`. Two sessions never overwrite each other, and your checkout stays as it is until you merge (*Merge into Main Checkout…* in VS Code, or `git merge ao/<session>/root`). A folder outside git gets an empty scratch folder instead, so start sessions that need your files from a git repository.
 
-The editor actions that work on what you are looking at (*Fix with omp*, *Commit with omp*, *Review Uncommitted Changes*, …) tell the session where your working copy is, so they edit your checkout, not the worktree.
+The editor actions that work on what you are looking at (*Fix with…*, *Commit with…*, *Review Uncommitted Changes*, …) tell the session where your working copy is, so they edit your checkout, not the worktree.
 
 A repository without a remote needs a default branch for AO: `git remote set-head origin main`, or Switchyard sets `defaultBranch` on the AO project for you.
 
@@ -135,7 +143,7 @@ The phone uses **AO's mobile app** ([iPhone and iPad](https://apps.apple.com/app
    - **Tailscale on Windows, omp in WSL 2**, and other setups where the phone can't see the machine: [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2).
 
    Details and limits: [Phone and API access](REMOTE-API.md).
-3. **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/switchyard` says what needs you and `/switchyard take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
+3. **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts agent sessions, and the chat hears back when they finish or need you. In any chat, `/switchyard` says what needs you and `/switchyard take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
 
 ## 4. The laptop, in the remote arrangement
 
@@ -149,7 +157,7 @@ Voice isn't available in this version.
 ## A day with this setup
 
 1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `switchyard`, or starts and schedules sessions directly (`switchyard_session_start`, with `at` for later).
-2. **omp does the coding.** The planner sends ready cards and tasks to AO, which gives each session its own worktree and branch, within the planner's concurrency limit (`switchyard sched set <n>`).
+2. **The agents do the coding.** The planner sends ready cards and tasks to AO, which gives each session its own worktree and branch, within the planner's concurrency limit (`switchyard sched set <n>`).
 3. **Answer questions anywhere.** A session that needs you shows up on the Switchyard page in Hermes, on the phone, in VS Code, in `switchyard ls`, and as a message in the chat that started it. Answering in one place answers it everywhere. Approvals are yours: comments and the Hermes agent can't answer them (unless you turn on `agent_approvals`).
 4. **Review in VS Code.** *Open project in VS Code* on the Hermes page (or `switchyard vscode <session>`) opens the worktree; diffs, checkpoints and undo per turn. Merge the branch when you are happy. The card gets the session's final reply, and dependent cards start.
 
