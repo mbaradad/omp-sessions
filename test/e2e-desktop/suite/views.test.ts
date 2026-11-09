@@ -1,6 +1,6 @@
 // The AO-backed non-chat surfaces in a real VS Code, against an isolated AO daemon running real omp
 // (test/e2e-desktop/views.mjs). Reads the views' state through the API `activate` returns, drives them
-// through their commands, and checks AO's side through its HTTP API. Screenshots go to OMP_E2E_SHOTS.
+// through their commands, and checks AO's side through its HTTP API. Screenshots go to SWITCHYARD_E2E_SHOTS.
 import * as assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -14,8 +14,8 @@ import { writeLauncherSettings } from "../../../src/shared/launch";
 import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairing";
 import type { SessionMeta } from "../../../src/shared/protocol";
 
-const REPO = fs.realpathSync(process.env.OMP_E2E_REPO ?? "");
-const SHOTS = process.env.OMP_E2E_SHOTS ?? "";
+const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
+const SHOTS = process.env.SWITCHYARD_E2E_SHOTS ?? "";
 
 /** Polls `fn` until truthy: AO state lands through its change stream, with no promise the suite can await. */
 async function waitFor<T>(what: string, fn: () => T | undefined | Promise<T | undefined>, timeoutMs = 120_000): Promise<T> {
@@ -53,7 +53,7 @@ describe("AO views", () => {
 
 	it("connects to the AO daemon from its run file and loads the session list", async () => {
 		await waitFor("first session list", () => api.sessions.loaded);
-		assert.equal(ao.baseUrl, process.env.OMP_E2E_AO);
+		assert.equal(ao.baseUrl, process.env.SWITCHYARD_E2E_AO_URL);
 		assert.deepEqual(api.sessions.all(), [], "fresh daemon: no sessions");
 		await vscode.commands.executeCommand("omp.sessions.focus");
 	});
@@ -213,7 +213,7 @@ describe("AO views", () => {
 	it("Doctor reports the AO daemon, AO's readiness of omp, the planner and the sessions", async () => {
 		await vscode.commands.executeCommand("omp.copyDiagnostics");
 		const report = await vscode.env.clipboard.readText();
-		assert.match(report, new RegExp(`AO daemon running at ${(process.env.OMP_E2E_AO ?? "").replace(/[.]/g, "\\.")}`));
+		assert.match(report, new RegExp(`AO daemon running at ${(process.env.SWITCHYARD_E2E_AO_URL ?? "").replace(/[.]/g, "\\.")}`));
 		assert.match(report, /AO can run omp/);
 		assert.match(report, /## Planner/);
 		assert.match(report, /views smoke \(repo-1\)/);

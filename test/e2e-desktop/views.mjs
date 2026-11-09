@@ -5,7 +5,7 @@
 //   npm run test:e2e:views
 //
 // Needs `ao` (AO_BIN, else PATH / ~/.local/bin) and a logged-in `omp`. Scratch state lives in
-// /tmp/ao-smoke-views (OMP_E2E_SCRATCH): `repo/` (the git project), `ao/` (the daemon's data dir and
+// /tmp/ao-smoke-views (SWITCHYARD_E2E_SCRATCH): `repo/` (the git project), `ao/` (the daemon's data dir and
 // run file), `home/` (the isolated HOME and XDG_*; only .omp/agent links to the real one), `vscode/` (user data, extensions, OMP_VSCODE_HOME) and `shots/` (screenshots the
 // suite takes). Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_VERBOSE=1 echoes VS Code's log.
 // The shared dev daemon is never touched: discovery goes through AO_RUN_FILE.
@@ -53,7 +53,7 @@ await esbuild.build({
 });
 
 // ---------- scratch state ----------
-const scratch = path.resolve(process.env.OMP_E2E_SCRATCH || "/tmp/ao-smoke-views");
+const scratch = path.resolve(process.env.SWITCHYARD_E2E_SCRATCH || "/tmp/ao-smoke-views");
 const dirs = {
 	repo: path.join(scratch, "repo"),
 	ao: path.join(scratch, "ao"),
@@ -192,9 +192,9 @@ try {
 				SWITCHYARD_HOME: switchyardHome,
 				// Never start (or find) the user's own daemon: the run file above is the only one.
 				OMP_SESSIONS_NO_SERVER: "1",
-				OMP_E2E_REPO: dirs.repo,
-				OMP_E2E_SHOTS: dirs.shots,
-				OMP_E2E_AO: baseUrl,
+				SWITCHYARD_E2E_REPO: dirs.repo,
+				SWITCHYARD_E2E_SHOTS: dirs.shots,
+				SWITCHYARD_E2E_AO_URL: baseUrl,
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),
