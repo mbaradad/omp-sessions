@@ -4,7 +4,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 version=$(node -p 'require("./package.json").version')
-vsix="dist/switchyard-$version.vsix"
+# Absolute: the VS Code server CLI resolves a relative path against its own working directory.
+vsix="$PWD/dist/switchyard-$version.vsix"
 [ -f "$vsix" ] || { echo "missing $vsix; run npm run package" >&2; exit 1; }
 
 servers="$HOME/.vscode-server/cli/servers"

@@ -16,7 +16,7 @@ written with update_setting).
           group: Lightscale                 # omp group of the board's sessions (default: board name)
           mode: edits
           assignee: switchyard
-          model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: Switchyard' default)
+          model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: Switchyard's default)
           comment_authors: [dashboard, alice]   # replaces the lane's list on this board
           archive_completed: true               # replaces the lane's archive_completed on this board
     projects:                      # Hermes project id/slug/name (or any name you like) -> folder

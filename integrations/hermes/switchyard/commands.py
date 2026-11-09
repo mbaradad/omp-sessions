@@ -277,7 +277,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     board.add_argument("--group", help="omp group of the board's sessions (default: board name)")
     board.add_argument("--mode", choices=MODES)
     board.add_argument("--assignee")
-    board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": Switchyard' default)")
+    board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": Switchyard's default)")
     board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
     board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their omp sessions) once the lane completes them (default: the lane's setting)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
