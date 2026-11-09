@@ -58,6 +58,7 @@ describe("AO views", () => {
 	it("connects to the AO daemon from its run file and loads the session list", async () => {
 		await waitFor("first session list", () => api.sessions.loaded);
 		assert.equal(ao.baseUrl, process.env.SWITCHYARD_E2E_AO_URL);
+		await waitFor("the shared change stream is open", () => api.ao.status?.state === "open", 15_000);
 		assert.deepEqual(api.sessions.all(), [], "fresh daemon: no sessions");
 		await vscode.commands.executeCommand("omp.sessions.focus");
 	});

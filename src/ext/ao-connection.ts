@@ -2,7 +2,7 @@
 // (a systemd user unit where available, else a detached process) when `omp.server.autoStart` allows.
 // Every module that talks to AO asks `client()`; a failed attempt is retried on the next ask.
 import * as vscode from "vscode";
-import { type AoEvent, type AoEventSubscription, AoClient } from "../ao/client";
+import { type AoEvent, type AoEventSubscription, type AoStreamStatus, AoClient } from "../ao/client";
 
 export class AoConnection implements vscode.Disposable {
 	readonly log = vscode.window.createOutputChannel("AO", { log: true });
@@ -20,6 +20,19 @@ export class AoConnection implements vscode.Disposable {
 	 * client connects. Filter by `event.sessionId`; `session_updated` fires for any change of a session.
 	 */
 	readonly onEvent = this.eventEmitter.event;
+
+	private readonly statusEmitter = new vscode.EventEmitter<AoStreamStatus>();
+	/**
+	 * The state of that same subscription: `open` (with `resumed`/`reset`), `gap`, `retrying`, `closed`. After a
+	 * `reset` or a `gap` events may have been missed: re-read whatever was derived from them (a conversation).
+	 */
+	readonly onStatus = this.statusEmitter.event;
+	private lastStatus: AoStreamStatus | undefined;
+
+	/** The latest stream status (for a consumer that starts after it was announced); undefined before the first client. */
+	get status(): AoStreamStatus | undefined {
+		return this.lastStatus;
+	}
 
 	/** The connected client, if any (no I/O). */
 	get connected(): AoClient | undefined {
@@ -47,7 +60,14 @@ export class AoConnection implements vscode.Disposable {
 				this.current = client;
 				this.connecting = undefined;
 				this.log.info(`connected to AO at ${client.baseUrl}`);
-				this.subscription ??= client.events({ after: "latest", onEvent: event => this.eventEmitter.fire(event) });
+				this.subscription ??= client.events({
+					after: "latest",
+					onEvent: event => this.eventEmitter.fire(event),
+					onStatus: status => {
+						this.lastStatus = status;
+						this.statusEmitter.fire(status);
+					},
+				});
 				this.connectEmitter.fire(client);
 				return client;
 			},
@@ -64,6 +84,7 @@ export class AoConnection implements vscode.Disposable {
 	dispose(): void {
 		this.subscription?.close();
 		this.eventEmitter.dispose();
+		this.statusEmitter.dispose();
 		this.connectEmitter.dispose();
 		this.log.dispose();
 	}
