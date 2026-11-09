@@ -13,8 +13,6 @@ h2 { position: absolute; left: 56px; top: 40px; margin: 0; font-size: 30px; lett
 .thumb { height: 150px; overflow: hidden; background: #1f1f1f; border-bottom: 1px solid rgba(236, 225, 255, 0.1); position: relative; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb img.crop { width: 560px; height: auto; max-width: none; object-fit: fill; }
-.thumb.phoneish { background: #0c0812; display: grid; place-items: center; }
-.thumb.phoneish img { width: auto; height: 136px; object-fit: contain; border-radius: 10px; border: 1px solid rgba(255,255,255,.14); }
 .thumb.away { background: radial-gradient(70% 90% at 50% 40%, rgba(155, 77, 255, 0.22), transparent 70%), #120c1a; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 0 14px; }
 .thumb.away .row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #e6def2; background: rgba(42, 31, 57, 0.8); border: 1px solid rgba(236, 225, 255, 0.12); border-radius: 8px; padding: 6px 9px; }
 .thumb.away .row span:last-child { margin-left: auto; color: #9389a3; font-size: 11.5px; }
@@ -23,14 +21,14 @@ h2 { position: absolute; left: 56px; top: 40px; margin: 0; font-size: 30px; lett
 .body p { margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: #bdb3cb; }
 </style></head>
 <body><div class="glow"></div><div class="grid"></div>
-<h2>A day with omp Sessions</h2>
-<div class="sub dim">Hand work to omp in the morning, check in from anywhere, review and keep what's good.</div>
+<h2>A day with Switchyard</h2>
+<div class="sub dim">Plan the work in the morning, check in from anywhere, review and keep what's good.</div>
 <div class="line"></div>
 <div class="steps">
 	<div class="step">
 		<div class="pin">1</div><div class="time">09:00 · at your desk</div>
 		<div class="card"><div class="thumb"><img class="crop" src="../tasks.png" style="margin: -50px 0 0 -26px;" alt=""></div>
-		<div class="body"><h3>Queue the day</h3><p>Tasks with subtasks across two repos. Two run at a time; the rest wait their turn.</p></div></div>
+		<div class="body"><h3>Plan the day</h3><p>Tasks, subtasks and dependencies across two repos. Two run at a time; the rest wait their turn.</p></div></div>
 	</div>
 	<div class="step">
 		<div class="pin">2</div><div class="time">09:30 · laptop closed</div>
@@ -39,12 +37,12 @@ h2 { position: absolute; left: 56px; top: 40px; margin: 0; font-size: 30px; lett
 			<div class="row"><span class="dot" style="background:#e5c07b"></span>Flaky test<span>needs you</span></div>
 			<div class="row"><span class="dot" style="background:#89d185"></span>Rate limiting<span>done</span></div>
 		</div>
-		<div class="body"><h3>Walk away</h3><p>Close VS Code, sleep the laptop, lose SSH. The sessions keep going on the machine.</p></div></div>
+		<div class="body"><h3>Walk away</h3><p>Close VS Code, lose SSH. AO keeps the sessions running; the planner starts the next task.</p></div></div>
 	</div>
 	<div class="step">
 		<div class="pin">3</div><div class="time">12:40 · on your phone</div>
-		<div class="card"><div class="thumb phoneish"><img src="../phone/approval.png" style="object-position: 0 55%; object-fit: cover; width: 120px;" alt=""></div>
-		<div class="body"><h3>Approve on the go</h3><p>A session asks to run a command: approve it, switch it to Edits, or start a new one.</p></div></div>
+		<div class="card"><div class="thumb"><img src="../approval.png" style="object-position: left center;" alt=""></div>
+		<div class="body"><h3>Approve on the go</h3><p>A session asks to run a command: answer it in AO's phone app, VS Code or Hermes.</p></div></div>
 	</div>
 	<div class="step">
 		<div class="pin">4</div><div class="time">15:00 · back in VS Code</div>

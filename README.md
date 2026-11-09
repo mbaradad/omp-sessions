@@ -4,7 +4,7 @@
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/mbaradad.switchyard?color=ed4abf)](https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-5ad8e6)](LICENSE)
 
-![Switchyard: plans for your coding agents. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
+![Switchyard: plans for your coding agents. A VS Code chat with an inline diff next to a plan with running, dependent, waiting and scheduled tasks.](docs/images/hero.png)
 
 Switchyard plans work for [oh-my-pi](https://omp.sh) (`omp`) coding agents and hands it to [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO) to run. You write plans: tasks with subtasks and dependencies, queues per session, scheduled starts, priorities and a limit on how many run at once. The Switchyard *planner*, a small service on the machine with your code, sends each task to AO when its dependencies are done, a slot is free and its start time has come. AO runs it as an omp session in its own git worktree and keeps it alive with no client open. That's the difference from omp in tmux: work keeps moving without you, not just the process. Every client reaches the same sessions: the `switchyard` command, VS Code (any session opens there with the full chat, diffs and undo), AO's phone app, Hermes Agent and other agents. Close everything, sleep the laptop or drop SSH, and come back to what happened meanwhile: answers, diffs, questions waiting for you.
 
