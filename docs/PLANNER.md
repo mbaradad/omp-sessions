@@ -290,6 +290,22 @@ instead run the whole task again.
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Checkpoints (undo/redo with files)
+
+- `Task.turn`: the AO turn id of the task's latest run, kept after it finishes (key for "this task's changes" and
+  "undo this task"); `Task.session` is its session.
+- `/undo` and `/redo` are human turns in AO. They are never task turns (the planner finds its own turn by its
+  `clientMessageId`), and activity that is just `/undo`/`/redo` does not trigger a branch sync.
+- `Task.undone` / `TaskView.undone`: a person undid the finished task's turn, so its work is gone; the task keeps
+  its `done` status (no automatic re-run) but stops satisfying `after` for dependents that have not started
+  (they show `blocked`). Redoing clears it. Set by the planner when `PlannerOptions.undone(task)` says so; asked
+  on activity in the task's session for tasks others still wait on.
+- `requeue {id, clean: true}`: before the retry is sent, `PlannerOptions.rewind(task)` undoes the earlier attempt's turn
+  (files and context). Refused when a later task of the same session exists (undo would rewind it too), when the
+  task has no earlier turn, and failed at dispatch with a clear message when the planner has no `rewind` hook.
+- The two hooks are supplied by the process (`main.ts`): they are built on `src/shared/checkpoint-ops.ts`
+  (`turnStatuses` for `undone`; `planUndo` + `runCheckpointCommand` for `rewind`), wired at integration.
+
 ## Events (`subscribe {topic: "plan"}`)
 
 - `{id, event: "plan", plan: PlanView}`: first right after subscribing, then after every change
@@ -314,6 +330,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.
 - 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.
 - 2026-11-09: lanes resolve by session id; `lane.session` set at dispatch; `state`/`waitUntil` on `LaneView` and `QueueView`.
 - 2026-11-09: draft v1.

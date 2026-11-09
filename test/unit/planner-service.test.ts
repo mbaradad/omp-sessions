@@ -208,3 +208,58 @@ test("any provider error omp ends as a completed reply fails the run (retries ap
 	assert.match(byTitle(p, "retries").summary ?? "", /Attempt 1 of 2 failed/);
 	await until("silent death interrupted", () => byTitle(p, "silent death").interrupted);
 });
+
+test("an undone task stops satisfying `after` for dependents that haven't started; redoing it brings it back (checkpoints)", async t => {
+	const ao = new FakeAo();
+	let undone = false;
+	const p = start(tempPlan(t), ao, { undone: async () => undone });
+	t.after(() => p.stop());
+	p.edit([{ op: "add", ref: "a", task: { title: "A" } }, { op: "add", task: { title: "B", after: ["@a"], startAt: Date.now() + 3_600_000 } }]);
+	const s = await until("A sent", () => byTitle(p, "A").run?.phase === "sent" && byTitle(p, "A").run?.session);
+	ao.finishTurn(s, "completed", "A done");
+	await until("A done with its turn kept", () => byTitle(p, "A").status === "done" && byTitle(p, "A").turn);
+	assert.equal(p.view().tasks.find(x => x.title === "B")?.state, "scheduled");
+	undone = true;
+	ao.poke(s, "active");
+	ao.poke(s, "idle");
+	await until("A undone", () => byTitle(p, "A").undone);
+	assert.equal(p.view().tasks.find(x => x.title === "B")?.state, "blocked");
+	assert.equal(byTitle(p, "A").status, "done", "no automatic re-run");
+	undone = false;
+	ao.poke(s, "active");
+	ao.poke(s, "idle");
+	await until("A redone", () => !byTitle(p, "A").undone);
+	assert.equal(p.view().tasks.find(x => x.title === "B")?.state, "scheduled");
+});
+
+test("requeue {clean} undoes the failed attempt first, and only for the last task of a session", async t => {
+	const ao = new FakeAo();
+	const rewound: string[] = [];
+	const p = start(tempPlan(t), ao, { rewind: async task => void rewound.push(task.title) });
+	t.after(() => p.stop());
+	p.edit([{ op: "lane.add", id: "l_00000000ee" }, { op: "add", task: { title: "one", lane: "l_00000000ee" } }, { op: "add", task: { title: "two", lane: "l_00000000ee" } }]);
+	const s = await until("one sent", () => byTitle(p, "one").run?.phase === "sent" && byTitle(p, "one").run?.session);
+	ao.finishTurn(s, "completed", "one done");
+	await until("two sent", () => byTitle(p, "two").run?.phase === "sent");
+	ao.finishTurn(s, "failed" as never);
+	await until("two failed", () => byTitle(p, "two").status === "failed");
+	// "one" can't be undone: the later "two" shares its session and would be rewound too.
+	assert.throws(() => p.edit([{ op: "requeue", id: byTitle(p, "one").id, clean: true }]), /would rewind the later task "two"/);
+	p.edit([{ op: "requeue", id: byTitle(p, "two").id, clean: true }]);
+	assert.equal(byTitle(p, "two").clean, true);
+	await until("two re-sent", () => byTitle(p, "two").run?.phase === "sent");
+	assert.deepEqual(rewound, ["two"]);
+	assert.equal(byTitle(p, "two").clean, undefined);
+});
+
+test("requeue {clean} without the checkpoints hook fails the dispatch with a clear message", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "only" } }]);
+	const s = await until("sent", () => byTitle(p, "only").run?.phase === "sent" && byTitle(p, "only").run?.session);
+	ao.finishTurn(s, "failed" as never);
+	await until("failed", () => byTitle(p, "only").status === "failed");
+	p.edit([{ op: "requeue", id: byTitle(p, "only").id, clean: true }]);
+	await until("failed again", () => byTitle(p, "only").status === "failed" && (byTitle(p, "only").summary ?? "").includes("clean retry"));
+});

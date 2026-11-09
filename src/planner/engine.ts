@@ -236,6 +236,8 @@ export function normalizeState(raw: unknown): PlanState {
 		if (typeof tr.session === "string" && tr.session) task.session = tr.session;
 		if (typeof tr.recur === "string" && tr.recur) task.recur = tr.recur;
 		if (typeof tr.turn === "string" && tr.turn) task.turn = tr.turn;
+		if (tr.undone === true) task.undone = true;
+		if (tr.clean === true) task.clean = true;
 		if (typeof tr.followUp === "string" && tr.followUp) task.followUp = tr.followUp.slice(0, MAX_NOTES);
 		if (tr.followUpOnly === true && task.followUp) task.followUpOnly = true;
 		const git = rec(tr.git);
@@ -307,7 +309,7 @@ export function effectivePriority(state: PlanState, task: Task): Priority {
  */
 function resolved(byId: Map<string, Task>, id: string): boolean {
 	const t = byId.get(id);
-	return !!t && (t.status === "skipped" || (t.status === "done" && (!t.git || !!t.git.head)));
+	return !!t && (t.status === "skipped" || (t.status === "done" && !t.undone && (!t.git || !!t.git.head)));
 }
 
 /** The AO session a run continues: the lane's, else the task's own from an earlier run; none with fresh context. */
@@ -580,9 +582,18 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "requeue": {
 				const t = task(o.id);
 				notRunning(t, "requeue");
+				if (o.clean) {
+					if (!t.turn || !t.session) fail(`"${t.title}" has no earlier attempt to undo`);
+					// Undoing a turn rewinds every later prompt of the session too.
+					const later = s.tasks.find(x => x !== t && x.session === t.session && x.turn && (x.finishedAt ?? x.startedAt ?? 0) > (t.finishedAt ?? t.startedAt ?? 0));
+					if (later) fail(`undoing "${t.title}" would rewind the later task "${later.title}" in the same session; requeue without clean, or only the last task of a session`);
+				}
 				t.status = "pending";
 				resetRun(t);
 				delete t.paused;
+				delete t.undone;
+				if (o.clean) t.clean = true;
+				else delete t.clean;
 				const l = laneOf(s, t);
 				if (l && !l.startAt) l.autoRun = true;
 				break;

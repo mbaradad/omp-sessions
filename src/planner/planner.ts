@@ -29,6 +29,10 @@ export interface PlannerOptions {
 	now?: () => number;
 	version?: string;
 	retryBaseMs?: number;
+	/** Whether a person undid this finished task's turn (checkpoints); asked when its session shows activity. */
+	undone?: (task: Task) => Promise<boolean>;
+	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
+	rewind?: (task: Task) => Promise<void>;
 	/** How often a running task's session is asked about when no event said it died (default 10 s). */
 	livenessMs?: number;
 	/** Fallback poll of running tasks (events usually come first). */
@@ -145,6 +149,7 @@ export class Planner {
 					this.lastEventAt = this.now();
 					// Events may have been missed while the stream was down: look at everything again.
 					void this.refreshActivity();
+					this.refreshUndone();
 					this.poll();
 					this.emit();
 				},
@@ -172,7 +177,53 @@ export class Planner {
 		if (activity !== before && this.state.lanes.some(l => l.session === session)) this.schedule(100);
 		// A finished git task's session went idle after someone worked in it: its branch may have new commits.
 		if (activity === "idle" && before !== undefined && before !== "idle") {
-			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.propagation.sync(t.id);
+			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.syncUnlessUndo(t.id, session);
+		}
+		if (activity !== before) this.refreshUndone(session);
+	}
+
+	/** Propagates a finished task's branch after activity in its session, unless that activity was `/undo` or `/redo` (checkpoints: not work to propagate). */
+	private async syncUnlessUndo(id: string, session: string): Promise<void> {
+		try {
+			const messages = (await this.ao?.conversation(session))?.messages ?? [];
+			const last = messages.filter(m => m.role === "user").pop()?.text ?? "";
+			if (/^\/(?:undo|redo)(?:\s|$)/i.test(last.trim())) return;
+		} catch {
+			return;
+		}
+		await this.propagation.sync(id);
+	}
+
+	private readonly undoneTimers = new Map<string, NodeJS.Timeout>();
+
+	/** Re-reads "was this task's turn undone" for the finished tasks of `session` that others still wait on. */
+	private refreshUndone(session?: string): void {
+		const check = this.opts.undone;
+		if (!check || this.stopped) return;
+		const needed = new Set(this.state.tasks.filter(t => t.status !== "done" && t.status !== "skipped").flatMap(t => t.after ?? []));
+		for (const sid of session ? [session] : new Set(this.state.tasks.map(t => t.session).filter((x): x is string => !!x))) {
+			if (!this.state.tasks.some(t => t.status === "done" && t.session === sid && t.turn && needed.has(t.id))) continue;
+			clearTimeout(this.undoneTimers.get(sid));
+			const timer = setTimeout(async () => {
+				this.undoneTimers.delete(sid);
+				for (const t of this.state.tasks.filter(x => x.status === "done" && x.session === sid && x.turn && needed.has(x.id))) {
+					const undone = await check(t).catch(err => {
+						this.log("undone check failed", t.id, String(err));
+						return !!t.undone;
+					});
+					if (undone === !!t.undone) continue;
+					this.commit(s => {
+						const x = s.tasks.find(y => y.id === t.id);
+						if (!x) return;
+						if (undone) x.undone = true;
+						else delete x.undone;
+					});
+					this.log(undone ? "task undone" : "task redone", t.id);
+					this.schedule(0);
+				}
+			}, 500);
+			timer.unref();
+			this.undoneTimers.set(sid, timer);
 		}
 	}
 
@@ -400,6 +451,13 @@ export class Planner {
 			let spawn: Record<string, unknown> | undefined;
 			let repo: string | undefined;
 			let seeded: SeedResult = {};
+			// `requeue {clean}`: the failed attempt is undone first, so the retry starts from before it.
+			if (task.clean && session) {
+				if (!this.opts.rewind) throw new PlanError(`"${task.title}" asks for a clean retry, which needs the Switchyard checkpoints extension (not available in this planner)`);
+				await this.opts.rewind(task).catch(err => {
+					throw new PlanError(`could not undo the earlier attempt of "${task.title}": ${err instanceof Error ? err.message : String(err)}`);
+				});
+			}
 			// A typo'd model would leave a terminated session behind in AO (G36): check before anything is created.
 			if (opts.model) await this.checkModel(ao, opts.model);
 			// A session that exists already (a client spawned it): the parents' work is merged into its worktree.
@@ -457,6 +515,7 @@ export class Planner {
 					},
 					now,
 				);
+				delete t.clean;
 				if (seeded.sync) t.sync = { ...t.sync, ...seeded.sync };
 				if (seeded.followUp) t.followUp = [t.followUp, seeded.followUp].filter(Boolean).join("\n\n");
 				// A lane task continuing a session shares that session's branch and worktree.

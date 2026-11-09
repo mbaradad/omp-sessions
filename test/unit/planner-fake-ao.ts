@@ -10,7 +10,7 @@ import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AoError } from "../../src/ao/client";
 import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
-import { Planner } from "../../src/planner/planner";
+import { Planner, type PlannerOptions } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
 
@@ -133,6 +133,11 @@ export class FakeAo implements AoPort {
 		return this.modelIds;
 	}
 
+	/** An AO event for the session with the given activity (someone chatted: active, then idle). */
+	poke(session: string, activity: string): void {
+		this.event(session, activity);
+	}
+
 	/** Simulates the chat host dying mid-turn: the turn stays running, the session reads exited. */
 	killHost(session: string): void {
 		const s = this.sessions.get(session);
@@ -230,8 +235,8 @@ export function tempPlan(t: TestContext): string {
 	return path.join(dir, "plan.json");
 }
 
-export function start(file: string, ao: FakeAo): Planner {
-	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
+export function start(file: string, ao: FakeAo, hooks: Pick<PlannerOptions, "undone" | "rewind"> = {}): Planner {
+	const p = new Planner({ ...hooks, file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
 	p.start();
 	return p;
 }

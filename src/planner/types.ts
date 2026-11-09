@@ -114,8 +114,12 @@ export interface Task {
 	holdUntil?: number;
 	/** In-flight dispatch (status running). */
 	run?: TaskRun;
-	/** AO turn id of the latest run (link from the task to the chat). */
+	/** AO turn id of the latest run (link task → chat; the key for "this task's changes" and "undo this task"). */
 	turn?: string;
+	/** A person undid this task's turn in AO (checkpoints): its work is gone, so it no longer satisfies `after`. */
+	undone?: boolean;
+	/** The next run starts from before the previous attempt: that turn is undone first (`requeue {clean}`). */
+	clean?: boolean;
 	/** The task's git branch and worktree (AO project sessions), for graph propagation. */
 	git?: TaskGit;
 	/** Propagation state of each parent edge (parent task id → state). */
@@ -333,7 +337,8 @@ export type PlanOp =
 	| { op: "move"; id: string; index: number }
 	| { op: "after"; id: string; ids: string[] }
 	| { op: "run"; id: string }
-	| { op: "requeue"; id: string }
+	/** `clean`: before it runs again, undo the failed attempt's turn (files and context) through the checkpoints extension. */
+	| { op: "requeue"; id: string; clean?: boolean }
 	| { op: "pause"; id: string }
 	| { op: "resume"; id: string }
 	| { op: "abort"; id: string }
