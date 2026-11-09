@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Planner } from "../../src/planner/planner";
 import { FakeAo, byTitle, running, start, tempPlan, until } from "./planner-fake-ao";
 import { loadPlan } from "../../src/planner/store";
 
@@ -297,4 +298,21 @@ test("a task with a timeout still notices its turn ending within a moment (a slo
 	ao.finishTurn(s, "completed", "done");
 	await until("done", () => byTitle(p, "timed").status === "done", 10_000);
 	assert.ok(Date.now() - at < 5000, `noticed after ${Date.now() - at} ms`);
+});
+
+test("a new session starts with the user's default model and mode (config.json) when nothing else names one; a continued session and explicit options win", async t => {
+	const ao = new FakeAo();
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, userDefaults: () => ({ model: "anthropic/claude-x", mode: "edits" }) });
+	p.start();
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "plain" } }, { op: "add", task: { title: "explicit", options: { model: "anthropic/other", mode: "plan" } } }, { op: "lane.add", id: "l_00000000ff" }, { op: "add", task: { title: "first", lane: "l_00000000ff" } }, { op: "add", task: { title: "second", lane: "l_00000000ff" } }]);
+	await until("sent", () => ["plain", "explicit", "first"].every(n => byTitle(p, n).run?.phase === "sent"));
+	const body = (title: string) => ao.sessions.get(byTitle(p, title).run?.session as string)?.spawnBody;
+	assert.deepEqual([body("plain")?.model, body("plain")?.mode], ["anthropic/claude-x", "edits"]);
+	assert.deepEqual([body("explicit")?.model, body("explicit")?.mode], ["anthropic/other", "plan"]);
+	ao.finishTurn(byTitle(p, "first").run?.session as string, "completed", "one");
+	await until("second sent", () => byTitle(p, "second").run?.phase === "sent");
+	assert.equal(byTitle(p, "second").run?.via, "send");
+	assert.equal(byTitle(p, "second").run?.settings?.model, undefined, "a continued session keeps its own model");
 });

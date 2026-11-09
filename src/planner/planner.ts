@@ -10,6 +10,7 @@
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
 import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
+import { type UserDefaults, readUserDefaults } from "./defaults";
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
@@ -29,6 +30,8 @@ export interface PlannerOptions {
 	now?: () => number;
 	version?: string;
 	retryBaseMs?: number;
+	/** Model and mode for a NEW session whose task, lane and planner defaults name none (config.json, MAPPING D7); read at every dispatch. */
+	userDefaults?: () => UserDefaults;
 	/** Whether a person undid this finished task's turn (checkpoints); asked when its session shows activity. */
 	undone?: (task: Task) => Promise<boolean>;
 	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
@@ -443,12 +446,15 @@ export class Planner {
 		try {
 			const task = this.state.tasks.find(t => t.id === id);
 			if (!task || task.status !== "pending") return;
-			const opts = effectiveOptions(this.state, task);
+			const base = effectiveOptions(this.state, task);
 			const key = `planner-${task.id}-${(task.attempts ?? 0) + 1}-${this.now().toString(36)}`;
-			const provider = providerOf(opts.model);
 			// The session this task continues (its lane's, or its own from an earlier run); one AO no longer knows starts a new one.
 			let session = targetSession(this.state, task);
 			if (session && !(await ao.session(session))) session = undefined;
+			// Lowest fallback for a session the planner STARTS: the user's own defaults (config.json). A continued session keeps its model and mode.
+			const user = session ? {} : (this.opts.userDefaults ?? readUserDefaults)();
+			const opts = { ...base, ...(base.model || !user.model ? {} : { model: user.model }), ...(base.mode || !user.mode ? {} : { mode: user.mode }) };
+			const provider = providerOf(opts.model);
 			let spawn: SessionStart | undefined;
 			let repo: string | undefined;
 			let seeded: SeedResult = {};

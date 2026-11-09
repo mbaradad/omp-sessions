@@ -143,6 +143,10 @@ interface PlannerConfig {
   repo → AO project session for that repo (registered on first use); AO gives every project session its own
   worktree and branch `ao/<slug>/root`, so parallel tasks never share a checkout. Outside git → standalone
   session (AO scratch dir). (`worktree` and `approvalMode` are no longer task options: unknown option fields are ignored.)
+- **User defaults** (MAPPING D7): for a session the planner *starts*, a model or mode that neither the task, its lane
+  nor `PlannerConfig.defaults` names comes from `<switchyard home>/config.json` (`model`, `mode`; the file
+  `switchyard config set` writes), read at every dispatch; else AO's/omp's default model and mode `auto`. A
+  continued session keeps its own model and mode.
 - **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
   `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
   checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
