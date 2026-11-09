@@ -1,10 +1,10 @@
 // User organization of sessions (groups, colors, priorities, pins, archive, tags, kanban lanes,
-// manual order). Lives in `<stateRoot>/organize.json`, separate from host-owned meta.json.
+// manual order). Lives in `<switchyard home>/organize.json`, separate from host-owned meta.json.
 // Shared by the extension (Sessions view, board) and session hosts (scheduling): no vscode import.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { stateRoot } from "./protocol";
+import { switchyardHome } from "../ao/native";
 
 export const ORG_COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"] as const;
 export type OrgColor = (typeof ORG_COLORS)[number];
@@ -63,8 +63,9 @@ export const DEFAULT_LANES: readonly OrgLane[] = [
 	{ id: "done", name: "Done", order: 4 },
 ];
 
+/** Switchyard's own copy (`<switchyard home>/organize.json`, MAPPING D5): the old omp Sessions extension keeps using ~/.omp/vscode/organize.json beside it. */
 export function organizeFile(): string {
-	return path.join(stateRoot(), "organize.json");
+	return path.join(switchyardHome(), "organize.json");
 }
 
 export function emptyOrgData(): OrgData {

@@ -201,7 +201,7 @@ export class Host {
 	/** Runs the `--daemonize` launcher, without waiting for the host it starts; resolves with the launcher's exit code. */
 	spawnLauncher(extraArgs: string[] = []): Promise<number | null> {
 		const child = spawn(process.execPath, [HOST_JS, "--daemonize", "--id", this.id, "--cwd", this.cwd, "--omp", FAKE_OMP, ...extraArgs], {
-			env: { ...process.env, OMP_VSCODE_HOME: this.home, FAKE_OMP_SESSIONS: this.sessions, FAKE_OMP_LOG: this.fakeLog, ...this.env },
+			env: { ...process.env, OMP_VSCODE_HOME: this.home, SWITCHYARD_HOME: this.home, FAKE_OMP_SESSIONS: this.sessions, FAKE_OMP_LOG: this.fakeLog, ...this.env },
 			stdio: "ignore",
 		});
 		const { promise, resolve } = Promise.withResolvers<number | null>();
