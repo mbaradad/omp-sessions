@@ -1207,7 +1207,7 @@ async function cmdSched(args: Args): Promise<void> {
 			set = { paused: false };
 			break;
 		case "stop-when-done":
-			throw new UsageError("sched stop-when-done is gone: the planner has no per-queue stop. A finished queue frees its omp process only when AO's chat hibernation is on (it hibernates a chat nobody views after 90 s; off by default on a headless daemon: start AO with hibernation on). MAPPING: stopWhenQueueDone dropped");
+			throw new UsageError("sched stop-when-done is gone: the planner has no per-queue stop. A finished queue frees its agent process only when AO's chat hibernation is on (it hibernates a chat nobody views after 90 s; off by default on a headless daemon: start AO with hibernation on). MAPPING: stopWhenQueueDone dropped");
 		case "budget": {
 			// budget <hour|day|week> <usd|off>: a cap on what planner-dispatched work may spend in a rolling window.
 			if (arg === undefined) break;
@@ -1546,7 +1546,7 @@ async function cmdStatus(args: Args): Promise<number> {
 	const HIBERNATION_FIX = `curl -X PATCH ${daemon?.baseUrl ?? "http://127.0.0.1:3001"}/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'`;
 	const notes: string[] = [...notesFirst];
 	if (hibernation === false && config.hibernation === "on") notes.push(`config.json says hibernation on but AO's chat hibernation reads off: it has not been applied yet (the daemon was not started by Switchyard, or was restarted by systemd). Apply it now: switchyard config set hibernation on`);
-	else if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or switchyard config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
+	else if (hibernation === false) notes.push(`AO's chat hibernation is off: idle agent hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or switchyard config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
@@ -1577,7 +1577,7 @@ async function cmdStatus(args: Args): Promise<number> {
 	const row = (label: string, text: string) => `${c.dim(pad(label, 10))}${text}`;
 	const rows = [`${c.bold("switchyard")} ${VERSION} ${c.dim(`· home ${status.home}`)}`];
 	rows.push(row("ao", daemon ? `${c.green("running")} ${daemon.baseUrl} pid ${daemon.pid}` : `${c.red("not running")} ${c.dim("(systemctl --user start ao-daemon)")}`));
-	rows.push(row("idle", hibernation === undefined ? c.dim("unknown") : hibernation ? c.green("hibernation on") + c.dim(" (AO stops the omp of a chat nobody views after 90 s)") : `hibernation off ${c.dim("(idle omp hosts stay up; a note, not a problem)")}`));
+	rows.push(row("idle", hibernation === undefined ? c.dim("unknown") : hibernation ? c.green("hibernation on") + c.dim(" (AO stops the agent of a chat nobody views after 90 s)") : `hibernation off ${c.dim("(idle agent hosts stay up; a note, not a problem)")}`));
 	if (hibernation === false && config.hibernation === "on") rows.push(`${" ".repeat(10)}${c.yellow("config says on but AO reads off: not applied yet")} ${c.dim("(the daemon wasn't started by Switchyard, or was restarted by systemd) · apply it now: switchyard config set hibernation on")}`);
 	else if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · lost when AO restarts (it reads off after every boot, even if you turned it on); switchyard config set hibernation on makes Switchyard re-apply it`)}`);
 	rows.push(row("planner", plannerInfo ? `${c.green("running")} pid ${plannerInfo.pid} · ${plannerInfo.version} · up ${ago(plannerInfo.startedAt)}` : `${c.red("not running")} ${c.dim("(switchyard server start)")}`));
@@ -1655,7 +1655,7 @@ async function cmdConfig(args: Args): Promise<number> {
 					`mode           ${s.mode ?? c.dim("(not set: auto)")} ${c.dim("(permission mode of new sessions that ask for none)")}`,
 					`service        ${s.service ?? "on"} ${c.dim("(off: the planner isn't installed as a login service by itself)")}`,
 					`omp-extension  ${s.ompExtension ?? "on"} ${c.dim("(off: the CLI doesn't install or refresh Switchyard's omp extension and shim by itself)")}`,
-					`hibernation    ${s.hibernation ?? c.dim("(not set: AO's own setting)")} ${c.dim("(on: AO stops the omp of a chat nobody views after 90 s)")}`,
+					`hibernation    ${s.hibernation ?? c.dim("(not set: AO's own setting)")} ${c.dim("(on: AO stops the agent of a chat nobody views after 90 s)")}`,
 					`omp.extraArgs  ${s.omp?.extraArgs?.length ? s.omp.extraArgs.join(" ") : c.dim("(none)")} ${c.dim("(added to every omp acp an AO session starts; needs the Switchyard omp shim)")}`,
 				].join("\n") + "\n",
 			);
