@@ -138,6 +138,7 @@ export class Checkpoints implements vscode.Disposable {
 		}
 		const rel = (f: string) => path.relative(plan.cwd, f) || f;
 		const busy = isBusy(view, conversation);
+		const queued = conversation.turns.filter(t => t.state === "queued").length;
 		const detail = [
 			plan.rewound.length > 1 ? `${plan.rewound.length} prompts are undone: this one and every later one.` : "",
 			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
@@ -145,6 +146,7 @@ export class Checkpoints implements vscode.Disposable {
 			plan.merged.length ? `Changed since omp wrote them, without overlapping its edits (kept): ${listNames(plan.merged.map(rel))}.` : "",
 			plan.conflicts.length ? `Changed since omp wrote them, overlapping its edits (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
 			busy ? "omp is working: the turn is interrupted first." : "",
+			busy && queued ? `${queued} queued message${queued === 1 ? "" : "s"} will be dropped: AO cancels queued turns when a turn is interrupted (GAPS G41).` : "",
 			"Changes made by shell commands are not tracked. Redo brings everything back.",
 		]
 			.filter(Boolean)
