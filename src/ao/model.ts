@@ -220,11 +220,15 @@ export function queueOf(conversation: AoConversation): AoQueue {
 	};
 }
 
-/** Files the agent's turns changed (rolled-back turns and files excluded), with their line counts summed across turns. */
-export function changedFiles(conversation: AoConversation): AoChangedFile[] {
+/**
+ * Files the agent's turns changed, with their line counts summed across turns. Rolled-back turns and
+ * files are left out, and so are `undone` turns: omp's /undo rewinds turns AO never hears about (its
+ * rollback is unsupported for omp), so it keeps their diffs; the checkpoints store knows them.
+ */
+export function changedFiles(conversation: AoConversation, undone?: ReadonlySet<string>): AoChangedFile[] {
 	const files = new Map<string, AoChangedFile>();
 	for (const turn of conversation.turns) {
-		if (turn.rolledBack || !turn.diff) continue;
+		if (turn.rolledBack || !turn.diff || undone?.has(turn.id)) continue;
 		for (const f of turn.diff.files) {
 			if (f.rolledBack) continue;
 			const prev = files.get(f.path) ?? (f.oldPath ? files.get(f.oldPath) : undefined);
@@ -316,7 +320,8 @@ export function exitReasonOf(view: AoSessionView, conversation?: AoConversation)
 	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
-export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {
+/** `undone`: turns omp's /undo rewound (see changedFiles). */
+export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState, undone?: ReadonlySet<string>): AoSessionModel {
 	const question = conversation ? questionsOf(conversation)[0] : undefined;
 	const reply = conversation ? lastReply(conversation) : undefined;
 	const exitReason = exitReasonOf(view, conversation);
@@ -336,7 +341,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation,
 		createdAt: ms(view.createdAt),
 		updatedAt: Math.max(ms(view.updatedAt), ms(view.lastEventAt)),
 		...(typeof usage?.cost === "number" && { cost: usage.cost, currency: usage.currency || "USD" }),
-		changedFiles: conversation ? changedFiles(conversation) : [],
+		changedFiles: conversation ? changedFiles(conversation, undone) : [],
 		queue: conversation ? queueOf(conversation) : { pending: 0, running: 0, done: 0, total: 0, items: [] },
 		...(question && { question }),
 		...(reply && { reply }),
@@ -447,6 +452,8 @@ export interface AoWatcherOptions {
 	conversationLimit?: number;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
+	/** Turns of a session that omp's /undo rewound (from the checkpoints store), left out of its changed files. */
+	undoneTurns?(sessionId: string, conversation: AoConversation): ReadonlySet<string> | undefined;
 }
 
 /**
@@ -571,7 +578,7 @@ export class AoSessionWatcher {
 		if (this.options.conversations === false || view.mode !== "chat") return withCwd(sessionModel(view));
 		try {
 			const conversation = await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 });
-			return withCwd(sessionModel(view, conversation));
+			return withCwd(sessionModel(view, conversation, undefined, this.options.undoneTurns?.(view.id, conversation)));
 		} catch {
 			// Not ready yet (409 while the controller starts), or gone with a terminated session.
 			return withCwd(sessionModel(view));
