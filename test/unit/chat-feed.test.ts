@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoTurn } from "../../src/ao/client";
+import { btwRecord } from "../../src/ext/chat-btw";
 import { ChatFeed, ompItemId, replyFor, toolNameOf, toolResultOf } from "../../src/ext/chat-feed";
 import type { ToWebview } from "../../src/shared/webview";
 
@@ -263,4 +264,83 @@ test("turns omp undid and the /undo, /redo commands are left out, and come back 
 	// omp's tool call id back to the card the webview shows.
 	assert.equal(feed.activityIdOf("call_xyz"), "a7");
 	assert.equal(feed.activityIdOf("nope"), undefined);
+});
+
+test("omp's write/edit permission prompt (a form with Approve/Deny) is a select dialog answered through the inputs route", () => {
+	const form = act(2, {
+		activityKind: "user_input",
+		status: "pending",
+		turnId: "t1",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: notes.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: notes.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const feed = new ChatFeed();
+	const [ui] = feed.reset(conv({ turns: [turn("t1", "running")], activities: [form], controller: "busy" })).pendingUi;
+	assert.equal(ui.method, "select");
+	assert.equal(ui.title, "Allow tool: write\nPath: notes.md");
+	assert.deepEqual(ui.options, ["Approve", "Approve write for this session", "Deny"]);
+	const req = feed.request("req-write");
+	assert.ok(req);
+	assert.deepEqual(replyFor(req, { value: "Approve" }), { kind: "input", action: "accept", content: { value: "Approve" } });
+	assert.deepEqual(replyFor(req, { cancelled: true }), { kind: "input", action: "accept", content: { value: "Deny" } });
+});
+
+test("turns AO replays from omp's history after a restart (acp-history-turn) are hidden when their prompt is already there", () => {
+	const hist = (id: string) => turn(id, "recovered", { providerTurnId: `acp-history-turn:41:abc:root36:${id}` });
+	const base = conv({
+		turns: [turn("t1", "completed"), turn("t2", "completed")],
+		messages: [msg(1, "user", "write a story", "t1"), msg(2, "assistant", "once…", "t1"), msg(3, "user", "What color is it?", "t2", { content: [{ type: "image", mimeType: "image/png" }] }), msg(4, "assistant", "Green", "t2")],
+		activities: [act(5, { activityKind: "system", status: "completed", turnId: "t1", summary: "Steered", detail: { event: "steer", text: "make it shorter", origin: "human" } })],
+	});
+	const feed = new ChatFeed();
+	feed.reset(base);
+	// The restart replays the steered prompt and the image prompt (AO writes "[Image]" after its text), plus one prompt AO never held.
+	const replayed = conv({
+		turns: [...base.turns, hist("h1"), hist("h2"), hist("h3")],
+		messages: [...base.messages, msg(6, "user", "make it shorter", "h1"), msg(7, "assistant", "shorter", "h1"), msg(8, "user", "What color is it?\n[Image]", "h2"), msg(9, "assistant", "Green", "h2"), msg(10, "user", "an older prompt", "h3")],
+		activities: base.activities,
+	});
+	// Only the prompt AO never held is announced; the copies stay out.
+	const posts = feed.apply(replayed);
+	assert.deepEqual(texts(posts.flatMap(p => (p.type === "event" && p.ev.message ? [p.ev.message] : []))), ["an older prompt"]);
+	assert.deepEqual(
+		texts(new ChatFeed().reset(replayed).messages).filter(Boolean),
+		["write a story", "once…", "What color is it?", "Green", "make it shorter", "an older prompt"],
+	);
+	// A copy the webview already showed asks for a rebuild.
+	const shown = new ChatFeed();
+	shown.reset(conv({ turns: [turn("t1", "completed"), hist("h1")], messages: [msg(1, "user", "hello", "h1"), msg(2, "assistant", "hi", "h1")] }));
+	assert.equal(shown.takeStale(), false);
+	shown.apply(conv({ turns: [turn("t1", "completed"), hist("h1")], messages: [msg(3, "user", "hello", "t1"), msg(4, "assistant", "hi", "t1")] }));
+	assert.equal(shown.takeStale(), true);
+	assert.equal(shown.takeStale(), false);
+});
+
+test("a side chat becomes one /btw card: the first question and its answer, later ones as follow-ups, failures as errors", () => {
+	const side = { id: "s1" } as never;
+	const turn = (id: string, text: string, state: string, createdAt: string, errorMessage?: string) => ({ id, text, state, createdAt, sideId: "s1", clientMessageId: id, ...(errorMessage && { errorMessage }) });
+	const m = (id: string, turnId: string, role: string, text: string, sequence: number) => ({ id, turnId, role, text, sequence, sideId: "s1", revision: 0, streaming: false, createdAt: T, updatedAt: T });
+	const snapshot = (turns: unknown[], messages: unknown[]) => ({ side, turns, messages, activities: [], hasMore: false }) as never;
+	assert.equal(btwRecord(snapshot([], [])), undefined);
+	assert.deepEqual(btwRecord(snapshot([turn("a", "why?", "running", "2026-11-09T10:00:00Z")], [m("1", "a", "user", "why?", 1)])), { id: "s1", question: "why?", answer: "", status: "running", followUps: [] });
+	const done = btwRecord(snapshot([turn("a", "why?", "completed", "2026-11-09T10:00:00Z"), turn("b", "and?", "completed", "2026-11-09T10:01:00Z")], [m("1", "a", "user", "why?", 1), m("2", "a", "assistant", "because", 2), m("3", "b", "assistant", "that", 4)]));
+	assert.deepEqual(done, { id: "s1", question: "why?", answer: "because", status: "done", followUps: [{ question: "and?", answer: "that" }] });
+	assert.deepEqual(btwRecord(snapshot([turn("a", "why?", "failed", "2026-11-09T10:00:00Z", "model overloaded")], [])), { id: "s1", question: "why?", answer: "", status: "error", error: "model overloaded", followUps: [] });
+});
+
+test("a queued prompt AO discarded on interrupt (turn interrupted, never started) is not shown as a message", () => {
+	const feed = new ChatFeed();
+	const snap = feed.reset(conv({ turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "interrupted")], messages: [msg(1, "user", "slow", "t1"), msg(2, "user", "queued behind it", "t2")] }));
+	assert.deepEqual(texts(snap.messages).filter(t => t && t !== "Interrupted"), ["slow"]);
+});
+
+test("a replayed turn with no prompt (assistant-only, after a compaction) and a compaction's message-less turn leave no trace", () => {
+	const feed = new ChatFeed();
+	const page = conv({
+		turns: [turn("t1", "completed"), turn("t2", "completed", { hasHumanPrompt: false }), turn("h1", "recovered", { providerTurnId: "acp-history-turn:41:abc:root36:h1", hasHumanPrompt: false })],
+		messages: [msg(1, "user", "hello", "t1"), msg(2, "assistant", "hi", "t1"), msg(3, "assistant", "summary of the earlier conversation", "h1")],
+	});
+	assert.deepEqual(texts(feed.reset(page).messages).filter(Boolean), ["hello", "hi"]);
+	assert.equal(feed.isBusy(), false);
 });

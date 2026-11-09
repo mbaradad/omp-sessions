@@ -7,7 +7,8 @@
 // while it streams. This module turns AO snapshots into those shapes: `reset` for a full history,
 // `apply` for every later page, emitting frames only for rows that changed.
 import type { AoActivity, AoConversation, AoMessage, AoTurn, AoUsage } from "../ao/client";
-import { type AoQuestion, questionOf } from "../ao/model";
+import { type AoQuestion, answerFor, questionOf } from "../ao/model";
+import { ompToolCallId } from "../shared/checkpoints";
 import { diffTexts } from "../shared/diff";
 import type { OmpFrame, UiRequest } from "../shared/protocol";
 import type { DiffsByPath, SlimState, ToWebview } from "../shared/webview";
@@ -32,28 +33,11 @@ function isTool(a: AoActivity): boolean {
 	return !!TOOL_KINDS[a.activityKind] || (a.activityKind === "reasoning" && !!rec(a.detail)?.toolKind);
 }
 
-/**
- * The id inside AO's ACP `providerItemId`: `acp:<len>:<scope><len>:<id>`, each part length-prefixed
- * (`acp:41:<conversation uuid>:root30:toolu_01…`). Undefined for anything else (steers, approvals, malformed).
- */
+/** omp's tool call id inside AO's ACP `providerItemId` (decoded by checkpoints' `ompToolCallId`); undefined for any other id (steers, approvals, malformed). */
 export function ompItemId(providerItemId: string | undefined): string | undefined {
 	if (!providerItemId?.startsWith("acp:")) return undefined;
-	// The lengths count UTF-8 bytes, so walk the bytes.
-	const bytes = Buffer.from(providerItemId, "utf8");
-	let at = 4;
-	const part = (): Buffer | undefined => {
-		let colon = bytes.indexOf(0x3a, at);
-		if (colon < 0 || colon === at || !/^\d+$/.test(bytes.toString("latin1", at, colon))) return undefined;
-		const len = Number(bytes.toString("latin1", at, colon));
-		at = colon + 1;
-		if (at + len > bytes.length) return undefined;
-		const out = bytes.subarray(at, at + len);
-		at += len;
-		return out;
-	};
-	if (!part()) return undefined;
-	const id = part();
-	return id && at === bytes.length ? id.toString("utf8") : undefined;
+	const id = ompToolCallId(providerItemId);
+	return id === providerItemId ? undefined : id;
 }
 
 /** omp's tool name for an ACP tool activity: AO keeps only ACP's kind and omp's raw arguments. */
@@ -164,8 +148,9 @@ export function uiRequestOf(a: AoActivity, toolName?: string): PendingRequest {
 	const question = questionOf(a);
 	const base = { type: "extension_ui_request" as const, id: question.id };
 	if (question.kind === "approval") {
-		const tool = toolName ?? toolNameOf(a);
-		return { question, ui: { ...base, method: "select", title: `Allow ${tool}: ${question.title}`, options: question.options ?? [] } };
+		// omp's write/edit prompts arrive as a form whose summary already reads "Allow tool: write\nPath: …".
+		const title = question.inputField ? question.title : `Allow ${toolName ?? toolNameOf(a)}: ${question.title}`;
+		return { question, ui: { ...base, method: "select", title, options: question.options ?? [] } };
 	}
 	const fields = question.questions ?? [];
 	const title = question.message ? `${question.title}\n${question.message}` : question.title;
@@ -199,7 +184,11 @@ export function replyFor(p: PendingRequest, res: Record<string, unknown>): AoRep
 	if (q.kind === "approval") {
 		const decisions = q.decisions ?? [];
 		const chosen = res.cancelled ? decisions.find(d => d.kind === "reject_once") ?? decisions.find(d => d.kind?.startsWith("reject")) : decisions.find(d => d.label === res.value);
-		return chosen ? { kind: "approval", decisionId: chosen.id } : undefined;
+		if (!chosen) return undefined;
+		// A permission prompt omp raised as a form (write/edit) is answered through the inputs route; src/ao knows which.
+		const answer = answerFor(q, chosen.label);
+		if ("error" in answer) return undefined;
+		return answer.kind === "approval" ? answer : { kind: "input", action: answer.body.action, ...(answer.body.content && { content: answer.body.content as Record<string, unknown> }) };
 	}
 	if (res.cancelled) return { kind: "input", action: "decline" };
 	const fields = q.questions ?? [];
@@ -249,6 +238,9 @@ export class ChatFeed {
 	private pending = new Map<string, PendingRequest>();
 	private noticedTurns = new Set<string>();
 	private hidden = new Set<string>();
+	/** Replayed copies of turns AO already holds (GAPS G33): hidden like `hidden`, found by comparing prompt texts. */
+	private dupes = new Set<string>();
+	private stale = false;
 	private busy = false;
 	private conv: AoConversation | undefined;
 
@@ -264,6 +256,8 @@ export class ChatFeed {
 		this.shown.clear();
 		this.pending.clear();
 		this.noticedTurns.clear();
+		this.dupes.clear();
+		this.stale = false;
 		this.merge(conv);
 		const messages: unknown[] = [];
 		const diffs: Record<string, DiffsByPath> = {};
@@ -279,7 +273,7 @@ export class ChatFeed {
 			}
 		}
 		for (const t of this.turns.values()) {
-			if (this.hidden.has(t.id)) continue;
+			if (this.hidden.has(t.id) || this.dupes.has(t.id)) continue;
 			const n = this.turnNotice(t);
 			if (n) {
 				messages.push({ role: "notice", level: n.level, message: n.text });
@@ -430,6 +424,43 @@ export class ChatFeed {
 			const prev = this.rows.get(r.id);
 			if (!prev || prev.revision <= r.revision) this.rows.set(r.id, r);
 		}
+		this.updateDupes();
+	}
+
+	/**
+	 * After `exit-agent` + `resume-agent` AO replays omp's history and files prompts it already holds (steered
+	 * ones, ones with images) as extra `recovered` turns (`acp-history-turn:`). A replayed turn whose prompt
+	 * text matches a prompt or steer of another turn is a copy, and one with no prompt (assistant-only, after a compaction) is noise: leave both out.
+	 */
+	private updateDupes(): void {
+		const replayed = new Set([...this.turns.values()].filter(t => t.providerTurnId?.startsWith("acp-history-turn:")).map(t => t.id));
+		if (!replayed.size && !this.dupes.size) return;
+		const norm = (text: string) => text.replace(/\s*\[Image\]\s*$/i, "").trim();
+		const known = new Set<string>();
+		const promptOf = new Map<string, string>();
+		for (const r of this.rows.values()) {
+			if (r.kind === "message" && r.role === "user" && r.turnId) {
+				if (replayed.has(r.turnId)) promptOf.set(r.turnId, norm(r.text));
+				else known.add(norm(r.text));
+			} else if (r.kind === "activity" && r.activityKind === "system" && rec(r.detail)?.event === "steer") known.add(norm(str(rec(r.detail)?.text)));
+		}
+		const next = new Set([...promptOf].filter(([, text]) => text && known.has(text)).map(([id]) => id));
+		// A replayed turn with no prompt at all is not a turn of the conversation (after a compaction AO replays
+		// assistant-only ones, one more per restart): leave it out too.
+		for (const id of replayed) if (!promptOf.has(id)) next.add(id);
+		for (const id of next) {
+			if (this.dupes.has(id)) continue;
+			// Rows of this copy were already sent to the webview: it must be rebuilt.
+			if ([...this.rows.values()].some(r => r.turnId === id && this.shown.has(r.id))) this.stale = true;
+		}
+		this.dupes = next;
+	}
+
+	/** Whether a replayed copy that the webview already shows was found since the last call (the caller re-reads everything). */
+	takeStale(): boolean {
+		const stale = this.stale;
+		this.stale = false;
+		return stale;
 	}
 
 	/**
@@ -444,12 +475,12 @@ export class ChatFeed {
 		return rows.sort((a, b) => key(a) - key(b));
 	}
 
-	/** A queued prompt shows as a queue chip, and one withdrawn before it ran not at all. */
+	/** A queued prompt shows as a queue chip; one withdrawn or discarded by an interrupt before it ran (GAPS G41) not at all. */
 	private visible(r: Row): boolean {
-		if (r.turnId && this.hidden.has(r.turnId)) return false;
+		if (r.turnId && (this.hidden.has(r.turnId) || this.dupes.has(r.turnId))) return false;
 		if (r.kind !== "message" || r.role !== "user" || !r.turnId) return true;
 		const t = this.turns.get(r.turnId);
-		return !(t && (t.state === "queued" || (t.state === "cancelled" && !t.startedAt)));
+		return !(t && (t.state === "queued" || ((t.state === "cancelled" || t.state === "interrupted") && !t.startedAt)));
 	}
 
 	private turnNotice(t: AoTurn): { level: "error" | "warning"; text: string } | undefined {

@@ -14,6 +14,8 @@ export interface SlimState {
 	fastModeEnabled?: boolean;
 	autoCompactionEnabled?: boolean;
 	contextUsage?: { tokens: number; contextWindow: number; percent: number };
+	/** Provider quota windows of the session's model (the planner's `omp usage` reading), `resetsAtSec` in epoch seconds. */
+	usageWindows?: Array<{ window: string; usedPercent: number; resetsAtSec?: number }>;
 	queuedMessages?: { steering: string[]; followUp: string[] };
 	todoPhases?: Array<{ name: string; tasks: Array<{ content: string; status: string }> }>;
 	goal?: { objective?: string; status?: string; [key: string]: unknown } | null;
@@ -116,6 +118,7 @@ export type PanelCommand =
 	| "settings"
 	| "undoTurn"
 	| "redoTurn"
+	| "openTui"
 	| "openHermesCard"
 	| "showHermesCard";
 

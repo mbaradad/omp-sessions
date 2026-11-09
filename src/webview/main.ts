@@ -620,11 +620,19 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 	const { text, context } = splitContext(planned ? full.slice(PLAN_PROMPT_PREFIX.length) : full);
 	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}`, title: timeTitle(m) });
 	const bubble = h("div", { class: "bubble" });
+	// Prompts the planner sends for tasks: the lane's queue task i/n, a free task of the plan, and a follow-up run.
 	const queued = /^\[Task (\d+)\/(\d+) from the queue\] /.exec(text);
-	if (queued) {
+	const task = queued
+		? { head: queued[0], chip: `Queued task ${queued[1]}/${queued[2]}`, trailer: /\n\nWork through this task completely[\s\S]*$/ }
+		: text.startsWith("[Task from the plan] ")
+			? { head: "[Task from the plan] ", chip: "Planned task", trailer: /\n\nWork through this task completely[\s\S]*$/ }
+			: text.startsWith("[Follow-up on your task] ")
+				? { head: "[Follow-up on your task] ", chip: "Follow-up", trailer: /\n\nTake this into account, fix whatever it breaks[\s\S]*$/ }
+				: undefined;
+	if (task) {
 		el.classList.add("queued-task");
-		renderMarkdownInto(bubble, text.slice(queued[0].length).replace(/\n\nWork through this task completely[\s\S]*$/, ""));
-		bubble.prepend(h("div", { class: "task-chip" }, `Queued task ${queued[1]}/${queued[2]}`));
+		renderMarkdownInto(bubble, text.slice(task.head.length).replace(task.trailer, ""));
+		bubble.prepend(h("div", { class: "task-chip" }, task.chip));
 	} else renderMarkdownInto(bubble, text);
 	if (planned) bubble.prepend(h("div", { class: "task-chip", title: "Sent in Plan mode: read-only, file edits refused" }, "Plan mode"));
 	if (context) {
@@ -1046,6 +1054,7 @@ function renderHeader(): void {
 			["Collapse / expand all tool cards", toggleAllCards, "Alt+T"],
 			["Find in conversation", () => findBar.open(), "Ctrl/⌘+F"],
 			["Permission mode…", () => showModeMenu(menuBtn), "Shift+Tab"],
+			["Continue in omp's terminal UI", cmd("openTui"), "/tui"],
 			null,
 			["Copy last response", cmd("copyLast"), "/copy"],
 			["Session stats", cmd("stats"), "/cost"],
@@ -1119,6 +1128,7 @@ function renderFooter(): void {
 		modeButton(),
 		pct !== null ? h("span", { class: `pill${pct > 80 ? " warn" : ""}`, title: `${ctx?.tokens?.toLocaleString()} / ${ctx?.contextWindow?.toLocaleString()} tokens` }, h("span", { class: "meter" }, h("span", { style: `width:${Math.min(100, pct)}%` })), `${pct}%`) : "",
 		cost > 0 ? h("span", { class: "pill", title: typeof state?.cost === "number" ? "Session cost (AO)" : "Cost of the messages shown" }, `$${cost.toFixed(2)}`) : "",
+		usageWindowPill(state?.usageWindows),
 		usageLimitPill(rec(state?.usageLimit)),
 		...[...statuses.values()].filter(Boolean).map(s => h("span", { class: "pill dim" }, s)),
 		h("span", { class: "spacer" }),
@@ -1129,6 +1139,15 @@ function renderFooter(): void {
 	stopBtn.classList.toggle("hidden", !busy);
 	announce(meta?.status === "waiting" ? "omp needs your input" : busy ? (state?.isCompacting ? "omp is compacting context" : "omp is working") : meta?.status === "stopped" ? "Session stopped" : "omp is ready");
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
+}
+
+/** The most used quota window of the session's provider, once it is 80% used (red from 95%). */
+function usageWindowPill(windows: Array<{ window: string; usedPercent: number; resetsAtSec?: number }> | undefined): HTMLElement | "" {
+	const top = windows?.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+	if (!top || top.usedPercent < 80) return "";
+	const when = (w: { resetsAtSec?: number }) => (w.resetsAtSec ? ` · resets ${new Date(w.resetsAtSec * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "");
+	const title = (windows ?? []).map(w => `${w.window}: ${Math.round(w.usedPercent)}% used${when(w)}`).join("\n");
+	return h("span", { class: `pill${top.usedPercent >= 95 ? " warn" : ""}`, title: `Provider usage\n${title}` }, `${top.window} ${Math.round(top.usedPercent)}%`);
 }
 
 /** A turn AO paused at the account's usage limit: it waits for the reset (and continues then when auto-resume is on). */
@@ -1233,7 +1252,7 @@ function renderQueue(steering: string[], followUp: string[]): void {
 		...chips.map(c =>
 			h(
 				"span",
-				{ class: "qchip", title: c.q === "steering" ? "Injected into the running turn" : "Runs after this turn" },
+				{ class: "qchip", title: c.q === "steering" ? "Injected into the running turn" : "Runs after this turn. If you interrupt (Esc), AO drops it and the chat sends it again." },
 				`${c.q === "steering" ? "↪" : "⏭"} ${c.t.slice(0, 80)}`,
 				h("button", { class: "x", title: "Remove", onclick: () => post({ type: "removeQueued", text: c.t, queue: c.q }) }, "×"),
 			),
@@ -1821,7 +1840,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "change": {
 			changesByTool.set(msg.change.toolCallId, msg.change);
-			diffsByTool.set(msg.change.toolCallId, msg.diffs);
+			if (Object.keys(msg.diffs).length) diffsByTool.set(msg.change.toolCallId, msg.diffs);
 			const card = cards.get(msg.change.toolCallId);
 			if (card) scheduleCard(card);
 			if (meta) {

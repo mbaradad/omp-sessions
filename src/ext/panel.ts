@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, AoError, unwrap } from "../ao/client";
+import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, type AoStreamStatus, AoError, unwrap } from "../ao/client";
 import { hermesOrigin } from "../shared/hermes-origin";
 import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
@@ -13,8 +13,9 @@ import type { FileChange, QueueOp, SessionMeta, TaskQueue } from "../shared/prot
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
 import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
+import { askSideQuestion, sideRecords } from "./chat-btw";
 import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
-import { sendResuming } from "./chat-send";
+import { interruptKeepingQueue, sendResuming } from "./chat-send";
 import { type CommandContext, LOCAL_COMMANDS, handleComposerInput, runSessionAction } from "./commands";
 import { parseTaskInput } from "./tasks";
 import { chatSymbolInfo, openChatSymbol } from "./bridge";
@@ -24,7 +25,7 @@ import { openLink, openUrlFromOmp } from "./links";
 import { type SessionManager, resolveOmpPath } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage } from "./slim";
-import { switchyardHome } from "../ao/native";
+import { readNativeSession, switchyardHome } from "../ao/native";
 
 const STARRED_MODELS_KEY = "omp.starredModels";
 
@@ -132,12 +133,10 @@ const MAX_HISTORY_PAGES = 20;
 const SYNC_DEBOUNCE_MS = 60;
 /** Shell output kept per `!command` for the next prompt's context. */
 const MAX_SHELL_CONTEXT = 20_000;
+/** AO's chat view lease lasts 30 s: renew well inside it. */
+const LEASE_RENEW_MS = 15_000;
 
 type ConfigOption = AoSchemas["ConversationConfigOptionResponse"];
-type ApprovalMode = NonNullable<AoSchemas["ConversationTurnSettingsPayload"]["approvalMode"]>;
-
-/** AO's approval mode for each permission mode but plan, which is omp's `mode` config option. */
-const APPROVAL_OF: Record<Exclude<PermissionMode, "plan">, ApprovalMode> = { ask: "default", edits: "accept-edits", auto: "bypass-permissions" };
 
 function mergeCommands(server: SlashCommand[], snippets: PromptSnippet[]): SlashCommand[] {
 	const names = new Set(server.map(c => c.name));
@@ -175,13 +174,24 @@ function ompDefaultPermissionMode(): Promise<PermissionMode | undefined> {
 /**
  * Where the chat's task strip, `/queue` and Alt+Enter go when the planner holds the queues: a lane whose
  * id is an AO session id continues that session (PLANNER-API.md). The extension adapts its planner
- * store (ext-tasks' `PlannerStore.queue(id, ops)`: `get` = no ops) to this.
+ * store to this with ext-tasks' `SessionQueues` (`get` reads the live plan and never calls the planner; `PlannerStore.queue(id, [])`
+ * is NOT a read: it creates an empty paused lane for a session that has none).
  */
 export interface ChatQueueSource {
 	get(sessionId: string): Promise<TaskQueue | null>;
 	edit(sessionId: string, ops: QueueOp[]): Promise<TaskQueue | null>;
-	/** The plan changed: the chat re-reads its queue. */
+	/** The plan changed: the chat re-reads its queue and the usage windows. */
 	onDidChange: vscode.Event<unknown>;
+	/** The provider usage windows the planner last read (`omp usage`; PlanView.status.usageWindows), for the footer's usage pill. */
+	usage?(): ReadonlyArray<{ provider: string; window: string; usedPercent: number; resetsAt?: number }>;
+}
+
+/** The window's one AO change stream: events and its status (open/reset/gap/retrying/closed), so a chat opens no stream of its own. */
+export interface ChatEventSource {
+	onEvent: vscode.Event<{ sessionId?: string; type: string }>;
+	onStatus: vscode.Event<AoStreamStatus>;
+	/** The latest status, for a chat opened after it was announced. */
+	readonly status: AoStreamStatus | undefined;
 }
 
 /** The part of the checkpoints extension's client the chat uses (`Checkpoints` in `src/ext/checkpoints.ts` on `ao/checkpoints`). Edits are keyed by omp's tool call ids. */
@@ -197,7 +207,11 @@ export interface ChatCheckpoints {
 	onDidChange: vscode.Event<{ sessionId: string; added: FileChange[] }>;
 }
 
-/** The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call (`readMode`/`writeMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). */
+/**
+ * The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call
+ * (`readMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). Switch with `setSessionMode(ao, id, mode)`
+ * from `session-mode-ops.ts`, never by writing the file: it also sets omp's plan option and declines stale gate questions.
+ */
 export interface ChatModeGate {
 	read(sessionId: string): PermissionMode | undefined;
 	/** Resolves once the switch is done (the gate's waiting question, if any, is settled). */
@@ -208,6 +222,8 @@ export class ChatPanel implements vscode.Disposable {
 	private ao: AoClient | undefined;
 	private stream: AoEventSubscription | undefined;
 	private streamOpen = false;
+	/** The stream has been open once: a later `open` is a reconnect. */
+	private sawOpen = false;
 	private readonly subs: vscode.Disposable[] = [];
 	private webviewReady = false;
 	private readonly feed = new ChatFeed();
@@ -227,11 +243,13 @@ export class ChatPanel implements vscode.Disposable {
 	/** `!command` output waiting to go into the next prompt's context. */
 	private shellContext: string[] = [];
 	private shell: ChildProcess | undefined;
-	private switchingMode = false;
+	/** Tool cards whose inline diff comes from the checkpoints extension. */
+	private readonly checkpointCards = new Set<string>();
 	/** Identifies this chat's keep-awake lease on the AO chat. */
 	private readonly viewId = crypto.randomUUID();
 	private outbox: ToWebview[] = [];
 	private flushTimer: NodeJS.Timeout | undefined;
+	private leaseTimer: NodeJS.Timeout | undefined;
 	private disposed = false;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
@@ -252,6 +270,8 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly checkpoints?: ChatCheckpoints,
 		/** The session's permission-mode file (Switchyard omp extension gate); absent: AO-native modes. */
 		private readonly modes?: ChatModeGate,
+		/** The window's shared AO change stream (`AoConnection` on `ao/ext-views`); absent: this chat opens its own. */
+		private readonly events?: ChatEventSource,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
 		surface.webview.html = this.html();
@@ -266,7 +286,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
 			}),
 			{ dispose: () => this.stream?.close() },
-			...(tasks ? [tasks.onDidChange(() => void this.postQueue())] : []),
+			...(tasks ? [tasks.onDidChange(() => (void this.postQueue(), this.postState()))] : []),
 			...(checkpoints ? [checkpoints.onDidChange(e => e.sessionId === sessionId && this.onCheckpoints(e.added))] : []),
 		);
 		const cwd = this.meta?.cwd;
@@ -338,6 +358,8 @@ export class ChatPanel implements vscode.Disposable {
 
 	/** Feed output, shrunk for the (possibly remote) webview channel. */
 	private postFeed(msg: ToWebview): void {
+		// An edit the checkpoints extension recorded is diffed from its snapshots (what Review and Revert use); AO's text diff is the fallback.
+		if (msg.type === "diffs" && this.checkpointCards.has(msg.toolCallId)) return;
 		if (msg.type !== "event") return this.post(msg);
 		const ev = slimFrame(msg.ev);
 		if (ev) this.post({ type: "event", ev });
@@ -351,27 +373,38 @@ export class ChatPanel implements vscode.Disposable {
 			ao => {
 				if (this.disposed) return;
 				this.ao = ao;
-				let opens = 0;
-				this.stream = ao.events({
-					after: "latest",
-					onEvent: ev => {
-						if (ev.sessionId === this.sessionId && ev.type === "session_updated") this.schedule();
-					},
-					onStatus: s => {
-						const open = s.state === "open";
-						if (open !== this.streamOpen) {
-							this.streamOpen = open;
-							this.post({ type: "connection", connected: open && this.loaded });
-						}
-						// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
-						if ((s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) || s.state === "gap") this.schedule(true);
-					},
-				});
-				this.lease(true);
+				const shared = this.events;
+				if (shared) {
+					// The window's one change stream: this chat only listens.
+					this.subs.push(shared.onEvent(ev => this.onChange(ev)), shared.onStatus(s => this.onStreamStatus(s)));
+					if (shared.status) this.onStreamStatus(shared.status, true);
+				} else {
+					this.stream = ao.events({ after: "latest", onEvent: ev => this.onChange(ev), onStatus: s => this.onStreamStatus(s) });
+				}
+				this.lease(this.surface.visible);
+				this.leaseTimer = setInterval(() => this.lease(this.surface.visible), LEASE_RENEW_MS);
 				this.schedule(true);
 			},
 			err => this.post({ type: "error", message: `AO daemon unreachable: ${errorText(err)}` }),
 		);
+	}
+
+	private onChange(ev: { sessionId?: string; type: string }): void {
+		if (ev.sessionId === this.sessionId && ev.type === "session_updated") this.schedule();
+	}
+
+	/** `initial`: the status the stream already had when this chat started listening (not a reconnect). */
+	private onStreamStatus(s: AoStreamStatus, initial = false): void {
+		const open = s.state === "open";
+		if (open !== this.streamOpen) {
+			this.streamOpen = open;
+			this.post({ type: "connection", connected: open && this.loaded });
+		}
+		if (s.state === "open") {
+			// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
+			if (this.sawOpen && !initial && (s.reset || !s.resumed)) this.schedule(true);
+			this.sawOpen = true;
+		} else if (s.state === "gap") this.schedule(true);
 	}
 
 	private async client(): Promise<AoClient> {
@@ -379,9 +412,9 @@ export class ChatPanel implements vscode.Disposable {
 		return this.ao;
 	}
 
-	/** AO hibernates idle chats nobody watches; an open chat holds a view lease. */
+	/** AO hibernates idle chats nobody watches; a visible chat holds a view lease (30 s in AO), renewed while it stays open. */
 	private lease(active: boolean): void {
-		void this.ao?.api.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId: this.sessionId } }, body: { viewId: this.viewId, active } }).catch(() => undefined);
+		void this.ao?.chatView(this.sessionId, this.viewId, active).catch(() => undefined);
 	}
 
 	private schedule(full = false): void {
@@ -460,13 +493,17 @@ export class ChatPanel implements vscode.Disposable {
 			state: this.state,
 			commands: mergeCommands(this.serverCommands, this.snippets),
 			changes: view.changes,
-			diffs: { ...view.diffs, ...snap.diffs },
+			diffs: { ...snap.diffs, ...view.diffs },
 			connected: this.streamOpen,
 			home: os.homedir(),
 			queue: await this.queueView(),
 		});
 		for (const m of snap.live) this.postFeed(m);
 		this.post({ type: "checkpoints", redo: this.checkpoints?.redoCount(this.sessionId) ?? 0 });
+		// Earlier side questions (/btw) live in AO as side chats: draw their cards again.
+		void sideRecords(ao, this.sessionId).then(records => {
+			for (const record of records) this.post({ type: "event", ev: { type: "btw_record", record } });
+		}, () => undefined);
 		this.postOrigin(true);
 	}
 
@@ -490,7 +527,9 @@ export class ChatPanel implements vscode.Disposable {
 		// omp undid or redid a prompt (or ran /undo, /redo): the turns to hide changed, so show the new conversation.
 		const cp = this.checkpoints;
 		const full = this.feed.full();
-		if (cp && full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full))) this.schedule(true);
+		const statusChanged = !!cp && !!full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full));
+		// A replayed copy of a turn already on screen (GAPS G33) turned up: rebuild without it.
+		if (this.feed.takeStale() || statusChanged) this.schedule(true);
 		this.postState();
 	}
 
@@ -506,7 +545,7 @@ export class ChatPanel implements vscode.Disposable {
 	/** omp's slash commands, as AO lists them (skills). */
 	private async skills(ao: AoClient): Promise<SlashCommand[]> {
 		try {
-			const { skills } = await unwrap(ao.api.GET("/api/v1/sessions/{sessionId}/conversation/skills", { params: { path: { sessionId: this.sessionId } } }));
+			const skills = await ao.skills(this.sessionId);
 			return skills.map(s => ({ name: s.name, ...(s.description && { description: s.description }), ...(s.inputHint && { input: { hint: s.inputHint } }) }));
 		} catch {
 			return this.serverCommands;
@@ -533,6 +572,10 @@ export class ChatPanel implements vscode.Disposable {
 		if (value) state.model = { ...splitModel(value), name: model?.choices?.find(c => c.value === value)?.name };
 		const thinking = this.thinkingOption()?.currentValue;
 		if (thinking) state.thinkingLevel = thinking;
+		// How much of the model's provider quota is used comes from the planner (omp's own `usage`): AO sets a limit only when a prompt itself fails, and omp's limits end as completed turns (G35).
+		const windows = this.tasks?.usage?.() ?? [];
+		const mine = state.model?.provider ? windows.filter(w => w.provider === state.model?.provider) : windows;
+		if (mine.length) state.usageWindows = mine.map(w => ({ window: w.window, usedPercent: w.usedPercent, ...(w.resetsAt && { resetsAtSec: Math.round(w.resetsAt / 1000) }) }));
 		return state;
 	}
 
@@ -562,14 +605,68 @@ export class ChatPanel implements vscode.Disposable {
 		if (queue) this.post({ type: "queue", queue });
 	}
 
-	private async editQueue(ops: QueueOp[]): Promise<void> {
-		if (!this.tasks) {
-			await this.sessions.editQueue(this.sessionId, ops);
-			if (this.meta?.status === "stopped") await this.postQueue();
-			return;
+	/** Applies queue ops; false (with a notice carrying the planner's reason) when the edit was refused. */
+	private async editQueue(ops: QueueOp[]): Promise<boolean> {
+		try {
+			if (!this.tasks) {
+				await this.sessions.editQueue(this.sessionId, ops);
+				if (this.meta?.status === "stopped") await this.postQueue();
+				return true;
+			}
+			const queue = await this.tasks.edit(this.sessionId, ops);
+			if (queue) this.post({ type: "queue", queue });
+			return true;
+		} catch (err) {
+			this.post({ type: "notice", level: "warning", text: `Queue change refused: ${errorText(err)}` });
+			return false;
 		}
-		const queue = await this.tasks.edit(this.sessionId, ops);
-		if (queue) this.post({ type: "queue", queue });
+	}
+
+	/**
+	 * `/tui`: hands the session to omp's own terminal UI. AO stops the agent (the conversation stays), omp
+	 * resumes the same omp session in a terminal, and closing the terminal gives the session back to AO.
+	 * The omp session id is what the Switchyard omp extension recorded (GAPS G9); `AO_SESSION_ID` keeps its
+	 * checkpoints and mode gate on in the terminal.
+	 */
+	private async openTui(): Promise<void> {
+		const native = readNativeSession(this.sessionId);
+		const omp = resolveOmpPath();
+		const warn = (text: string) => this.post({ type: "notice", level: "warning", text });
+		if (!native?.ompSessionId) return warn("omp's session id is not known yet: the Switchyard omp extension records it when the session starts. Send a message first, or check that the extension is installed.");
+		if (!omp) return warn("Could not find the `omp` executable.");
+		if (this.feed.isBusy()) return warn("omp is working: interrupt it (Esc), or wait for it to finish, before continuing in the terminal.");
+		const ao = await this.client();
+		await ao.exitAgent(this.sessionId);
+		this.post({ type: "notice", level: "info", text: "Continuing in omp's terminal UI. The session returns to the background when you close that terminal." });
+		const terminal = vscode.window.createTerminal({
+			name: `omp · ${this.meta?.title ?? this.sessionId}`,
+			cwd: native.cwd ?? this.meta?.cwd,
+			shellPath: omp,
+			shellArgs: ["--resume", native.ompSessionId],
+			env: { AO_SESSION_ID: this.sessionId },
+			location: { viewColumn: vscode.ViewColumn.Beside },
+		});
+		terminal.show();
+		const closed = vscode.window.onDidCloseTerminal(t => {
+			if (t !== terminal) return;
+			closed.dispose();
+			ao.resumeAgent(this.sessionId).then(
+				() => this.schedule(true),
+				err => this.post({ type: "notice", level: "error", text: `Could not give the session back to AO: ${errorText(err)}. Use Resume session.` }),
+			);
+		});
+		this.subs.push(closed);
+	}
+
+	/** `/btw`: asks in a forked side chat; the webview draws the card as it fills. */
+	private async askSide(typed: string): Promise<void> {
+		const question = typed || (await vscode.window.showInputBox({ prompt: "Side question (answered without interrupting the agent)" })) || "";
+		if (!question.trim()) return;
+		try {
+			await askSideQuestion(await this.client(), this.sessionId, question.trim(), record => this.post({ type: "event", ev: { type: "btw_record", record } }));
+		} catch (err) {
+			this.post({ type: "notice", level: "error", text: `Side question failed: ${errorText(err)}` });
+		}
 	}
 
 	// ---------- checkpoints (omp extension) ----------
@@ -587,7 +684,12 @@ export class ChatPanel implements vscode.Disposable {
 			const card = this.feed.activityIdOf(c.toolCallId);
 			if (!card) continue;
 			out.changes.push({ ...c, toolCallId: card });
-			out.diffs[card] = cp.toolDiffs(this.sessionId, c);
+			const diffs = cp.toolDiffs(this.sessionId, c);
+			// A change whose snapshots are too large to diff has no diffs: AO's stay.
+			if (Object.keys(diffs).length) {
+				out.diffs[card] = diffs;
+				this.checkpointCards.add(card);
+			}
 		}
 		return out;
 	}
@@ -598,7 +700,10 @@ export class ChatPanel implements vscode.Disposable {
 		if (!cp) return;
 		for (const c of added) {
 			const card = this.feed.activityIdOf(c.toolCallId);
-			if (card) this.post({ type: "change", change: { ...c, toolCallId: card }, diffs: cp.toolDiffs(this.sessionId, c) });
+			if (!card) continue;
+			const diffs = cp.toolDiffs(this.sessionId, c);
+			if (Object.keys(diffs).length) this.checkpointCards.add(card);
+			this.post({ type: "change", change: { ...c, toolCallId: card }, diffs });
 		}
 		this.post({ type: "checkpoints", redo: cp.redoCount(this.sessionId) });
 		this.schedule();
@@ -660,59 +765,18 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	/**
-	 * Plan is omp's `mode` option and switches live. The others are the approval mode AO launches omp
-	 * with (GAPS G7): AO stores the new one, then omp restarts on the same transcript to pick it up.
+	 * Permission modes are live through the Switchyard omp extension (MAPPING Q4/D11): its gate reads the
+	 * session's mode file on every tool call, so a switch applies at once, mid-turn, with no client open.
+	 * A session without a mode file (started from AO's own UI) runs in AO's mode; the chat can't change it.
 	 */
 	private async setMode(mode: PermissionMode): Promise<void> {
-		const conv = this.feed.conversation;
-		if (!conv || this.switchingMode) return;
 		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
-			// A Switchyard session: the omp extension's gate reads the mode file on every tool call, so this is live.
 			await this.modes.set(this.sessionId, mode);
 			this.postState();
-			return;
-		}
-		if (mode === "plan") {
-			await this.setOption("mode", "plan");
-			return;
-		}
-		// AO's `default` runs omp with omp's own tools.approvalMode (GAPS G12): that is Ask only if omp's config says so.
-		if (mode === "ask" && (await ompDefaultPermissionMode()) !== "ask") {
-			this.post({
-				type: "notice",
-				level: "warning",
-				markdown: true,
-				text: `AO can't start omp in Ask mode: AO's default approval mode runs omp with your \`tools.approvalMode\` (${this.defaultMode ? PERMISSION_MODE_INFO[this.defaultMode].label : "unknown"} here). Set \`tools.approvalMode: always-ask\` in omp's config.yml (/settings) for Ask, or use Edits (asks before commands).`,
-			});
-			return;
-		}
-		if (this.option("mode")?.currentValue === "plan") await this.setOption("mode", "default");
-		const approval = APPROVAL_OF[mode];
-		const current = conv.settings.approvalMode ?? "default";
-		if (current === approval) {
-			this.postState();
-			return;
-		}
-		const ao = await this.client();
-		// Ask AO, not the feed: a turn that just started may not have reached this chat yet.
-		const now = await ao.getConversation(this.sessionId, { limit: 1 });
-		if (now.controller === "busy" || now.turns.some(t => t.state === "running" || t.state === "queued")) {
-			this.post({ type: "notice", level: "warning", text: `Switching to ${PERMISSION_MODE_INFO[mode].label} restarts omp: wait for this turn to end, or interrupt it (Esc), then switch again.` });
-			return;
-		}
-		this.switchingMode = true;
-		try {
-			this.post({ type: "notice", level: "info", text: `Restarting omp in ${PERMISSION_MODE_INFO[mode].label} mode (same conversation)…` });
-			await ao.setTurnSettings(this.sessionId, { approvalMode: approval });
-			await ao.exitAgent(this.sessionId);
-			await ao.resumeAgent(this.sessionId);
-			this.post({ type: "notice", level: "info", text: `${PERMISSION_MODE_INFO[mode].label} mode: ${PERMISSION_MODE_INFO[mode].detail}.` });
-		} finally {
-			this.switchingMode = false;
-			await this.refreshOptions(ao);
-			this.postState();
 			this.schedule();
+			return;
 		}
+		this.post({ type: "notice", level: "warning", text: "This session was not started by Switchyard, so its permission mode is AO's and cannot be switched here. Sessions started from Switchyard switch modes live." });
 	}
 
 	// ---------- session chrome ----------
@@ -766,9 +830,11 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	private resolveCandidate(candidate: string): string | undefined {
-		const cwd = this.meta?.cwd || os.homedir();
+		const cwd = this.meta?.cwd;
 		const expanded = candidate.startsWith("~/") ? path.join(os.homedir(), candidate.slice(2)) : candidate;
-		const abs = path.resolve(cwd, expanded);
+		// Without a workspace only absolute paths resolve.
+		if (!cwd && !path.isAbsolute(expanded)) return undefined;
+		const abs = path.resolve(cwd ?? "", expanded);
 		return fs.existsSync(abs) ? abs : undefined;
 	}
 
@@ -806,7 +872,12 @@ export class ChatPanel implements vscode.Disposable {
 			this.post({ type: "notice", level: "warning", text: "A shell command is still running (Esc stops it)." });
 			return;
 		}
-		const cwd = this.meta?.cwd || os.homedir();
+		// AO has no workspace for this session (terminated, worktree released): there is no folder to run in.
+		const cwd = this.meta?.cwd;
+		if (!cwd) {
+			this.post({ type: "notice", level: "warning", text: "This session has no workspace folder any more, so there is nowhere to run the command." });
+			return;
+		}
 		const win = process.platform === "win32";
 		const child = spawn(win ? process.env.ComSpec || "cmd.exe" : process.env.SHELL || "/bin/sh", win ? ["/d", "/s", "/c", command] : ["-c", command], { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 		this.shell = child;
@@ -841,6 +912,7 @@ export class ChatPanel implements vscode.Disposable {
 			post: msg => this.post(msg),
 			insertText: text => this.insertText(text),
 			setMode: mode => this.setMode(mode),
+			askSide: question => this.askSide(question),
 			runShell: (command, keep) => this.runShell(command, keep),
 		};
 	}
@@ -850,17 +922,12 @@ export class ChatPanel implements vscode.Disposable {
 		const ao = await this.client();
 		const attachments = images.map(i => ({ data: i.data, mimeType: i.mimeType }));
 		const steer = this.feed.isBusy() && (vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer") === "steer";
-		// Images can take long to upload: AO extends the request deadline for this header.
-		const headers = attachments.length ? { "X-AO-Attachment-Upload": "1" } : undefined;
-		const params = { path: { sessionId: this.sessionId } };
+		// The same id on a retry after a restart: AO answers a duplicate instead of sending twice. The wrappers add AO's upload-deadline header for images.
 		const body = { text: message, clientMessageId: crypto.randomUUID(), ...(attachments.length && { attachments }) };
 		await sendResuming(
 			ao,
 			this.sessionId,
-			async () => {
-				if (steer) await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params, body, headers }));
-				else await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params, body, headers }));
-			},
+			async () => void (await (steer ? ao.steerOrSend(this.sessionId, body) : ao.sendMessage(this.sessionId, body))),
 			() => this.post({ type: "notice", level: "info", text: "omp was not running: restarting it on this conversation…" }),
 		);
 		this.schedule();
@@ -880,8 +947,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (queued) {
 					const [first, ...rest] = queued[2].trim().split("\n");
 					const { title, subtasks } = parseTaskInput(first);
-					await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
-					this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
+					if (await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }])) this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
 					return;
 				}
 				if (/^\/tasks\s*$/.test(m.text.trim())) {
@@ -914,13 +980,12 @@ export class ChatPanel implements vscode.Disposable {
 					this.shell.kill();
 					return;
 				}
-				try {
-					await (await this.client()).interrupt(this.sessionId);
-				} catch (err) {
-					// The turn ended between the keypress and the call.
-					if (!(err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN")) throw err;
-				}
+			{
+				const again = await interruptKeepingQueue(await this.client(), this.sessionId);
+				if (again) this.post({ type: "notice", level: "info", text: `Interrupted. AO drops the messages queued behind a turn, so your ${again} queued message${again === 1 ? " was" : "s were"} sent again.` });
+				this.schedule();
 				return;
+			}
 			case "uiResponse": {
 				const req = this.feed.request(m.res.id);
 				if (req?.question.url && m.res.value === OPEN_LINK) {
@@ -942,7 +1007,8 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			}
 			case "openFile": {
-				const abs = this.resolveCandidate(m.path) ?? path.resolve(this.meta?.cwd ?? "", m.path);
+				const abs = this.resolveCandidate(m.path) ?? (this.meta?.cwd || path.isAbsolute(m.path) ? path.resolve(this.meta?.cwd ?? "", m.path) : undefined);
+				if (!abs) return;
 				await openFile(abs, m.line, m.column, this.surface.viewColumn);
 				return;
 			}
@@ -1055,7 +1121,7 @@ export class ChatPanel implements vscode.Disposable {
 			case "compact": {
 				const ao = await this.client();
 				this.post({ type: "event", ev: { type: "auto_compaction_start" } });
-				await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/compact", { params: { path: { sessionId: this.sessionId } } }));
+				await ao.compact(this.sessionId);
 				return;
 			}
 			case "newSession":
@@ -1078,6 +1144,9 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			case "undoTurn":
 				await this.undo();
+				return;
+			case "openTui":
+				await this.openTui();
 				return;
 			case "redoTurn":
 				if (!this.checkpoints) return this.unavailable("Redo");
@@ -1144,6 +1213,7 @@ export class ChatPanel implements vscode.Disposable {
 		this.disposed = true;
 		clearTimeout(this.flushTimer);
 		clearTimeout(this.syncTimer);
+		clearInterval(this.leaseTimer);
 		this.lease(false);
 		this.shell?.kill();
 		for (const d of this.subs) d.dispose();
