@@ -13,9 +13,7 @@ import { aoPort } from "../../src/planner/ao-port";
 import { Planner } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
 let client: AoClient;
