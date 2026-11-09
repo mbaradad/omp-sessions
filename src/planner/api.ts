@@ -48,6 +48,7 @@ export function createApiServer(opts: ApiOptions): net.Server {
 	};
 	planner.onChange(change => {
 		if (change.task) for (const c of clients) for (const id of c.subs) send(c, { id, event: "task", ...change.task });
+		if (change.sync) for (const c of clients) for (const id of c.subs) send(c, { id, event: "sync", ...change.sync });
 		if (change.plan && !planTimer) planTimer = setTimeout(publishPlan, PLAN_EVENT_MS);
 	});
 
