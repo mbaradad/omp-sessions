@@ -14,6 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type AoQueueItem, queueOf, turnReply } from "./model";
 import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
@@ -300,9 +301,55 @@ export class AoClient {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
 	}
 
-	/** Stops the running turn. */
+	/**
+	 * Stops the running turn. AO also settles every queued turn as `interrupted`: they never run, and the
+	 * queue is empty afterwards (G41, checked live). The 204 comes back **before** that: the turns are still
+	 * `running` and `queued` for a few hundred ms. Use `interruptWithQueue` to get the prompts back.
+	 */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
+	}
+
+	/**
+	 * Stops the running turn and returns the queued prompts the interrupt discarded (G41), in queue order, so
+	 * the caller can warn about them or send them again. AO settles the turns after it has answered, so this
+	 * waits (up to `settleTimeoutMs`, default 10 s) until the running turn has ended and none of the prompts
+	 * that were queued is still queued. A prompt that started running in between ended up running, not
+	 * discarded, and is not reported.
+	 */
+	async interruptWithQueue(sessionId: string, settleTimeoutMs = 10_000): Promise<{ discarded: AoQueueItem[] }> {
+		const before = await this.getConversation(sessionId);
+		const queued = queueOf(before).items;
+		const running = new Set(before.turns.filter(t => t.state === "running").map(t => t.id));
+		await this.interrupt(sessionId);
+		if (queued.length === 0) return { discarded: [] };
+		const watched = new Set(queued.map(q => q.turnId));
+		const deadline = Date.now() + settleTimeoutMs;
+		for (;;) {
+			const turns = (await this.getConversation(sessionId)).turns;
+			const open = turns.some(t => (running.has(t.id) && t.state === "running") || (watched.has(t.id) && t.state === "queued"));
+			if (!open || Date.now() > deadline) {
+				const ended = new Set(turns.filter(t => t.state === "interrupted" || t.state === "cancelled").map(t => t.id));
+				return { discarded: queued.filter(item => ended.has(item.turnId)) };
+			}
+			await new Promise(resolve => setTimeout(resolve, 150));
+		}
+	}
+
+	/**
+	 * The reply of one turn once it is final (turnReply): AO can mark a turn `completed` a moment before its
+	 * last assistant message stops streaming, and a read in that window returns nothing or a half reply. Reads
+	 * the conversation until the turn has ended and its reply is final, or `graceMs` (default 3 s) has passed,
+	 * and returns what there is then with `final: false` (a turn that ended with no assistant text never
+	 * becomes final). For anything that stores a turn's summary: the planner's task result.
+	 */
+	async awaitTurnReply(sessionId: string, turnId: string, options: { graceMs?: number; pollMs?: number } = {}): Promise<{ text?: string; final: boolean }> {
+		const deadline = Date.now() + (options.graceMs ?? 3_000);
+		for (;;) {
+			const reply = turnReply(await this.getConversation(sessionId), turnId);
+			if (reply.final || Date.now() >= deadline) return reply;
+			await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 150));
+		}
 	}
 
 	/** Compacts the conversation (omp's `/compact`). `tokensBefore`/`tokensAfter` come back when the agent reports them. */
