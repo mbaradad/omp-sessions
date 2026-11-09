@@ -7,11 +7,11 @@
 // replays the outstanding steps: AO answers a replayed spawn or message with what it already made,
 // so nothing runs twice. A run AO lost (session deleted or killed, turn recovered/interrupted by
 // someone else) becomes `interrupted` and is never re-run unattended.
+import { type SwitchyardConfig, readSwitchyardConfig } from "../ao/config";
 import { isCheckpointCommand } from "../shared/checkpoints";
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
 import { type Outcome, PlanError, advance, taskByRef, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
-import { type UserDefaults, readUserDefaults } from "./defaults";
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
@@ -32,7 +32,7 @@ export interface PlannerOptions {
 	version?: string;
 	retryBaseMs?: number;
 	/** Model and mode for a NEW session whose task, lane and planner defaults name none (config.json, MAPPING D7); read at every dispatch. */
-	userDefaults?: () => UserDefaults;
+	userDefaults?: () => Pick<SwitchyardConfig, "model" | "mode">;
 	/** Whether a person undid this finished task's turn (checkpoints); asked when its session shows activity. */
 	undone?: (task: Task) => Promise<boolean>;
 	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
@@ -518,7 +518,7 @@ export class Planner {
 			let session = targetSession(this.state, task);
 			if (session && !(await ao.session(session))) session = undefined;
 			// Lowest fallback for a session the planner STARTS: the user's own defaults (config.json). A continued session keeps its model and mode.
-			const user = session ? {} : (this.opts.userDefaults ?? readUserDefaults)();
+			const user = session ? {} : (this.opts.userDefaults ?? readSwitchyardConfig)();
 			const opts = { ...base, ...(base.model || !user.model ? {} : { model: user.model }), ...(base.mode || !user.mode ? {} : { mode: user.mode }) };
 			const provider = providerOf(opts.model);
 			let spawn: SessionStart | undefined;
