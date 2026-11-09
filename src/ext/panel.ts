@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, AoError, unwrap } from "../ao/client";
+import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, type AoStreamStatus, AoError, unwrap } from "../ao/client";
 import { hermesOrigin } from "../shared/hermes-origin";
 import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
@@ -186,6 +186,14 @@ export interface ChatQueueSource {
 	usage?(): ReadonlyArray<{ provider: string; window: string; usedPercent: number; resetsAt?: number }>;
 }
 
+/** The window's one AO change stream: events and its status (open/reset/gap/retrying/closed), so a chat opens no stream of its own. */
+export interface ChatEventSource {
+	onEvent: vscode.Event<{ sessionId?: string; type: string }>;
+	onStatus: vscode.Event<AoStreamStatus>;
+	/** The latest status, for a chat opened after it was announced. */
+	readonly status: AoStreamStatus | undefined;
+}
+
 /** The part of the checkpoints extension's client the chat uses (`Checkpoints` in `src/ext/checkpoints.ts` on `ao/checkpoints`). Edits are keyed by omp's tool call ids. */
 export interface ChatCheckpoints {
 	undo(sessionId: string, target?: { turnId: string } | { text: string }): Promise<{ prompt?: string } | undefined>;
@@ -214,6 +222,8 @@ export class ChatPanel implements vscode.Disposable {
 	private ao: AoClient | undefined;
 	private stream: AoEventSubscription | undefined;
 	private streamOpen = false;
+	/** The stream has been open once: a later `open` is a reconnect. */
+	private sawOpen = false;
 	private readonly subs: vscode.Disposable[] = [];
 	private webviewReady = false;
 	private readonly feed = new ChatFeed();
@@ -260,6 +270,8 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly checkpoints?: ChatCheckpoints,
 		/** The session's permission-mode file (Switchyard omp extension gate); absent: AO-native modes. */
 		private readonly modes?: ChatModeGate,
+		/** The window's shared AO change stream (`AoConnection` on `ao/ext-views`); absent: this chat opens its own. */
+		private readonly events?: ChatEventSource,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
 		surface.webview.html = this.html();
@@ -361,28 +373,38 @@ export class ChatPanel implements vscode.Disposable {
 			ao => {
 				if (this.disposed) return;
 				this.ao = ao;
-				let opens = 0;
-				this.stream = ao.events({
-					after: "latest",
-					onEvent: ev => {
-						if (ev.sessionId === this.sessionId && ev.type === "session_updated") this.schedule();
-					},
-					onStatus: s => {
-						const open = s.state === "open";
-						if (open !== this.streamOpen) {
-							this.streamOpen = open;
-							this.post({ type: "connection", connected: open && this.loaded });
-						}
-						// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
-						if ((s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) || s.state === "gap") this.schedule(true);
-					},
-				});
+				const shared = this.events;
+				if (shared) {
+					// The window's one change stream: this chat only listens.
+					this.subs.push(shared.onEvent(ev => this.onChange(ev)), shared.onStatus(s => this.onStreamStatus(s)));
+					if (shared.status) this.onStreamStatus(shared.status, true);
+				} else {
+					this.stream = ao.events({ after: "latest", onEvent: ev => this.onChange(ev), onStatus: s => this.onStreamStatus(s) });
+				}
 				this.lease(this.surface.visible);
 				this.leaseTimer = setInterval(() => this.lease(this.surface.visible), LEASE_RENEW_MS);
 				this.schedule(true);
 			},
 			err => this.post({ type: "error", message: `AO daemon unreachable: ${errorText(err)}` }),
 		);
+	}
+
+	private onChange(ev: { sessionId?: string; type: string }): void {
+		if (ev.sessionId === this.sessionId && ev.type === "session_updated") this.schedule();
+	}
+
+	/** `initial`: the status the stream already had when this chat started listening (not a reconnect). */
+	private onStreamStatus(s: AoStreamStatus, initial = false): void {
+		const open = s.state === "open";
+		if (open !== this.streamOpen) {
+			this.streamOpen = open;
+			this.post({ type: "connection", connected: open && this.loaded });
+		}
+		if (s.state === "open") {
+			// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
+			if (this.sawOpen && !initial && (s.reset || !s.resumed)) this.schedule(true);
+			this.sawOpen = true;
+		} else if (s.state === "gap") this.schedule(true);
 	}
 
 	private async client(): Promise<AoClient> {
