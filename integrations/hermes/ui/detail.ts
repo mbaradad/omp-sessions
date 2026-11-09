@@ -15,6 +15,7 @@ const SYNC_LABEL: Record<SyncState, string> = {
 	"in-sync": "in sync",
 	pending: "changes wait for this turn to end",
 	merged: "changes merged",
+	resolving: "its agent is resolving the merge",
 	conflict: "merge conflict",
 	"upstream-changed": "changed after this one finished",
 };

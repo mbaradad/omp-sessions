@@ -371,7 +371,7 @@ def session_detail(sid: str) -> dict:
     card = card_lookup({ref}).get(ref) if ref else None
     question = report.get("question") if isinstance(report.get("question"), dict) else None
     view = session_view(info, card, ref, question)
-    view.update(reply=report.get("reply"), model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"], upstream=upstream_view(report.get("upstream")))
+    view.update(reply=report.get("reply"), mode=report.get("mode") or view["mode"], model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"], upstream=upstream_view(report.get("upstream")))
     return view
 
 
@@ -454,6 +454,9 @@ def session_action(sid: str, action: str, body: dict) -> dict:
     if action == "retry":
         return {"ok": True, "queue": o.queue_retry(sid)}
     if action == "schedule":
+        # `at: null` unschedules; a body without `at` is a mistake, not a cancel.
+        if "at" not in body:
+            raise ApiError(400, "at: when the queue starts (+30m, 14:30, an ISO time), or null to unschedule")
         at = body.get("at")
         if at is None:
             return {"ok": True, "queue": o.queue_at(sid, "off")}

@@ -22,22 +22,33 @@ WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 5: "scheduled", 124: "ti
 USAGE_EXIT = 2
 PRIORITIES = ("urgent", "high", "normal", "low")
 # Sync state of a graph edge (GRAPH-PROPAGATION.md): how far a parent's changes reached its child.
-SYNC_STATES = ("in-sync", "pending", "merged", "conflict", "upstream-changed")
-# Question kinds answered with text; select/confirm dialogs grant something (tool approvals, plan
-# approval) and are left to the user.
+SYNC_STATES = ("in-sync", "pending", "merged", "resolving", "conflict", "upstream-changed")
+# Question kinds answered with text; the other dialogs (select, confirm, approval) may grant something.
 TEXT_QUESTION_KINDS = ("ask", "input", "editor")
 # Title of the question the Switchyard omp extension's permission-mode gate asks before a tool runs.
 GATE_PREFIX = "Allow tool: "
+ALLOW_CHOICE = re.compile(r"^(allow|approve|accept)\b", re.IGNORECASE)
+DENY_CHOICE = re.compile(r"^(deny|reject|refuse)\b", re.IGNORECASE)
 
 
 def is_approval(question: dict) -> bool:
-    """True for a dialog that approves or denies something (omp's `select`/`confirm` dialogs: tool
-    permissions, plan approval) rather than a plain question answered with text or a choice. The
-    permission-mode gate of the Switchyard omp extension asks "Allow tool: …" as an ordinary AO
-    input question (kind ask/input): it is an approval all the same."""
-    if str(question.get("kind") or "") not in TEXT_QUESTION_KINDS:
+    """True for a dialog that approves or denies something (a tool permission, plan approval) rather than
+    a plain question answered with text or a choice. The CLI says so itself (`approval`, when it can);
+    else: a `select` is an approval when its choices allow and deny something (AO shows an omp `ask`
+    with options as a `select` too, which the agent may answer); any other non-text kind is one;
+    and the permission-mode gate's "Allow tool: …" question is one whatever its kind."""
+    flag = question.get("approval")
+    if isinstance(flag, bool):
+        return flag
+    if any(str(question.get(k) or "").startswith(GATE_PREFIX) for k in ("title", "message")):
         return True
-    return any(str(question.get(k) or "").startswith(GATE_PREFIX) for k in ("title", "message"))
+    kind = str(question.get("kind") or "")
+    if kind in TEXT_QUESTION_KINDS:
+        return False
+    if kind == "select":
+        options = [str(o) for o in question.get("options") or []]
+        return any(ALLOW_CHOICE.match(o) for o in options) and any(DENY_CHOICE.match(o) for o in options)
+    return True
 
 
 def short(session_id: str) -> str:
@@ -264,9 +275,12 @@ class OmpSessions:
         return self.json(["queue", free_text_ok(session), "run", "--json"])
 
     def queue_retry(self, session: str) -> Any:
-        """`queue retry`: failed tasks, else a paused or interrupted queue, else the last finished task back
-        to pending, and the queue on (a scheduled start is kept); returns the queue. Fails when nothing is to requeue."""
-        return self.json(["queue", free_text_ok(session), "retry", "--json"])
+        """Requeues a failed (or interrupted) task, `queue retry`, and turns the queue on unless it waits for a
+        scheduled start, which is kept; returns the queue. Fails when there is nothing to retry."""
+        queue = self.json(["queue", free_text_ok(session), "retry", "--json"])
+        if isinstance(queue, dict) and not queue.get("startAt") and queue.get("autoRun") is not True:
+            queue = self.json(["queue", free_text_ok(session), "start", "--json"])
+        return queue
 
     def queue_get(self, session: str) -> Any:
         """The session's queue (queue.json: tasks, autoRun, startAt)."""

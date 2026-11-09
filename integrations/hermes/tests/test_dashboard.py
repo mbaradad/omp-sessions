@@ -95,7 +95,7 @@ class DashboardApiTest(unittest.TestCase):
 
         a = until(lambda: self.state_is(asking["id"], "needs_input"), "needs_input")
         self.assertEqual(a["question"]["title"], "$ ls")
-        self.assertEqual(a["question"]["kind"], "approval")
+        self.assertEqual(a["question"]["kind"], "select", "an approval the page shows as a choice")
         self.assertEqual(a["mode"], "ask")
         self.assertEqual(a["project"], WORK.name)
         self.assertIn("dash-test", a["tags"])

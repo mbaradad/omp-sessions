@@ -122,7 +122,7 @@ export interface Session {
 	reply?: string | null;
 }
 
-export type SyncState = "in-sync" | "pending" | "merged" | "conflict" | "upstream-changed";
+export type SyncState = "in-sync" | "pending" | "merged" | "resolving" | "conflict" | "upstream-changed";
 
 export interface UpstreamEdge {
 	/** The parent's omp session. */

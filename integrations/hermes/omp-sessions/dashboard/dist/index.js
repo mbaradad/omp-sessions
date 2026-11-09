@@ -239,7 +239,10 @@
     sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
     external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
     pause: "M8 5v14M16 5v14",
-    tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01"
+    tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01",
+    archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
+    unarchive: "M3 4h18v4H3zM5 8v12h14V8M12 18v-6M9.5 14.5L12 12l2.5 2.5",
+    undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"
   };
   function icon(name, size = 14, title) {
     return h(
@@ -413,6 +416,93 @@
     }, []);
   }
 
+  // integrations/hermes/ui/queue.ts
+  var AT_PRESETS = [
+    { label: "+30m", at: () => "+30m" },
+    { label: "+1h", at: () => "+1h" },
+    { label: "+3h", at: () => "+3h" },
+    { label: "Tonight 22:00", at: () => nextLocal(22, 0) },
+    { label: "Tomorrow 09:00", at: () => nextLocal(9, 1) }
+  ];
+  function nextLocal(hour, days) {
+    const d = /* @__PURE__ */ new Date();
+    d.setDate(d.getDate() + days);
+    d.setHours(hour, 0, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    const pad = (n) => String(n).padStart(2, "0");
+    const off = -d.getTimezoneOffset();
+    const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
+  }
+  function queueAbilities(s) {
+    const q = s.queue;
+    const scheduled = typeof s.startAt === "number";
+    if (q.total === 0) return { run: false, retry: false, schedule: false, unschedule: false };
+    return {
+      run: q.pending > 0 && (s.autoRun !== true || scheduled),
+      retry: (q.failed ?? 0) > 0 || (q.interrupted ?? 0) > 0 || q.pending === 0 && q.running === 0,
+      schedule: q.pending > 0 || (q.failed ?? 0) > 0 || scheduled,
+      unschedule: scheduled
+    };
+  }
+  function ScheduleBox(p) {
+    const [at, setAt] = useState("");
+    return h(
+      "form",
+      {
+        className: "omps-at omps-queue-at",
+        onClick: (e) => e.stopPropagation(),
+        onKeyDown: (e) => e.stopPropagation(),
+        onSubmit: (e) => {
+          e.preventDefault();
+          if (at.trim()) p.onSchedule(at.trim());
+        }
+      },
+      h("div", { className: "omps-at-presets" }, ...AT_PRESETS.map((x) => h("button", { key: x.label, type: "button", className: "omps-chip omps-chip-btn", disabled: p.busy, onClick: () => p.onSchedule(x.at()) }, x.label))),
+      h(
+        "div",
+        { className: "omps-queue-at-row" },
+        h("input", { className: "omps-input omps-mono", "aria-label": "Start time", value: at, placeholder: "+30m, 14:30 or 2026-01-31T09:00", onChange: (e) => setAt(e.target.value) }),
+        h(Button, { type: "submit", small: true, kind: "primary", label: "Schedule", busy: p.busy, disabled: !at.trim() }),
+        typeof p.s.startAt === "number" ? h(Button, { small: true, kind: "ghost", label: "Unschedule", title: `Cancel the start at ${clock(p.s.startAt)}; the tasks stay`, disabled: p.busy, onClick: () => p.onSchedule(null) }) : null
+      )
+    );
+  }
+  function QueueControls(p) {
+    const [busy, setBusy] = useState(null);
+    const [picking, setPicking] = useState(false);
+    const [error, setError] = useState(null);
+    const can = queueAbilities(p.s);
+    if (!can.run && !can.retry && !can.schedule) return null;
+    const run = async (action, body = {}) => {
+      setBusy(action);
+      setError(null);
+      try {
+        await p.onAction(p.s.id, action, body);
+        if (action === "schedule") setPicking(false);
+      } catch (err) {
+        setError(errorMessage(err));
+      } finally {
+        setBusy(null);
+      }
+    };
+    const scheduled = typeof p.s.startAt === "number";
+    return h(
+      "div",
+      { className: cx("omps-queue-controls", p.compact && "is-compact"), onClick: (e) => e.stopPropagation(), onKeyDown: (e) => e.stopPropagation() },
+      h(
+        "div",
+        { className: "omps-queue-buttons" },
+        can.run ? h(Button, { small: true, kind: "ghost", icon: "send", label: "Run now", title: "Start the queue now (a scheduled start is dropped)", busy: busy === "run", onClick: () => void run("run") }) : null,
+        can.retry ? h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Retry", title: "Failed or interrupted tasks (else the last finished one) back to pending, and the queue on; a scheduled start is kept", busy: busy === "retry", onClick: () => void run("retry") }) : null,
+        can.schedule ? h(Button, { small: true, kind: picking ? "primary" : "ghost", icon: "clock", label: scheduled ? "Reschedule" : "Schedule", pressed: picking, onClick: () => setPicking(!picking) }) : null,
+        can.unschedule && !picking ? h(Button, { small: true, kind: "ghost", icon: "x", label: "Unschedule", title: "Cancel the scheduled start; the tasks stay", busy: busy === "schedule", onClick: () => void run("schedule", { at: null }) }) : null
+      ),
+      picking ? h(ScheduleBox, { s: p.s, busy: busy === "schedule", onSchedule: (at) => void run("schedule", { at }) }) : null,
+      error ? h("div", { className: "omps-queue-error", role: "alert" }, error) : null
+    );
+  }
+
   // integrations/hermes/ui/board.ts
   var COLUMNS = [
     { id: "needs", label: "Needs you", states: ["needs_input"], icon: "ask", empty: "Nothing is waiting on you." },
@@ -421,6 +511,9 @@
     { id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
     { id: "stopped", label: "Stopped", states: ["interrupted", "stopped"], icon: "stop", empty: "No stopped sessions." }
   ];
+  function isDone(s) {
+    return s.completed || s.state === "idle" && !s.queue.pending && !s.queue.running;
+  }
   var SHOWN = { done: 24, stopped: 20 };
   function order(col, list) {
     const updated = (s) => s.updatedAt ?? 0;
@@ -437,6 +530,24 @@
     if (q.questions?.length) return q.questions[0].question || q.title;
     return q.title.split("\n")[0];
   }
+  function CardButton(p) {
+    return h(
+      "button",
+      {
+        type: "button",
+        className: "omps-card-act",
+        title: p.title,
+        "aria-label": p.title,
+        disabled: p.disabled,
+        onClick: (e) => {
+          e.stopPropagation();
+          p.onClick();
+        },
+        onKeyDown: (e) => e.stopPropagation()
+      },
+      icon(p.icon, 12)
+    );
+  }
   function SessionCard(p) {
     const { s } = p;
     const open = () => p.onOpen(s.id);
@@ -447,7 +558,7 @@
     return h(
       "article",
       {
-        className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived"),
+        className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived", s.completed && "is-completed"),
         role: "button",
         tabIndex: 0,
         "aria-pressed": p.selected,
@@ -488,7 +599,9 @@
           icon("external", 11)
         ),
         s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
-        s.upstream?.some((e) => e.state === "conflict") ? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict") : s.upstream?.some((e) => e.state === "upstream-changed") ? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed") : null
+        s.upstream?.some((e) => e.state === "conflict") ? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict") : s.upstream?.some((e) => e.state === "upstream-changed") ? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed") : null,
+        s.completed ? h("span", { className: "omps-chip is-completed", title: s.completedAt ? `Completed ${new Date(s.completedAt).toLocaleString()}` : "Marked completed" }, icon("check", 10), "Completed") : null,
+        s.archived ? h("span", { className: "omps-chip", title: "Archived: hidden unless Archived is on" }, "Archived") : null
       ),
       s.state === "needs_input" ? h(
         "div",
@@ -513,15 +626,34 @@
         "div",
         { className: "omps-card-foot" },
         h("span", { className: "omps-card-state" }, s.state === "working" ? h("span", { className: "omps-pulse", "aria-hidden": true }) : null, stateText(s, p.now)),
-        progress !== null ? h("span", { className: "omps-progress", title: `${s.queue.done} of ${s.queue.total} tasks done` }, h("span", { style: { width: `${progress}%` } })) : null,
+        progress !== null ? h("span", { className: cx("omps-progress", (s.queue.failed ?? 0) > 0 && "has-failed"), title: `${s.queue.done} of ${s.queue.total} tasks done${s.queue.failed ? `, ${s.queue.failed} failed` : ""}` }, h("span", { style: { width: `${progress}%` } })) : null,
         h("span", { className: "omps-grow" }),
         cost ? h("span", { className: "omps-cost" }, cost) : null,
-        s.state === "scheduled" && s.startAt ? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now))
-      )
+        typeof s.startAt === "number" ? h("span", { className: "omps-when is-scheduled", title: `Queue starts ${new Date(s.startAt).toLocaleString()}` }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now)),
+        h(
+          "span",
+          { className: "omps-card-acts" },
+          s.completed ? h(CardButton, { icon: "undo", title: "Mark not completed", disabled: p.busy, onClick: () => p.onAction(s.id, "uncomplete") }) : h(CardButton, { icon: "check", title: "Mark completed", disabled: p.busy, onClick: () => p.onAction(s.id, "complete") }),
+          s.archived ? h(CardButton, { icon: "unarchive", title: "Unarchive", disabled: p.busy, onClick: () => p.onAction(s.id, "unarchive") }) : h(CardButton, { icon: "archive", title: "Archive", disabled: p.busy, onClick: () => p.onAction(s.id, "archive") })
+        )
+      ),
+      p.onQueueAction ? h(QueueControls, { s, onAction: p.onQueueAction, compact: true }) : null
     );
   }
   function SessionBoard(p) {
     const [expanded, setExpanded] = useState({});
+    const [confirmAll, setConfirmAll] = useState(false);
+    const [archivingAll, setArchivingAll] = useState(false);
+    const archivable = p.sessions.filter((s) => !s.archived && isDone(s));
+    const archiveAll = async () => {
+      setArchivingAll(true);
+      try {
+        await p.onArchiveAll(archivable.map((s) => s.id));
+      } finally {
+        setArchivingAll(false);
+        setConfirmAll(false);
+      }
+    };
     return h(
       "div",
       { className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
@@ -540,12 +672,27 @@
             { className: "omps-col-head" },
             h("span", { className: "omps-col-icon" }, icon(col.icon, 13)),
             h("span", { className: "omps-col-title" }, col.label),
-            h("span", { className: "omps-count" }, String(list.length))
+            h("span", { className: "omps-count" }, String(list.length)),
+            col.id === "done" && archivable.length ? confirmAll ? h(
+              "span",
+              { className: "omps-confirm omps-col-confirm" },
+              `Archive ${archivable.length}?`,
+              h(Button, { small: true, kind: "danger", label: "Archive", busy: archivingAll, onClick: () => void archiveAll() }),
+              h(Button, { small: true, kind: "ghost", label: "Cancel", disabled: archivingAll, onClick: () => setConfirmAll(false) })
+            ) : h(Button, {
+              small: true,
+              kind: "ghost",
+              icon: "archive",
+              label: "Archive all",
+              className: "omps-col-action",
+              title: `Archive the ${archivable.length} done or completed session${archivable.length === 1 ? "" : "s"} shown (idle with nothing queued, or marked completed)`,
+              onClick: () => setConfirmAll(true)
+            }) : null
           ),
           h(
             "div",
             { className: "omps-col-body" },
-            shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
+            shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, busy: p.busy.has(s.id), onOpen: p.onOpen, onOpenProject: p.onOpenProject, onAction: p.onAction, onQueueAction: p.onQueueAction })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
             list.length > shown.length ? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`) : null
           )
         );
@@ -642,6 +789,7 @@
   };
   function BoardCard(p) {
     const { b } = p;
+    const [confirmArchive, setConfirmArchive] = useState(false);
     const [folder, setFolder] = useState(b.folder ?? "");
     const [group, setGroup] = useState(b.group ?? "");
     const [mode, setMode] = useState(b.mode ?? "");
@@ -702,6 +850,35 @@
           children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e) => setAuthors(e.target.value) })
         }),
         h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty }))
+      ),
+      h(
+        "div",
+        { className: "omps-mode-row omps-bcard-archive" },
+        h("label", { className: "omps-section-label", htmlFor: `omps-${b.slug}-archive` }, "Archive done cards"),
+        h(
+          "select",
+          {
+            id: `omps-${b.slug}-archive`,
+            className: "omps-input",
+            value: b.archiveCompleted == null ? "" : b.archiveCompleted ? "on" : "off",
+            disabled: p.busy,
+            title: "Archive a card on the board, and its omp session, as soon as the lane completes it",
+            onChange: (e) => {
+              const v = e.target.value;
+              void p.onSave(b.slug, { archiveCompleted: v === "" ? null : v === "on" });
+            }
+          },
+          h("option", { value: "" }, `Lane default${b.archiveCompleted == null ? b.effectiveArchiveCompleted ? " (when completed)" : " (keep)" : ""}`),
+          h("option", { value: "on" }, "When the lane completes them"),
+          h("option", { value: "off" }, "Keep them")
+        ),
+        confirmArchive ? h(
+          "span",
+          { className: "omps-confirm" },
+          "Archive every done card of this lane now?",
+          h(Button, { small: true, kind: "danger", label: "Archive", busy: p.busy, onClick: () => void p.onArchiveDone(b.slug).finally(() => setConfirmArchive(false)) }),
+          h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmArchive(false) })
+        ) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by omp, and their omp sessions`, onClick: () => setConfirmArchive(true) })
       ),
       h(
         "div",
@@ -796,6 +973,24 @@
         setBusy(null);
       }
     };
+    const archiveDone = async (slug) => {
+      setBusy(slug);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const res = await p.host.request(`/boards/${encodeURIComponent(slug)}/archive-done`, { method: "POST", body: {} });
+        setView(res.view);
+        const n = res.archived.length;
+        const failed = Object.entries(res.failed).map(([card, why]) => `${card}: ${why}`);
+        if (failed.length) setActionError(`Not archived: ${failed.join("; ")}`);
+        setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} omp session${res.sessions.length === 1 ? "" : "s"}.`);
+        p.onChanged();
+      } catch (err) {
+        setActionError(errorMessage(err));
+      } finally {
+        setBusy(null);
+      }
+    };
     if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
     const notes = p.lane?.notes ?? [];
     const tick = p.lane?.dispatcher;
@@ -855,6 +1050,7 @@
             models: models.models,
             onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body),
             onOpenSession: p.onOpenSession,
+            onArchiveDone: (slug) => archiveDone(slug),
             onOpenFolder: (folder) => void openFolder(folder)
           })
         )
@@ -868,6 +1064,7 @@
     "in-sync": "in sync",
     pending: "changes wait for this turn to end",
     merged: "changes merged",
+    resolving: "its agent is resolving the merge",
     conflict: "merge conflict",
     "upstream-changed": "changed after this one finished"
   };
@@ -1050,6 +1247,11 @@
         setBusy(null);
       }
     };
+    const queueAction = async (id, action, body) => {
+      await p.host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+      await load();
+      p.onChanged();
+    };
     const view = s ?? p.summary;
     const questionId = view?.question?.id;
     const working = view?.state === "working" || view?.state === "starting";
@@ -1084,14 +1286,23 @@
           h(Meta, { label: "Status", children: stateText(view, p.now) }),
           view.group ? h(Meta, { label: "Group", children: view.group }) : null,
           view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-          view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
-          view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
+          typeof view.startAt === "number" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+          view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}${view.queue.failed ? ` · ${view.queue.failed} failed` : ""}` }) : null,
           view.model ? h(Meta, { label: "Model", children: view.model }) : null,
           h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
           h(Meta, { label: "Files changed", children: String(view.changedFiles) }),
           h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
-          view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map((t) => h("span", { key: t, className: "omps-chip" }, t))) }) : null
+          view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map((t) => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
+          view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null
         ) : null,
+        view ? h(
+          "div",
+          { className: "omps-mode-row omps-detail-actions" },
+          h("span", { className: "omps-section-label" }, view.archived ? "Archived" : view.completed ? "Completed" : "Organize"),
+          view.completed ? h(Button, { small: true, kind: "ghost", icon: "undo", label: "Mark not completed", busy: busy === "uncomplete", onClick: () => void act("uncomplete", "uncomplete", {}) }) : h(Button, { small: true, kind: "ghost", icon: "check", label: "Mark completed", title: "Done, whatever its state: Archive all on the Done column takes it", busy: busy === "complete", onClick: () => void act("complete", "complete", {}) }),
+          view.archived ? h(Button, { small: true, kind: "ghost", icon: "unarchive", label: "Unarchive", busy: busy === "unarchive", onClick: () => void act("unarchive", "unarchive", {}) }) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive", title: "Hide it from the board (Show archived brings it back)", busy: busy === "archive", onClick: () => void act("archive", "archive", {}) })
+        ) : null,
+        view ? h(QueueControls, { s: view, onAction: queueAction }) : null,
         view ? h(
           "div",
           { className: "omps-mode-row" },
@@ -1489,23 +1700,6 @@ omp session: ${session}` : ""}`),
   }
 
   // integrations/hermes/ui/newSession.ts
-  var AT_PRESETS = [
-    { label: "+30m", at: () => "+30m" },
-    { label: "+1h", at: () => "+1h" },
-    { label: "+3h", at: () => "+3h" },
-    { label: "Tonight 22:00", at: () => nextLocal(22, 0) },
-    { label: "Tomorrow 09:00", at: () => nextLocal(9, 1) }
-  ];
-  function nextLocal(hour, days) {
-    const d = /* @__PURE__ */ new Date();
-    d.setDate(d.getDate() + days);
-    d.setHours(hour, 0, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-    const pad = (n) => String(n).padStart(2, "0");
-    const off = -d.getTimezoneOffset();
-    const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
-  }
   function NewSessionDialog(p) {
     const [places, setPlaces] = useState(null);
     const [placesError, setPlacesError] = useState(null);
@@ -1863,6 +2057,8 @@ omp session: ${session}` : ""}`),
       const [project, setProject] = useState("");
       const [archived, setArchived] = useState(false);
       const [notice, setNotice] = useState(null);
+      const [boardNote, setBoardNote] = useState(null);
+      const [busyCards, setBusyCards] = useState(/* @__PURE__ */ new Set());
       const search = useRef(null);
       const loadSessions = async () => {
         try {
@@ -1921,6 +2117,34 @@ omp session: ${session}` : ""}`),
         setSelected(s.id);
         refresh();
       };
+      const cardAction = async (id, action) => {
+        setBoardNote(null);
+        setBusyCards((prev) => new Set(prev).add(id));
+        try {
+          await host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body: {} });
+          await loadSessions();
+        } catch (err) {
+          setBoardNote({ text: errorMessage(err), error: true });
+        } finally {
+          setBusyCards((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
+      };
+      const archiveAll = async (ids) => {
+        setBoardNote(null);
+        try {
+          const res = await host.request("/sessions/archive-done", { method: "POST", body: { ids } });
+          const n = res.archived.length;
+          const failed = res.failed.map((f) => `${f.id.slice(0, 8)}: ${f.error}`);
+          setBoardNote({ text: `Archived ${n} session${n === 1 ? "" : "s"}.${failed.length ? ` Not archived: ${failed.join("; ")}` : ""}`, error: failed.length > 0 });
+          await loadSessions();
+        } catch (err) {
+          setBoardNote({ text: errorMessage(err), error: true });
+        }
+      };
       const openProject = async (id) => {
         setNotice(null);
         try {
@@ -1928,6 +2152,10 @@ omp session: ${session}` : ""}`),
         } catch (err) {
           setNotice(errorMessage(err));
         }
+      };
+      const queueAction = async (id, action, body) => {
+        await host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+        await loadSessions();
       };
       const notInstalled = overview && !overview.ompSessions.found;
       let main;
@@ -1962,14 +2190,15 @@ omp session: ${session}` : ""}`),
             h(Select, { label: "Board", value: board, all: "All boards", options: facets.boards, onChange: setBoard }),
             h(Select, { label: "Group", value: group, all: "All groups", options: facets.groups, onChange: setGroup }),
             h(Select, { label: "Project", value: project, all: "All projects", options: facets.projects, onChange: setProject }),
-            archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", pressed: archived, label: `Archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
+            archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", icon: "archive", pressed: archived, label: `Show archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
             filtered ? h(Button, { small: true, kind: "ghost", icon: "x", label: "Clear", onClick: () => (setQuery(""), setBoard(""), setGroup(""), setProject("")) }) : null,
             h("span", { className: "omps-grow" }),
             h("span", { className: "omps-muted omps-total" }, filtered ? `${shown.length} of ${all.length}` : `${all.length} session${all.length === 1 ? "" : "s"}`)
           ),
           error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
           notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-          h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: (id) => void openProject(id), filtered })
+          boardNote ? h("div", { className: boardNote.error ? "omps-stale" : "omps-notice" }, icon(boardNote.error ? "alert" : "archive", 12), boardNote.text) : null,
+          h(SessionBoard, { sessions: shown, selected, now, busy: busyCards, onOpen: setSelected, onOpenProject: (id) => void openProject(id), onQueueAction: queueAction, onAction: (id, action) => void cardAction(id, action), onArchiveAll: archiveAll, filtered })
         );
       }
       return h(

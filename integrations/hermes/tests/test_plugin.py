@@ -219,7 +219,8 @@ class PluginTest(unittest.TestCase):
         self.assertIn("parent result", task["notes"], "parent results are in the prompt")
         self.assertIn("nope-skill: (not found on this machine)", task["notes"])
         self.assertEqual(task["title"], "echo child result")
-        self.assertEqual(report(cs["meta"]["id"]).get("after"), [s["meta"]["id"]])
+        [parent_task] = queue_of(s["meta"]["id"])["tasks"]
+        self.assertEqual(task["after"], [parent_task["id"]], "the child's task waits for the parent card's task (so it starts from its work)")
         self.tick_until("proj", child, lambda t: t.status == "done", "child done")
         self.assertEqual(len(tagged(child)), 1)
 
@@ -656,10 +657,11 @@ class PluginTest(unittest.TestCase):
         self.assertNotIn("error", first, first)
         second = self.tool("omp_session_start", {"task": "echo second", "cwd": str(WORK), "after": [first["id"]]})
         self.assertNotIn("error", second, second)
-        self.assertEqual(second.get("after"), [first["id"]])
-        # The first session still has its scheduled task ahead: the second waits for it, queued.
+        # The first session still has its scheduled task ahead: the second waits for that task, queued.
         shown = report(second["id"])
-        self.assertEqual((shown["state"], shown["after"], shown["blockedBy"]), ("queued", [first["id"]], [first["id"]]))
+        [first_task] = queue_of(first["id"])["tasks"]
+        [second_task] = queue_of(second["id"])["tasks"]
+        self.assertEqual((shown["state"], second_task["after"], second_task["blockedBy"], second_task["state"]), ("queued", [first_task["id"]], [first_task["id"]], "blocked"))
         # The first waiting for the second would be a cycle; an unknown session is refused too.
         cycle = self.tool("omp_queue_add", {"id": first["id"], "task": "echo more", "after": [second["id"]]})
         self.assertIn("cycle", cycle.get("error", ""), cycle)
@@ -729,6 +731,13 @@ class PureTest(unittest.TestCase):
         self.assertTrue(is_approval({"kind": "ask", "title": "ask", "message": "Allow tool: write x"}))
         self.assertFalse(is_approval({"kind": "ask", "title": "Pick one"}))
         self.assertTrue(is_approval({"kind": "approval", "title": "$ ls"}))
+        # AO shows an omp `ask` with options as a `select` too: only allow/deny choices make an approval.
+        self.assertFalse(is_approval({"kind": "select", "title": "Pick one", "options": ["alpha", "beta"]}), "a plain choice: the agent and card comments may answer it")
+        self.assertFalse(is_approval({"kind": "select", "title": "Deploy?", "options": ["Yes", "No"]}))
+        self.assertTrue(is_approval({"kind": "select", "title": "$ ls", "options": ["Allow once", "Always allow", "Reject", "Always reject"]}))
+        self.assertTrue(is_approval({"kind": "select", "title": "Allow tool: write\nPath: x", "options": ["Approve", "Approve write for this session", "Deny"]}))
+        self.assertFalse(is_approval({"kind": "select", "title": "Pick one", "options": ["Allow once", "Deny"], "approval": False}), "the CLI's own flag wins")
+        self.assertTrue(is_approval({"kind": "ask", "title": "x", "approval": True}))
 
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
