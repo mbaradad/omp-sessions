@@ -84,6 +84,8 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 	showArchived = false;
 	/** Whether stopped sessions are hidden; unread ones stay until looked at (organize.ts). */
 	hideFinished = false;
+	/** Whether sessions marked completed are hidden (organize.ts). */
+	hideCompleted = false;
 	/** Stopped sessions the last render hid because of `hideFinished`. */
 	hiddenFinished = 0;
 	/** Root nodes the last render produced. */
@@ -210,6 +212,10 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const color = effectiveColor(data, m.id);
 		const failed = m.status === "stopped" && !!m.exitCode;
 		if (color && !failed) item.iconPath = new vscode.ThemeIcon(STATUS_SHAPE[m.status], orgThemeColor(color));
+		// Completed shows while nothing happens in the session (activity icons win).
+		const completed = m.queue?.completed === true;
+		if (completed && (m.status === "idle" || m.status === "stopped") && !failed) item.iconPath = new vscode.ThemeIcon("pass-filled", orgThemeColor(color) ?? new vscode.ThemeColor("charts.green"));
+		if (completed) item.description = ["✓ completed", item.description].filter(Boolean).join(" · ");
 		const origin = hermesOrigin(e?.tags);
 		const plainTags = origin ? (e?.tags ?? []).filter(t => !isHermesTag(t, origin)) : (e?.tags ?? []);
 		if (origin || plainTags.length) item.description = [item.description, origin ? originLabel(origin) : "", plainTags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" · ");
@@ -225,10 +231,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				color ? `$(symbol-color) ${color}${e?.color ? "" : " (from group)"}` : "",
 				e?.pinned ? "$(pinned) pinned" : "",
 				e?.archived ? "$(archive) archived" : "",
+				completed ? `$(pass) completed${m.queue?.completedAt ? ` ${new Date(m.queue.completedAt).toLocaleString()}` : ""}` : "",
 			].filter(Boolean);
 			if (lines.length) item.tooltip.appendMarkdown(`\n\n${lines.join("  \n")}`);
 		}
-		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
+		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${completed ? ".completed" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
 	}
 
 	/** Session ids shown next to `node` in its container (display order). */
@@ -295,6 +302,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				sortBy: isSortMode(sortBy) ? sortBy : "auto",
 				filter: this.filter,
 				showArchived: this.showArchived,
+				hideCompleted: this.hideCompleted,
 				visible: m => {
 					if (!this.sessions.inScope(m)) return false;
 					// Finished = nothing ahead: scheduled, queued and interrupted sessions stay (their meta.queue is kept current).

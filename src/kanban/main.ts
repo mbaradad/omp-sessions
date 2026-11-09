@@ -3,10 +3,13 @@ import { plainExcerpt } from "../shared/excerpt";
 import type { SyncState } from "../shared/protocol";
 import {
 	BOARD_MODES,
+	BOARD_SORTS,
+	BOARD_SORT_LABEL,
 	type BoardCard,
 	type BoardColumn,
 	type BoardData,
 	type BoardMode,
+	type BoardSort,
 	type BoardSection,
 	type CardUpdate,
 	type DropTarget,
@@ -45,9 +48,12 @@ const post = (msg: FromBoard): void => vscode.postMessage(msg);
 
 interface ViewState {
 	mode: BoardMode;
+	/** Card order inside every column (`rank` = manual order). */
+	sort: BoardSort;
 	filter: string;
 	showArchived: boolean;
 	showStopped: boolean;
+	showCompleted: boolean;
 	swimlanes: boolean;
 	/** Dependency graph instead of the columns. */
 	graph: boolean;
@@ -60,9 +66,11 @@ function loadState(): ViewState {
 	const s: Record<string, unknown> = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...raw } : {};
 	return {
 		mode: BOARD_MODES.find(m => m === s.mode) ?? "status",
+		sort: BOARD_SORTS.find(x => x === s.sort) ?? "rank",
 		filter: typeof s.filter === "string" ? s.filter : "",
 		showArchived: s.showArchived === true,
 		showStopped: s.showStopped !== false,
+		showCompleted: s.showCompleted !== false,
 		swimlanes: s.swimlanes === true,
 		graph: s.graph === true,
 		collapsed: Array.isArray(s.collapsed) ? s.collapsed.filter((x): x is string => typeof x === "string") : [],
@@ -278,6 +286,18 @@ function setArchived(ids: string[], archived: boolean): void {
 	post({ type: "setArchived", ids, archived });
 	render();
 }
+function setCompleted(ids: string[], completed: boolean): void {
+	const now = Date.now();
+	for (const id of ids)
+		patchLocal(id, c => {
+			if (completed && !c.completed) c.completedAt = now;
+			if (!completed) c.completedAt = undefined;
+			c.completed = completed;
+		});
+	if (!view.showCompleted && completed) for (const id of ids) selected.delete(id);
+	post({ type: "setCompleted", ids, completed });
+	render();
+}
 /** The cards an action on `id` applies to: the selection when `id` is part of it. */
 function targets(id: string): string[] {
 	return selected.has(id) ? orderedSelection() : [id];
@@ -294,7 +314,7 @@ function rowOf(id: string): { key: string; columns: BoardColumn[] } | undefined 
 function moveCards(ids: string[], target: DropTarget | undefined, columns: BoardColumn[]): void {
 	if (!target) return;
 	const updates = planDrop(view.mode, columns, ids, target);
-	if (updates) applyUpdates(updates);
+	if (updates?.length) applyUpdates(updates);
 }
 
 // ---------- header ----------
@@ -358,10 +378,26 @@ function renderHeader(cardCount: number): void {
 		b.setAttribute("aria-selected", String(view.mode === m && !view.graph));
 		modes.append(b);
 	}
+	const sortSelect = el("select", "sort");
+	sortSelect.title = "Card order in every column (Rank = your drag & drop order)";
+	sortSelect.setAttribute("aria-label", "Sort cards by");
+	for (const s of BOARD_SORTS) {
+		const option = el("option", "", BOARD_SORT_LABEL[s]);
+		option.value = s;
+		option.selected = view.sort === s;
+		sortSelect.append(option);
+	}
+	sortSelect.addEventListener("change", () => {
+		view.sort = BOARD_SORTS.find(s => s === sortSelect.value) ?? "rank";
+		saveState();
+		render();
+	});
+	const sortControl = el("label", "sort-control", "Sort", sortSelect);
 	const toggles = el(
 		"div",
 		"toggles",
 		toggle("Stopped", "Show stopped sessions", () => view.showStopped, v => (view.showStopped = v)),
+		toggle("Completed", "Show sessions marked completed", () => view.showCompleted, v => (view.showCompleted = v)),
 		toggle("Archived", "Show archived sessions", () => view.showArchived, v => (view.showArchived = v)),
 		toggle("Swimlanes", "One row per project", () => view.swimlanes, v => (view.swimlanes = v)),
 		toggle("Graph", "Show session dependencies as a graph", () => view.graph, v => (view.graph = v)),
@@ -382,7 +418,7 @@ function renderHeader(cardCount: number): void {
 		button("icon-btn", "Toggle full width (maximize editor group)", [icon("expand")], () => post({ type: "maximize" })),
 		button("primary", "New session", [icon("plus"), "New"], () => post({ type: "newSession" })),
 	);
-	const children: Node[] = [modes, filterInput, toggles, right];
+	const children: Node[] = [modes, filterInput, sortControl, toggles, right];
 	if (selected.size) {
 		const ids = () => orderedSelection();
 		const bulk = el(
@@ -393,6 +429,8 @@ function renderHeader(cardCount: number): void {
 			button("ghost", "Set color", ["Color"], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : boardEl, ids())),
 			button("ghost", "Archive", ["Archive"], () => setArchived(ids(), true)),
 			button("ghost", "Unarchive", ["Unarchive"], () => setArchived(ids(), false)),
+			button("ghost", "Mark completed", ["Complete"], () => setCompleted(ids(), true)),
+			button("ghost", "Reopen (not completed)", ["Reopen"], () => setCompleted(ids(), false)),
 			button("ghost", "Stop", ["Stop"], () => post({ type: "stop", ids: ids() })),
 			button("ghost", "Resume", ["Resume"], () => post({ type: "resume", ids: ids() })),
 			button("ghost", "Clear selection (Esc)", ["Clear"], () => {
@@ -415,22 +453,23 @@ function statusPill(c: BoardCard): HTMLElement {
 	if (key === "waiting") return el("span", "pill waiting", icon("bell"), "Needs input");
 	if (key === "queued") return el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : "Queued");
 	if (key === "stopped") return el("span", "pill stopped", icon("circle"), "Stopped");
+	if (key === "completed") return el("span", "pill completed", icon("check"), "Completed");
 	return el("span", "pill idle", icon("check"), "Idle");
 }
 
 function renderCard(c: BoardCard, row: string): HTMLElement {
-	const card = el("div", `card${c.color ? ` c-${c.color}` : ""}${selected.has(c.id) ? " selected" : ""}${c.archived ? " archived" : ""}${c.status === "stopped" ? " stopped" : ""}`);
+	const card = el("div", `card${c.color ? ` c-${c.color}` : ""}${selected.has(c.id) ? " selected" : ""}${c.archived ? " archived" : ""}${c.status === "stopped" ? " stopped" : ""}${c.completed ? " completed" : ""}`);
 	card.dataset.id = c.id;
 	card.dataset.row = row;
 	card.tabIndex = c.id === focusedId ? 0 : -1;
 	card.draggable = true;
 	card.setAttribute("role", "listitem");
-	card.setAttribute("aria-label", `${c.title}, ${PRIORITY_LABEL[c.priority]} priority, ${statusKey(c)}`);
+	card.setAttribute("aria-label", `${c.title}, ${PRIORITY_LABEL[c.priority]} priority, ${statusKey(c)}${c.completed ? ", completed" : ""}`);
 	card.setAttribute("aria-selected", String(selected.has(c.id)));
 
 	const prio = button(`prio-btn prio-${c.priority}`, `Priority: ${PRIORITY_LABEL[c.priority]} (P to cycle)`, [priorityIcon(c.priority)], ev => priorityMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id)));
 	const title = el("span", "title", c.title);
-	const top = el("div", "card-top", prio, title, c.pinned ? icon("pin", "pinned") : null, c.unread ? el("span", "unread-dot") : null);
+	const top = el("div", "card-top", prio, title, c.completed ? icon("check", "done-mark") : null, c.pinned ? icon("pin", "pinned") : null, c.unread ? el("span", "unread-dot") : null);
 	if (c.unread) title.title = "New activity";
 
 	const meta = el("div", "card-meta", statusPill(c), el("span", "project", icon("folder"), c.project));
@@ -476,6 +515,7 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		canRerunWithParent(c) ? button("icon-btn", "Re-run with parent changes", [icon("rerun")], () => post({ type: "rerunWithParent", ids: targets(c.id) })) : null,
 		stopped ? button("icon-btn", "Resume", [icon("play")], () => post({ type: "resume", ids: targets(c.id) })) : button("icon-btn", "Stop", [icon("stop")], () => post({ type: "stop", ids: targets(c.id) })),
 		button("icon-btn", "Color…", [icon("palette")], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id))),
+		c.completed ? button("icon-btn done-btn on", "Completed — click to reopen", [icon("check")], () => setCompleted(targets(c.id), false)) : button("icon-btn done-btn", "Mark completed", [icon("check")], () => setCompleted(targets(c.id), true)),
 		c.archived ? button("icon-btn", "Unarchive", [icon("unarchive")], () => setArchived(targets(c.id), false)) : button("icon-btn", "Archive", [icon("archive")], () => setArchived(targets(c.id), true)),
 	);
 	card.append(el("div", "card-body", ...parts), actions);
@@ -569,6 +609,7 @@ function columnHeader(col: BoardColumn, index: number, total: number, count: num
 	}
 	const head = el("div", `col-head${col.color ? ` c-${col.color}` : ""}${col.queued ? " queued" : ""}`, col.color ? el("span", `dot c-${col.color}`) : statusDot(col), title, el("span", "badge", String(count)), laneHeaderControls(col, index, total));
 	if (col.queued) head.title = "Sessions waiting for a global concurrency slot, in start order. Reorder to change who starts next.";
+	else if (col.sorted) head.title = `Sorted by ${BOARD_SORT_LABEL[view.sort].toLowerCase()}: dropping here changes ${view.mode === "status" ? "nothing" : `the ${view.mode}`}, not the order (Sort: Rank to reorder).`;
 	else if (!col.droppable && view.mode === "status") head.title = "Status columns follow the sessions; reorder within a column only.";
 	return head;
 }
@@ -592,7 +633,7 @@ function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<strin
 	return e;
 }
 
-const GRAPH_STATE: Record<StatusKey, string> = { working: "working", waiting: "needs input", queued: "queued", idle: "idle", stopped: "stopped" };
+const GRAPH_STATE: Record<StatusKey, string> = { working: "working", waiting: "needs input", queued: "queued", idle: "idle", completed: "completed", stopped: "stopped" };
 
 const EDGE_KINDS = ["pending", "changed", "conflict", "merged"] as const;
 type EdgeKind = (typeof EDGE_KINDS)[number];
@@ -679,7 +720,7 @@ function render(): void {
 		return;
 	}
 	renderPending = false;
-	const visible = filterCards(data.cards, { text: view.filter, showArchived: view.showArchived, showStopped: view.showStopped });
+	const visible = filterCards(data.cards, { text: view.filter, showArchived: view.showArchived, showStopped: view.showStopped, showCompleted: view.showCompleted });
 	for (const id of [...selected]) if (!visible.some(c => c.id === id)) selected.delete(id);
 	if (view.graph) {
 		rows = [];
@@ -693,11 +734,11 @@ function render(): void {
 		return;
 	}
 	const lanesData = { lanes: data.lanes, groups: data.groups };
-	const all = buildColumns(view.mode, lanesData, visible);
-	// Stopped column is noise while stopped sessions are hidden.
-	const keep = (c: BoardColumn) => !(view.mode === "status" && c.value === "stopped" && !view.showStopped);
+	const all = buildColumns(view.mode, lanesData, visible, view.sort);
+	// Stopped / Completed columns are noise while those sessions are hidden.
+	const keep = (c: BoardColumn) => !(view.mode === "status" && ((c.value === "stopped" && !view.showStopped) || (c.value === "completed" && !view.showCompleted)));
 	rows = view.swimlanes
-		? projectsOf(visible).map(p => ({ key: `swim:${p}`, title: p, columns: buildColumns(view.mode, lanesData, visible.filter(c => c.project === p)).filter(keep) }))
+		? projectsOf(visible).map(p => ({ key: `swim:${p}`, title: p, columns: buildColumns(view.mode, lanesData, visible.filter(c => c.project === p), view.sort).filter(keep) }))
 		: [{ key: "", title: "", columns: all.filter(keep) }];
 	const columns = all.filter(keep);
 	renderHeader(visible.length);

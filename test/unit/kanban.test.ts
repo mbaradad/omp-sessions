@@ -54,7 +54,7 @@ const ids = (col: BoardColumn | undefined, section = 0): string[] => col?.sectio
 const byId = (cols: BoardColumn[], id: string) => cols.find(c => c.id === id);
 
 describe("buildColumns", () => {
-	test("status: needs input / working / queued / idle / stopped; queued ordered by slot position", () => {
+	test("status: needs input / working / queued / idle / completed / stopped; queued ordered by slot position", () => {
 		const cols = buildColumns("status", { lanes, groups }, [
 			card("w", { status: "waiting" }),
 			card("s", { status: "starting" }),
@@ -63,19 +63,62 @@ describe("buildColumns", () => {
 			card("q1", { waiting: { position: 1, since: NOW }, rank: 5 }),
 			card("i"),
 			card("x", { status: "stopped", waiting: { position: 3, since: NOW } }),
+			card("done-idle", { completed: true }),
+			card("done-stopped", { status: "stopped", completed: true, rank: -1 }),
+			// Activity wins over the marker: it shows where the work is.
+			card("done-asking", { status: "waiting", completed: true }),
 		]);
 		assert.deepEqual(
 			cols.map(c => [c.title, ids(c)]),
 			[
-				["Needs input", ["w"]],
+				["Needs input", ["done-asking", "w"]],
 				["Working", ["k", "s"]],
 				["Queued", ["q1", "q2"]],
 				["Idle", ["i"]],
+				["Completed", ["done-stopped", "done-idle"]],
 				["Stopped", ["x"]],
 			],
 		);
 		assert.ok(cols.every(c => !c.droppable));
 		assert.equal(cols.filter(c => c.queued).length, 1);
+	});
+
+	test("sort: every container but Queued follows the chosen order; rank keeps the manual order", () => {
+		const cards = [
+			card("unsched", { rank: 0, updatedAt: NOW + 5 }),
+			card("late", { rank: 1, startAt: NOW + 2000 }),
+			card("soon", { rank: 2, startAt: NOW + 1000 }),
+			card("q2", { waiting: { position: 2, since: NOW }, startAt: NOW + 10 }),
+			card("q1", { waiting: { position: 1, since: NOW }, startAt: NOW + 99 }),
+		];
+		const byRank = buildColumns("status", { lanes, groups }, cards.map(c => ({ ...c })));
+		assert.deepEqual(ids(byId(byRank, "status:idle")), ["unsched", "late", "soon"]);
+		assert.equal(byId(byRank, "status:idle")?.sorted, undefined);
+		const scheduled = buildColumns("status", { lanes, groups }, cards.map(c => ({ ...c })), "scheduled");
+		assert.deepEqual(ids(byId(scheduled, "status:idle")), ["soon", "late", "unsched"]);
+		assert.equal(byId(scheduled, "status:idle")?.sorted, true);
+		assert.deepEqual(ids(byId(scheduled, "status:queued")), ["q1", "q2"], "Queued stays in start order");
+		// Sub-group sections follow the sort too.
+		const grouped = buildColumns("group", { lanes, groups }, [card("x", { group: "a1", title: "b" }), card("y", { group: "a1", title: "a", rank: 9 })], "name");
+		assert.deepEqual(ids(byId(grouped, "group:a"), 1), ["y", "x"]);
+	});
+
+	test("sort completed: marked first by mark time, then most recently finished, ties by id", () => {
+		const cols = buildColumns(
+			"lane",
+			{ lanes, groups },
+			[
+				card("f-old", { finishedAt: 10 }),
+				card("c-old", { completed: true, completedAt: 1 }),
+				card("never", { status: "working" }),
+				card("c-new", { completed: true, completedAt: 5 }),
+				card("f-new", { finishedAt: 20 }),
+				card("f-tie-b", { finishedAt: 15 }),
+				card("f-tie-a", { finishedAt: 15 }),
+			],
+			"completed",
+		);
+		assert.deepEqual(ids(byId(cols, "lane:backlog")), ["c-new", "c-old", "f-new", "f-tie-a", "f-tie-b", "f-old", "never"]);
 	});
 
 	test("lane: user lanes in order; unknown/missing lane falls into the first", () => {
@@ -209,6 +252,12 @@ describe("planDrop", () => {
 		assert.deepEqual(planDrop("status", cols, ["j"], { columnId: "status:idle", sectionId: "status:idle", beforeId: "i" }), [{ id: "j", patch: { rank: -RANK_STEP } }]);
 	});
 
+	test("a sorted column has no manual order: drops change fields only, never ranks", () => {
+		const sorted = buildColumns("lane", { lanes, groups }, [card("a", { lane: "doing", title: "A" }), card("b", { lane: "doing", title: "B" }), card("c", { lane: "backlog" })], "name");
+		assert.deepEqual(planDrop("lane", sorted, ["c"], { columnId: "lane:doing", sectionId: "lane:doing", beforeId: "b" }), [{ id: "c", patch: { lane: "doing" } }]);
+		assert.deepEqual(planDrop("lane", sorted, ["b"], { columnId: "lane:doing", sectionId: "lane:doing", beforeId: "a" }), []);
+	});
+
 	test("queued: moving up past a higher priority adopts it so the scheduler order matches", () => {
 		const q = (id: string, position: number, priority: BoardCard["priority"], rank: number) => card(id, { waiting: { position, since: NOW }, priority, rank });
 		const cols = buildColumns("status", { lanes, groups }, [q("u", 1, "urgent", 50), q("h", 2, "high", 0), q("l", 3, "low", 0)]);
@@ -263,11 +312,14 @@ describe("filterCards", () => {
 		card("b", { title: "Docs", lastText: "Updated the README", project: "api", cwd: "/work/api" }),
 		card("c", { title: "Old", status: "stopped" }),
 		card("d", { title: "Shelved", archived: true }),
+		card("e", { title: "Shipped", status: "stopped", completed: true }),
 	];
-	const f = (text: string, showArchived = false, showStopped = false) => filterCards(cards, { text, showArchived, showStopped }).map(c => c.id);
-	test("archived/stopped toggles", () => {
-		assert.deepEqual(f(""), ["a", "b"]);
-		assert.deepEqual(f("", true, true), ["a", "b", "c", "d"]);
+	const f = (text: string, showArchived = false, showStopped = false, showCompleted?: boolean) => filterCards(cards, { text, showArchived, showStopped, showCompleted }).map(c => c.id);
+	test("archived/stopped/completed toggles", () => {
+		assert.deepEqual(f(""), ["a", "b", "e"], "completed sessions show (in their column) even while stopped ones are hidden");
+		assert.deepEqual(f("", true, true), ["a", "b", "c", "d", "e"]);
+		assert.deepEqual(f("", true, true, false), ["a", "b", "c", "d"]);
+		assert.deepEqual(f("completed"), ["e"]);
 	});
 	test("text, #tag, project: — all tokens must match, case-insensitive", () => {
 		assert.deepEqual(f("LOGIN"), ["a"]);

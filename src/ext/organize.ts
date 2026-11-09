@@ -92,6 +92,8 @@ const SORT_MODE_INFO: Record<SortMode, { label: string; detail: string }> = {
 	name: { label: "$(case-sensitive) Name", detail: "Alphabetical" },
 	created: { label: "$(calendar) Created", detail: "Newest first" },
 	cost: { label: "$(credit-card) Cost", detail: "Most expensive first" },
+	scheduled: { label: "$(watch) Scheduled Start", detail: "Next scheduled queue start first; unscheduled sessions last" },
+	completed: { label: "$(pass) Completed", detail: "Marked completed first (latest first), then the most recently finished" },
 };
 
 function piSvg(hex: string): string {
@@ -150,11 +152,12 @@ export function registerOrganize(api: OmpApi): void {
 	// ---------- view state: filter, archived, context keys ----------
 	tree.showArchived = context.globalState.get<boolean>("omp.organize.showArchived") ?? false;
 	tree.hideFinished = context.globalState.get<boolean>("omp.organize.hideFinished") ?? false;
+	tree.hideCompleted = context.globalState.get<boolean>("omp.organize.hideCompleted") ?? false;
 	/** Description and empty message from the last render (no extra tree build). */
 	const updateDescription = () => {
 		const hidden = tree.hideFinished && tree.hiddenFinished ? `${tree.hiddenFinished} finished hidden` : "";
 		const scope = sessions.scope() === "all" ? "all sessions" : "this workspace";
-		view.description = [scope, tree.filter ? `Filtered: ${tree.filter}` : "", hidden].filter(Boolean).join(" · ");
+		view.description = [scope, tree.filter ? `Filtered: ${tree.filter}` : "", hidden, tree.hideCompleted ? "completed hidden" : ""].filter(Boolean).join(" · ");
 		view.message =
 			tree.rootCount > 0
 				? undefined
@@ -172,6 +175,7 @@ export function registerOrganize(api: OmpApi): void {
 		void vscode.commands.executeCommand("setContext", "omp.sessions.filtered", !!tree.filter);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.showArchived", tree.showArchived);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.hideFinished", tree.hideFinished);
+		void vscode.commands.executeCommand("setContext", "omp.sessions.hideCompleted", tree.hideCompleted);
 		void vscode.commands.executeCommand("setContext", "omp.sessions.scopeAll", config().get<string>("sessionScope") === "all");
 		void vscode.commands.executeCommand("setContext", "omp.sessions.groupBy", groupBy());
 	};
@@ -451,6 +455,14 @@ export function registerOrganize(api: OmpApi): void {
 	};
 	reg("omp.organize.hideFinished", () => setHideFinished(true));
 	reg("omp.organize.showFinished", () => setHideFinished(false));
+	const setHideCompleted = (value: boolean) => {
+		tree.hideCompleted = value;
+		void context.globalState.update("omp.organize.hideCompleted", value);
+		tree.refresh();
+		updateChrome();
+	};
+	reg("omp.organize.hideCompleted", () => setHideCompleted(true));
+	reg("omp.organize.showCompleted", () => setHideCompleted(false));
 	reg("omp.sessions.showAll", () => updateSetting("sessionScope", "all"));
 	reg("omp.sessions.showWorkspace", () => updateSetting("sessionScope", "workspace"));
 
@@ -544,6 +556,16 @@ export function registerOrganize(api: OmpApi): void {
 		m => !store.session(m.id).archived,
 	);
 	flagCommand("omp.organize.unarchive", "Unarchive which session?", ids => store.setArchived(ids, false), m => !!store.session(m.id).archived);
+	flagCommand(
+		"omp.markCompleted",
+		"Mark which session completed?",
+		ids => {
+			void sessions.setCompleted(ids, true).catch(err => vscode.window.showWarningMessage(plain(`Could not mark completed: ${err instanceof Error ? err.message : String(err)}`)));
+			if (tree.hideCompleted) vscode.window.setStatusBarMessage(`$(pass) Completed ${ids.length} session${ids.length === 1 ? "" : "s"} — Show Completed lists them again`, 5000);
+		},
+		m => !m.queue?.completed,
+	);
+	flagCommand("omp.markNotCompleted", "Reopen which completed session?", ids => void sessions.setCompleted(ids, false).catch(err => vscode.window.showWarningMessage(plain(`Could not reopen: ${err instanceof Error ? err.message : String(err)}`))), m => !!m.queue?.completed);
 
 	reg("omp.organize.editTags", async (arg?: unknown, all?: unknown) => {
 		const metas = await targetSessions(arg, all, "Tag which session?");

@@ -7,6 +7,8 @@ import * as vscode from "vscode";
 import { effectiveColor, effectiveRank } from "../shared/organize";
 import type { BoardData, BoardCard, FromBoard, ToBoard } from "../kanban/board";
 import type { OmpApi } from "./api";
+import { finishedAt, scheduledStart } from "../shared/session-sort";
+import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
 
@@ -49,6 +51,10 @@ function buildData(api: OmpApi): BoardData {
 			tags: e.tags ?? [],
 			lane: e.lane,
 			group: e.groupId,
+			startAt: scheduledStart(m.queue),
+			completed: m.queue?.completed === true,
+			completedAt: m.queue?.completedAt,
+			finishedAt: finishedAt(m.status, m.updatedAt),
 			...(m.queue?.after && { after: m.queue.after }),
 			...(m.queue?.blockedBy && { blockedBy: m.queue.blockedBy }),
 		};
@@ -125,6 +131,9 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			break;
 		case "setArchived":
 			store.setArchived(msg.ids, msg.archived);
+			break;
+		case "setCompleted":
+			await api.sessions.setCompleted(msg.ids, msg.completed).catch(err => vscode.window.showWarningMessage(plain(`Could not ${msg.completed ? "mark completed" : "reopen"}: ${err instanceof Error ? err.message : String(err)}`)));
 			break;
 		case "addLane":
 			store.createLane(msg.name);

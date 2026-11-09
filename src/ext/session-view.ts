@@ -124,6 +124,8 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const after = sessionsOf(tasks.flatMap(t => t.after ?? []));
 	const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []));
 	const failed = tasks.filter(t => t.state === "failed").length;
+	const completed = lanes.every(l => l.completed === true);
+	const completedAt = Math.max(...lanes.map(l => l.completedAt ?? 0));
 	// Propagation (GRAPH-PROPAGATION.md): the worst state over every parent edge of the session's tasks, and the parent sessions in it.
 	const edges = tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, edge]) => ({ parent, state: edge.state })));
 	const syncState = edges.reduce<SyncState | undefined>((worst, e) => (worst === undefined || SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worst] ? e.state : worst), undefined);
@@ -142,6 +144,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(Number.isFinite(startAt) && { startAt }),
 		...(interrupted && { interrupted }),
 		...(failed && { failed }),
+		...(completed && { completed, completedAt }),
 		...(sync && { sync }),
 		...(after.length && { after }),
 		...(blockedBy.length && { blockedBy }),
@@ -199,6 +202,14 @@ export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): str
 	const lanes = plan?.lanes.filter(l => l.id === sessionId || l.session === sessionId) ?? [];
 	const ids = new Set(lanes.map(l => l.id));
 	return (plan?.tasks ?? []).filter(t => (t.lane !== undefined && ids.has(t.lane) || t.session === sessionId) && Object.values(t.sync ?? {}).some(e => e.state === "upstream-changed" || e.state === "conflict")).map(t => t.id);
+}
+
+/** Plan edits that mark sessions completed (or reopen them): `lane.complete` on the lane that continues each one; a session without a lane gets one first. */
+export function completeOps(plan: PlanView | undefined, ids: readonly string[], completed: boolean): PlanOp[] {
+	return ids.flatMap((id): PlanOp[] => {
+		const lane = plan?.lanes.find(l => l.id === id || l.session === id);
+		return [...(lane ? [] : [{ op: "lane.add" as const, id, session: id }]), { op: "lane.complete", id: lane?.id ?? id, completed }];
+	});
 }
 
 /**

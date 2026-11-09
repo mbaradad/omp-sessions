@@ -731,6 +731,18 @@
 				"icon": "$(archive)"
 			},
 			{
+				"command": "omp.organize.hideCompleted",
+				"title": "Hide Completed Sessions",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
+				"command": "omp.organize.showCompleted",
+				"title": "Show Completed Sessions",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
 				"command": "omp.organize.newGroup",
 				"title": "New Group…",
 				"category": "omp",
@@ -795,6 +807,18 @@
 				"title": "Unarchive",
 				"category": "omp",
 				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.markCompleted",
+				"title": "Mark Completed",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
+				"command": "omp.markNotCompleted",
+				"title": "Mark Not Completed",
+				"category": "omp",
+				"icon": "$(circle-large-outline)"
 			},
 			{
 				"command": "omp.organize.moveUp",
@@ -1028,6 +1052,16 @@
 					"group": "2_view@3"
 				},
 				{
+					"command": "omp.organize.hideCompleted",
+					"when": "view == omp.sessions && !omp.sessions.hideCompleted",
+					"group": "2_view@3"
+				},
+				{
+					"command": "omp.organize.showCompleted",
+					"when": "view == omp.sessions && omp.sessions.hideCompleted",
+					"group": "2_view@3"
+				},
+				{
 					"command": "omp.organize.newGroup",
 					"when": "view == omp.sessions",
 					"group": "2_view@4"
@@ -1193,6 +1227,16 @@
 					"command": "omp.organize.unarchive",
 					"when": "view == omp.sessions && viewItem =~ /^session.*\\.archived/",
 					"group": "3_organize@9"
+				},
+				{
+					"command": "omp.markCompleted",
+					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.completed)/",
+					"group": "3_organize@10"
+				},
+				{
+					"command": "omp.markNotCompleted",
+					"when": "view == omp.sessions && viewItem =~ /^session.*\\.completed/",
+					"group": "3_organize@10"
 				},
 				{
 					"command": "omp.organize.moveUp",
@@ -1677,6 +1721,14 @@
 					"when": "omp.sessions.showArchived"
 				},
 				{
+					"command": "omp.organize.hideCompleted",
+					"when": "!omp.sessions.hideCompleted"
+				},
+				{
+					"command": "omp.organize.showCompleted",
+					"when": "omp.sessions.hideCompleted"
+				},
+				{
 					"command": "omp.tasks.addSubtask",
 					"when": "false"
 				},
@@ -2030,7 +2082,9 @@
 						"priority",
 						"name",
 						"created",
-						"cost"
+						"cost",
+						"scheduled",
+						"completed"
 					],
 					"default": "auto",
 					"enumDescriptions": [
@@ -2040,7 +2094,9 @@
 						"Urgent → low, then last activity.",
 						"Alphabetical.",
 						"Newest first.",
-						"Most expensive first."
+						"Most expensive first.",
+						"Next scheduled queue start first; unscheduled sessions last.",
+						"Marked completed first (latest first), then the most recently finished."
 					],
 					"description": "How sessions are sorted within each group of the Sessions view."
 				},

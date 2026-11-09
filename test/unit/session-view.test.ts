@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -231,4 +231,13 @@ test("dependencyOps: pending tasks wait for every task of the picked sessions; o
 	assert.equal(dependencyOps(plan, "C", ["A"])?.length, 1);
 	assert.equal(dependencyOps({ ...plan, tasks: plan.tasks.filter(t => t.lane !== "b") }, "B", ["A"]), undefined);
 	assert.equal(dependencyOps(undefined, "A", ["B"]), undefined);
+});
+
+test("completeOps / laneQueue: the marker is the planner's lane.complete; a session without a lane gets one", () => {
+	const lane = (id: string, extra: Partial<LaneView> = {}): LaneView => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 0, running: 0, done: 1, failed: 0, total: 1, ...extra });
+	const plan = { rev: 1, lanes: [lane("a", { completed: true, completedAt: 99 }), lane("b")], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
+	assert.deepEqual(completeOps(plan, ["A", "C"], true), [{ op: "lane.complete", id: "a", completed: true }, { op: "lane.add", id: "C", session: "C" }, { op: "lane.complete", id: "C", completed: true }]);
+	assert.deepEqual(completeOps(plan, ["B"], false), [{ op: "lane.complete", id: "b", completed: false }]);
+	assert.deepEqual([laneQueue(plan, "A")?.completed, laneQueue(plan, "A")?.completedAt], [true, 99]);
+	assert.equal(laneQueue(plan, "B")?.completed, undefined);
 });

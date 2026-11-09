@@ -15,7 +15,7 @@ import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpo
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -243,6 +243,16 @@ export class SessionManager implements vscode.Disposable {
 		if (!source || !ops) return 0;
 		await source.edit(ops);
 		return ops.length;
+	}
+
+	/**
+	 * Marks sessions completed or reopens them: the planner's lane marker (`lane.complete`), so every client sees
+	 * it. A session without a lane gets one named after it. Nothing is sent without a planner connection.
+	 */
+	async setCompleted(ids: readonly string[], completed: boolean): Promise<void> {
+		const source = this.planSource;
+		if (!source || ids.length === 0) return;
+		await source.edit(completeOps(source.plan, ids, completed));
 	}
 
 	/** Relists every session from AO. */
