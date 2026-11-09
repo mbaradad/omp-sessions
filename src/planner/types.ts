@@ -123,6 +123,8 @@ export interface Task {
 	sync?: Record<string, EdgeSync>;
 	/** Note for the next run's prompt (upstream changes merged, or a merge to resolve). */
 	followUp?: string;
+	/** The next run is only that note (a follow-up in the session that has the work), not the whole task again. */
+	followUpOnly?: boolean;
 }
 
 export interface TaskGit {
