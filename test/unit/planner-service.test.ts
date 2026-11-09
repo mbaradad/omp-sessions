@@ -284,3 +284,17 @@ test("someone resumes a dead host: AO fails the stuck turn with 'controller ende
 	assert.equal(byTitle(p, "long").attempts, undefined, "no attempt used, nothing retried");
 	assert.match(byTitle(p, "long").summary ?? "", /host died/);
 });
+
+test("a task with a timeout still notices its turn ending within a moment (a slow re-check must not hold off events and polls)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "timed", options: { timeoutMinutes: 10 } } }]);
+	const s = await until("sent", () => byTitle(p, "timed").run?.phase === "sent" && byTitle(p, "timed").run?.session);
+	// Let at least one check run (it arms the long re-check), then end the turn.
+	await sleep(700);
+	const at = Date.now();
+	ao.finishTurn(s, "completed", "done");
+	await until("done", () => byTitle(p, "timed").status === "done", 10_000);
+	assert.ok(Date.now() - at < 5000, `noticed after ${Date.now() - at} ms`);
+});

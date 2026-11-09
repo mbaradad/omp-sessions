@@ -78,7 +78,8 @@ export class Planner {
 	private tickDue = 0;
 	private pollTimer: NodeJS.Timeout | undefined;
 	private usageTimer: NodeJS.Timeout | undefined;
-	private readonly retryTimers = new Map<string, NodeJS.Timeout>();
+	/** Pending check of a running task: its timer and when it is due (an earlier request replaces a later one). */
+	private readonly retryTimers = new Map<string, { timer: NodeJS.Timeout; due: number }>();
 	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
 	/** omp model ids AO knows, fetched at most every 10 minutes. */
@@ -124,7 +125,7 @@ export class Planner {
 		clearTimeout(this.tickTimer);
 		clearInterval(this.pollTimer);
 		clearInterval(this.usageTimer);
-		for (const t of this.retryTimers.values()) clearTimeout(t);
+		for (const t of this.retryTimers.values()) clearTimeout(t.timer);
 		this.retryTimers.clear();
 		this.stream?.close();
 	}
@@ -539,7 +540,15 @@ export class Planner {
 
 	/** Drives or checks task `id` after `delay` ms (coalesced; one AO step per task at a time). */
 	private follow(id: string, delay: number): void {
-		if (this.stopped || this.retryTimers.has(id)) return;
+		if (this.stopped) return;
+		const due = this.now() + Math.max(0, delay);
+		const pending = this.retryTimers.get(id);
+		// A check already due sooner covers this request; a later one (a slow re-check) gives way to it.
+		if (pending && pending.due <= due) return;
+		if (pending) {
+			clearTimeout(pending.timer);
+			this.retryTimers.delete(id);
+		}
 		const run = () => {
 			this.retryTimers.delete(id);
 			if (this.busy.has(id)) {
@@ -556,7 +565,7 @@ export class Planner {
 			run();
 			return;
 		}
-		this.retryTimers.set(id, setTimeout(run, delay));
+		this.retryTimers.set(id, { timer: setTimeout(run, delay), due });
 	}
 
 	private task(id: string): Task | undefined {
@@ -743,7 +752,8 @@ export class Planner {
 				this.interruptSent.add(id);
 				await ao.interrupt(session);
 			}
-			if (timeout) this.follow(id, 30_000);
+			// Look again before the deadline (the periodic poll and AO's events cover the rest).
+			if (timeout) this.follow(id, Math.max(500, Math.min(30_000, (t.startedAt ?? this.now()) + timeout * 60_000 - this.now())));
 			return;
 		}
 		const cost = conv.cost !== undefined ? Math.max(0, conv.cost - (run.baseCost ?? 0)) : undefined;
