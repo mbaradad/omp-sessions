@@ -69,16 +69,10 @@ for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
 		throw new Error(`test:hermes refuses to run: ${key} is ${value ?? "unset"}, not under ${os.tmpdir()}`);
 	}
 }
-// `new` starts sessions in AO's bypass with Switchyard's omp extension gating (D11) and refuses ask/edits/plan
-// without the extension on the machine: the fake omp has no gate, so a stand-in file satisfies that check
-// (the CLI looks where omp does: the fixture's agent dir). Without it the CLI refuses those modes, by design.
-if (ao.agentDir) {
-	// What gateStatus() looks for (src/shared/omp-extension-install.ts): the package lists ./mode.js and the file exists.
-	const dir = path.join(ao.agentDir, "extensions", "switchyard");
-	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(path.join(dir, "mode.js"), "// test gate\n");
-	fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: "switchyard", private: true, type: "module", omp: { extensions: ["./mode.js"] } }, null, "\t")}\n`);
-}
+// `new` starts sessions in AO's bypass with Switchyard's omp extension gating (D11), and the CLI refuses
+// ask/edits/plan without that gate installed. The fake omp has no gate: the fixture's stand-in package, in its own
+// agent dir (where the CLI looks), satisfies that check.
+ao.standInGate();
 let status = 1;
 try {
 	console.log(`Hermes Python: ${python} · AO ${ao.baseUrl}`);
