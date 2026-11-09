@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -201,5 +201,11 @@ describe("continuesSession", () => {
 		assert.equal(continuesSession(plan([], []), {}), false);
 		assert.equal(continuesSession(plan([lane("q", { session: "proj-1" })], []), { lane: "q" }, true), false);
 		assert.equal(continuesSession(plan([], []), { session: "proj-2" }, true), false);
+	});
+});
+
+describe("keptBranchText", () => {
+	test("says whose branch it was and why the planner kept it", () => {
+		assert.equal(keptBranchText({ task: "Write release notes", why: "holds 2 commits no other branch has" }), "of “Write release notes” — holds 2 commits no other branch has");
 	});
 });

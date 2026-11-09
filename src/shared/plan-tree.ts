@@ -1,6 +1,6 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
-import type { BudgetCaps, EdgeSync, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
+import type { BudgetCaps, EdgeSync, KeptBranch, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
@@ -212,4 +212,9 @@ export function continuesSession(plan: PlanView | undefined, task: Pick<TaskView
 	if (freshContext) return false;
 	if (task.lane) return !!plan?.lanes.find(l => l.id === task.lane)?.session;
 	return !!task.session;
+}
+
+/** One line for a leftover branch of a removed task: whose it was and why it was kept. */
+export function keptBranchText(b: Pick<KeptBranch, "task" | "why">): string {
+	return `of “${b.task}” — ${b.why}`;
 }
