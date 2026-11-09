@@ -177,7 +177,11 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async models() {
 			const { data } = await ao.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } });
-			return (data?.models ?? []).map(m => (typeof m === "string" ? m : m.id));
+			// AO lists omp's whole catalog; only the providers this machine is configured for can run. A model of any other
+			// provider would pass a plain catalog check and then fail at the session (the helper removes it again).
+			const configured = new Set(data?.configuredProviders ?? []);
+			const usable = (data?.models ?? []).filter(m => configured.size === 0 || (m.provider !== undefined && configured.has(m.provider)));
+			return usable.map(m => m.id);
 		},
 		async conversation(session) {
 			return conversationInfo(await ao.getConversation(session));

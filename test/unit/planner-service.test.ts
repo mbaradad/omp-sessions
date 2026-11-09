@@ -135,7 +135,7 @@ test("a model AO doesn't list fails the dispatch before any session exists (G36)
 	t.after(() => p.stop());
 	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { mode: "ask", thinking: "low" } } }, { op: "add", task: { title: "plain" } }]);
 	await until("typo failed", () => byTitle(p, "typo").status === "failed");
-	assert.match(byTitle(p, "typo").summary ?? "", /doesn't know the model "anthropic\/claude-xx"/);
+	assert.match(byTitle(p, "typo").summary ?? "", /the model "anthropic\/claude-xx" is not available here/);
 	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
 	assert.equal(ao.created, 2);
 	const asks = ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody;

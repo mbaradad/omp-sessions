@@ -500,7 +500,7 @@ export class Planner {
 	/** Refuses a model AO doesn't list (an unknown one leaves a terminated session behind); passes when AO can't say. */
 	private async checkModel(ao: AoPort, model: string): Promise<void> {
 		if (!this.models || this.now() - this.models.at > 10 * 60_000) this.models = { at: this.now(), ids: new Set(await ao.models()) };
-		if (this.models.ids.size && !this.models.ids.has(model)) throw new PlanError(`AO doesn't know the model "${model}" (see \`omp models\`)`);
+		if (this.models.ids.size && !this.models.ids.has(model)) throw new PlanError(`the model "${model}" is not available here: AO lists ${this.models.ids.size} runnable omp models (configured providers only; see \`omp models\`)`);
 	}
 
 	/** Chooses spawn or send, resolves the project, writes the dispatch record, then drives it. */
