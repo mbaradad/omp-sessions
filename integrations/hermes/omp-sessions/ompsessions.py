@@ -458,7 +458,11 @@ class OmpSessions:
             if value:
                 args.append(f"--{flag}={value}")
         args += [f"--tag={t}" for t in tags]
-        args += ["--", cwd]
+        # The folder is a plain argument, not after `--`: what follows `--` is omp's own flags. It is
+        # always an absolute path (resolve_place), so it never reads as a flag.
+        if cwd.startswith("-"):
+            raise OmpSessionsError(f"not a folder: {cwd}")
+        args.append(cwd)
         out = self.json(args, stdin=stdin, timeout=90)
         if not isinstance(out, dict) or not isinstance(out.get("id"), str):
             raise OmpSessionsError(f"omp-sessions new printed no session id: {str(out)[:200]}")
