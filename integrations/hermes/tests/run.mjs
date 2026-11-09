@@ -2,7 +2,7 @@
 // Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built omp-sessions
 // (out/cli.js) with the fake omp. Skips when Hermes isn't installed. Not part of `npm test`.
 // HERMES_PYTHON=<python> picks the interpreter (default: the venv of the installed Hermes).
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -50,11 +50,45 @@ if (build.status !== 0) {
 	process.exit(build.status ?? 1);
 }
 
-console.log(`Hermes Python: ${python}`);
-// -I: ignore the user's PYTHONPATH/site; -B: never write bytecode into the Hermes install.
-const res = spawnSync(python, ["-I", "-B", "-m", "unittest", "discover", "-s", path.join(root, "integrations/hermes/tests"), "-p", "test_*.py", "-v"], {
-	cwd: root,
-	stdio: "inherit",
-	env: { ...process.env, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath },
-});
-process.exit(res.status ?? 1);
+// The plugin drives the real omp-sessions CLI, which runs on AO: an isolated `ao daemon` with the
+// scripted fake omp (test/ao-fixture.mjs), never the dev daemon or the real ~/.omp.
+const { aoAvailable, startAoFixture } = await import(path.join(root, "test/ao-fixture.mjs"));
+if (!aoAvailable()) {
+	console.log("test:hermes skipped: ao is not installed (set SWITCHYARD_TEST_AO_BIN)");
+	process.exit(0);
+}
+const ao = await startAoFixture();
+// Isolated HOME rule (CONTRACT.md): everything the suite spawns runs under the fixture's temp root, with
+// SWITCHYARD_HOME set (the CLI's spawn writes <SWITCHYARD_HOME>/sessions/<id>/mode client-side).
+// (The fixture sets HOME/XDG/SWITCHYARD_HOME of this process too, so read the env the subprocess gets.)
+const stack = { ...process.env, ...ao.stackEnv };
+for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
+	const value = stack[key];
+	if (!value || !path.resolve(value).startsWith(path.resolve(os.tmpdir()) + path.sep)) {
+		await ao.stop();
+		throw new Error(`test:hermes refuses to run: ${key} is ${value ?? "unset"}, not under ${os.tmpdir()}`);
+	}
+}
+// `new` starts sessions in AO's bypass with Switchyard's omp extension gating (D11) and refuses ask/edits/plan
+// without the extension on the machine: the fake omp has no gate, so a stand-in file satisfies that check
+// (the CLI looks where omp does: the fixture's agent dir).
+if (ao.agentDir) {
+	const gate = path.join(ao.agentDir, "extensions", "switchyard", "mode.js");
+	fs.mkdirSync(path.dirname(gate), { recursive: true });
+	fs.writeFileSync(gate, "// test gate\n");
+}
+let status = 1;
+try {
+	console.log(`Hermes Python: ${python} · AO ${ao.baseUrl}`);
+	// -I: ignore the user's PYTHONPATH/site; -B: never write bytecode into the Hermes install. TEST_FILTER=<pattern>: unittest -k.
+	const filter = process.env.TEST_FILTER ? ["-k", process.env.TEST_FILTER] : [];
+	const child = spawn(python, ["-I", "-B", "-m", "unittest", "discover", "-s", path.join(root, "integrations/hermes/tests"), "-p", "test_*.py", "-v", ...filter], {
+		cwd: root,
+		stdio: "inherit",
+		env: { ...stack, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath, OMP_TEST_REPO: ao.scratchRepo("work") },
+	});
+	status = await new Promise(resolve => child.on("exit", code => resolve(code ?? 1)));
+} finally {
+	await ao.stop();
+}
+process.exit(status);

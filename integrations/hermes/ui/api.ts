@@ -70,7 +70,13 @@ export interface Question {
 	questions?: Array<{ question: string; options: string[]; multi: boolean }>;
 }
 
-export interface CardRef {
+/** Kanban dependency links: a child card waits for its parents. */
+export interface CardLinks {
+	parents: string[];
+	children: string[];
+}
+
+export interface CardRef extends Partial<CardLinks> {
 	board: string;
 	id: string;
 	title?: string | null;
@@ -97,16 +103,33 @@ export interface Session {
 	priority?: string | null;
 	tags: string[];
 	archived: boolean;
-	queue: { pending: number; running: number; done: number; total: number };
+	/** Marked completed (omp-sessions complete): done, whatever its state. */
+	completed: boolean;
+	completedAt?: number | null;
+	queue: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number };
+	/** The queue runs its pending tasks by itself (off: paused, or waiting for `startAt`). */
+	autoRun?: boolean;
 	startAt?: number | null;
 	waiting?: { position: number; since?: number; launch?: boolean } | null;
 	excerpt?: string | null;
 	exitReason?: string | null;
 	authProblem?: string | null;
 	question?: Question | null;
+	/** Parent edges of the session's task (GRAPH-PROPAGATION.md): how far each parent's changes reached it. */
+	upstream?: UpstreamEdge[];
 	card?: CardRef | null;
 	/** Detail only: the full last reply. */
 	reply?: string | null;
+}
+
+export type SyncState = "in-sync" | "pending" | "merged" | "resolving" | "conflict" | "upstream-changed";
+
+export interface UpstreamEdge {
+	/** The parent's omp session. */
+	parent?: string | null;
+	state: SyncState;
+	/** Conflicting files (state conflict). */
+	files: string[];
 }
 
 export interface Scheduler {
@@ -147,7 +170,7 @@ export interface Overview {
 	pluginVersion?: string;
 }
 
-export interface LinkedCard {
+export interface LinkedCard extends Partial<CardLinks> {
 	id: string;
 	title?: string | null;
 	status: string;
@@ -156,6 +179,21 @@ export interface LinkedCard {
 	laneState?: string | null;
 	waitingOnInput: boolean;
 	error?: string | null;
+}
+
+/** A card of the board (archived ones aside) for the dependency graph. */
+export interface GraphCard extends CardLinks {
+	id: string;
+	title: string;
+	status: string;
+	assignee?: string | null;
+	/** The omp session working on the card: the lane's, else the latest tagged with it. */
+	session?: string | null;
+	/** That session's state ("removed" when it's gone; "not created" for a lane card not started yet). */
+	sessionState?: string | null;
+	/** The kanban lane runs this card. */
+	lane: boolean;
+	laneState?: string | null;
 }
 
 export interface Board {
@@ -176,8 +214,14 @@ export interface Board {
 	commentAuthors?: string[] | null;
 	/** Whose comments reach omp and whose @omp assigns cards on this board ("*": anyone). */
 	effectiveCommentAuthors: string[];
+	/** This board's archive_completed (null: the lane's setting). */
+	archiveCompleted?: boolean | null;
+	/** Whether the lane archives the cards it completes on this board (and their omp sessions). */
+	effectiveArchiveCompleted: boolean;
 	linked: LinkedCard[];
-	ready: Array<{ id: string; title: string }>;
+	ready: Array<{ id: string; title: string } & Partial<CardLinks>>;
+	/** Absent from an older backend. */
+	cards?: GraphCard[];
 	lastPass?: number | null;
 	error?: string | null;
 }
@@ -187,8 +231,23 @@ export interface BoardsView {
 	enabled: boolean;
 	assignee: string;
 	mode?: Mode | null;
+	archiveCompleted: boolean;
 	allBoards: boolean;
 	boards: Board[];
+}
+
+/** POST /sessions/archive-done: the done sessions it archived, and the ones omp-sessions refused. */
+export interface ArchiveDone {
+	archived: string[];
+	failed: Array<{ id: string; error: string }>;
+}
+
+/** POST /boards/<slug>/archive-done: the board's done lane cards it archived, with their omp sessions. */
+export interface ArchiveDoneCards {
+	archived: string[];
+	sessions: string[];
+	failed: Record<string, string>;
+	view: BoardsView;
 }
 
 export interface Places {

@@ -1,13 +1,48 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
-// the permission mode and model switches, Stop, and Open in VS Code (the chat, or the project folder).
-import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session } from "./api";
+// queue controls (run now, retry, schedule), the permission mode and model switches, Stop, and Open in
+// VS Code (the chat, or the project folder).
+import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type SyncState, type UpstreamEdge } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
 import { ModelPicker, ModelsError, useModels } from "./models";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, stateText } from "./util";
+import { QueueControls, type RunQueueAction } from "./queue";
 import { openInVscode } from "./vscode";
 
 const POLL_MS = 3000;
+
+const SYNC_LABEL: Record<SyncState, string> = {
+	"in-sync": "in sync",
+	pending: "changes wait for this turn to end",
+	merged: "changes merged",
+	resolving: "its agent is resolving the merge",
+	conflict: "merge conflict",
+	"upstream-changed": "changed after this one finished",
+};
+
+/** The parent tasks' sync states (GRAPH-PROPAGATION.md), with Sync now and Re-run with parent changes. */
+function Upstream(p: { edges: UpstreamEdge[]; busy: string | null; onSync: (rerun: boolean) => void }): ReactElement {
+	const changed = p.edges.some(e => e.state === "upstream-changed");
+	return h(
+		"section",
+		{ className: "omps-upstream", "aria-label": "Parent tasks" },
+		h("div", { className: "omps-section-label" }, "Parent tasks"),
+		...p.edges.map((e, i) =>
+			h(
+				"div",
+				{ key: i, className: cx("omps-upstream-edge", `omps-sync-${e.state}`) },
+				`${e.parent ? shortId(e.parent) : "parent"} · ${SYNC_LABEL[e.state] ?? e.state}`,
+				e.files.length ? h("div", { className: "omps-upstream-files" }, `${e.files.slice(0, 8).join(", ")}${e.files.length > 8 ? ` … ${e.files.length - 8} more` : ""}`) : null,
+			),
+		),
+		h(
+			"div",
+			{ className: "omps-followup-row" },
+			h(Button, { small: true, kind: "ghost", label: "Sync now", title: "Merge the parents' changes into this session's worktree", busy: p.busy === "sync", onClick: () => p.onSync(false) }),
+			changed ? h(Button, { small: true, kind: "primary", label: "Re-run with parent changes", busy: p.busy === "rerun", onClick: () => p.onSync(true) }) : null,
+		),
+	);
+}
 
 /** omp-sessions answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts). */
 function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) => void }): ReactElement {
@@ -177,6 +212,12 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 		}
 	};
 
+	const queueAction: RunQueueAction = async (id, action, body) => {
+		await p.host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+		await load();
+		p.onChanged();
+	};
+
 	const view = s ?? p.summary;
 	const questionId = view?.question?.id;
 	const working = view?.state === "working" || view?.state === "starting";
@@ -214,15 +255,30 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Meta, { label: "Status", children: stateText(view, p.now) }),
 						view.group ? h(Meta, { label: "Group", children: view.group }) : null,
 						view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-						view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
-						view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
+						typeof view.startAt === "number" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+						view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}${view.queue.failed ? ` · ${view.queue.failed} failed` : ""}` }) : null,
 						view.model ? h(Meta, { label: "Model", children: view.model }) : null,
 						h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
 						h(Meta, { label: "Files changed", children: String(view.changedFiles) }),
 						h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
 						view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map(t => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
+						view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null,
 					)
 				: null,
+			view
+				? h(
+						"div",
+						{ className: "omps-mode-row omps-detail-actions" },
+						h("span", { className: "omps-section-label" }, view.archived ? "Archived" : view.completed ? "Completed" : "Organize"),
+						view.completed
+							? h(Button, { small: true, kind: "ghost", icon: "undo", label: "Mark not completed", busy: busy === "uncomplete", onClick: () => void act("uncomplete", "uncomplete", {}) })
+							: h(Button, { small: true, kind: "ghost", icon: "check", label: "Mark completed", title: "Done, whatever its state: Archive all on the Done column takes it", busy: busy === "complete", onClick: () => void act("complete", "complete", {}) }),
+						view.archived
+							? h(Button, { small: true, kind: "ghost", icon: "unarchive", label: "Unarchive", busy: busy === "unarchive", onClick: () => void act("unarchive", "unarchive", {}) })
+							: h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive", title: "Hide it from the board (Show archived brings it back)", busy: busy === "archive", onClick: () => void act("archive", "archive", {}) }),
+					)
+				: null,
+			view ? h(QueueControls, { s: view, onAction: queueAction }) : null,
 			view
 				? h(
 						"div",
@@ -256,6 +312,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 					)
 				: null,
 			view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
+			view?.upstream?.length ? h(Upstream, { edges: view.upstream, busy, onSync: rerun => void act(rerun ? "rerun" : "sync", "sync", { rerun }) }) : null,
 			h(
 				"section",
 				{ className: "omps-reply", "aria-label": "Last reply" },

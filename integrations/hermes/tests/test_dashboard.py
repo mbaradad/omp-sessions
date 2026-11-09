@@ -7,8 +7,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
 import unittest
 import urllib.parse
+from pathlib import Path
 from unittest import mock
 
 import test_plugin as base
@@ -85,14 +87,15 @@ class DashboardApiTest(unittest.TestCase):
     def test_sessions_carry_state_question_schedule_and_card(self) -> None:
         with kbc.connect_closing(board="dash") as conn:
             card = kb.create_task(conn, title="Ship the dashboard tab", assignee="someone", board="dash")
-        asking = self.post("/sessions", {"prompt": "write dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
+        asking = self.post("/sessions", {"prompt": "ask\nwrite dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
+        written = Path(asking["cwd"]) / "dash-q.txt"
         later = self.post("/sessions", {"prompt": "echo later", "title": "later on", "where": {"kind": "folder", "value": str(WORK)}, "when": "at", "at": "+2h", "group": "Dash group"})
         self.assertIn("startAt", later)
         linked = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo linked", "--tag", "hermes:dash", "--tag", f"card:{card}").stdout)
 
         a = until(lambda: self.state_is(asking["id"], "needs_input"), "needs_input")
-        self.assertIn("Allow tool: write", a["question"]["title"])
-        self.assertEqual(a["question"]["kind"], "select")
+        self.assertEqual(a["question"]["title"], "Pick one")
+        self.assertIn(a["question"]["kind"], ("ask", "select"), "a plain choice, not an approval")
         self.assertEqual(a["mode"], "ask")
         self.assertEqual(a["project"], WORK.name)
         self.assertIn("dash-test", a["tags"])
@@ -102,19 +105,20 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(q["group"], "Dash group")
         self.assertEqual(q["title"], "later on")
         ln = until(lambda: self.state_is(linked["id"], "idle"), "linked idle")
-        self.assertEqual(ln["card"], {"board": "dash", "id": card, "title": "Ship the dashboard tab", "status": "ready"})
+        self.assertEqual(ln["card"], {"board": "dash", "id": card, "title": "Ship the dashboard tab", "status": "ready", "parents": [], "children": []})
         self.assertEqual(ln["excerpt"], "linked")
 
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
         d = self.get(f"/sessions/{asking['id']}")
-        self.assertEqual(d["question"]["options"][0], "Approve")
+        choices = d["question"].get("options") or d["question"]["questions"][0]["options"]  # a `select`, or an `ask` with its questions
+        self.assertEqual(choices[0], "alpha")
         # An answer names its question: none, or another question's id, answers nothing.
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"}, status=400)
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": "not-this-one"}, status=400)
         self.assertEqual(self.view(asking["id"])["state"], "needs_input")
-        self.assertFalse((WORK / "dash-q.txt").exists())
+        self.assertFalse(written.exists())
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]})
-        until(lambda: (WORK / "dash-q.txt").exists(), "file written after the answer")
+        until(lambda: written.exists(), "file written after the answer")
         until(lambda: self.state_is(asking["id"], "idle"), "idle after the answer")
         err = self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]}, status=400)
         self.assertIn("not waiting", err["error"])
@@ -126,6 +130,38 @@ class DashboardApiTest(unittest.TestCase):
         until(lambda: self.state_is(asking["id"], "stopped"), "stopped")
         self.assertEqual(self.post(f"/sessions/{asking['id']}/mode", {"mode": "bogus"}, status=400)["error"], "mode must be one of ask, edits, plan, auto")
         self.assertIn("no session matches", self.get("/sessions/nope-nope", status=404)["error"])
+
+    def test_queue_actions_run_retry_schedule(self) -> None:
+        sid = self.post("/sessions", {"prompt": "error boom", "title": "dash queue", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})["id"]
+        failed = until(lambda: (v := self.view(sid)) and v["queue"]["failed"] == 1 and v, "the queued task fails")
+        self.assertEqual((failed["queue"]["pending"], failed["autoRun"], failed["startAt"]), (0, False, None))
+
+        # Nothing pending to run; a missing or unreadable time is refused.
+        self.assertIn("no pending task", self.post(f"/sessions/{sid}/run", {}, status=409)["error"])
+        self.assertIn("at:", self.post(f"/sessions/{sid}/schedule", {}, status=400)["error"])
+        self.assertIn("error", self.post(f"/sessions/{sid}/schedule", {"at": "soonish"}, status=400))
+
+        # Schedule, then Retry: the failed task waits for the start, which Retry keeps.
+        at = self.post(f"/sessions/{sid}/schedule", {"at": "+2h"})["queue"]["startAt"]
+        self.assertAlmostEqual(at / 1000, time.time() + 7200, delta=60)
+        q = self.post(f"/sessions/{sid}/retry", {})["queue"]
+        self.assertEqual((q["tasks"][0]["status"], q["startAt"], q["autoRun"]), ("pending", at, False))
+        v = self.view(sid)
+        self.assertEqual((v["state"], v["startAt"], v["queue"]["failed"], v["queue"]["pending"]), ("scheduled", at, 0, 1))
+
+        # Reschedule (epoch ms, as the page may send), then unschedule: the task stays, the queue paused.
+        later = int((time.time() + 3 * 3600) * 1000)
+        self.assertAlmostEqual(self.post(f"/sessions/{sid}/schedule", {"at": later})["queue"]["startAt"], later, delta=60_000)
+        q = self.post(f"/sessions/{sid}/schedule", {"at": None})["queue"]
+        self.assertEqual((q.get("startAt"), q["autoRun"], q["tasks"][0]["status"]), (None, False, "pending"))
+
+        # Run now: the task runs (and fails again); Retry then runs it again at once.
+        self.assertTrue(self.post(f"/sessions/{sid}/run", {})["queue"]["autoRun"])
+        until(lambda: base.queue_of(sid)["tasks"][0].get("status") == "failed", "run now ran it")
+        first = base.queue_of(sid)["tasks"][0]["finishedAt"]
+        self.post(f"/sessions/{sid}/retry", {})
+        until(lambda: (t := base.queue_of(sid)["tasks"][0]).get("status") == "failed" and t.get("finishedAt", 0) > first, "retry reran it")
+        self.assertIn("unknown action", self.post(f"/sessions/{sid}/requeue", {}, status=404)["error"])
 
     def test_start_validates_and_resolves_places(self) -> None:
         self.assertEqual(self.post("/sessions", {"where": {"kind": "folder", "value": str(WORK)}}, status=400)["error"], "write what omp should do")
@@ -140,7 +176,7 @@ class DashboardApiTest(unittest.TestCase):
         self.assertTrue(any(f["path"] == str(WORK) for f in places["folders"]))
         self.assertTrue(any(b["slug"] == "proj" and b["folder"] == str(WORK) for b in places["boards"]))
         by_project = self.post("/sessions", {"prompt": "echo by project", "where": {"kind": "project", "value": WORK.name}})
-        self.assertEqual(by_project["cwd"], str(WORK))
+        self.assertTrue(base.same_repo(by_project["cwd"], WORK))
 
     def test_boards_view_and_lane_settings(self) -> None:
         try:
@@ -176,6 +212,62 @@ class DashboardApiTest(unittest.TestCase):
         finally:
             CONFIG.write_text(self.config_text)
 
+    def test_cards_carry_their_dependency_links(self) -> None:
+        kbb.create_board("graph", name="Graph board")
+        with kbc.connect_closing(board="graph") as conn:
+            plan = kb.create_task(conn, title="Plan", assignee="omp", board="graph")
+            build = kb.create_task(conn, title="Build", assignee="someone", parents=[plan], board="graph")
+            docs = kb.create_task(conn, title="Docs", assignee="someone", parents=[plan], board="graph")
+            ship = kb.create_task(conn, title="Ship", assignee="someone", parents=[build, docs], board="graph")
+            alone = kb.create_task(conn, title="Alone", assignee="someone", board="graph")
+            gone = kb.create_task(conn, title="Old parent", assignee="someone", board="graph")
+            kb.link_tasks(conn, gone, alone)
+            kb.archive_task(conn, gone)
+        tagged_sid = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo building", "--tag", "hermes:graph", "--tag", f"card:{build}").stdout)["id"]
+        until(lambda: self.state_is(tagged_sid, "idle"), "tagged session idle")
+
+        def graph_board() -> dict:
+            return next(b for b in self.get("/boards")["boards"] if b["slug"] == "graph")
+
+        g = graph_board()
+        cards = {c["id"]: c for c in g["cards"]}
+        self.assertNotIn(gone, cards, "archived cards are not on the graph")
+        self.assertEqual(set(cards), {plan, build, docs, ship, alone})
+        links = {cid: (sorted(c["parents"]), sorted(c["children"])) for cid, c in cards.items()}
+        self.assertEqual(links[plan], ([], sorted([build, docs])))
+        self.assertEqual(links[build], ([plan], [ship]))
+        self.assertEqual(links[docs], ([plan], [ship]))
+        self.assertEqual(links[ship], (sorted([build, docs]), []))
+        self.assertEqual(links[alone], ([gone], []), "a link to an archived card is still reported")
+        self.assertEqual((cards[ship]["status"], cards[plan]["status"]), ("todo", "ready"), "a child waits for its parents")
+        # The session working on a card: a tagged session (not the lane's), with its state.
+        self.assertEqual((cards[build]["session"], cards[build]["sessionState"], cards[build]["lane"]), (tagged_sid, "idle", False))
+        self.assertEqual((cards[plan]["session"], cards[plan]["sessionState"], cards[plan]["lane"]), (None, None, False))
+        # The lane's ready list carries the links too.
+        self.assertEqual([(r["id"], r["parents"], sorted(r["children"])) for r in g["ready"]], [(plan, [], sorted([build, docs]))])
+        # So do the sessions' card refs (card_lookup).
+        v = self.view(tagged_sid)
+        self.assertEqual((v["card"]["parents"], v["card"]["children"]), ([plan], [ship]))
+
+        # A Hermes without the batched graph API: the task_links table gives the same links.
+        with mock.patch.dict(kb.__dict__):
+            del kb.task_graph_contexts
+            old = {c["id"]: (sorted(c["parents"]), sorted(c["children"])) for c in graph_board()["cards"]}
+        self.assertEqual(old, links)
+
+    def test_card_links_degrade_without_task_links(self) -> None:
+        import sqlite3
+        import types
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            # Neither the batched API nor a task_links table (a Hermes before dependencies): no links, no error.
+            self.assertEqual(self.api.card_links(conn, types.SimpleNamespace(), ["a", "b", "a"]), {"a": {"parents": [], "children": []}, "b": {"parents": [], "children": []}})
+            broken = types.SimpleNamespace(task_graph_contexts=mock.Mock(side_effect=sqlite3.OperationalError("no such table: task_links")))
+            self.assertEqual(self.api.card_links(conn, broken, ["a"]), {"a": {"parents": [], "children": []}})
+        finally:
+            conn.close()
+
     def test_open_in_vscode_records_the_request_and_links_the_last_window(self) -> None:
         queued = self.post("/sessions", {"prompt": "echo vscode", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})
         sid = queued["id"]
@@ -189,7 +281,8 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(json.loads(request.read_text())["session"], sid)
             window.write_text(json.dumps({"authority": "ssh-remote+ws", "scheme": "vscode", "at": 1}))
             link = self.post(f"/sessions/{sid}/vscode", {})
-            self.assertEqual(link["url"], f"vscode://vscode-remote/ssh-remote+ws{WORK}")
+            # The session's own folder: its AO worktree.
+            self.assertEqual(link["url"], f"vscode://vscode-remote/ssh-remote+ws{base.report(sid)['cwd']}")
             self.assertEqual(link["authority"], "ssh-remote+ws")
             # The redirect page for Hermes Desktop: on the address the request came in on, link in the fragment.
             base_url, _, fragment = link["page"].partition("#")
@@ -207,7 +300,11 @@ class DashboardApiTest(unittest.TestCase):
         repo = WORK / "proj-repo"
         pkg = repo / "pkg"
         pkg.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        # AO makes a project of the repository, which needs a commit on its default branch.
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        (pkg / "README.md").write_text("pkg\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], check=True)
         window = base.OMP_HOME / "vscode-window.json"
         window.unlink(missing_ok=True)
         inside = json.loads(omp_sessions("new", str(pkg), "--detach", "--json", "-p", "echo in a repo").stdout)
@@ -219,7 +316,8 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(urllib.parse.unquote(link["page"].partition("#")[2]), link["url"])
         self.assertEqual(self.post(f"/sessions/{on_board['id']}/project", {})["folder"], str(WORK))
         # Folders the page shows open; anything else is refused.
-        self.assertEqual(self.post("/folders/vscode", {"path": str(pkg)})["folder"], str(pkg))
+        self.assertEqual(self.post("/folders/vscode", {"path": str(repo)})["folder"], str(repo), "an AO project's folder")
+        self.assertIn("error", self.post("/folders/vscode", {"path": str(pkg)}, status=403), "a folder inside a project is not shown")
         self.assertEqual(self.post("/folders/vscode", {"path": str(WORK)})["folder"], str(WORK), "a board folder")
         self.assertIn("error", self.post("/folders/vscode", {"path": str(WORK.parent)}, status=403))
         self.assertIn("error", self.post("/folders/vscode", {"path": "/"}, status=403))
@@ -236,6 +334,96 @@ class DashboardApiTest(unittest.TestCase):
             self.assertIn("error", self.post("/models/default", {"model": 3}, status=400))
         finally:
             self.assertIsNone(self.post("/models/default", {"model": None})["default"])
+
+    def new(self, *args: str) -> str:
+        return json.loads(omp_sessions("new", str(WORK), "--detach", "--json", *args).stdout)["id"]
+
+    def test_archive_unarchive_complete_and_uncomplete_actions(self) -> None:
+        sid = self.new("-p", "echo to archive")
+        v = until(lambda: self.state_is(sid, "idle"), "idle")
+        self.assertEqual((v["archived"], v["completed"]), (False, False))
+        self.post(f"/sessions/{sid}/archive", {})
+        self.assertTrue(self.view(sid)["archived"])
+        self.post(f"/sessions/{sid[:8]}/unarchive", {})
+        self.assertFalse(self.view(sid)["archived"])
+        # complete/uncomplete run `omp-sessions complete|uncomplete <session> --json` (stubbed here, so the
+        # test doesn't depend on the CLI version the plugin runs against).
+        calls: list[list[str]] = []
+        real_json = self.api.ompsessions.OmpSessions.json
+
+        def fake_json(o, args, **kw):
+            if args[0] in ("complete", "uncomplete"):
+                calls.append(list(args))
+                return {"id": sid, "completed": args[0] == "complete", "changed": True}
+            return real_json(o, args, **kw)
+
+        with mock.patch.object(self.api.ompsessions.OmpSessions, "json", fake_json):
+            self.assertEqual(self.post(f"/sessions/{sid}/complete", {}), {"ok": True, "id": sid, "completed": True, "changed": True})
+            self.assertFalse(self.post(f"/sessions/{sid}/uncomplete", {})["completed"])
+        self.assertEqual(calls, [["complete", sid, "--json"], ["uncomplete", sid, "--json"]])
+        self.assertIn("unknown action", self.post(f"/sessions/{sid}/bogus", {}, status=404)["error"])
+        self.assertIn("invalid value", self.post("/sessions/--all/archive", {}, status=400)["error"], "a session reference is never a flag")
+
+    def test_archive_done_archives_a_views_done_sessions_in_one_request(self) -> None:
+        group = "Archive-all group"
+        done1 = self.new(f"--group={group}", "-p", "echo one")
+        done2 = self.new(f"--group={group}", "--tag", "hermes:dash", "-p", "echo two")
+        elsewhere = self.new("-p", "echo three")
+        already = self.new(f"--group={group}", "-p", "echo four")
+        later = self.new(f"--group={group}", "--task=echo later", "--at=+2h")
+        marked = self.new(f"--group={group}", "--task=echo marked", "--at=+3h")
+        for sid in (done1, done2, elsewhere, already):
+            until(lambda: self.state_is(sid, "idle"), f"{sid[:8]} idle")
+        omp_sessions("archive", already)
+        self.assertEqual(self.view(later)["state"], "scheduled")
+
+        # The view's filters: board (a card's board or a hermes:<board> tag) and group.
+        self.assertEqual(self.post("/sessions/archive-done", {"group": group, "board": "dash"}), {"archived": [done2], "failed": []})
+        # A session marked completed is done whatever its state (stubbed: `ls --json` reports `completed`).
+        real_sessions = self.api.ompsessions.OmpSessions.sessions
+
+        def with_completed(o, all=True):
+            out = real_sessions(o, all)
+            for i in out:
+                if i["meta"]["id"] == marked:
+                    i["completed"] = True
+            return out
+
+        with mock.patch.object(self.api.ompsessions.OmpSessions, "sessions", with_completed):
+            r = self.post("/sessions/archive-done", {"group": group})
+        self.assertEqual((set(r["archived"]), r["failed"]), ({done1, marked}, []), "idle with nothing queued, or completed; never one already archived")
+        self.assertFalse(self.view(later)["archived"], "scheduled work is not done")
+        self.assertTrue(all(self.view(s)["archived"] for s in (done1, done2, marked, already)))
+        # `ids`: the sessions the page shows; only the done ones among them are archived.
+        self.assertEqual(self.post("/sessions/archive-done", {"ids": [elsewhere, later]})["archived"], [elsewhere])
+        self.assertFalse(self.view(later)["archived"])
+        self.assertEqual(self.post("/sessions/archive-done", {"ids": [later]})["archived"], [])
+        self.assertIn("ids must be", self.post("/sessions/archive-done", {"ids": elsewhere}, status=400)["error"])
+
+    def test_board_archive_setting_and_archiving_a_boards_done_cards(self) -> None:
+        try:
+            v = self.post("/boards/dash", {"archiveCompleted": True})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["archiveCompleted"], dash["effectiveArchiveCompleted"], v["archiveCompleted"]), (True, True, False))
+            self.assertIs(self.api.settings().lane.boards["dash"]["archive_completed"], True)
+            v = self.post("/boards/dash", {"archiveCompleted": None})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["archiveCompleted"], dash["effectiveArchiveCompleted"]), (None, False), "back to the lane's setting")
+            self.assertIn("archiveCompleted", self.post("/boards/dash", {"archiveCompleted": "yes"}, status=400)["error"])
+
+            with kbc.connect_closing(board="dash") as conn:
+                done = kb.create_task(conn, title="dash done", assignee="omp", board="dash")
+                kb.complete_task(conn, done, result="ok")
+                other = kb.create_task(conn, title="dash someone's", assignee="someone", board="dash")
+                kb.complete_task(conn, other, result="ok")
+            r = self.post("/boards/dash/archive-done", {})
+            self.assertEqual((r["archived"], r["failed"]), ([done], {}))
+            self.assertTrue(any(b["slug"] == "dash" for b in r["view"]["boards"]))
+            with kbc.connect_closing(board="dash") as conn:
+                self.assertEqual((kb.get_task(conn, done).status, kb.get_task(conn, other).status), ("archived", "done"))
+            self.assertIn("no kanban board", self.post("/boards/nope/archive-done", {}, status=404)["error"])
+        finally:
+            CONFIG.write_text(self.config_text)
 
     def test_missing_omp_sessions_is_explained(self) -> None:
         with mock.patch.object(self.api.ompsessions, "find_omp_sessions", return_value=None):

@@ -7,8 +7,9 @@ written with update_setting).
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions
       assignee: omp
-      mode: ask                    # starting permission mode of card sessions (default: omp's)
+      mode: ask                    # starting permission mode of card sessions (unset: auto; ask/edits/plan need Switchyard's omp extension)
       comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@omp` assigns cards ("*": anyone)
+      archive_completed: false     # archive a card (and its omp session) once the lane completes it
       boards:                      # empty: every board, with the defaults above
         lightscale:
           folder: /home/me/src/lightscale   # cwd for cards with a scratch workspace
@@ -17,6 +18,7 @@ written with update_setting).
           assignee: omp
           model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: omp Sessions' default)
           comment_authors: [dashboard, alice]   # replaces the lane's list on this board
+          archive_completed: true               # replaces the lane's archive_completed on this board
     projects:                      # Hermes project id/slug/name (or any name you like) -> folder
       lightscale: /home/me/src/lightscale
 
@@ -52,6 +54,7 @@ class BoardLane:
     mode: Optional[str] = None
     model: Optional[str] = None
     comment_authors: tuple[str, ...] = DEFAULT_COMMENT_AUTHORS
+    archive_completed: bool = False
 
     def trusts(self, author: str) -> bool:
         """Whether `author`'s comments reach omp and their `@omp` mentions assign cards."""
@@ -64,6 +67,7 @@ class LaneSettings:
     assignee: str = DEFAULT_ASSIGNEE
     mode: Optional[str] = None
     comment_authors: tuple[str, ...] = DEFAULT_COMMENT_AUTHORS
+    archive_completed: bool = False
     boards: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -107,6 +111,8 @@ def _board_entry(v: Any) -> dict[str, Any]:
     authors = parse_authors(v.get("comment_authors"))
     if authors is not None:
         out["comment_authors"] = list(authors)
+    if isinstance(v.get("archive_completed"), bool):
+        out["archive_completed"] = v["archive_completed"]
     return out
 
 
@@ -131,6 +137,7 @@ def parse_settings(raw: Mapping[str, Any]) -> Settings:
             assignee=(_str(lane_raw.get("assignee")) or DEFAULT_ASSIGNEE).lower(),
             mode=_mode(lane_raw.get("mode")),
             comment_authors=DEFAULT_COMMENT_AUTHORS if authors is None else authors,
+            archive_completed=lane_raw.get("archive_completed") is True,
             boards=boards,
         ),
         projects=projects,
@@ -152,7 +159,14 @@ def board_lane(s: Settings, slug: str, board_name: Optional[str] = None) -> Opti
         mode=e.get("mode") or s.lane.mode,
         model=e.get("model"),
         comment_authors=tuple(e["comment_authors"]) if "comment_authors" in e else s.lane.comment_authors,
+        archive_completed=archive_completed(s, slug),
     )
+
+
+def archive_completed(s: Settings, slug: str) -> bool:
+    """Whether the lane archives the cards it completes on `slug` (the board's setting, else the lane's)."""
+    v = s.lane.boards.get(slug, {}).get("archive_completed")
+    return v if isinstance(v, bool) else s.lane.archive_completed
 
 
 def read_settings(ctx: Any) -> Settings:

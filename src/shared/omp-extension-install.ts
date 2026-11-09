@@ -1,8 +1,8 @@
 // Installs the omp extensions Switchyard ships (`out/omp-extension/*.js`, built from
 // src/omp-extension) into omp's agent folder as one package, `<agent dir>/extensions/switchyard/`
 // with a `package.json` listing the modules, which omp's native discovery loads in every omp
-// process (MAPPING.md D6). Each module does nothing unless AO runs that omp (`AO_SESSION_ID`). The
-// folder is ours: modules no longer shipped are removed. Node-only.
+// process (MAPPING.md D6). Each module gates itself (checkpoints and the mode gate: `AO_SESSION_ID`; the
+// VS Code bridge: its `disabled` flag). The folder is ours: modules no longer shipped are removed. Node-only.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { shimDir, switchyardHome } from "../ao/native";

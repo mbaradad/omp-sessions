@@ -21,15 +21,53 @@ WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 5: "scheduled", 124: "ti
 # `omp-sessions` exits 2 on a usage error, e.g. an answer that doesn't fit the question.
 USAGE_EXIT = 2
 PRIORITIES = ("urgent", "high", "normal", "low")
-# Question kinds answered with text; select/confirm dialogs grant something (tool approvals, plan
-# approval) and are left to the user.
+# Sync state of a graph edge (GRAPH-PROPAGATION.md): how far a parent's changes reached its child.
+SYNC_STATES = ("in-sync", "pending", "merged", "resolving", "conflict", "upstream-changed")
+# Question kinds answered with text; the other dialogs (select, confirm, approval) may grant something.
 TEXT_QUESTION_KINDS = ("ask", "input", "editor")
+# Title of the question the Switchyard omp extension's permission-mode gate asks before a tool runs.
+GATE_PREFIX = "Allow tool: "
+ALLOW_CHOICE = re.compile(r"^(allow|approve|accept)\b", re.IGNORECASE)
+DENY_CHOICE = re.compile(r"^(deny|reject|refuse)\b", re.IGNORECASE)
 
 
 def is_approval(question: dict) -> bool:
-    """True for a dialog that approves or denies something (omp's `select`/`confirm` dialogs: tool
-    permissions, plan approval) rather than a plain question answered with text or a choice."""
-    return str(question.get("kind") or "") not in TEXT_QUESTION_KINDS
+    """True for a dialog that approves or denies something (a tool permission, plan approval) rather than
+    a plain question answered with text or a choice. The CLI says so itself (`approval`, when it can);
+    else: a `select` is an approval when its choices allow and deny something (AO shows an omp `ask`
+    with options as a `select` too, which the agent may answer); any other non-text kind is one;
+    and the permission-mode gate's "Allow tool: …" question is one whatever its kind."""
+    flag = question.get("approval")
+    if isinstance(flag, bool):
+        return flag
+    if any(str(question.get(k) or "").startswith(GATE_PREFIX) for k in ("title", "message")):
+        return True
+    kind = str(question.get("kind") or "")
+    if kind in TEXT_QUESTION_KINDS:
+        return False
+    if kind == "select":
+        options = [str(o) for o in question.get("options") or []]
+        return any(ALLOW_CHOICE.match(o) for o in options) and any(DENY_CHOICE.match(o) for o in options)
+    return True
+
+
+def edges_of(upstream: Any) -> list[dict]:
+    """The parent edges of an `upstream` value: `show`/`ls` give {state, edges: [{parent, state, files?}]}
+    (state: the worst incoming edge); `plan status` edges come as a bare list."""
+    if isinstance(upstream, dict):
+        upstream = upstream.get("edges")
+    return [e for e in upstream if isinstance(e, dict)] if isinstance(upstream, list) else []
+
+
+def edge_mark(edge: dict) -> str:
+    """What makes an edge's state new: its parent and head, or (when the CLI gives no head) the files at issue."""
+    return f"{edge.get('parentSession') or edge.get('parent')}:{edge.get('parentHead') or edge.get('at') or ','.join(sorted(str(f) for f in edge.get('files') or []))}"
+
+
+def short(session_id: str) -> str:
+    """A session id for messages: AO ids (`<project>-<n>`, already short and what every command takes)
+    in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8, the prefix it was known by."""
+    return session_id[:8] if "-" not in session_id and len(session_id) > 12 else session_id
 
 
 def free_text_ok(value: str) -> str:
@@ -45,6 +83,15 @@ def agent_state(info: dict) -> str:
     or stopped."""
     state = info.get("state")
     return state if isinstance(state, str) and state else "unknown"
+
+
+def is_done(info: dict) -> bool:
+    """A finished session the user can archive: marked completed (`omp-sessions complete`), or idle with
+    nothing queued or running."""
+    if info.get("completed") is True:
+        return True
+    q = info.get("queue") if isinstance(info.get("queue"), dict) else {}
+    return agent_state(info) == "idle" and not int(q.get("pending") or 0) and not int(q.get("running") or 0)
 
 
 class OmpSessionsError(RuntimeError):
@@ -220,17 +267,70 @@ class OmpSessions:
         """A prompt (stdin) to the session; while it works it waits for the end of the turn unless `steer`."""
         self.ok(["send", free_text_ok(session), "-", *(["--steer"] if steer else [])], stdin=text, timeout=90)
 
-    def queue_add(self, session: str, task: str, *, notes: Optional[str] = None, subtasks: Sequence[str] = (), top: bool = False, run: bool = False) -> Any:
+    def queue_add(self, session: str, task: str, *, notes: Optional[str] = None, subtasks: Sequence[str] = (), top: bool = False, run: bool = False, after: Sequence[str] = ()) -> Any:
         """Adds a task to the session's queue; returns the queue. stdin carries the title (one line) and,
-        after the first newline, the notes (`queue add -` keeps them verbatim)."""
+        after the first newline, the notes (`queue add -` keeps them verbatim). `after`: sessions the
+        queue waits for (replaces the queue's current dependencies)."""
         args = ["queue", free_text_ok(session), "add", "-", "--json", *(f"--sub={s}" for s in subtasks)]
         args += [*(["--top"] if top else []), *(["--run"] if run else [])]
         title = " ".join(task.split())
+        # Dependencies first: with --run the task must not start before they are in place.
+        if after:
+            self.queue_after(session, after)
         return self.json(args, stdin=f"{title}\n{notes}" if notes else title)
 
     def queue_at(self, session: str, when: str) -> Any:
         """Schedules the session's queue (+30m, 14:30, an ISO time) or cancels the schedule (off); returns the queue."""
         return self.json(["queue", free_text_ok(session), "at", "--json", "--", free_text_ok(when)])
+
+    def queue_run(self, session: str) -> Any:
+        """Runs the session's queue now (its first pending task goes ahead, a scheduled start is dropped); returns the queue."""
+        return self.json(["queue", free_text_ok(session), "run", "--json"])
+
+    def queue_retry(self, session: str) -> Any:
+        """Requeues a failed (or interrupted) task, `queue retry`, and turns the queue on unless it waits for a
+        scheduled start, which is kept; returns the queue. Fails when there is nothing to retry."""
+        queue = self.json(["queue", free_text_ok(session), "retry", "--json"])
+        if isinstance(queue, dict) and not queue.get("startAt") and queue.get("autoRun") is not True:
+            queue = self.json(["queue", free_text_ok(session), "start", "--json"])
+        return queue
+
+    def queue_get(self, session: str) -> Any:
+        """The session's queue (queue.json: tasks, autoRun, startAt)."""
+        return self.json(["queue", free_text_ok(session), "--json"])
+
+    def queue_after(self, session: str, after: Sequence[str]) -> Any:
+        """Pending tasks of the session wait until these sessions finished (empty: no waiting); returns
+        the queue. Refused for the session itself, unknown sessions and cycles."""
+        refs = [free_text_ok(s) for s in after] or ["off"]
+        return self.json(["queue", free_text_ok(session), "after", "--json", "--", *refs])
+
+    def plan_status(self, ref: Optional[str] = None) -> list[dict]:
+        """`plan status --json`: the graph edges and how far each parent's changes reached its child
+        ({parent, parentSession, child, childSession, state, files?, parentHead?, childHead?, at?};
+        state is one of SYNC_STATES), for one task or session, else for every plan."""
+        out = self.json(["plan", "status", "--json", *(["--", free_text_ok(ref)] if ref else [])])
+        edges = out.get("edges") if isinstance(out, dict) else None
+        return [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
+
+    def upstream_by_session(self) -> dict[str, list[dict]]:
+        """{child session: its parent edges} from `plan status`: what `show`/`ls` don't carry. {} when the
+        CLI has no `plan status` or the planner isn't reachable: propagation is then simply not shown."""
+        try:
+            edges = self.plan_status()
+        except OmpSessionsError:
+            return {}
+        out: dict[str, list[dict]] = {}
+        for e in edges:
+            if e.get("childSession"):
+                out.setdefault(str(e["childSession"]), []).append(e)
+        return out
+
+    def plan_sync(self, ref: str, *, rerun: bool = False) -> dict:
+        """`plan sync <task|session> --json`: brings the parents' changes into its worktree now;
+        `rerun` also runs its task again with them (for a done task marked upstream-changed)."""
+        out = self.json(["plan", "sync", "--json", *(["--rerun"] if rerun else []), "--", free_text_ok(ref)], timeout=120)
+        return out if isinstance(out, dict) else {}
 
     def priority(self, session: str, priority: str) -> str:
         if priority not in PRIORITIES:
@@ -251,6 +351,27 @@ class OmpSessions:
             raise OmpSessionsError(error_text(r) or f"omp-sessions status exited with {r.code}") from exc
         if not isinstance(out, dict):
             raise OmpSessionsError(f"omp-sessions status printed {r.stdout.strip()[:100]!r}")
+        return out
+
+    def archive(self, session: str) -> str:
+        """Hides the session from the default lists (`omp-sessions archive`); returns what it printed."""
+        return self.ok(["archive", free_text_ok(session)]).strip()
+
+    def unarchive(self, session: str) -> str:
+        return self.ok(["unarchive", free_text_ok(session)]).strip()
+
+    def complete(self, session: str) -> dict:
+        """Marks the session completed (`omp-sessions complete`): done, whatever its state. Returns
+        {id, completed, completedAt?, changed}."""
+        return self._completed("complete", session)
+
+    def uncomplete(self, session: str) -> dict:
+        return self._completed("uncomplete", session)
+
+    def _completed(self, cmd: str, session: str) -> dict:
+        out = self.json([cmd, free_text_ok(session), "--json"])
+        if not isinstance(out, dict):
+            raise OmpSessionsError(f"omp-sessions {cmd} printed {str(out)[:100]!r}")
         return out
 
     def projects(self) -> list[dict]:
@@ -308,12 +429,16 @@ class OmpSessions:
         group: Optional[str] = None,
         priority: Optional[str] = None,
         model: Optional[str] = None,
+        after: Sequence[str] = (),
     ) -> dict:
-        """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?}."""
+        """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?, after?}.
+        `after` (task only): sessions whose work must finish before the task starts."""
         if bool(prompt) == bool(task):
             raise OmpSessionsError("give either a prompt or a task")
         if priority and priority not in PRIORITIES:
             raise OmpSessionsError(f"priority must be one of {', '.join(PRIORITIES)}")
+        if prompt and after:
+            raise OmpSessionsError("after holds back a queued task: give a task, not a prompt")
         # `--flag=value`: a value starting with `--` stays a value.
         args = ["new", "--detach", "--json"]
         stdin = None
@@ -328,11 +453,16 @@ class OmpSessions:
                 stdin = notes
             if at:
                 args.append(f"--at={at}")
+            args += [f"--after={s}" for s in after]
         for flag, value in (("title", title), ("mode", mode), ("group", group), ("priority", priority), ("model", model)):
             if value:
                 args.append(f"--{flag}={value}")
         args += [f"--tag={t}" for t in tags]
-        args += ["--", cwd]
+        # The folder is a plain argument, not after `--`: what follows `--` is omp's own flags. It is
+        # always an absolute path (resolve_place), so it never reads as a flag.
+        if cwd.startswith("-"):
+            raise OmpSessionsError(f"not a folder: {cwd}")
+        args.append(cwd)
         out = self.json(args, stdin=stdin, timeout=90)
         if not isinstance(out, dict) or not isinstance(out.get("id"), str):
             raise OmpSessionsError(f"omp-sessions new printed no session id: {str(out)[:200]}")

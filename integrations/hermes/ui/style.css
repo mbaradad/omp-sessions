@@ -192,6 +192,8 @@
 .omps-col.is-empty { flex-basis: 168px; }
 .omps-col-head { display: flex; align-items: center; gap: 7px; padding: 10px 12px 9px; border-bottom: 1px solid var(--o-border); font-weight: 600; font-size: 12.5px; position: relative; }
 .omps-col-head::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--tone, var(--o-border)); opacity: 0.85; }
+.omps-col-action { margin-left: auto; height: 22px; padding: 0 7px; font-weight: 500; }
+.omps-col-confirm { margin-left: auto; font-weight: 500; }
 .col-needs { --tone: var(--t-needs_input); }
 .col-working { --tone: var(--t-working); }
 .col-queued { --tone: var(--t-queued); }
@@ -221,6 +223,7 @@
 .omps-card:hover { border-color: var(--o-border-strong); transform: translateY(-1px); box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.55); }
 .omps-card.is-selected { border-color: var(--tone); box-shadow: 0 0 0 1px var(--tone), 0 10px 26px -16px color-mix(in srgb, var(--tone) 80%, transparent); }
 .omps-card.is-archived { opacity: 0.6; }
+.omps-chip.is-completed { background: color-mix(in srgb, var(--t-idle) 16%, transparent); border-color: color-mix(in srgb, var(--t-idle) 40%, transparent); }
 .tone-needs_input { --tone: var(--t-needs_input); }
 .tone-working { --tone: var(--t-working); }
 .tone-starting { --tone: var(--t-starting); }
@@ -247,6 +250,15 @@
 .omps-card-vscode { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
 .omps-card:hover .omps-card-vscode, .omps-card:focus-within .omps-card-vscode, .omps-card-vscode:focus-visible { opacity: 1; }
 .omps-card-vscode:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-acts { display: inline-flex; gap: 2px; }
+.omps-card-act { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
+.omps-card:hover .omps-card-act, .omps-card:focus-within .omps-card-act, .omps-card-act:focus-visible { opacity: 1; }
+.omps-card-act:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-act:disabled { cursor: progress; opacity: 0.4; }
+.omps-mode-row.omps-bcard-archive { justify-content: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--o-border); }
+.omps-bcard-archive .omps-input { width: auto; flex: 1 1 160px; }
+.omps-mode-row.omps-detail-actions { justify-content: flex-start; }
+.omps-detail-actions .omps-section-label { min-width: 7rem; }
 .omps-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; padding: 0 7px; height: 19px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--o-accent) 14%, transparent); color: var(--o-fg2); border: 1px solid color-mix(in srgb, var(--o-accent) 24%, transparent); }
 .omps-chip.is-warn { background: color-mix(in srgb, var(--o-yellow) 16%, transparent); border-color: color-mix(in srgb, var(--o-yellow) 40%, transparent); }
 .omps-chip.is-needs { background: color-mix(in srgb, var(--o-pink) 16%, transparent); border-color: color-mix(in srgb, var(--o-pink) 40%, transparent); }
@@ -276,6 +288,14 @@
 .omps-progress span { display: block; height: 100%; background: var(--o-grad); }
 .omps-cost { font-variant-numeric: tabular-nums; color: var(--o-fg2); }
 .omps-when { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.omps-when.is-scheduled { color: var(--t-scheduled); }
+.omps-progress.has-failed { box-shadow: 0 0 0 1px var(--o-red); }
+.omps-queue-controls { display: flex; flex-direction: column; gap: 8px; }
+.omps-queue-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.omps-queue-controls.is-compact .omps-btn-sm { height: 23px; padding: 0 7px; font-size: 11.5px; }
+.omps-queue-at-row { display: flex; align-items: center; gap: 6px; }
+.omps-queue-at-row .omps-input { flex: 1; min-width: 0; }
+.omps-queue-error { font-size: 12px; color: var(--o-red); }
 
 /* ---------- empty / error / loading ---------- */
 .omps-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 48px 24px; color: var(--o-muted); }
@@ -429,6 +449,46 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- graph view ---------- */
+.omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
+.omps-graph-panel .omps-filters { margin-bottom: 0; }
+.omps-glegend { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.omps-glegend .omps-kstatus { margin-left: 0; }
+.omps-graph-scroll { overflow: auto; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-col); max-height: calc(100vh - 220px); min-height: 160px; }
+.omps-host-desktop .omps-graph-scroll { max-height: none; }
+.omps-graph { display: block; font-family: inherit; }
+.omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
+.omps-gedge-head { fill: var(--o-border-strong); }
+.omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
+.omps-gnode:focus, .omps-gnode:focus-visible { outline: none; }
+.omps-gnode.k-running { --k: var(--o-blue); }
+.omps-gnode.k-ready { --k: var(--o-purple); }
+.omps-gnode.k-blocked { --k: var(--o-pink); }
+.omps-gnode.k-done { --k: var(--o-green); }
+.omps-gnode.k-triage, .omps-gnode.k-todo { --k: var(--o-yellow); }
+.omps-gnode-box { fill: var(--o-raised); stroke: color-mix(in srgb, var(--k) 45%, var(--o-border)); stroke-width: 1; }
+.omps-gnode:hover .omps-gnode-box { stroke: var(--k); }
+.omps-gnode:focus-visible .omps-gnode-box { stroke: var(--o-ring); stroke-width: 2; }
+.omps-gnode.is-selected .omps-gnode-box { stroke: var(--k); stroke-width: 2.5; }
+.omps-gnode.is-faded { opacity: 0.4; }
+.omps-gnode-bar { fill: var(--k); }
+.omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
+.omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
+.omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
+.omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
+.omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.omps-gcard-head .omps-kstatus { margin-left: 0; }
+.omps-gcard-title { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.omps-gcard-links { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.omps-gcard-links .omps-section-label { margin: 0 4px 0 0; min-width: 72px; }
+.omps-gchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--o-border); background: var(--o-card); color: var(--o-fg2); border-radius: 999px; padding: 2px 9px 2px 3px; font-size: 12px; cursor: pointer; }
+.omps-gchip .omps-kstatus { margin-left: 0; }
+.omps-gchip:hover:not(:disabled) { border-color: var(--o-border-strong); color: var(--o-fg); }
+.omps-gchip:disabled { cursor: default; opacity: 0.6; }
+
 @media (max-width: 720px) {
 	.omps-search { min-width: 0; flex: 1; }
 	.omps-bgrid { grid-template-columns: 1fr; }
@@ -437,3 +497,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 @media (prefers-reduced-motion: reduce) {
 	.omps *, .omps *::before, .omps *::after { animation: none !important; transition: none !important; }
 }
+.omps-upstream { display: flex; flex-direction: column; gap: 6px; }
+.omps-upstream-edge { font-size: 12px; color: var(--o-fg2); }
+.omps-sync-conflict { color: var(--o-red); }
+.omps-sync-upstream-changed, .omps-sync-pending { color: var(--o-yellow); }
+.omps-upstream-files { font-size: 11px; color: var(--o-muted); word-break: break-all; }

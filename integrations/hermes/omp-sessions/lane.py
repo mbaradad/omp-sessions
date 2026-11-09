@@ -14,7 +14,9 @@ Android): a comment on a linked card from a trusted author (the board's `comment
 `dashboard`) answers omp's open question or reaches the session as a message marked as a kanban
 comment from that author, and `@omp` from a trusted author on any card of a lane board assigns that
 card to the lane. Approval dialogs are never answered from comments. A comment that can't be
-delivered is retried on later passes (a few times) instead of being dropped.
+delivered is retried on later passes (a few times) instead of being dropped. With `archive_completed`
+on (the lane's or the board's setting), a card the lane completes is archived on the board right away,
+together with its omp session.
 
 Card <-> session links and the lane's lock are machine-wide (store.lane_data_dir, beside the shared
 kanban boards), so several profiles' gateways never run two lane passes at once; before creating a
@@ -33,8 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval
-from .settings import ANY_AUTHOR, BoardLane, Settings, board_lane
+from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, edge_mark, edges_of, error_text, is_approval, short
+from .settings import ANY_AUTHOR, BoardLane, Settings, archive_completed, board_lane
 from .store import Busy, Store
 
 log = logging.getLogger(__name__)
@@ -54,7 +56,7 @@ MAX_SEND_TRIES = 5
 HOLD_STATES = ("queued", "scheduled", "starting", "interrupted")
 # `omp-sessions answer` failures that only mean the dialog changed meanwhile (look again next pass).
 QUESTION_MOVED = re.compile(r"question changed|not waiting for an answer|no question is waiting", re.IGNORECASE)
-WHERE_TO_ANSWER = "VS Code, the omp phone app, the omp Sessions page"
+WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page"
 
 
 def claimer_id() -> str:
@@ -64,10 +66,6 @@ def claimer_id() -> str:
 
 def link_key(board: str, card: str) -> str:
     return f"{board}/{card}"
-
-
-def short(session_id: str) -> str:
-    return session_id[:8]
 
 
 def clip(text: str, limit: int) -> str:
@@ -98,24 +96,19 @@ def compose_notes(
     *,
     board: str,
     card_id: str,
-    cwd: str,
-    branch: Optional[str],
     context: str,
     skills: list[tuple[str, Optional[str]]],
 ) -> str:
     """The queued task's notes (omp gets them under the card title): what the session is for, the
     card's worker context as Hermes builds it for its own workers (body, parent results, comments),
-    and the SKILL.md files of the card's skills."""
+    and the SKILL.md files of the card's skills. They name no folder or branch: AO runs the session in
+    its own worktree, and a path here would send omp's edits into the folder the lane started from."""
     head = [
         f"This omp session works on Hermes kanban card {board}/{card_id}.",
         "The omp-sessions plugin reports back to the card on its own: your final reply becomes the card's result "
         "(and the input of cards that depend on it), and questions or approvals you ask show up on the card. "
         "You don't need any kanban tools.",
-        "",
-        f"Working folder: {cwd}",
     ]
-    if branch:
-        head.append(f"Branch: {branch} (a git worktree for this card; commit your work on it)")
     tail: list[str] = []
     if skills:
         tail += ["", "## Skills", "The card asks for these skills. Read each SKILL.md before you start and follow it:"]
@@ -168,15 +161,17 @@ class Card:
 
 
 def question_text(q: dict) -> str:
-    lines = [str(q.get("title") or "omp asks a question")]
+    subs = [s for s in q.get("questions") or [] if isinstance(s, dict)]
+    title = str(q.get("title") or "omp asks a question")
+    # AO's ask elicitation repeats its one question as the dialog title.
+    lines = [] if len(subs) == 1 and str(subs[0].get("question") or "") == title else [title]
     if q.get("message"):
         lines.append(str(q["message"]))
     if q.get("options"):
         lines.append("Options: " + " · ".join(str(o) for o in q["options"]))
-    for sub in q.get("questions") or []:
-        if isinstance(sub, dict):
-            opts = " · ".join(str(o) for o in sub.get("options") or [])
-            lines.append(f"{sub.get('question', '')}" + (f" ({opts})" if opts else ""))
+    for sub in subs:
+        opts = " · ".join(str(o) for o in sub.get("options") or [])
+        lines.append(f"{sub.get('question', '')}" + (f" ({opts})" if opts else ""))
     return "\n".join(lines)
 
 
@@ -197,7 +192,8 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
     ("block_input", text, question_id, approval), ("comment_input", text, question_id, approval),
-    ("unblock",), ("complete",), ("block_transient", reason), ("retry",), ("recreate",)."""
+    ("block_conflict", text, mark), ("unblock",), ("complete",), ("block_transient", reason), ("retry",),
+    ("recreate",)."""
     if card.status is None:
         return [("drop", "the card was deleted")]
     if card.status in ("done", "archived"):
@@ -210,7 +206,10 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
             return [("claim",), ("recreate",)] if card.status == "ready" else []
         acts: list[tuple] = [("unblock",)] if our_block else []
         if card.status in ("running", "ready") or our_block:
-            acts.append(("block_transient", f"The omp session {short(str(link.get('session', '')))} was removed."))
+            sid = str(link.get("session", ""))
+            # An old omp Sessions id (no `-`, 14 characters) belongs to a session that was never migrated to AO.
+            what = f"The omp session {sid} predates the move to Switchyard and was not migrated" if "-" not in sid and len(sid) > 12 else f"The omp session {short(sid)} was removed"
+            acts.append(("block_transient", f"{what}. Unblock the card to start a new session."))
         return acts
     state = report.get("state")
     q = report.get("queue") if isinstance(report.get("queue"), dict) else {}
@@ -220,6 +219,16 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
         return [("complete",)]
     if link.get("state") == "failed":
         return [("claim",), ("retry",)] if card.status == "ready" else []
+    # A parent's changes that don't merge (GRAPH-PROPAGATION.md) need a person, like a question.
+    conflict = next((e for e in upstream_edges(report) if e.get("state") == "conflict"), None)
+    if conflict is not None:
+        mark = f"conflict:{edge_mark(conflict)}"
+        if mark in (link.get("asked") or []):
+            return [("claim",)] if card.status == "ready" else []
+        acts = [("claim",)] if card.status == "ready" else []
+        if card.status in ("running", "ready") and card.block_kind != "needs_input":
+            acts.append(("block_conflict", conflict_text(conflict), mark))
+        return acts
     if state == "needs_input":
         acts = [("claim",)] if card.status == "ready" else []
         question = report.get("question") if isinstance(report.get("question"), dict) else {}
@@ -254,6 +263,22 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     return []
 
 
+def upstream_edges(report: Optional[dict]) -> list[dict]:
+    """The report's parent edges (`upstream` in `show --json`; GRAPH-PROPAGATION.md)."""
+    return edges_of((report or {}).get("upstream"))
+
+
+def conflict_text(edge: dict) -> str:
+    files = [f for f in edge.get("files") or [] if isinstance(f, str)]
+    parent = short(str(edge.get("parentSession") or edge.get("parent") or "?"))
+    listed = ", ".join(files[:20]) + (f" … {len(files) - 20} more" if len(files) > 20 else "")
+    return (
+        f"The changes of parent omp session {parent} don't merge cleanly into this card's worktree"
+        + (f" ({listed})" if listed else "")
+        + ". Resolve the merge in the omp session (a comment on this card reaches it), then the lane picks the card up again."
+    )
+
+
 def capacity(sched: dict) -> int:
     """How many more cards to claim now: omp's free concurrency slots (scheduler.json limit)."""
     if sched.get("paused") is True:
@@ -273,6 +298,8 @@ class Lane:
         self.store = store
         self.settings = settings
         self.omp = omp
+        # {child session: parent edges} of this pass (`plan status`), put into each tracked session's report.
+        self._upstream: dict[str, list[dict]] = {}
 
     # -- plugin state --
 
@@ -344,6 +371,7 @@ class Lane:
         if not mine and cfg is None:
             return
         omp = self.omp()
+        self._upstream = omp.upstream_by_session()
         errors: list[str] = []
         started: list[str] = []
         with kbc.connect_closing(board=slug) as conn:
@@ -375,7 +403,54 @@ class Lane:
                         log.warning("omp lane: %s: %s", key, exc, exc_info=True)
                         errors.append(f"{key}: {exc}")
                     self._save(links)
+                try:
+                    self._upstream_notes(conn, slug, omp)
+                except OmpSessionsError as exc:  # e.g. a CLI without `plan status`
+                    log.debug("omp lane: plan status on %s: %s", slug, exc)
         self._status(slug, started=started, error="; ".join(errors) or None)
+
+    def _upstream_notes(self, conn: Any, slug: str, omp: OmpSessions) -> None:
+        """A done card whose parent card changed afterwards (edge state upstream-changed,
+        GRAPH-PROPAGATION.md): the planner merged the change into its worktree but doesn't re-run it, so
+        say so once on the card, with how to re-run it."""
+        from hermes_cli import kanban_db as kb
+
+        edges = [e for es in self._upstream.values() for e in es if e.get("state") == "upstream-changed"]
+        if not edges:
+            return
+        cards = {sid: card for card, sid in self._card_sessions(omp, slug).items()}
+        noted = self.store.get("upstream_noted", [])
+        noted = noted if isinstance(noted, list) else []
+        for e in edges:
+            child = str(e.get("childSession") or "")
+            card = cards.get(child)
+            mark = f"{child}:{edge_mark(e)}"
+            if not card or mark in noted:
+                continue
+            parent = str(e.get("parentSession") or "")
+            what = f"card {cards[parent]}" if parent in cards else f"omp session {short(parent)}"
+            kb.add_comment(
+                conn,
+                card,
+                AUTHOR,
+                f"Parent {what} changed after this card was done. Its changes are merged into omp session {short(child)}'s worktree, "
+                f"but this card's task was not run again. To re-run it with them: `switchyard plan sync {short(child)} --rerun`, "
+                f"the omp Sessions page (Re-run with parent changes), or ask Hermes (switchyard_plan_sync with rerun).",
+            )
+            noted.append(mark)
+        self.store.set("upstream_noted", noted[-500:])
+
+    def _card_sessions(self, omp: OmpSessions, slug: str) -> dict[str, str]:
+        """{card id: omp session id} of the board's cards, from the sessions' `hermes:<board>` + `card:<id>` tags."""
+        out: dict[str, str] = {}
+        for s in omp.sessions(all=True):
+            tags = s.get("tags") if isinstance(s.get("tags"), list) else []
+            meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+            if f"hermes:{slug}" in tags and meta.get("id"):
+                for t in tags:
+                    if isinstance(t, str) and t.startswith("card:"):
+                        out[t[5:]] = str(meta["id"])
+        return out
 
     # -- new cards --
 
@@ -445,7 +520,15 @@ class Lane:
             context = f"# Kanban task {task.id}: {task.title}\n\n## Body\n{task.body or '(empty)'}\n\n(worker context unavailable: {exc})"
         roots = skill_roots(Path(get_hermes_home()))
         skills = [(name, find_skill(name, roots)) for name in (task.skills or [])]
-        notes = compose_notes(board=slug, card_id=task.id, cwd=link["cwd"], branch=link.get("branch"), context=context, skills=skills)
+        notes = compose_notes(board=slug, card_id=task.id, context=context, skills=skills)
+        # Parent cards that ran in the lane become the session's `after`, so the planner starts this
+        # card's worktree from their branches and later propagates their changes (GRAPH-PROPAGATION.md).
+        try:
+            parents = kb.parent_ids(conn, task.id)
+        except Exception:
+            parents = []
+        by_card = self._card_sessions(omp, slug) if parents else {}
+        after = [by_card[p] for p in parents if p in by_card]
         try:
             res = omp.new(
                 link["cwd"],
@@ -456,6 +539,7 @@ class Lane:
                 tags=["hermes", f"hermes:{slug}", f"card:{task.id}"],
                 group=cfg.group if cfg else None,
                 model=card_model(task) or (cfg.model if cfg else None),
+                after=after,
             )
         except OmpSessionsError as exc:
             link["state"] = "failed"
@@ -472,8 +556,9 @@ class Lane:
             conn,
             task.id,
             AUTHOR,
-            f"Queued as omp session {short(sid)} in {link['cwd']}"
-            + (f" (branch {link['branch']})" if link.get("branch") else "")
+            # Where omp really works: AO's worktree for the session, not the folder the lane gave it.
+            f"Queued as omp session {short(sid)} in {res.get('cwd') or link['cwd']}"
+            + (f" (branch {link['branch']})" if link.get("branch") and res.get("cwd") in (None, link["cwd"]) else "")
             + f". It starts when omp has a free slot. Follow or steer it in {WHERE_TO_ANSWER}, or with `omp-sessions attach {short(sid)}`; "
             f"comments here by {authors} reach the session too. This card is updated when it finishes or needs input.",
         )
@@ -543,6 +628,8 @@ class Lane:
                     self._create(conn, slug, link, task, cfg, omp)
             return
         report = omp.show(link["session"])
+        if report is not None and "upstream" not in report:
+            report["upstream"] = self._upstream.get(str(link["session"]), [])
         if self._forward_comments(conn, link, report, omp, cfg or board_lane_fallback(settings, slug)):
             return  # the session got something new: look at it again next tick
         for act in decide(card, link, report, assignee):
@@ -711,6 +798,10 @@ class Lane:
             elif kb.block_task(conn, card_id, reason=f"{what} ({how}):\n{act[1]}", kind="needs_input"):
                 link["input_blocked"] = True
             link["asked"] = [*(link.get("asked") or []), act[2]]
+        elif kind == "block_conflict":
+            if kb.block_task(conn, card_id, reason=act[1], kind="needs_input"):
+                link["input_blocked"] = True
+            link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "unblock":
             kb.unblock_task(conn, card_id)
             link["input_blocked"] = False
@@ -727,6 +818,8 @@ class Lane:
             if ok or (after and after.status == "done"):
                 log.info("omp lane: %s completed from omp session %s", key, short(link["session"]))
                 links.pop(key, None)
+                if (cfg or board_lane_fallback(self.settings(), slug)).archive_completed:
+                    self.archive_card(conn, slug, card_id, [str(link["session"])], omp)
             else:
                 link["error"] = "complete refused (are all parents done?)"
         elif kind == "block_transient":
@@ -752,6 +845,64 @@ class Lane:
             link.pop("session_gone", None)
             self._create(conn, slug, link, task, cfg, omp)
 
+    # -- archiving --
+
+    def archive_card(self, conn: Any, slug: str, card_id: str, sessions: list[str], omp: OmpSessions) -> Optional[str]:
+        """Archives a done card on Hermes's board and its omp sessions; returns what failed, or None.
+        The card is archived even when an omp session can't be (it is then still listed by omp)."""
+        from hermes_cli import kanban_db as kb
+
+        failed = []
+        if not kb.archive_task(conn, card_id):
+            after = kb.get_task(conn, card_id)
+            if after is None or after.status != "archived":
+                failed.append(f"Hermes refused to archive card {card_id}")
+        for sid in sessions:
+            try:
+                omp.archive(sid)
+            except OmpSessionsError as exc:
+                failed.append(f"omp session {short(sid)}: {exc}")
+        if failed:
+            log.warning("omp lane: archiving %s/%s: %s", slug, card_id, "; ".join(failed))
+            return "; ".join(failed)
+        log.info("omp lane: %s/%s archived with omp session(s) %s", slug, card_id, ", ".join(short(s) for s in sessions) or "none")
+        return None
+
+    def archive_done(self, slug: str) -> dict:
+        """Archives every done lane card on `slug` (`hermes omp archive-done`): done cards assigned to the
+        lane's assignee or worked by an omp session (tagged `hermes:<slug>` + `card:<id>`), together
+        with those sessions. {"archived": [card id], "sessions": [session id], "failed": {card id: why}}."""
+        from hermes_cli import kanban_db as kb
+        from hermes_cli import kanban_db_connect as kbc
+
+        settings = self.settings()
+        assignee = (settings.lane.boards.get(slug, {}).get("assignee") or settings.lane.assignee).lower()
+        omp = self.omp()
+        by_card: dict[str, list[str]] = {}
+        for s in omp.sessions(all=True):
+            tags = s.get("tags") if isinstance(s.get("tags"), list) else []
+            meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+            if f"hermes:{slug}" not in tags or not meta.get("id"):
+                continue
+            for t in tags:
+                if isinstance(t, str) and t.startswith("card:"):
+                    by_card.setdefault(t[5:], [])
+                    if s.get("archived") is not True:
+                        by_card[t[5:]].append(str(meta["id"]))
+        out: dict[str, Any] = {"archived": [], "sessions": [], "failed": {}}
+        with kbc.connect_closing(board=slug) as conn:
+            for task in kb.list_tasks(conn, status="done"):
+                if (task.assignee or "").lower() != assignee and task.id not in by_card:
+                    continue
+                sessions = by_card.get(task.id, [])
+                err = self.archive_card(conn, slug, task.id, sessions, omp)
+                if err:
+                    out["failed"][task.id] = err
+                else:
+                    out["archived"].append(task.id)
+                    out["sessions"].extend(sessions)
+        return out
+
 
 def card_model(task: Any) -> Optional[str]:
     """The card's model override (`hermes kanban set-model`) as an omp model selector (provider/model
@@ -767,7 +918,7 @@ def board_lane_fallback(settings: Settings, slug: str) -> BoardLane:
     """Settings for a linked card whose board the lane no longer takes new cards from."""
     e = settings.lane.boards.get(slug, {})
     authors = tuple(e["comment_authors"]) if "comment_authors" in e else settings.lane.comment_authors
-    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors)
+    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors, archive_completed=archive_completed(settings, slug))
 
 
 def project_folder(project_id: Optional[str], settings: Settings) -> Optional[str]:

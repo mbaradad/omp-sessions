@@ -5,34 +5,11 @@ import { Button, ErrorBox, Field, Segmented, useDismiss } from "./components";
 import { ModelPicker, ModelsError, useModels } from "./models";
 import { h, type ReactElement, useEffect, useRef, useState } from "./react";
 import { icon } from "./util";
+import { AT_PRESETS } from "./queue";
 import { openInVscode } from "./vscode";
 
 type Where = StartBody["where"]["kind"];
 type When = StartBody["when"];
-
-const AT_PRESETS: ReadonlyArray<{ label: string; at: () => string }> = [
-	{ label: "+30m", at: () => "+30m" },
-	{ label: "+1h", at: () => "+1h" },
-	{ label: "+3h", at: () => "+3h" },
-	{ label: "Tonight 22:00", at: () => nextLocal(22, 0) },
-	{ label: "Tomorrow 09:00", at: () => nextLocal(9, 1) },
-];
-
-/**
- * `hour`:00 of this browser's day `days` ahead (tonight: tomorrow if already past), as an ISO time with
- * its UTC offset (2026-01-31T09:00+01:00), so omp's machine starts it at the time shown here whatever
- * its own time zone.
- */
-function nextLocal(hour: number, days: number): string {
-	const d = new Date();
-	d.setDate(d.getDate() + days);
-	d.setHours(hour, 0, 0, 0);
-	if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-	const pad = (n: number): string => String(n).padStart(2, "0");
-	const off = -d.getTimezoneOffset();
-	const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
-}
 
 export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () => void; onStarted: (s: Started) => void }): ReactElement {
 	const [places, setPlaces] = useState<Places | null>(null);

@@ -2,14 +2,14 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to omp. The `omp-sessions` Hermes plugin gives it:
 
-- **Tools** (toolset `omp_sessions`, 14 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, switch their model, and check the omp Sessions server.
+- **Tools** (toolset `omp_sessions`, 16 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
 - **Notifications.** When an omp session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
 - **A kanban lane.** Kanban cards assigned to `omp` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`omp-sessions` skill**, plus `/omp` in chats and `hermes omp …` in a terminal.
 
-The plugin drives the `omp-sessions` CLI, so every session it starts is an ordinary omp session run by the `omp-sessions` server. You can watch and steer it from the omp Sessions page in Hermes, with `omp-sessions attach`, in the omp phone app, or in VS Code (omp Sessions). Queued sessions respect omp's global concurrency limit (`omp-sessions sched set <n>`).
+The plugin drives the `omp-sessions` CLI, so every session it starts is an ordinary omp session run by [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO), the daemon behind omp Sessions. The plugin never talks to AO itself: `omp-sessions` is the one client that maps AO sessions onto omp Sessions states, questions, queues and costs, the same way for VS Code, the CLI and Hermes. You can watch and steer a session from the omp Sessions page in Hermes, with `omp-sessions attach`, in the AO app or AO Mobile, or in VS Code (omp Sessions). Queued sessions respect omp's global concurrency limit (`omp-sessions sched set <n>`).
 
-For the whole arrangement (one workstation running omp, the `omp-sessions` server and Hermes; VS Code and Hermes Desktop on a laptop; the phone over Tailscale), see [the setup guide](SETUP.md).
+For the whole arrangement (one workstation running omp, the AO daemon and Hermes; VS Code and Hermes Desktop on a laptop; AO Mobile on the phone), see [the setup guide](SETUP.md).
 
 ## Install
 
@@ -75,18 +75,20 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | --- | --- |
 | `omp_sessions_list` | Lists sessions: running and with work ahead (queued, scheduled, interrupted), or all with `all: true`. |
 | `omp_projects_list` | Lists where sessions can run: recent omp folders, kanban boards with their configured folders and groups, and Hermes projects. |
-| `omp_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder and group). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority` and `model`. |
-| `omp_session_status` | Returns a session's state, pending question, last reply, queue, cost and changed files. |
+| `omp_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time); `after` (with `task`) names sessions whose work must finish first: the task branches from their work and later gets their changes (see [Parent changes](#parent-changes)). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder and group). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority` and `model`. |
+| `omp_session_status` | Returns a session's state, pending question, last reply, queue, cost, changed files, and `upstream`: the sync state of each parent. |
 | `omp_session_wait` | Blocks until the session is idle, needs input, stopped or interrupted, or scheduled. The default timeout is 300 s, at most 600 s. |
 | `omp_session_send` | Sends a prompt (resuming a stopped session). While the session works, the prompt runs after the current turn; `steer: true` redirects the turn instead. |
 | `omp_session_answer` | Answers the waiting question with an option number or text, yes/no, or free text. Refused for approval dialogs unless `agent_approvals` is on. |
 | `omp_session_mode` | Switches the permission mode live. Unless `agent_approvals` is on, it refuses while an approval waits (the switch would answer it) and refuses switching to a less restrictive mode (plan < ask < edits < auto; a session without a mode counts as ask). |
 | `omp_session_model` | Shows the session's model, or switches it (live while it runs, else from its next resume). |
 | `omp_session_stop` | Stops the session, or cancels a scheduled start. Its history stays, and `omp_session_send` resumes it. |
-| `omp_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on. |
+| `omp_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on; `after` sets the sessions the queue waits for. |
 | `omp_queue_schedule` | Sets or changes when a session's queue starts (`at`), cancels it (`at: "off"`), and/or sets its `priority`. |
 | `omp_models_list` | Lists the models omp can use (`provider/id`), with the omp Sessions default and omp's own. |
 | `omp_server_status` | The `omp-sessions status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. |
+| `switchyard_plan_status` | Lists the graph's edges (parent → child) with their sync state and conflicting files, for one session or every plan. |
+| `switchyard_plan_sync` | Brings a session's parents' changes into its worktree now and returns each edge's sync state; `rerun: true` also runs its task again with them. |
 
 States: `queued` (waiting for a slot), `scheduled` (waiting for its start time), `starting`, `working`, `needs_input`, `idle` (done for now), `interrupted` (a crash or reboot cut a queued task short; it waits for a person), `stopped`.
 
@@ -121,7 +123,7 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
    - the paths of the `SKILL.md` files the card asks for.
 
    The session gets the tags `hermes`, `hermes:<board>` and `card:<id>`, goes into the board's omp group, and starts in the board's permission mode, if one is set.
-4. **Comments** on the card with the session id and how to watch it: the omp Sessions page, `omp-sessions attach <id>`, the phone app, or VS Code.
+4. **Comments** on the card with the session id and how to watch it: the omp Sessions page, `omp-sessions attach <id>`, the AO app or AO Mobile, or VS Code.
 5. **Tracks** the session and mirrors it onto the card:
 
 | Session | Card |
@@ -132,11 +134,20 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
 | task done (idle, or stopped afterwards) | `complete`. The result is the session's last reply, and so is the run summary that child cards read. The metadata holds the omp session id, folder, cost (including subagents) and changed-file count. |
 | interrupted (crash or reboot during the task) | Blocked with the reason and "Unblock the card to continue it in the same session". Unblocking starts the queue again. |
 | task failed, session stopped early, or session removed | `block --kind transient` with the reason. |
-| card done, archived, deleted or reassigned | The lane stops tracking it and leaves the session alone. |
+| a parent's changes don't merge into its worktree (`conflict`) | `block --kind needs_input` with the files. Resolve the merge in the session (a card comment reaches it); the card is unblocked once the edge is merged. |
+| card done, archived, deleted or reassigned | The lane stops tracking it and leaves the session alone. A done card whose parent changes later gets one comment saying how to re-run it (below). |
 
 Unblocking a card that failed (in Hermes: `hermes kanban unblock <id>`) retries it in the same omp session, or in a new one if the session was removed.
 
 The card↔session links and the lane's lock live beside the kanban boards, which every profile shares: `~/.hermes/plugin-data/omp-sessions-lane/` (`state.json`, `lane.lock`). Before it creates a session, the lane also looks for an omp session tagged `card:<id>`. A card never gets two sessions, even across restarts or crashes.
+
+### Parent changes
+
+A card whose Hermes parents ran in the lane is queued with those parents' sessions as `after`, so its omp session branches from their work instead of the repository base. When a parent changes later (a follow-up, a re-run), the planner merges the change into each child's worktree: a child that is working gets it after its turn, an idle one gets it with a note, a done one is marked **upstream changed** and is not run again. Each edge has a sync state: `in-sync`, `pending`, `merged`, `conflict` or `upstream-changed`.
+
+- A `conflict` blocks the child's card (see the table above). The session itself does not turn `needs_input` (and `omp_session_wait` doesn't return for it): read `upstream.state` in `omp_session_status` (the worst of its parent edges: conflict > resolving > upstream-changed > pending > merged > in-sync).
+- An `upstream-changed` card gets one comment. Re-run it with `switchyard plan sync <session> --rerun`, **Re-run with parent changes** on the omp Sessions page, or `switchyard_plan_sync` with `rerun: true`.
+- `switchyard plan status` lists every edge; the omp Sessions page shows a **merge conflict** or **parent changed** chip on the card and the parents' states in the detail panel, with **Sync now**.
 
 ### Several profiles
 
@@ -169,7 +180,7 @@ From any chat (including clients whose assignee picker lists only Hermes profile
 Comments on a card the lane runs can reach its omp session, but only from **trusted authors**: `lane.comment_authors`, default `["dashboard"]`, which is what the Hermes dashboard and Hermes Console post as (`*` trusts anyone). Hermes agents comment under their profile name, so another profile's agent, which may act on untrusted input, can't prompt omp or hand it cards unless you list that profile. A comment from anyone else gets one note per author per card saying it doesn't reach the session. Approvals are never answered by comments.
 
 - While omp waits on a question (ask, input or editor), the first new comment is the answer (an option's number or label, or free text); the lane then unblocks the card. If it doesn't fit the question, the lane says so and tries the next comment.
-- **Approvals are never answered by comments.** While one waits, comments are held, the card gets one note saying where to approve (the omp Sessions page, the phone app, VS Code or `omp-sessions answer`), and the comments are delivered after it's answered.
+- **Approvals are never answered by comments.** While one waits, comments are held, the card gets one note saying where to approve (the omp Sessions page, the AO app or AO Mobile, VS Code or `omp-sessions answer`), and the comments are delivered after it's answered.
 - Otherwise comments arrive as a message: a follow-up while omp works, a new prompt once it is idle (the card is completed again from the new reply). omp sees each one wrapped as `<kanban-comment author="…">`.
 - Comments are held until the card's queued task has started, so they never jump the concurrency limit or a scheduled start.
 - The lane confirms each delivery with its own comment (`omp session 1a2b3c4d: passed the comment on`), and says so when omp rejects an answer. If a comment can't be delivered, the card gets one "Couldn't reach omp session …" note and the lane retries on later passes, giving up (and saying so) after 5 tries.
@@ -184,6 +195,9 @@ hermes omp board lightscale --folder ~/src/lightscale --group Lightscale --mode 
 hermes omp project lightscale ~/src/lightscale       # folder for a Hermes project, by id, slug or name
 hermes omp lane off                                  # stop taking new cards; linked cards keep reporting
 hermes omp lane run                                  # one pass now
+hermes omp lane on --archive-completed on            # archive each card (and its omp session) once the lane completes it
+hermes omp board lightscale --archive-completed on   # the same for one board (off; default: the lane's setting)
+hermes omp archive-done --board lightscale          # archive a board's done lane cards and their omp sessions now (repeat --board; default: every board)
 hermes omp status                                    # lane, last passes, errors, linked cards and their sessions
 ```
 
@@ -201,8 +215,9 @@ plugins:
         lane:
           enabled: true
           assignee: omp
-          mode: auto                   # unset: the omp Sessions default (omp-sessions config set mode), else omp's; edits/ask make cards wait for a person at the first command
+          mode: auto                   # unset: the Switchyard default (omp-sessions config set mode), else auto (nothing asks); ask/edits/plan need Switchyard's omp extension (omp-sessions status shows it) and make cards wait for a person at the first command
           comment_authors: [dashboard] # whose comments reach omp and whose @omp assigns cards ("*": anyone)
+          archive_completed: false     # true: archive a card on the board, and its omp session, as soon as the lane completes it
           boards:                      # empty: every board
             lightscale:
               folder: /home/me/src/lightscale
@@ -210,15 +225,22 @@ plugins:
               mode: auto
               model: anthropic/claude-sonnet-4-5   # unset: the omp Sessions default
               comment_authors: [dashboard, alice]  # replaces the lane's list on this board
+              archive_completed: true              # replaces the lane's archive_completed on this board
         projects:
           lightscale: /home/me/src/lightscale
 ```
+
+### Archiving done cards
+
+Done cards pile up on a board. With `archive_completed` on (the lane's setting, or a board's own), the lane archives a card right after it completes it, with the card's result kept, and archives the card's omp session too (`omp-sessions archive`; it stays in `ls --all` and under *Show archived* on the page). It is off by default.
+
+`hermes omp archive-done [--board <slug>]` does it in one go for the cards already done: every `done` card assigned to the board's lane assignee, or run by an omp session (tagged `hermes:<board>` and `card:<id>`), is archived with Hermes's own `archive_task`, together with those sessions. Cards of other assignees and open cards are left alone. The Boards view has the same, per board: *Archive done cards* (when the lane completes them, keep them, or the lane's default) and *Archive done now*.
 
 ### Answering a card's question
 
 When a card is blocked with `needs_input`, answer the omp session in any of these places:
 
-- the omp Sessions page in Hermes, or the omp phone app;
+- the omp Sessions page in Hermes, the AO app or AO Mobile;
 - VS Code (the session's chat);
 - `omp-sessions answer <id> <choice>`;
 - from Hermes, with `omp_session_answer` (questions only; approvals need `agent_approvals`);
@@ -265,10 +287,11 @@ The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web d
 ![omp Sessions in the Hermes dashboard](images/hermes-dashboard.png)
 
 - **Status strip:** `omp-sessions` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
-- **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply; interrupted sessions say so. Filter by board, group or project, or search (`/`). Each card has a button to open its project in VS Code.
-- **Detail panel** (click a card): the question with one button per answer (the answer names the question, so a stale click fails instead of answering a different dialog), the full last reply, a follow-up box (it runs after the current turn; tick *Steer this turn* to redirect it instead), the permission mode switch, a model switcher, Stop (hidden for interrupted sessions), **VS Code** and **Open project in VS Code** (below).
+- **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply; interrupted sessions say so. Filter by board, group or project, or search (`/`). Each card has a button to open its project in VS Code, and (on hover) **Mark completed** / **Mark not completed** and **Archive** / **Unarchive**. **Archive all** on the Done column header (after a confirm) archives, in one request, every done session the board shows: idle with nothing queued, or marked completed (`omp-sessions complete`). Archived sessions are hidden; **Show archived** brings them back, with Unarchive on each.
+- **Detail panel** (click a card): the question with one button per answer (the answer names the question, so a stale click fails instead of answering a different dialog), the full last reply, queue controls (*Run now* runs the queue's first pending task at once and drops a scheduled start; *Retry* puts a failed, interrupted or finished task back to pending and keeps the schedule; *Schedule* sets or cancels the queue's start time, the same as `omp_queue_schedule`), a follow-up box (it runs after the current turn; tick *Steer this turn* to redirect it instead), the permission mode switch, a model switcher, Mark completed and Archive (or their undo), Stop (hidden for interrupted sessions), **VS Code** and **Open project in VS Code** (below).
 - **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, a searchable model picker, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
 - **Boards:** the lane switch, and per board (the ones in the lane first) the lane's folder (with an open-in-VS-Code button), omp group, mode, default model, trusted comment authors and assignee, the cards it runs as omp sessions with their status, and the ready cards it takes next.
+- **Graph:** a board's kanban cards as a dependency graph, parents on the left and their children (cards that wait for them: `hermes kanban link <parent> <child>`, or a card created with parents) to the right. Cards are coloured by status and show the state of the omp session working on them: the lane's session (marked *lane*), else the latest session tagged `hermes:<board>` + `card:<id>`. An edge is solid once its parent is done and dashed while it still holds the child back. Only cards linked to another card show until you switch **Linked cards only** to **All cards** (unlinked cards then sit in a grid below; archived cards never show). Click a card (or focus it and press Enter) to see what it waits for and what it unblocks; a card with an omp session also opens that session's detail panel.
 
 ![A session that needs an answer](images/hermes-detail.png)
 
@@ -292,13 +315,13 @@ The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashbo
 
 - **Chats**: Hermes calls the `omp_session_*` tools as usual (Console shows them as steps), and the note that a session finished or needs input arrives in the chat that started it.
 - **`/omp`**: a short summary (how many sessions need you, are working, queued, scheduled, interrupted or done, and which need you); `/omp status` for the lane; `/omp take <card> [board]` routes a kanban card to omp, which Console's assignee picker can't (it lists only profiles).
-- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@omp` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them on the phone app or the omp Sessions page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
+- **Tasks**: cards the lane runs show `@omp`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@omp` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them in AO Mobile or on the omp Sessions page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
 
-For the omp sessions themselves on Android (every session, not only cards), pair the omp phone app (**omp: Connect Phone…**): it lists them, follows them live, and answers questions and approvals.
+For the omp sessions themselves on Android (every session, not only cards), pair AO Mobile with the AO daemon (see the [setup guide](SETUP.md)): it lists them, follows them live, and answers questions and approvals.
 
 ## Troubleshooting
 
-- **Start with `omp-sessions status`** on the machine (server, omp, problems), then **omp Doctor** in VS Code (*omp: Run Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-sessions`, with fixes (see [In VS Code](#in-vs-code)).
+- **Start with `omp-sessions status`** on the machine (the AO daemon, omp, problems; `ao doctor` checks AO itself), then **omp Doctor** in VS Code (*omp: Run Doctor*): its Hermes section checks the plugin in every profile, notifications, the dispatcher and the lane, and `omp-sessions`, with fixes (see [In VS Code](#in-vs-code)).
 - **`hermes omp status` says `omp-sessions: NOT FOUND`.** Install the command (VS Code: **omp: Install omp-sessions Command**, or the release package), or set `plugins.entries.omp-sessions.settings.omp_sessions` to its path. The gateway may run with a smaller `PATH` than your shell. A 0.5.0 setting named `omp_vs` is no longer read; rename it to `omp_sessions`.
 - **Comments don't reach the session.** Check the author: only `lane.comment_authors` (default `dashboard`) count. Approvals never go through comments.
 - **The tools are missing in Hermes.** Check `hermes plugins list`. A user plugin loads only once it is enabled. Start a new Hermes session after enabling, or run `hermes gateway restart`.
@@ -310,4 +333,4 @@ For the omp sessions themselves on Android (every session, not only cards), pair
   - `hermes omp lane run` forces a pass from the terminal.
   - Just updated the plugin files? The running gateway keeps the old code until it reloads the plugin: the extension's automatic refresh and `omp-sessions hermes install` do that for you; by hand, `hermes -p <profile> plugins disable omp-sessions` then `enable`, or `hermes gateway restart`.
 - **A card was blocked with "could not prepare the workspace".** A `worktree` card needs a path inside a git repository, or a board `default_workdir`. A `dir` path must be absolute.
-- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. omp's own logs: `omp-sessions server log` and `omp-sessions tail <id>`.
+- **Logs.** Lane and notification errors are written to Hermes's log (`~/.hermes/logs/agent.log`) and shown by `hermes omp status`. A session's own output: `omp-sessions tail <id>`; the AO daemon: `ao status` and `ao doctor`.

@@ -1,5 +1,5 @@
-"""omp-sessions: Hermes plugin for omp coding sessions, run by the omp Sessions server through its
-omp-sessions CLI (the same sessions VS Code, the omp phone app and the CLI show).
+"""omp-sessions: Hermes plugin for omp coding sessions, run by Agent Orchestrator (AO) through the
+omp-sessions CLI (the same sessions VS Code, the AO app, AO Mobile and the CLI show).
 
 - Tools (toolset omp_sessions) to list, start, queue, schedule, check, wait on, answer, steer and stop
   omp sessions, add tasks to their queues, set priority, and read the server's status.

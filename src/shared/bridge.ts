@@ -1,7 +1,8 @@
-// VS Code bridge: lets omp sessions use VS Code's language features through an MCP server.
-//   omp ──stdio MCP──> out/mcp.js ──JSONL socket──> extension (one socket per VS Code window)
+// VS Code bridge: lets omp sessions use VS Code's language features.
+//   omp ──omp extension (module bridge.js of the Switchyard package)──┐
+//   MCP client ──stdio MCP (out/mcp.js)───────────────────────────────┴──JSONL socket──> extension (one socket per VS Code window)
 // Each window registers itself in `<stateRoot>/bridge/<pid>.json` (0600) next to its socket; the
-// MCP server picks the window whose workspace folders contain the session cwd and authenticates
+// caller picks the window whose workspace folders contain the session cwd and authenticates
 // with the per-window token from that file. Everything here is node-only and VS Code-free.
 
 import * as crypto from "node:crypto";
@@ -12,14 +13,14 @@ import { stateRoot } from "./protocol";
 import { privateSocketDir } from "./server-protocol";
 
 export const BRIDGE_VERSION = 1;
-/** MCP server name; omp exposes its tools as `mcp__vscode_<tool>`. */
+/** MCP server name; omp exposes the tools as `mcp__vscode_<tool>` (the omp extension keeps those names). */
 export const MCP_SERVER_NAME = "vscode";
 
 export function bridgeRoot(): string {
 	return path.join(stateRoot(), "bridge");
 }
 
-/** Present while `omp.vscodeTools` is off: hosts then start omp without the MCP server. */
+/** Present while `omp.vscodeTools` is off: the omp extension then registers no tools. */
 export function bridgeDisabledFlag(): string {
 	return path.join(bridgeRoot(), "disabled");
 }
@@ -128,36 +129,6 @@ export function pickWindows(entries: BridgeEntry[], cwd: string): WindowChoice[]
 	});
 	scored.sort((a, b) => b.score - a.score || b.entry.focusedAt - a.entry.focusedAt);
 	return scored.map(s => ({ entry: s.entry, matched: s.score > 0 }));
-}
-
-// ---------- host side: register the MCP server for one session ----------
-
-/**
- * Writes `<sessionDir>/vscode-bridge/.mcp.json` and returns the omp args that load it, or [] when
- * the bridge is disabled or the MCP script is missing. omp's `--config` overlays cannot declare MCP
- * servers; an `--extension` package dir is the per-process way to add one.
- */
-export function bridgeOmpArgs(sessionDir: string, cwd: string, mcpScript: string, nodePath: string): string[] {
-	const dir = path.join(sessionDir, "vscode-bridge");
-	if (fs.existsSync(bridgeDisabledFlag()) || !fs.existsSync(mcpScript)) {
-		fs.rmSync(dir, { recursive: true, force: true });
-		return [];
-	}
-	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const config = {
-		mcpServers: {
-			[MCP_SERVER_NAME]: {
-				type: "stdio",
-				command: nodePath,
-				args: [mcpScript],
-				// The host may run under VS Code's Electron binary; make it behave as plain node.
-				env: { ELECTRON_RUN_AS_NODE: "1", OMP_VSCODE_BRIDGE_CWD: cwd, OMP_VSCODE_HOME: stateRoot() },
-				timeout: 60_000,
-			},
-		},
-	};
-	fs.writeFileSync(path.join(dir, ".mcp.json"), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-	return ["--extension", dir];
 }
 
 // ---------- wire protocol (MCP server <-> extension), JSONL ----------

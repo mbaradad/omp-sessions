@@ -8,8 +8,8 @@ import os
 import time
 from typing import Any, Callable, Optional, Sequence
 
-from .lane import Lane, short
-from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions
+from .lane import Lane
+from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions, short
 from .settings import MODES, Settings, board_lane, parse_authors, update_setting
 from .store import Store, profile_of
 
@@ -86,8 +86,14 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
             }
         )
     last_inject = store.get("last_inject")
+    try:
+        omp_info = omp.status().get("omp")
+    except OmpSessionsError:
+        omp_info = None
     return {
         "omp_sessions": " ".join(cmd) if cmd else None,
+        # `status --json` `omp`: installed/authenticated, Switchyard's omp extension (needed for ask/edits/plan), shim.
+        "omp": omp_info if isinstance(omp_info, dict) else None,
         "scheduler": sched,
         "notify": settings.notify,
         "last_notification": last_inject if isinstance(last_inject, dict) else None,
@@ -101,6 +107,7 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
             "assignee": settings.lane.assignee,
             "mode": settings.lane.mode,
             "comment_authors": list(settings.lane.comment_authors),
+            "archive_completed": settings.lane.archive_completed,
             "boards": settings.lane.boards or "all",
             "ticks": lane.ticks(),
             "state": str(lane.store.state.data_dir),
@@ -116,7 +123,10 @@ def status_text(d: dict) -> str:
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
-        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · omp-sessions server not running'}")
+        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once omp-sessions starts it)'}")
+    ext = (d.get("omp") or {}).get("extension")
+    if isinstance(ext, dict) and ext.get("installed") is False:
+        lines.append("omp extension: NOT INSTALLED: cards in mode ask, edits or plan can't be started (auto works); install Switchyard's omp extension (open VS Code with Switchyard)")
     last = d.get("last_notification") or {}
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
@@ -129,7 +139,7 @@ def status_text(d: dict) -> str:
         f"{slug}" + (f" ({', '.join(f'{k}={v}' for k, v in cfg.items())})" if cfg else "") for slug, cfg in boards.items()
     )
     lines.append(f"lane (profile {d['profile']}): {'on' if lane['enabled'] else 'off'} · assignee {lane['assignee']} · mode {lane['mode'] or 'omp default'} · {board_text}")
-    lines.append(f"trusted comment authors: {', '.join(lane['comment_authors']) or 'none'} · agent answers approvals: {'yes' if d['agent_approvals'] else 'no'}")
+    lines.append(f"trusted comment authors: {', '.join(lane['comment_authors']) or 'none'} · agent answers approvals: {'yes' if d['agent_approvals'] else 'no'} · archive completed cards: {'yes' if lane.get('archive_completed') else 'no'}")
     disp = d.get("dispatcher")
     if disp:
         lines.append(f"kanban dispatcher: last tick {_ago(disp.get('at'))} in profile {disp.get('profile')} (lane {'on' if disp.get('lane_on') else 'off'} there, pid {disp.get('pid')})")
@@ -167,7 +177,7 @@ def sessions_summary(omp: OmpSessions) -> str:
         q = s.get("queue") or {}
         queue = f" · queue {q.get('done', 0)}/{q.get('total', 0)}" if q.get("total") else ""
         group = f" · {s['group']}" if s.get("group") else ""
-        lines.append(f"{str(m.get('id', ''))[:8]}  {agent_state(s):<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
+        lines.append(f"{short(str(m.get('id', '')))}  {agent_state(s):<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
     return "\n".join(lines)
 
 
@@ -195,7 +205,7 @@ def sessions_brief(omp: OmpSessions) -> str:
     lines = [" · ".join(f"{len(by[k])} {label}" for k, label in labels if by.get(k))]
     for s in (by.get("needs_input") or [])[:5]:
         m = s.get("meta") or {}
-        lines.append(f"needs you: {str(m.get('id', ''))[:8]} {m.get('title', '')!s:.60}")
+        lines.append(f"needs you: {short(str(m.get('id', '')))} {m.get('title', '')!s:.60}")
     return "\n".join(lines)
 
 
@@ -230,6 +240,21 @@ def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane
     return f"No card {card_id} on {'board ' + board if board else 'any open board'}."
 
 
+def archive_done_text(slugs: Sequence[str], lane: Lane) -> str:
+    """`hermes omp archive-done`: archives each board's done lane cards and their omp sessions."""
+    lines = []
+    for slug in slugs:
+        try:
+            r = lane.archive_done(slug)
+        except OmpSessionsError as exc:
+            lines.append(f"{slug}: {exc}")
+            continue
+        n = len(r["archived"])
+        lines.append(f"{slug}: archived {n} done card{'' if n == 1 else 's'}" + (f" ({', '.join(r['archived'])})" if n else "") + f" and {len(r['sessions'])} omp session(s)")
+        lines.extend(f"  ! {card}: {why}" for card, why in r["failed"].items())
+    return "\n".join(lines) or "No boards."
+
+
 def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="omp_cmd")
     st = sub.add_parser("status", help="omp-sessions, notifications, the kanban lane and linked cards")
@@ -242,6 +267,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     on.add_argument("--mode", choices=MODES, help="starting permission mode of card sessions")
     on.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every board)")
     on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach omp and whose @omp assigns cards (default dashboard; * anyone)")
+    on.add_argument("--archive-completed", choices=("on", "off"), help="archive a card and its omp session once the lane completes it (default off)")
     lane_sub.add_parser("off", help="stop taking new cards (linked cards are still reported)")
     run = lane_sub.add_parser("run", help="one lane pass now (normally every dispatcher tick)")
     run.add_argument("--board", action="append", default=[], help="only this board (repeatable)")
@@ -253,6 +279,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     board.add_argument("--assignee")
     board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": omp Sessions' default)")
     board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
+    board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their omp sessions) once the lane completes them (default: the lane's setting)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
     project = sub.add_parser("project", help="map a Hermes project (or any name) to a folder")
     project.add_argument("name")
@@ -263,6 +290,8 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     take = sub.add_parser("take", help="assign a kanban card to the omp lane")
     take.add_argument("card")
     take.add_argument("--board", help="the card's board (default: search every open board)")
+    done = sub.add_parser("archive-done", help="archive the done lane cards of a board and their omp sessions")
+    done.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every open board)")
 
 
 def _lane(raw: Any) -> dict:
@@ -277,7 +306,7 @@ def _lane(raw: Any) -> dict:
     return lane
 
 
-def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[str] = None, boards: Sequence[str] = (), comment_authors: Optional[str] = None) -> None:
+def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[str] = None, boards: Sequence[str] = (), comment_authors: Optional[str] = None, archive_completed: Optional[bool] = None) -> None:
     """Turns the lane on or off (plus, when turning it on, its assignee, mode, extra boards and
     trusted comment authors)."""
 
@@ -290,6 +319,8 @@ def set_lane(*, enabled: bool, assignee: Optional[str] = None, mode: Optional[st
             lane["mode"] = mode
         if comment_authors is not None:
             lane["comment_authors"] = list(parse_authors(comment_authors) or ())
+        if archive_completed is not None:
+            lane["archive_completed"] = archive_completed
         for b in boards:
             lane["boards"].setdefault(b, {})
         return lane
@@ -306,11 +337,12 @@ def set_board(
     assignee: Optional[str] = None,
     model: Optional[str] = None,
     comment_authors: Optional[str] = None,
+    archive_completed: Optional[str] = None,
     remove: bool = False,
 ) -> None:
     """Per-board lane settings: None leaves a field alone, "" clears it (comment_authors: back to the
-    lane's list); `remove` drops the board from the lane's list. Raises ValueError for a folder that
-    doesn't exist or an unknown mode."""
+    lane's list; archive_completed, else "on"/"off": back to the lane's setting); `remove` drops the
+    board from the lane's list. Raises ValueError for a folder that doesn't exist or an unknown mode."""
     if mode and mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     path = os.path.abspath(os.path.expanduser(folder.strip())) if folder and folder.strip() else None
@@ -340,6 +372,11 @@ def set_board(
                 entry["comment_authors"] = list(parse_authors(comment_authors) or ())
             else:
                 entry.pop("comment_authors", None)
+        if archive_completed is not None:
+            if archive_completed in ("on", "off"):
+                entry["archive_completed"] = archive_completed == "on"
+            else:
+                entry.pop("archive_completed", None)
         return lane
 
     update_setting("lane", change)
@@ -378,7 +415,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
     if cmd == "lane":
         sub = getattr(args, "lane_cmd", None)
         if sub == "on":
-            set_lane(enabled=True, assignee=args.assignee, mode=args.mode, boards=args.board, comment_authors=args.comment_authors)
+            set_lane(enabled=True, assignee=args.assignee, mode=args.mode, boards=args.board, comment_authors=args.comment_authors, archive_completed=None if args.archive_completed is None else args.archive_completed == "on")
         elif sub == "off":
             set_lane(enabled=False)
         elif sub == "run":
@@ -394,7 +431,8 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         return 0
     if cmd == "board":
         try:
-            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, model=args.model, comment_authors=args.comment_authors, remove=args.remove)
+            ac = args.archive_completed
+            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, model=args.model, comment_authors=args.comment_authors, archive_completed=None if ac is None else "" if ac == "default" else ac, remove=args.remove)
         except ValueError as exc:
             print(exc)
             return 1
@@ -423,5 +461,11 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
         return 0
     if cmd == "take":
         print(take_card(args.card, args.board or None, settings(), lane))
+        return 0
+    if cmd == "archive-done":
+        from hermes_cli import kanban_db as kb
+
+        slugs = args.board or [b.get("slug") or kb.DEFAULT_BOARD for b in kb.list_boards(include_archived=False)]
+        print(archive_done_text(slugs, lane))
         return 0
     return 2

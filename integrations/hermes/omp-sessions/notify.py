@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .ompsessions import OmpSessions, is_approval
+from .ompsessions import OmpSessions, is_approval, short
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ WATCH_MAX_AGE_S = 7 * 24 * 3600
 # chat that started the session is usually gone (a one-shot `hermes chat -Q`, a closed CLI chat).
 REFUSED_GIVE_UP_S = 3600
 REPLY_EXCERPT = 600
-WHERE_TO_ANSWER = "VS Code, the omp phone app, the omp Sessions page, or `omp-sessions answer`"
+WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page, or `omp-sessions answer`"
 
 
 def signature(report: dict) -> str:
@@ -40,7 +40,7 @@ def signature(report: dict) -> str:
 def note_text(report: dict, agent_approvals: bool = False) -> str:
     """The note for a settled session. What omp wrote (question, reply, reason, title) sits in an
     <omp-output> block marked as data: it may echo files, web pages or tool output omp read."""
-    sid = str(report.get("id", ""))[:8]
+    sid = short(str(report.get("id", "")))
     state = report.get("state")
     q = report.get("question") if isinstance(report.get("question"), dict) else {}
     head = {

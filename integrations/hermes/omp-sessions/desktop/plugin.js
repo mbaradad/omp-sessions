@@ -90,7 +90,7 @@ function money(cost) {
   return `$${cost < 10 ? cost.toFixed(2) : cost.toFixed(0)}`;
 }
 function shortId(id) {
-  return id.slice(0, 8);
+  return !id.includes("-") && id.length > 12 ? id.slice(0, 8) : id;
 }
 var STATE_LABEL = {
   needs_input: "Needs you",
@@ -242,7 +242,10 @@ var PATHS = {
   sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
   pause: "M8 5v14M16 5v14",
-  tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01"
+  tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01",
+  archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
+  unarchive: "M3 4h18v4H3zM5 8v12h14V8M12 18v-6M9.5 14.5L12 12l2.5 2.5",
+  undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"
 };
 function icon(name, size = 14, title) {
   return h(
@@ -416,6 +419,93 @@ function useDismiss(onClose, root) {
   }, []);
 }
 
+// integrations/hermes/ui/queue.ts
+var AT_PRESETS = [
+  { label: "+30m", at: () => "+30m" },
+  { label: "+1h", at: () => "+1h" },
+  { label: "+3h", at: () => "+3h" },
+  { label: "Tonight 22:00", at: () => nextLocal(22, 0) },
+  { label: "Tomorrow 09:00", at: () => nextLocal(9, 1) }
+];
+function nextLocal(hour, days) {
+  const d = /* @__PURE__ */ new Date();
+  d.setDate(d.getDate() + days);
+  d.setHours(hour, 0, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
+}
+function queueAbilities(s) {
+  const q = s.queue;
+  const scheduled = typeof s.startAt === "number";
+  if (q.total === 0) return { run: false, retry: false, schedule: false, unschedule: false };
+  return {
+    run: q.pending > 0 && (s.autoRun !== true || scheduled),
+    retry: (q.failed ?? 0) > 0 || (q.interrupted ?? 0) > 0 || q.pending === 0 && q.running === 0,
+    schedule: q.pending > 0 || (q.failed ?? 0) > 0 || scheduled,
+    unschedule: scheduled
+  };
+}
+function ScheduleBox(p) {
+  const [at, setAt] = useState("");
+  return h(
+    "form",
+    {
+      className: "omps-at omps-queue-at",
+      onClick: (e) => e.stopPropagation(),
+      onKeyDown: (e) => e.stopPropagation(),
+      onSubmit: (e) => {
+        e.preventDefault();
+        if (at.trim()) p.onSchedule(at.trim());
+      }
+    },
+    h("div", { className: "omps-at-presets" }, ...AT_PRESETS.map((x) => h("button", { key: x.label, type: "button", className: "omps-chip omps-chip-btn", disabled: p.busy, onClick: () => p.onSchedule(x.at()) }, x.label))),
+    h(
+      "div",
+      { className: "omps-queue-at-row" },
+      h("input", { className: "omps-input omps-mono", "aria-label": "Start time", value: at, placeholder: "+30m, 14:30 or 2026-01-31T09:00", onChange: (e) => setAt(e.target.value) }),
+      h(Button, { type: "submit", small: true, kind: "primary", label: "Schedule", busy: p.busy, disabled: !at.trim() }),
+      typeof p.s.startAt === "number" ? h(Button, { small: true, kind: "ghost", label: "Unschedule", title: `Cancel the start at ${clock(p.s.startAt)}; the tasks stay`, disabled: p.busy, onClick: () => p.onSchedule(null) }) : null
+    )
+  );
+}
+function QueueControls(p) {
+  const [busy, setBusy] = useState(null);
+  const [picking, setPicking] = useState(false);
+  const [error, setError] = useState(null);
+  const can = queueAbilities(p.s);
+  if (!can.run && !can.retry && !can.schedule) return null;
+  const run = async (action, body = {}) => {
+    setBusy(action);
+    setError(null);
+    try {
+      await p.onAction(p.s.id, action, body);
+      if (action === "schedule") setPicking(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const scheduled = typeof p.s.startAt === "number";
+  return h(
+    "div",
+    { className: cx("omps-queue-controls", p.compact && "is-compact"), onClick: (e) => e.stopPropagation(), onKeyDown: (e) => e.stopPropagation() },
+    h(
+      "div",
+      { className: "omps-queue-buttons" },
+      can.run ? h(Button, { small: true, kind: "ghost", icon: "send", label: "Run now", title: "Start the queue now (a scheduled start is dropped)", busy: busy === "run", onClick: () => void run("run") }) : null,
+      can.retry ? h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Retry", title: "Failed or interrupted tasks (else the last finished one) back to pending, and the queue on; a scheduled start is kept", busy: busy === "retry", onClick: () => void run("retry") }) : null,
+      can.schedule ? h(Button, { small: true, kind: picking ? "primary" : "ghost", icon: "clock", label: scheduled ? "Reschedule" : "Schedule", pressed: picking, onClick: () => setPicking(!picking) }) : null,
+      can.unschedule && !picking ? h(Button, { small: true, kind: "ghost", icon: "x", label: "Unschedule", title: "Cancel the scheduled start; the tasks stay", busy: busy === "schedule", onClick: () => void run("schedule", { at: null }) }) : null
+    ),
+    picking ? h(ScheduleBox, { s: p.s, busy: busy === "schedule", onSchedule: (at) => void run("schedule", { at }) }) : null,
+    error ? h("div", { className: "omps-queue-error", role: "alert" }, error) : null
+  );
+}
+
 // integrations/hermes/ui/board.ts
 var COLUMNS = [
   { id: "needs", label: "Needs you", states: ["needs_input"], icon: "ask", empty: "Nothing is waiting on you." },
@@ -424,6 +514,9 @@ var COLUMNS = [
   { id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
   { id: "stopped", label: "Stopped", states: ["interrupted", "stopped"], icon: "stop", empty: "No stopped sessions." }
 ];
+function isDone(s) {
+  return s.completed || s.state === "idle" && !s.queue.pending && !s.queue.running;
+}
 var SHOWN = { done: 24, stopped: 20 };
 function order(col, list) {
   const updated = (s) => s.updatedAt ?? 0;
@@ -440,6 +533,24 @@ function questionLine(s) {
   if (q.questions?.length) return q.questions[0].question || q.title;
   return q.title.split("\n")[0];
 }
+function CardButton(p) {
+  return h(
+    "button",
+    {
+      type: "button",
+      className: "omps-card-act",
+      title: p.title,
+      "aria-label": p.title,
+      disabled: p.disabled,
+      onClick: (e) => {
+        e.stopPropagation();
+        p.onClick();
+      },
+      onKeyDown: (e) => e.stopPropagation()
+    },
+    icon(p.icon, 12)
+  );
+}
 function SessionCard(p) {
   const { s } = p;
   const open = () => p.onOpen(s.id);
@@ -450,7 +561,7 @@ function SessionCard(p) {
   return h(
     "article",
     {
-      className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived"),
+      className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived", s.completed && "is-completed"),
       role: "button",
       tabIndex: 0,
       "aria-pressed": p.selected,
@@ -490,7 +601,10 @@ function SessionCard(p) {
         },
         icon("external", 11)
       ),
-      s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null
+      s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
+      s.upstream?.some((e) => e.state === "conflict") ? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict") : s.upstream?.some((e) => e.state === "upstream-changed") ? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed") : null,
+      s.completed ? h("span", { className: "omps-chip is-completed", title: s.completedAt ? `Completed ${new Date(s.completedAt).toLocaleString()}` : "Marked completed" }, icon("check", 10), "Completed") : null,
+      s.archived ? h("span", { className: "omps-chip", title: "Archived: hidden unless Archived is on" }, "Archived") : null
     ),
     s.state === "needs_input" ? h(
       "div",
@@ -515,15 +629,34 @@ function SessionCard(p) {
       "div",
       { className: "omps-card-foot" },
       h("span", { className: "omps-card-state" }, s.state === "working" ? h("span", { className: "omps-pulse", "aria-hidden": true }) : null, stateText(s, p.now)),
-      progress !== null ? h("span", { className: "omps-progress", title: `${s.queue.done} of ${s.queue.total} tasks done` }, h("span", { style: { width: `${progress}%` } })) : null,
+      progress !== null ? h("span", { className: cx("omps-progress", (s.queue.failed ?? 0) > 0 && "has-failed"), title: `${s.queue.done} of ${s.queue.total} tasks done${s.queue.failed ? `, ${s.queue.failed} failed` : ""}` }, h("span", { style: { width: `${progress}%` } })) : null,
       h("span", { className: "omps-grow" }),
       cost ? h("span", { className: "omps-cost" }, cost) : null,
-      s.state === "scheduled" && s.startAt ? h("span", { className: "omps-when", title: new Date(s.startAt).toLocaleString() }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now))
-    )
+      typeof s.startAt === "number" ? h("span", { className: "omps-when is-scheduled", title: `Queue starts ${new Date(s.startAt).toLocaleString()}` }, icon("clock", 11), clock(s.startAt)) : h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : void 0 }, ago(s.updatedAt, p.now)),
+      h(
+        "span",
+        { className: "omps-card-acts" },
+        s.completed ? h(CardButton, { icon: "undo", title: "Mark not completed", disabled: p.busy, onClick: () => p.onAction(s.id, "uncomplete") }) : h(CardButton, { icon: "check", title: "Mark completed", disabled: p.busy, onClick: () => p.onAction(s.id, "complete") }),
+        s.archived ? h(CardButton, { icon: "unarchive", title: "Unarchive", disabled: p.busy, onClick: () => p.onAction(s.id, "unarchive") }) : h(CardButton, { icon: "archive", title: "Archive", disabled: p.busy, onClick: () => p.onAction(s.id, "archive") })
+      )
+    ),
+    p.onQueueAction ? h(QueueControls, { s, onAction: p.onQueueAction, compact: true }) : null
   );
 }
 function SessionBoard(p) {
   const [expanded, setExpanded] = useState({});
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [archivingAll, setArchivingAll] = useState(false);
+  const archivable = p.sessions.filter((s) => !s.archived && isDone(s));
+  const archiveAll = async () => {
+    setArchivingAll(true);
+    try {
+      await p.onArchiveAll(archivable.map((s) => s.id));
+    } finally {
+      setArchivingAll(false);
+      setConfirmAll(false);
+    }
+  };
   return h(
     "div",
     { className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
@@ -542,12 +675,27 @@ function SessionBoard(p) {
           { className: "omps-col-head" },
           h("span", { className: "omps-col-icon" }, icon(col.icon, 13)),
           h("span", { className: "omps-col-title" }, col.label),
-          h("span", { className: "omps-count" }, String(list.length))
+          h("span", { className: "omps-count" }, String(list.length)),
+          col.id === "done" && archivable.length ? confirmAll ? h(
+            "span",
+            { className: "omps-confirm omps-col-confirm" },
+            `Archive ${archivable.length}?`,
+            h(Button, { small: true, kind: "danger", label: "Archive", busy: archivingAll, onClick: () => void archiveAll() }),
+            h(Button, { small: true, kind: "ghost", label: "Cancel", disabled: archivingAll, onClick: () => setConfirmAll(false) })
+          ) : h(Button, {
+            small: true,
+            kind: "ghost",
+            icon: "archive",
+            label: "Archive all",
+            className: "omps-col-action",
+            title: `Archive the ${archivable.length} done or completed session${archivable.length === 1 ? "" : "s"} shown (idle with nothing queued, or marked completed)`,
+            onClick: () => setConfirmAll(true)
+          }) : null
         ),
         h(
           "div",
           { className: "omps-col-body" },
-          shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
+          shown.length ? shown.map((s) => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, busy: p.busy.has(s.id), onOpen: p.onOpen, onOpenProject: p.onOpenProject, onAction: p.onAction, onQueueAction: p.onQueueAction })) : h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
           list.length > shown.length ? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`) : null
         )
       );
@@ -644,6 +792,7 @@ var SESSION_STATE = {
 };
 function BoardCard(p) {
   const { b } = p;
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [folder, setFolder] = useState(b.folder ?? "");
   const [group, setGroup] = useState(b.group ?? "");
   const [mode, setMode] = useState(b.mode ?? "");
@@ -704,6 +853,35 @@ function BoardCard(p) {
         children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e) => setAuthors(e.target.value) })
       }),
       h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty }))
+    ),
+    h(
+      "div",
+      { className: "omps-mode-row omps-bcard-archive" },
+      h("label", { className: "omps-section-label", htmlFor: `omps-${b.slug}-archive` }, "Archive done cards"),
+      h(
+        "select",
+        {
+          id: `omps-${b.slug}-archive`,
+          className: "omps-input",
+          value: b.archiveCompleted == null ? "" : b.archiveCompleted ? "on" : "off",
+          disabled: p.busy,
+          title: "Archive a card on the board, and its omp session, as soon as the lane completes it",
+          onChange: (e) => {
+            const v = e.target.value;
+            void p.onSave(b.slug, { archiveCompleted: v === "" ? null : v === "on" });
+          }
+        },
+        h("option", { value: "" }, `Lane default${b.archiveCompleted == null ? b.effectiveArchiveCompleted ? " (when completed)" : " (keep)" : ""}`),
+        h("option", { value: "on" }, "When the lane completes them"),
+        h("option", { value: "off" }, "Keep them")
+      ),
+      confirmArchive ? h(
+        "span",
+        { className: "omps-confirm" },
+        "Archive every done card of this lane now?",
+        h(Button, { small: true, kind: "danger", label: "Archive", busy: p.busy, onClick: () => void p.onArchiveDone(b.slug).finally(() => setConfirmArchive(false)) }),
+        h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmArchive(false) })
+      ) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by omp, and their omp sessions`, onClick: () => setConfirmArchive(true) })
     ),
     h(
       "div",
@@ -798,6 +976,24 @@ function BoardsPanel(p) {
       setBusy(null);
     }
   };
+  const archiveDone = async (slug) => {
+    setBusy(slug);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const res = await p.host.request(`/boards/${encodeURIComponent(slug)}/archive-done`, { method: "POST", body: {} });
+      setView(res.view);
+      const n = res.archived.length;
+      const failed = Object.entries(res.failed).map(([card, why]) => `${card}: ${why}`);
+      if (failed.length) setActionError(`Not archived: ${failed.join("; ")}`);
+      setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} omp session${res.sessions.length === 1 ? "" : "s"}.`);
+      p.onChanged();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
   if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
   const notes = p.lane?.notes ?? [];
   const tick = p.lane?.dispatcher;
@@ -857,6 +1053,7 @@ function BoardsPanel(p) {
           models: models.models,
           onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body),
           onOpenSession: p.onOpenSession,
+          onArchiveDone: (slug) => archiveDone(slug),
           onOpenFolder: (folder) => void openFolder(folder)
         })
       )
@@ -866,6 +1063,36 @@ function BoardsPanel(p) {
 
 // integrations/hermes/ui/detail.ts
 var POLL_MS = 3e3;
+var SYNC_LABEL = {
+  "in-sync": "in sync",
+  pending: "changes wait for this turn to end",
+  merged: "changes merged",
+  resolving: "its agent is resolving the merge",
+  conflict: "merge conflict",
+  "upstream-changed": "changed after this one finished"
+};
+function Upstream(p) {
+  const changed = p.edges.some((e) => e.state === "upstream-changed");
+  return h(
+    "section",
+    { className: "omps-upstream", "aria-label": "Parent tasks" },
+    h("div", { className: "omps-section-label" }, "Parent tasks"),
+    ...p.edges.map(
+      (e, i) => h(
+        "div",
+        { key: i, className: cx("omps-upstream-edge", `omps-sync-${e.state}`) },
+        `${e.parent ? shortId(e.parent) : "parent"} · ${SYNC_LABEL[e.state] ?? e.state}`,
+        e.files.length ? h("div", { className: "omps-upstream-files" }, `${e.files.slice(0, 8).join(", ")}${e.files.length > 8 ? ` … ${e.files.length - 8} more` : ""}`) : null
+      )
+    ),
+    h(
+      "div",
+      { className: "omps-followup-row" },
+      h(Button, { small: true, kind: "ghost", label: "Sync now", title: "Merge the parents' changes into this session's worktree", busy: p.busy === "sync", onClick: () => p.onSync(false) }),
+      changed ? h(Button, { small: true, kind: "primary", label: "Re-run with parent changes", busy: p.busy === "rerun", onClick: () => p.onSync(true) }) : null
+    )
+  );
+}
 function AnswerBox(p) {
   const { q } = p;
   const [text, setText] = useState("");
@@ -1023,6 +1250,11 @@ function DetailPanel(p) {
       setBusy(null);
     }
   };
+  const queueAction = async (id, action, body) => {
+    await p.host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+    await load();
+    p.onChanged();
+  };
   const view = s ?? p.summary;
   const questionId = view?.question?.id;
   const working = view?.state === "working" || view?.state === "starting";
@@ -1057,14 +1289,23 @@ function DetailPanel(p) {
         h(Meta, { label: "Status", children: stateText(view, p.now) }),
         view.group ? h(Meta, { label: "Group", children: view.group }) : null,
         view.card ? h(Meta, { label: "Kanban card", children: h("span", null, `${view.card.board} · `, view.card.title ?? view.card.id, view.card.status ? h("span", { className: cx("omps-kstatus", `k-${view.card.status}`) }, view.card.status) : null) }) : null,
-        view.startAt && view.state === "scheduled" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
-        view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}` }) : null,
+        typeof view.startAt === "number" ? h(Meta, { label: "Starts", children: clock(view.startAt) }) : null,
+        view.queue.total ? h(Meta, { label: "Tasks", children: `${view.queue.done} of ${view.queue.total} done${view.queue.running ? " · one running" : ""}${view.queue.failed ? ` · ${view.queue.failed} failed` : ""}` }) : null,
         view.model ? h(Meta, { label: "Model", children: view.model }) : null,
         h(Meta, { label: "Cost", children: money(view.cost) || "—" }),
         h(Meta, { label: "Files changed", children: String(view.changedFiles) }),
         h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
-        view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map((t) => h("span", { key: t, className: "omps-chip" }, t))) }) : null
+        view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map((t) => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
+        view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null
       ) : null,
+      view ? h(
+        "div",
+        { className: "omps-mode-row omps-detail-actions" },
+        h("span", { className: "omps-section-label" }, view.archived ? "Archived" : view.completed ? "Completed" : "Organize"),
+        view.completed ? h(Button, { small: true, kind: "ghost", icon: "undo", label: "Mark not completed", busy: busy === "uncomplete", onClick: () => void act("uncomplete", "uncomplete", {}) }) : h(Button, { small: true, kind: "ghost", icon: "check", label: "Mark completed", title: "Done, whatever its state: Archive all on the Done column takes it", busy: busy === "complete", onClick: () => void act("complete", "complete", {}) }),
+        view.archived ? h(Button, { small: true, kind: "ghost", icon: "unarchive", label: "Unarchive", busy: busy === "unarchive", onClick: () => void act("unarchive", "unarchive", {}) }) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive", title: "Hide it from the board (Show archived brings it back)", busy: busy === "archive", onClick: () => void act("archive", "archive", {}) })
+      ) : null,
+      view ? h(QueueControls, { s: view, onAction: queueAction }) : null,
       view ? h(
         "div",
         { className: "omps-mode-row" },
@@ -1094,6 +1335,7 @@ function DetailPanel(p) {
         h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model })
       ) : null,
       view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
+      view?.upstream?.length ? h(Upstream, { edges: view.upstream, busy, onSync: (rerun) => void act(rerun ? "rerun" : "sync", "sync", { rerun }) }) : null,
       h(
         "section",
         { className: "omps-reply", "aria-label": "Last reply" },
@@ -1153,24 +1395,314 @@ function DetailPanel(p) {
   );
 }
 
-// integrations/hermes/ui/newSession.ts
-var AT_PRESETS = [
-  { label: "+30m", at: () => "+30m" },
-  { label: "+1h", at: () => "+1h" },
-  { label: "+3h", at: () => "+3h" },
-  { label: "Tonight 22:00", at: () => nextLocal(22, 0) },
-  { label: "Tomorrow 09:00", at: () => nextLocal(9, 1) }
-];
-function nextLocal(hour, days) {
-  const d = /* @__PURE__ */ new Date();
-  d.setDate(d.getDate() + days);
-  d.setHours(hour, 0, 0, 0);
-  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-  const pad = (n) => String(n).padStart(2, "0");
-  const off = -d.getTimezoneOffset();
-  const zone = `${off >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:00${zone}`;
+// integrations/hermes/ui/graph-layout.ts
+var NODE_W = 228;
+var NODE_H = 58;
+var GAP_X = 64;
+var GAP_Y = 14;
+var PAD = 12;
+var LOOSE_GAP = 36;
+var SWEEPS = 4;
+function graphLinks(cards) {
+  const ids = new Set(cards.map((c) => c.id));
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const add = (from, to) => {
+    const key = `${from}
+${to}`;
+    if (from === to || !ids.has(from) || !ids.has(to) || seen.has(key)) return;
+    seen.add(key);
+    out.push({ from, to });
+  };
+  for (const c of cards) {
+    for (const p of c.parents) add(p, c.id);
+    for (const ch of c.children) add(c.id, ch);
+  }
+  return out;
 }
+function layoutGraph(cards, showAll) {
+  const links = graphLinks(cards);
+  const parentsOf = /* @__PURE__ */ new Map();
+  const childrenOf = /* @__PURE__ */ new Map();
+  for (const { from, to } of links) {
+    parentsOf.set(to, [...parentsOf.get(to) ?? [], from]);
+    childrenOf.set(from, [...childrenOf.get(from) ?? [], to]);
+  }
+  const isLinked = (id) => parentsOf.has(id) || childrenOf.has(id);
+  const linked = cards.filter((c) => isLinked(c.id));
+  const loose = showAll ? cards.filter((c) => !isLinked(c.id)) : [];
+  const layerOf = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const layer = (id) => {
+    const known = layerOf.get(id);
+    if (known !== void 0) return known;
+    visiting.add(id);
+    let l = 0;
+    for (const p of parentsOf.get(id) ?? []) if (!visiting.has(p)) l = Math.max(l, layer(p) + 1);
+    visiting.delete(id);
+    layerOf.set(id, l);
+    return l;
+  };
+  const layers2 = [];
+  for (const c of linked) (layers2[layer(c.id)] ??= []).push(c);
+  for (let i = 0; i < layers2.length; i++) layers2[i] ??= [];
+  const rowOf = /* @__PURE__ */ new Map();
+  const number = () => layers2.forEach((cs) => cs.forEach((c, i) => rowOf.set(c.id, i)));
+  number();
+  const reorder = (cs, neighbours) => {
+    const key = new Map(
+      cs.map((c, i) => {
+        const rows = (neighbours.get(c.id) ?? []).map((n) => rowOf.get(n)).filter((r) => r !== void 0);
+        return [c.id, rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : i];
+      })
+    );
+    return cs.map((c, i) => ({ c, i })).sort((a, b) => (key.get(a.c.id) ?? 0) - (key.get(b.c.id) ?? 0) || a.i - b.i).map((x) => x.c);
+  };
+  for (let s = 0; s < SWEEPS; s++) {
+    for (let i = 1; i < layers2.length; i++) {
+      layers2[i] = reorder(layers2[i], parentsOf);
+      number();
+    }
+    for (let i = layers2.length - 2; i >= 0; i--) {
+      layers2[i] = reorder(layers2[i], childrenOf);
+      number();
+    }
+  }
+  const nodes = [];
+  const at = /* @__PURE__ */ new Map();
+  const tallest = Math.max(0, ...layers2.map((cs) => cs.length));
+  const graphH = tallest ? tallest * (NODE_H + GAP_Y) - GAP_Y : 0;
+  layers2.forEach((cs, l) => {
+    const top = PAD + (graphH - (cs.length * (NODE_H + GAP_Y) - GAP_Y)) / 2;
+    cs.forEach((card, row) => {
+      const node = { card, layer: l, x: PAD + l * (NODE_W + GAP_X), y: top + row * (NODE_H + GAP_Y) };
+      nodes.push(node);
+      at.set(card.id, node);
+    });
+  });
+  const looseTop = PAD + (graphH ? graphH + LOOSE_GAP : 0);
+  const cols = Math.max(layers2.length, 4);
+  loose.forEach((card, i) => nodes.push({ card, layer: -1, x: PAD + i % cols * (NODE_W + GAP_X), y: looseTop + Math.floor(i / cols) * (NODE_H + GAP_Y) }));
+  const edges = links.map(({ from, to }) => {
+    const a = at.get(from);
+    const b = at.get(to);
+    const x1 = a.x + NODE_W;
+    const y1 = a.y + NODE_H / 2;
+    const x2 = b.x;
+    const y2 = b.y + NODE_H / 2;
+    const bend = Math.max(GAP_X / 2, Math.abs(x2 - x1) / 2);
+    return { from, to, d: `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}` };
+  });
+  const columns = loose.length ? Math.max(layers2.length, Math.min(cols, loose.length)) : layers2.length;
+  const looseRows = Math.ceil(loose.length / cols);
+  return {
+    nodes,
+    edges,
+    width: columns ? PAD * 2 + columns * (NODE_W + GAP_X) - GAP_X : 0,
+    height: nodes.length ? (loose.length ? looseTop + looseRows * (NODE_H + GAP_Y) - GAP_Y : PAD + graphH) + PAD : 0,
+    hidden: showAll ? 0 : cards.length - linked.length
+  };
+}
+
+// integrations/hermes/ui/graph.ts
+var POLL_MS2 = 8e3;
+var TITLE_CHARS = 30;
+var STATUSES = ["triage", "todo", "ready", "running", "blocked", "done"];
+var MET = { done: true, archived: true };
+var clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}…` : text;
+function hasLinks(cards) {
+  const ids = new Set(cards.map((c) => c.id));
+  return cards.some((c) => c.parents.some((p) => ids.has(p)) || c.children.some((ch) => ids.has(ch)));
+}
+function CardNode(p) {
+  const { card } = p;
+  const session = card.sessionState ? SESSION_STATE[card.sessionState] ?? card.sessionState : null;
+  const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""})`;
+  return h(
+    "g",
+    {
+      className: cx("omps-gnode", `k-${card.status}`, p.selected && "is-selected", p.faded && "is-faded"),
+      transform: `translate(${p.x} ${p.y})`,
+      role: "button",
+      tabIndex: 0,
+      "aria-label": label,
+      "aria-pressed": p.selected,
+      "data-card": card.id,
+      onClick: () => p.onOpen(card),
+      onKeyDown: (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          p.onOpen(card);
+        }
+      }
+    },
+    h("title", null, `${card.title}
+${card.id} · ${card.status}${card.assignee ? ` · ${card.assignee}` : ""}${session ? `
+omp session: ${session}` : ""}`),
+    h("rect", { className: "omps-gnode-box", width: NODE_W, height: NODE_H, rx: 8 }),
+    h("rect", { className: "omps-gnode-bar", width: 4, height: NODE_H - 12, x: 0, y: 6, rx: 2 }),
+    h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clip(card.title, TITLE_CHARS)),
+    h("text", { className: "omps-gnode-status", x: 14, y: 44 }, card.status),
+    session ? h(
+      "g",
+      { className: cx("omps-gnode-session", card.sessionState && `tone-${card.sessionState}`), transform: `translate(${NODE_W - 12} 40)` },
+      h("circle", { className: "omps-gnode-dot", cx: 0, cy: 0, r: 4 }),
+      h("text", { x: -10, y: 4, textAnchor: "end" }, card.lane ? `lane · ${session}` : session)
+    ) : null
+  );
+}
+function CardInfo(p) {
+  const { card } = p;
+  const chips = (ids) => ids.map((id) => {
+    const c = p.byId.get(id);
+    return h(
+      "button",
+      { key: id, type: "button", className: "omps-gchip", disabled: !c, title: c ? `${c.title} (${c.status})` : `${id} (archived)`, onClick: () => p.onSelect(id) },
+      h("span", { className: cx("omps-kstatus", `k-${c?.status ?? "archived"}`) }, c?.status ?? "archived"),
+      clip(c?.title ?? id, 40)
+    );
+  });
+  return h(
+    "section",
+    { className: "omps-gcard", "aria-label": `Card ${card.title}` },
+    h(
+      "div",
+      { className: "omps-gcard-head" },
+      h("span", { className: cx("omps-kstatus", `k-${card.status}`) }, card.status),
+      h("span", { className: "omps-gcard-title" }, card.title),
+      h("span", { className: "omps-muted omps-mono" }, card.id),
+      card.assignee ? h("span", { className: "omps-muted" }, `· ${card.assignee}`) : null,
+      h("span", { className: "omps-grow" }),
+      card.session ? h(
+        "button",
+        { type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open omp session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
+        h("span", { className: cx("omps-dot", card.sessionState && `tone-${card.sessionState}`) }),
+        SESSION_STATE[card.sessionState ?? ""] ?? card.sessionState
+      ) : h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no omp session"),
+      h(Button, { small: true, kind: "ghost", icon: "x", title: "Close", onClick: p.onClose })
+    ),
+    h(
+      "div",
+      { className: "omps-gcard-links" },
+      h("span", { className: "omps-section-label" }, "Waits for"),
+      card.parents.length ? chips(card.parents) : h("span", { className: "omps-muted" }, "nothing")
+    ),
+    h(
+      "div",
+      { className: "omps-gcard-links" },
+      h("span", { className: "omps-section-label" }, "Unblocks"),
+      card.children.length ? chips(card.children) : h("span", { className: "omps-muted" }, "nothing")
+    )
+  );
+}
+function GraphPanel(p) {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState(null);
+  const [slug, setSlug] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const load = async () => {
+    try {
+      setView(await p.host.request("/boards"));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, POLL_MS2);
+    return () => clearInterval(timer);
+  }, []);
+  const boards = view?.boards ?? [];
+  const board = boards.find((b) => b.slug === slug) ?? boards.find((b) => hasLinks(b.cards ?? [])) ?? boards[0];
+  const cards = board?.cards;
+  const layout = useMemo(() => layoutGraph(cards ?? [], showAll), [cards, showAll]);
+  const byId = useMemo(() => new Map((cards ?? []).map((c) => [c.id, c])), [cards]);
+  if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
+  if (!board) return h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." });
+  const open = (c) => {
+    setSelected(c.id);
+    if (c.session) p.onOpenSession(c.session);
+  };
+  const picked = selected ? byId.get(selected) : void 0;
+  let body;
+  if (!cards) {
+    body = h(Empty, { icon: "alert", title: "The graph needs a newer omp Sessions plugin", body: "This Hermes runs an omp Sessions backend that doesn't report card links; update the plugin and restart Hermes." });
+  } else if (layout.nodes.length === 0) {
+    body = h(Empty, {
+      icon: "kanban",
+      title: cards.length ? "No linked cards on this board" : "No cards on this board",
+      body: cards.length ? "Cards appear here once one waits for another (hermes kanban link <parent> <child>, or create a card with parents)." : void 0,
+      action: cards.length ? h(Button, { small: true, label: `Show all ${cards.length} cards`, onClick: () => setShowAll(true) }) : void 0
+    });
+  } else {
+    body = h(
+      "div",
+      { className: "omps-graph-scroll" },
+      h(
+        "svg",
+        { className: "omps-graph", width: layout.width, height: layout.height, viewBox: `0 0 ${layout.width} ${layout.height}`, role: "group", "aria-label": `Dependency graph of ${board.name}` },
+        h("defs", null, h("marker", { id: "omps-graph-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, h("path", { d: "M0 0L10 5L0 10z", className: "omps-gedge-head" }))),
+        ...layout.edges.map(
+          (e) => h("path", {
+            key: `${e.from}>${e.to}`,
+            d: e.d,
+            className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
+            markerEnd: "url(#omps-graph-arrow)"
+          })
+        ),
+        ...layout.nodes.map(
+          (n) => h(CardNode, {
+            key: n.card.id,
+            card: n.card,
+            x: n.x,
+            y: n.y,
+            selected: n.card.id === selected,
+            faded: picked !== void 0 && n.card.id !== picked.id && !picked.parents.includes(n.card.id) && !picked.children.includes(n.card.id),
+            onOpen: open
+          })
+        )
+      )
+    );
+  }
+  return h(
+    "div",
+    { className: "omps-graph-panel" },
+    h(
+      "div",
+      { className: "omps-filters" },
+      h(
+        "label",
+        { className: "omps-filter is-set" },
+        h("span", { className: "omps-filter-label" }, "Board"),
+        h(
+          "select",
+          { value: board.slug, "aria-label": "Board", onChange: (e) => (setSlug(e.target.value), setSelected(null)) },
+          ...boards.map((b) => h("option", { key: b.slug, value: b.slug }, b.name))
+        )
+      ),
+      h(Button, {
+        small: true,
+        kind: showAll ? "primary" : "ghost",
+        pressed: showAll,
+        label: showAll ? "All cards" : `Linked cards only${layout.hidden ? ` · ${layout.hidden} hidden` : ""}`,
+        title: showAll ? "Show only cards linked to another card" : "Show every card of the board",
+        onClick: () => setShowAll(!showAll)
+      }),
+      h("span", { className: "omps-grow" }),
+      h("span", { className: "omps-glegend", "aria-label": "Card status colours" }, ...STATUSES.map((s) => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s)))
+    ),
+    error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
+    board.error ? h(ErrorBox, { message: board.error }) : null,
+    picked ? h(CardInfo, { card: picked, byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
+    body
+  );
+}
+
+// integrations/hermes/ui/newSession.ts
 function NewSessionDialog(p) {
   const [places, setPlaces] = useState(null);
   const [placesError, setPlacesError] = useState(null);
@@ -1528,6 +2060,8 @@ function createPage(host2) {
     const [project, setProject] = useState("");
     const [archived, setArchived] = useState(false);
     const [notice, setNotice] = useState(null);
+    const [boardNote, setBoardNote] = useState(null);
+    const [busyCards, setBusyCards] = useState(/* @__PURE__ */ new Set());
     const search = useRef(null);
     const loadSessions = async () => {
       try {
@@ -1586,6 +2120,34 @@ function createPage(host2) {
       setSelected(s.id);
       refresh();
     };
+    const cardAction = async (id, action) => {
+      setBoardNote(null);
+      setBusyCards((prev) => new Set(prev).add(id));
+      try {
+        await host2.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body: {} });
+        await loadSessions();
+      } catch (err) {
+        setBoardNote({ text: errorMessage(err), error: true });
+      } finally {
+        setBusyCards((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    };
+    const archiveAll = async (ids) => {
+      setBoardNote(null);
+      try {
+        const res = await host2.request("/sessions/archive-done", { method: "POST", body: { ids } });
+        const n = res.archived.length;
+        const failed = res.failed.map((f) => `${f.id.slice(0, 8)}: ${f.error}`);
+        setBoardNote({ text: `Archived ${n} session${n === 1 ? "" : "s"}.${failed.length ? ` Not archived: ${failed.join("; ")}` : ""}`, error: failed.length > 0 });
+        await loadSessions();
+      } catch (err) {
+        setBoardNote({ text: errorMessage(err), error: true });
+      }
+    };
     const openProject = async (id) => {
       setNotice(null);
       try {
@@ -1594,10 +2156,16 @@ function createPage(host2) {
         setNotice(errorMessage(err));
       }
     };
+    const queueAction = async (id, action, body) => {
+      await host2.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
+      await loadSessions();
+    };
     const notInstalled = overview && !overview.ompSessions.found;
     let main;
     if (view === "boards") {
       main = h(BoardsPanel, { host: host2, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
+    } else if (view === "graph") {
+      main = h(GraphPanel, { host: host2, onOpenSession: setSelected });
     } else if (notInstalled) {
       main = h(Empty, { icon: "terminal", title: "omp-sessions is not installed", body: overview.ompSessions.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
     } else if (!sessions) {
@@ -1606,7 +2174,7 @@ function createPage(host2) {
       main = h(Empty, {
         icon: "sparkle",
         title: "No omp sessions yet",
-        body: "Start one here, with omp-sessions new, from VS Code or the omp phone app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+        body: "Start one here, with omp-sessions new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
         action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) })
       });
     } else {
@@ -1625,19 +2193,20 @@ function createPage(host2) {
           h(Select, { label: "Board", value: board, all: "All boards", options: facets.boards, onChange: setBoard }),
           h(Select, { label: "Group", value: group, all: "All groups", options: facets.groups, onChange: setGroup }),
           h(Select, { label: "Project", value: project, all: "All projects", options: facets.projects, onChange: setProject }),
-          archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", pressed: archived, label: `Archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
+          archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", icon: "archive", pressed: archived, label: `Show archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
           filtered ? h(Button, { small: true, kind: "ghost", icon: "x", label: "Clear", onClick: () => (setQuery(""), setBoard(""), setGroup(""), setProject("")) }) : null,
           h("span", { className: "omps-grow" }),
           h("span", { className: "omps-muted omps-total" }, filtered ? `${shown.length} of ${all.length}` : `${all.length} session${all.length === 1 ? "" : "s"}`)
         ),
         error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
         notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-        h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: (id) => void openProject(id), filtered })
+        boardNote ? h("div", { className: boardNote.error ? "omps-stale" : "omps-notice" }, icon(boardNote.error ? "alert" : "archive", 12), boardNote.text) : null,
+        h(SessionBoard, { sessions: shown, selected, now, busy: busyCards, onOpen: setSelected, onOpenProject: (id) => void openProject(id), onQueueAction: queueAction, onAction: (id, action) => void cardAction(id, action), onArchiveAll: archiveAll, filtered })
       );
     }
     return h(
       "div",
-      { className: cx("omps", `omps-host-${host2.kind}`, selected && view === "sessions" && "has-drawer") },
+      { className: cx("omps", `omps-host-${host2.kind}`, selected && view !== "boards" && "has-drawer") },
       host2.css ? h("style", null, host2.css) : null,
       h(
         "header",
@@ -1650,7 +2219,8 @@ function createPage(host2) {
           onChange: setView,
           options: [
             { value: "sessions", label: "Sessions" },
-            { value: "boards", label: "Boards" }
+            { value: "boards", label: "Boards" },
+            { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" }
           ]
         }),
         h("span", { className: "omps-grow" }),
@@ -1666,7 +2236,7 @@ function createPage(host2) {
         ]
       }) : null,
       h("div", { className: "omps-body" }, main),
-      selected && view === "sessions" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
+      selected && view !== "boards" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
       creating ? h(NewSessionDialog, { host: host2, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null
     );
   };
@@ -1867,6 +2437,8 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-col.is-empty { flex-basis: 168px; }
 .omps-col-head { display: flex; align-items: center; gap: 7px; padding: 10px 12px 9px; border-bottom: 1px solid var(--o-border); font-weight: 600; font-size: 12.5px; position: relative; }
 .omps-col-head::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--tone, var(--o-border)); opacity: 0.85; }
+.omps-col-action { margin-left: auto; height: 22px; padding: 0 7px; font-weight: 500; }
+.omps-col-confirm { margin-left: auto; font-weight: 500; }
 .col-needs { --tone: var(--t-needs_input); }
 .col-working { --tone: var(--t-working); }
 .col-queued { --tone: var(--t-queued); }
@@ -1896,6 +2468,7 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-card:hover { border-color: var(--o-border-strong); transform: translateY(-1px); box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.55); }
 .omps-card.is-selected { border-color: var(--tone); box-shadow: 0 0 0 1px var(--tone), 0 10px 26px -16px color-mix(in srgb, var(--tone) 80%, transparent); }
 .omps-card.is-archived { opacity: 0.6; }
+.omps-chip.is-completed { background: color-mix(in srgb, var(--t-idle) 16%, transparent); border-color: color-mix(in srgb, var(--t-idle) 40%, transparent); }
 .tone-needs_input { --tone: var(--t-needs_input); }
 .tone-working { --tone: var(--t-working); }
 .tone-starting { --tone: var(--t-starting); }
@@ -1922,6 +2495,15 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-card-vscode { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
 .omps-card:hover .omps-card-vscode, .omps-card:focus-within .omps-card-vscode, .omps-card-vscode:focus-visible { opacity: 1; }
 .omps-card-vscode:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-acts { display: inline-flex; gap: 2px; }
+.omps-card-act { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
+.omps-card:hover .omps-card-act, .omps-card:focus-within .omps-card-act, .omps-card-act:focus-visible { opacity: 1; }
+.omps-card-act:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-act:disabled { cursor: progress; opacity: 0.4; }
+.omps-mode-row.omps-bcard-archive { justify-content: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--o-border); }
+.omps-bcard-archive .omps-input { width: auto; flex: 1 1 160px; }
+.omps-mode-row.omps-detail-actions { justify-content: flex-start; }
+.omps-detail-actions .omps-section-label { min-width: 7rem; }
 .omps-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; padding: 0 7px; height: 19px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--o-accent) 14%, transparent); color: var(--o-fg2); border: 1px solid color-mix(in srgb, var(--o-accent) 24%, transparent); }
 .omps-chip.is-warn { background: color-mix(in srgb, var(--o-yellow) 16%, transparent); border-color: color-mix(in srgb, var(--o-yellow) 40%, transparent); }
 .omps-chip.is-needs { background: color-mix(in srgb, var(--o-pink) 16%, transparent); border-color: color-mix(in srgb, var(--o-pink) 40%, transparent); }
@@ -1951,6 +2533,14 @@ var style_default = `/* omp Sessions page: one stylesheet for the Hermes dashboa
 .omps-progress span { display: block; height: 100%; background: var(--o-grad); }
 .omps-cost { font-variant-numeric: tabular-nums; color: var(--o-fg2); }
 .omps-when { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.omps-when.is-scheduled { color: var(--t-scheduled); }
+.omps-progress.has-failed { box-shadow: 0 0 0 1px var(--o-red); }
+.omps-queue-controls { display: flex; flex-direction: column; gap: 8px; }
+.omps-queue-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.omps-queue-controls.is-compact .omps-btn-sm { height: 23px; padding: 0 7px; font-size: 11.5px; }
+.omps-queue-at-row { display: flex; align-items: center; gap: 6px; }
+.omps-queue-at-row .omps-input { flex: 1; min-width: 0; }
+.omps-queue-error { font-size: 12px; color: var(--o-red); }
 
 /* ---------- empty / error / loading ---------- */
 .omps-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 48px 24px; color: var(--o-muted); }
@@ -2104,6 +2694,46 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- graph view ---------- */
+.omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
+.omps-graph-panel .omps-filters { margin-bottom: 0; }
+.omps-glegend { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.omps-glegend .omps-kstatus { margin-left: 0; }
+.omps-graph-scroll { overflow: auto; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-col); max-height: calc(100vh - 220px); min-height: 160px; }
+.omps-host-desktop .omps-graph-scroll { max-height: none; }
+.omps-graph { display: block; font-family: inherit; }
+.omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
+.omps-gedge-head { fill: var(--o-border-strong); }
+.omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
+.omps-gnode:focus, .omps-gnode:focus-visible { outline: none; }
+.omps-gnode.k-running { --k: var(--o-blue); }
+.omps-gnode.k-ready { --k: var(--o-purple); }
+.omps-gnode.k-blocked { --k: var(--o-pink); }
+.omps-gnode.k-done { --k: var(--o-green); }
+.omps-gnode.k-triage, .omps-gnode.k-todo { --k: var(--o-yellow); }
+.omps-gnode-box { fill: var(--o-raised); stroke: color-mix(in srgb, var(--k) 45%, var(--o-border)); stroke-width: 1; }
+.omps-gnode:hover .omps-gnode-box { stroke: var(--k); }
+.omps-gnode:focus-visible .omps-gnode-box { stroke: var(--o-ring); stroke-width: 2; }
+.omps-gnode.is-selected .omps-gnode-box { stroke: var(--k); stroke-width: 2.5; }
+.omps-gnode.is-faded { opacity: 0.4; }
+.omps-gnode-bar { fill: var(--k); }
+.omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
+.omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
+.omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
+.omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
+.omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.omps-gcard-head .omps-kstatus { margin-left: 0; }
+.omps-gcard-title { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.omps-gcard-links { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.omps-gcard-links .omps-section-label { margin: 0 4px 0 0; min-width: 72px; }
+.omps-gchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--o-border); background: var(--o-card); color: var(--o-fg2); border-radius: 999px; padding: 2px 9px 2px 3px; font-size: 12px; cursor: pointer; }
+.omps-gchip .omps-kstatus { margin-left: 0; }
+.omps-gchip:hover:not(:disabled) { border-color: var(--o-border-strong); color: var(--o-fg); }
+.omps-gchip:disabled { cursor: default; opacity: 0.6; }
+
 @media (max-width: 720px) {
 	.omps-search { min-width: 0; flex: 1; }
 	.omps-bgrid { grid-template-columns: 1fr; }
@@ -2112,6 +2742,11 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 @media (prefers-reduced-motion: reduce) {
 	.omps *, .omps *::before, .omps *::after { animation: none !important; transition: none !important; }
 }
+.omps-upstream { display: flex; flex-direction: column; gap: 6px; }
+.omps-upstream-edge { font-size: 12px; color: var(--o-fg2); }
+.omps-sync-conflict { color: var(--o-red); }
+.omps-sync-upstream-changed, .omps-sync-pending { color: var(--o-yellow); }
+.omps-upstream-files { font-size: 11px; color: var(--o-muted); word-break: break-all; }
 `;
 
 // integrations/hermes/ui/desktop.ts

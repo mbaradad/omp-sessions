@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from .lane import one_line
 from .notify import Notifier, current_session_key
-from .ompsessions import PRIORITIES, WAIT_EXIT, OmpSessions, OmpSessionsError, error_text, free_text_ok, is_approval
+from .ompsessions import PRIORITIES, WAIT_EXIT, OmpSessions, OmpSessionsError, error_text, free_text_ok, is_approval, short
 from .settings import MODE_ORDER, MODES, Settings
 
 TOOLSET = "omp_sessions"
@@ -55,7 +55,7 @@ SCHEMAS: dict[str, dict] = {
     "omp_session_start": {
         "name": "omp_session_start",
         "description": (
-            "Start an omp coding session (an autonomous coding agent running in the background; the user can follow and steer it in VS Code, the omp phone app, the omp Sessions page or the omp-sessions CLI). "
+            "Start an omp coding session (an autonomous coding agent running in the background; the user can follow and steer it in VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page or the omp-sessions CLI). "
             "Give `prompt` to start now, or `task` to queue it (it starts when the omp Sessions scheduler's concurrency limit allows; with `at` it is scheduled). "
             "Where it runs: `cwd`, or `project` (a Hermes project or the name of a known folder), or `board` (that kanban board's folder and group). "
             "You are told when it finishes or needs input; omp_session_wait blocks until then. To add work to an existing session use omp_queue_add."
@@ -68,6 +68,7 @@ SCHEMAS: dict[str, dict] = {
                 "notes": {"type": "string", "description": "Details of the queued task (with task)."},
                 "subtasks": {"type": "array", "items": {"type": "string"}, "description": "Checklist items of the queued task."},
                 "at": {**AT, "description": f"Schedule the queued task: {AT['description']}"},
+                "after": {"type": "array", "items": {"type": "string"}, "description": "With task: omp session ids (or title words) whose work must finish first; the task waits (state queued, blockedBy in the report) and starts by itself once they are idle or stopped with no queued work left and no failed last task."},
                 "cwd": {"type": "string", "description": "Absolute folder to run in."},
                 "project": {"type": "string", "description": "Hermes project id/slug/name, or the name of a folder from omp_projects_list."},
                 "board": {"type": "string", "description": "Kanban board slug: run in its configured folder and omp group."},
@@ -130,6 +131,7 @@ SCHEMAS: dict[str, dict] = {
                 "subtasks": {"type": "array", "items": {"type": "string"}, "description": "Checklist items."},
                 "top": {"type": "boolean", "description": "Put it first in the queue."},
                 "run": {"type": "boolean", "description": "Turn the queue on (otherwise it runs when already on or scheduled)."},
+                "after": {"type": "array", "items": {"type": "string"}, "description": "omp session ids (or title words) whose work must finish before this queue's tasks start; replaces the queue's dependencies. Refused for the session itself, unknown sessions and cycles."},
             },
             "required": ["id", "task"],
         },
@@ -157,6 +159,25 @@ SCHEMAS: dict[str, dict] = {
         "name": "omp_session_model",
         "description": "Show an omp session's model, or switch it (live while it runs, else from its next resume).",
         "parameters": {"type": "object", "properties": {"id": SESSION_ID, "model": {"type": "string", "description": "provider/id from omp_models_list; omit to show the current one."}}, "required": ["id"]},
+    },
+    "switchyard_plan_status": {
+        "name": "switchyard_plan_status",
+        "description": (
+            "Show how far parent tasks' changes reached their children in the plan's graph: one edge per parent -> child with its sync state "
+            "(in-sync, pending, merged, resolving, conflict, upstream-changed) and the conflicting files. id (a session) limits it to that session's edges; "
+            "without it, every edge of every plan. Use switchyard_plan_sync to bring changes in or re-run a session."
+        ),
+        "parameters": {"type": "object", "properties": {"id": {**SESSION_ID, "description": "Session (id, prefix or title words); omit for every edge."}}},
+    },
+    "switchyard_plan_sync": {
+        "name": "switchyard_plan_sync",
+        "description": (
+            "Bring the changes of a session's parent tasks (the sessions it was started after) into its worktree now, and show each "
+            "graph edge's sync state: in-sync, pending (waits for its turn to end), merged, conflict (the merge needs a person or the "
+            "agent; the files are listed) or upstream-changed (it was done before its parent changed). rerun: true also runs its task "
+            "again with the parent changes; use it for upstream-changed. omp_session_status shows the same states as `upstream`."
+        ),
+        "parameters": {"type": "object", "properties": {"id": SESSION_ID, "rerun": {"type": "boolean", "description": "Also re-run its task with the parent changes."}}, "required": ["id"]},
     },
 }
 
@@ -269,6 +290,8 @@ class Tools:
             "omp_server_status": self.server_status,
             "omp_models_list": self.models_list,
             "omp_session_model": self.session_model,
+            "switchyard_plan_status": self.plan_status,
+            "switchyard_plan_sync": self.plan_sync,
         }
 
     def _run(self, fn: Callable[[], Any]) -> str:
@@ -307,6 +330,8 @@ class Tools:
                 raise OmpSessionsError("give either prompt (start now) or task (queue it)")
             if _str(args, "at") and not task:
                 raise OmpSessionsError("at schedules a queued task: use task instead of prompt")
+            if _list(args, "after") and not task:
+                raise OmpSessionsError("after holds back a queued task: use task instead of prompt")
             mode = _str(args, "mode")
             if mode and mode not in MODES:
                 raise OmpSessionsError(f"mode must be one of {', '.join(MODES)}")
@@ -326,6 +351,7 @@ class Tools:
                 group=_str(args, "group") or group,
                 priority=_str(args, "priority"),
                 model=_str(args, "model"),
+                after=_list(args, "after"),
             )
             key = current_session_key()
             if key and settings.notify:
@@ -341,6 +367,8 @@ class Tools:
             if report is None:
                 raise OmpSessionsError(f"no session matches {args.get('id')}")
             self.notifier.seen(report)
+            if "upstream" not in report:
+                report["upstream"] = self.omp().upstream_by_session().get(str(report.get("id")), [])
             return report
 
         return self._run(go)
@@ -409,11 +437,11 @@ class Tools:
                 raise OmpSessionsError(f"no session matches {sid}")
             q = report.get("question") if report.get("state") == "needs_input" else None
             if not isinstance(q, dict):
-                raise OmpSessionsError(f"omp session {str(report.get('id'))[:8]} is not waiting for an answer ({report.get('state')})")
+                raise OmpSessionsError(f"omp session {short(str(report.get('id')))} is not waiting for an answer ({report.get('state')})")
             if is_approval(q) and not self.settings().agent_approvals:
                 raise OmpSessionsError(
                     f"this is an approval dialog ({one_line(str(q.get('title') or q.get('kind')), 120)}): the user approves or denies it in VS Code, "
-                    "the omp phone app, the omp Sessions page or with `omp-sessions answer` (the plugin's agent_approvals setting lets you answer approvals)"
+                    "the Agent Orchestrator app or AO Mobile, the omp Sessions page or with `omp-sessions answer` (the plugin's agent_approvals setting lets you answer approvals)"
                 )
             r = omp.answer(str(report["id"]), answer, str(q.get("id") or "") or None)
             if r.code != 0:
@@ -458,7 +486,7 @@ class Tools:
             task = _str(args, "task")
             if not task:
                 raise OmpSessionsError("task is required")
-            queue = self.omp().queue_add(sid, task, notes=_str(args, "notes"), subtasks=_list(args, "subtasks"), top=args.get("top") is True, run=args.get("run") is True)
+            queue = self.omp().queue_add(sid, task, notes=_str(args, "notes"), subtasks=_list(args, "subtasks"), top=args.get("top") is True, run=args.get("run") is True, after=_list(args, "after"))
             self._rearm(sid)
             return queue
 
@@ -495,3 +523,16 @@ class Tools:
 
     def session_model(self, args: dict, **_: Any) -> str:
         return self._run(lambda: self.omp().model(self._id(args), _str(args, "model")))
+
+    def plan_status(self, args: dict, **_: Any) -> str:
+        return self._run(lambda: {"edges": self.omp().plan_status(_str(args, "id"))})
+
+    def plan_sync(self, args: dict, **_: Any) -> str:
+        def go() -> dict:
+            sid = self._id(args)
+            out = self.omp().plan_sync(sid, rerun=args.get("rerun") is True)
+            if args.get("rerun") is True:
+                self._rearm(sid)
+            return out
+
+        return self._run(go)

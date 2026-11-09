@@ -33,6 +33,7 @@ import {
 	validateArgs,
 } from "../shared/bridge";
 import { pidAlive } from "../shared/launch";
+import { ompExtensionDir } from "../shared/omp-extension-install";
 import type { OmpApi } from "./api";
 import { openFile } from "./diff";
 
@@ -761,6 +762,7 @@ async function bridgeStatus(api: OmpApi): Promise<void> {
 	lines.push(`- This window: ${running ? `serving on \`${running.socket}\` (pid ${running.pid}, ${server?.clients ?? 0} MCP connection(s))` : `not serving${server?.lastError ? ` — ${server.lastError}` : ""}`}`);
 	const script = vscode.Uri.joinPath(api.context.extensionUri, "out", "mcp.js").fsPath;
 	lines.push(`- MCP server script: \`${script}\`${fs.existsSync(script) ? "" : " **(missing — rebuild the extension)**"}`);
+	lines.push(`- omp extension: module \`bridge.js\` of the Switchyard package, installed into omp's agent folder at activation (\`${path.join(ompExtensionDir(), "bridge.js")}\`)${fs.existsSync(path.join(ompExtensionDir(), "bridge.js")) ? "" : " **(missing — reload the window)**"}`);
 	lines.push("", "## Connected windows", "");
 	const entries = readRegistry();
 	if (!entries.length) lines.push("None.");
