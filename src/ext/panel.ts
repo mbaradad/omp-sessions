@@ -177,8 +177,10 @@ function ompDefaultPermissionMode(): Promise<PermissionMode | undefined> {
 export interface ChatQueueSource {
 	get(sessionId: string): Promise<TaskQueue | null>;
 	edit(sessionId: string, ops: QueueOp[]): Promise<TaskQueue | null>;
-	/** The plan changed: the chat re-reads its queue. */
+	/** The plan changed: the chat re-reads its queue and the usage windows. */
 	onDidChange: vscode.Event<unknown>;
+	/** The provider usage windows the planner last read (`omp usage`; PlanView.status.usageWindows), for the footer's usage pill. */
+	usage?(): ReadonlyArray<{ provider: string; window: string; usedPercent: number; resetsAt?: number }>;
 }
 
 /** The part of the checkpoints extension's client the chat uses (`Checkpoints` in `src/ext/checkpoints.ts` on `ao/checkpoints`). Edits are keyed by omp's tool call ids. */
@@ -268,7 +270,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
 			}),
 			{ dispose: () => this.stream?.close() },
-			...(tasks ? [tasks.onDidChange(() => void this.postQueue())] : []),
+			...(tasks ? [tasks.onDidChange(() => (void this.postQueue(), this.postState()))] : []),
 			...(checkpoints ? [checkpoints.onDidChange(e => e.sessionId === sessionId && this.onCheckpoints(e.added))] : []),
 		);
 		const cwd = this.meta?.cwd;
@@ -543,6 +545,10 @@ export class ChatPanel implements vscode.Disposable {
 		if (value) state.model = { ...splitModel(value), name: model?.choices?.find(c => c.value === value)?.name };
 		const thinking = this.thinkingOption()?.currentValue;
 		if (thinking) state.thinkingLevel = thinking;
+		// How much of the model's provider quota is used comes from the planner (omp's own `usage`): AO sets a limit only when a prompt itself fails, and omp's limits end as completed turns (G35).
+		const windows = this.tasks?.usage?.() ?? [];
+		const mine = state.model?.provider ? windows.filter(w => w.provider === state.model?.provider) : windows;
+		if (mine.length) state.usageWindows = mine.map(w => ({ window: w.window, usedPercent: w.usedPercent, ...(w.resetsAt && { resetsAtSec: Math.round(w.resetsAt / 1000) }) }));
 		return state;
 	}
 

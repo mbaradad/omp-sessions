@@ -1119,6 +1119,7 @@ function renderFooter(): void {
 		modeButton(),
 		pct !== null ? h("span", { class: `pill${pct > 80 ? " warn" : ""}`, title: `${ctx?.tokens?.toLocaleString()} / ${ctx?.contextWindow?.toLocaleString()} tokens` }, h("span", { class: "meter" }, h("span", { style: `width:${Math.min(100, pct)}%` })), `${pct}%`) : "",
 		cost > 0 ? h("span", { class: "pill", title: typeof state?.cost === "number" ? "Session cost (AO)" : "Cost of the messages shown" }, `$${cost.toFixed(2)}`) : "",
+		usageWindowPill(state?.usageWindows),
 		usageLimitPill(rec(state?.usageLimit)),
 		...[...statuses.values()].filter(Boolean).map(s => h("span", { class: "pill dim" }, s)),
 		h("span", { class: "spacer" }),
@@ -1129,6 +1130,15 @@ function renderFooter(): void {
 	stopBtn.classList.toggle("hidden", !busy);
 	announce(meta?.status === "waiting" ? "omp needs your input" : busy ? (state?.isCompacting ? "omp is compacting context" : "omp is working") : meta?.status === "stopped" ? "Session stopped" : "omp is ready");
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
+}
+
+/** The most used quota window of the session's provider, once it is 80% used (red from 95%). */
+function usageWindowPill(windows: Array<{ window: string; usedPercent: number; resetsAtSec?: number }> | undefined): HTMLElement | "" {
+	const top = windows?.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+	if (!top || top.usedPercent < 80) return "";
+	const when = (w: { resetsAtSec?: number }) => (w.resetsAtSec ? ` · resets ${new Date(w.resetsAtSec * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "");
+	const title = (windows ?? []).map(w => `${w.window}: ${Math.round(w.usedPercent)}% used${when(w)}`).join("\n");
+	return h("span", { class: `pill${top.usedPercent >= 95 ? " warn" : ""}`, title: `Provider usage\n${title}` }, `${top.window} ${Math.round(top.usedPercent)}%`);
 }
 
 /** A turn AO paused at the account's usage limit: it waits for the reset (and continues then when auto-resume is on). */
