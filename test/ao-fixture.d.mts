@@ -35,7 +35,7 @@ export interface AoFixture {
 	clientEnv: { AO_PORT: string; AO_DATA_DIR: string; AO_RUN_FILE: string };
 	/** The omp AO runs: the fake's wrapper script (or "omp" with realOmp). */
 	ompBin: string;
-	/** Env to run that omp as AO does: PATH (fake first), PI_CODING_AGENT_DIR, FAKE_OMP_LOG, FAKE_OMP_USAGE. Empty with realOmp. */
+	/** Env to run that omp as AO does: PATH (fake first), PI_CODING_AGENT_DIR, FAKE_OMP_LOG, FAKE_OMP_USAGE, FAKE_OMP_RULES. Empty with realOmp. */
 	ompEnv: Record<string, string>;
 	/** clientEnv + ompEnv: for a planner, CLI or Hermes process that should use this stack. */
 	stackEnv: Record<string, string>;
@@ -54,6 +54,8 @@ export interface AoFixture {
 	readonly pid: number;
 	/** What the fake's `omp usage --json` reports from now on. */
 	setUsage(windows: { provider: string; id: string; label?: string; usedPercent: number; resetsAt?: number }[]): void;
+	/** Scripts for prompts the test doesn't write: the first rule whose `match` regex matches runs `script` instead ($1… = groups). */
+	setFakeRules(rules: { match: string; flags?: string; script: string }[]): void;
 	/** JSON request against the daemon; throws on non-2xx with the body. */
 	api(method: string, path: string, body?: unknown): Promise<any>;
 	/** A fresh git repo (one commit on main) under the fixture root. */
