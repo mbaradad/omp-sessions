@@ -18,6 +18,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
 import { sessionStateFile, switchyardHome } from "./native";
+import { writeMode } from "../shared/session-mode";
 import type { AoPermissionMode } from "./report";
 
 /** The permission modes; the gate in the omp extension reads one of these from the mode file. */
@@ -155,11 +156,12 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		}
 
 		// 6. The permission mode, last for the same reason (omp's `plan` option is one of the live ones).
-		// The caller's setMode writes the mode file and handles plan (MAPPING D11: never write the file
-		// by hand); without one this does both itself, which is all a session with no turns needs.
+		// A caller's setMode (e.g. setSessionMode, which also declines gate questions left open) takes
+		// over; without one this writes the mode file and handles plan, which is all a session with no
+		// turns needs.
 		if (options.setMode) await options.setMode(id, mode);
 		else {
-			writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
+			writeMode(id, mode, home);
 			if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
 		}
 	} catch (error) {
