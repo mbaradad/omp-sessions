@@ -15,7 +15,7 @@ import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpo
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
+import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, parentBranches, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -260,6 +260,11 @@ export class SessionManager implements vscode.Disposable {
 		const source = this.planSource;
 		if (!source || ids.length === 0) return;
 		await source.edit(completeOps(source.plan, ids, completed));
+	}
+
+	/** The branches this session's tasks build on (their parents'), for "Compare Branch with Base". */
+	parentBranches(id: string): Array<{ title: string; branch: string }> {
+		return parentBranches(this.planSource?.plan, id);
 	}
 
 	/** Relists every session from AO. */

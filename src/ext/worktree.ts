@@ -282,6 +282,16 @@ async function compareWithBase(api: OmpApi, arg: unknown): Promise<void> {
 	let files: ChangedFile[];
 	try {
 		wt = await withBase(picked.wt);
+		// A graph child starts from its parents' work: offer their branches as the base to see only what the child itself did.
+		const parents = api.sessions.parentBranches(picked.meta.id);
+		if (parents.length) {
+			const base = await vscode.window.showQuickPick(
+				[{ label: wt.base || "default branch", description: "the branch the project started from", branch: wt.base }, ...parents.map(p => ({ label: p.branch, description: `parent task “${p.title}”`, branch: p.branch }))],
+				{ title: "Compare with which base?", placeHolder: "A task that builds on others includes their work when compared with the default branch" },
+			);
+			if (!base) return;
+			if (base.branch !== wt.base) wt = { ...wt, base: base.branch, baseCommit: "" };
+		}
 		rev = await diffBase(wt.worktree, wt);
 		files = await changedSince(wt.worktree, rev);
 	} catch (err) {

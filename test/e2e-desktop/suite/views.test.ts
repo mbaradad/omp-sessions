@@ -9,6 +9,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import type { AoClient } from "../../../src/ao/client";
 import type { OmpApi } from "../../../src/ext/api";
+import { ensurePlanner, stopPlanner } from "../../../src/planner/client";
+import type { PlanOp, PlanView } from "../../../src/planner/types";
 import type { Node } from "../../../src/ext/tree";
 import { readMode } from "../../../src/shared/session-mode";
 import { writeSwitchyardConfig } from "../../../src/shared/switchyard-config";
@@ -16,6 +18,7 @@ import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairi
 import type { SessionMeta } from "../../../src/shared/protocol";
 
 const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
+const EXT_PATH = vscode.extensions.getExtension("mbaradad.omp-sessions")?.extensionPath ?? "";
 const SHOTS = process.env.SWITCHYARD_E2E_SHOTS ?? "";
 
 /** Polls `fn` until truthy: AO state lands through its change stream, with no promise the suite can await. */
@@ -174,6 +177,66 @@ describe("AO views", () => {
 			changed.dispose();
 			await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 			await vscode.commands.executeCommand("omp.sessions.focus");
+		}
+	});
+
+	it("on the real planner: Dependencies… (after), Mark completed (lane.complete), priority; the task graph shows in the card data", async () => {
+		const planner = await ensurePlanner(path.join(EXT_PATH, "out", "planner.js"));
+		assert.ok(planner, "the planner started (isolated SWITCHYARD_HOME)");
+		const changed = new vscode.EventEmitter<void>();
+		let plan: PlanView | undefined;
+		const refresh = async () => {
+			plan = (await planner.request("plan", {})) as PlanView;
+			changed.fire();
+		};
+		const source = {
+			get plan() {
+				return plan;
+			},
+			onDidChange: changed.event,
+			edit: async (ops: PlanOp[]) => {
+				const res = await planner.request("edit", { ops });
+				await refresh();
+				return res;
+			},
+		};
+		await refresh();
+		const sub = api.sessions.usePlan(source);
+		const other = await api.sessions.launch({ cwd: REPO, title: "other" });
+		try {
+			await waitFor("other session idle", () => api.sessions.get(other)?.status === "idle", 120_000);
+			// A queued task per session (autoRun off: the planner only plans here).
+			await source.edit([
+				{ op: "lane.add", id, session: id, autoRun: false },
+				{ op: "add", task: { title: "mine", lane: id } },
+				{ op: "lane.add", id: other, session: other, autoRun: false },
+				{ op: "add", task: { title: "theirs", lane: other } },
+			]);
+			assert.equal(await api.sessions.setDependencies(id, [other]), 1);
+			const theirs = plan?.tasks.find(t => t.lane === other)?.id;
+			assert.deepEqual(plan?.tasks.find(t => t.lane === id)?.after, [theirs]);
+			await waitFor("queue summary with the dependency", () => JSON.stringify(meta()?.queue?.after) === JSON.stringify([other]) && JSON.stringify(meta()?.queue?.blockedBy) === JSON.stringify([other]), 10_000);
+			// The planner refuses a cycle; the error says so.
+			await assert.rejects(api.sessions.setDependencies(other, [id]), /cycle|circular|itself|loop/i);
+			assert.equal(await api.sessions.setDependencies(id, []), 1);
+			await waitFor("dependency cleared", () => meta()?.queue?.after === undefined, 10_000);
+
+			await api.sessions.setCompleted([other], true);
+			await waitFor("completed marker", () => api.sessions.get(other)?.queue?.completed === true, 10_000);
+			assert.equal(plan?.lanes.find(l => l.id === other)?.completed, true);
+			await api.sessions.setCompleted([other], false);
+			await waitFor("reopened", () => api.sessions.get(other)?.queue?.completed === undefined, 10_000);
+
+			await api.sessions.setPriority([id], "high");
+			assert.equal(plan?.lanes.find(l => l.id === id)?.priority, "high");
+			await source.edit([{ op: "lane.remove", id }, { op: "lane.remove", id: other }]);
+		} finally {
+			sub.dispose();
+			await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+			await api.sessions.stop(other).catch(() => undefined);
+			await api.sessions.remove(other).catch(() => undefined);
+			planner.close();
+			await stopPlanner();
 		}
 	});
 

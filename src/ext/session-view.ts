@@ -204,6 +204,19 @@ export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): str
 	return (plan?.tasks ?? []).filter(t => (t.lane !== undefined && ids.has(t.lane) || t.session === sessionId) && Object.values(t.sync ?? {}).some(e => e.state === "upstream-changed" || e.state === "conflict")).map(t => t.id);
 }
 
+/** The branches of the tasks a session's tasks run on top of (graph propagation: a child starts from its parents' work). */
+export function parentBranches(plan: PlanView | undefined, sessionId: string): Array<{ title: string; branch: string }> {
+	if (!plan) return [];
+	const lanes = new Set(plan.lanes.filter(l => l.id === sessionId || l.session === sessionId).map(l => l.id));
+	const own = plan.tasks.filter(t => (t.lane !== undefined && lanes.has(t.lane)) || t.session === sessionId);
+	const parents = new Map<string, { title: string; branch: string }>();
+	for (const id of own.flatMap(t => t.after ?? [])) {
+		const parent = plan.tasks.find(t => t.id === id);
+		if (parent?.git?.branch && !own.includes(parent)) parents.set(parent.git.branch, { title: parent.title, branch: parent.git.branch });
+	}
+	return [...parents.values()];
+}
+
 /** A planner task whose state changed between two plans (the sounds listen to these). */
 export interface TaskTransition {
 	task: TaskView;
