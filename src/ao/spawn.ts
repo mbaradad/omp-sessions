@@ -18,6 +18,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
 import { sessionStateFile, switchyardHome } from "./native";
+import { writeMode } from "../shared/session-mode";
 import type { AoPermissionMode } from "./report";
 
 /** The permission modes; the gate in the omp extension reads one of these from the mode file. */
@@ -29,13 +30,19 @@ export interface SpawnSwitchyardOptions {
 	/** An AO project id; wins over `dir`. */
 	projectId?: string;
 	displayName?: string;
+	/** The branch the session's worktree is created on (AO default: `ao/<slug>/root`). Needs a project (`dir` in a git repo, or `projectId`). */
+	branch?: string;
 	/** An omp model id (`provider/model`), checked against the session's own choices. */
 	model?: string;
 	/** omp's thinking level (`off`, `low`, `medium`, `high`, …), checked against its choices. */
 	thinking?: string;
 	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). */
 	mode?: AoSessionMode;
-	/** Extra `omp acp` arguments for this session (G34). Needs the Switchyard `omp` shim on the daemon's PATH. No whitespace inside an argument. */
+	/**
+	 * Extra `omp acp` arguments for this session (G34), read by the Switchyard `omp` shim, which must be first on
+	 * the daemon's PATH. Written as plain words when every argument is one word, else as a JSON array of strings
+	 * (the shim reads either; the array needs `node` or `bun` on the daemon's PATH, a word list does not).
+	 */
 	ompArgs?: readonly string[];
 	/** The first message. Without one the session is left ready and waiting. */
 	prompt?: string;
@@ -72,6 +79,11 @@ function choicesOf(options: AoConfigOptions, id: string): string[] | undefined {
 	return option ? (option.choices ?? []).map(c => c.value) : undefined;
 }
 
+/** The `omp-args` file: plain words when no argument has whitespace (no JSON runtime needed), else a JSON array of strings. */
+export function ompArgsFile(args: readonly string[]): string {
+	return args.some(a => /\s/.test(a)) ? `${JSON.stringify(args)}\n` : `${args.join(" ")}\n`;
+}
+
 function writeFileAtomic(file: string, content: string): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	const tmp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
@@ -84,8 +96,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 	const home = options.home ?? switchyardHome();
 	const mode = options.mode ?? "auto";
 	const ompArgs = options.ompArgs ?? [];
-	const bad = ompArgs.find(a => a === "" || /\s/.test(a));
-	if (bad !== undefined) throw new Error(`omp argument ${JSON.stringify(bad)} is empty or contains whitespace: the shim splits the arguments file on whitespace`);
+	if (ompArgs.includes("")) throw new Error("an omp argument is empty");
 
 	// 1. A model no catalog knows would leave a terminated session behind; refuse it before any session exists.
 	if (options.model) {
@@ -106,6 +117,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		clientRequestId,
 		...(projectId && { projectId }),
 		...(options.displayName && { displayName: options.displayName }),
+		...(options.branch && { branch: options.branch }),
 	});
 	const id = spawned.session.id;
 	try {
@@ -118,7 +130,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 
 		// 4. Extra arguments are read when omp launches: write them, restart omp on the same transcript.
 		if (ompArgs.length > 0) {
-			writeFileAtomic(sessionStateFile(id, "omp-args", home), `${ompArgs.join(" ")}\n`);
+			writeFileAtomic(sessionStateFile(id, "omp-args", home), ompArgsFile(ompArgs));
 			await client.exitAgent(id);
 			await client.resumeAgent(id);
 			const deadline = Date.now() + (options.readyTimeoutMs ?? 90_000);
@@ -144,11 +156,12 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		}
 
 		// 6. The permission mode, last for the same reason (omp's `plan` option is one of the live ones).
-		// The caller's setMode writes the mode file and handles plan (MAPPING D11: never write the file
-		// by hand); without one this does both itself, which is all a session with no turns needs.
+		// A caller's setMode (e.g. setSessionMode, which also declines gate questions left open) takes
+		// over; without one this writes the mode file and handles plan, which is all a session with no
+		// turns needs.
 		if (options.setMode) await options.setMode(id, mode);
 		else {
-			writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
+			writeMode(id, mode, home);
 			if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
 		}
 	} catch (error) {
