@@ -8,6 +8,9 @@ import { test } from "node:test";
 import { writeSwitchyardConfig } from "../../src/ao/config";
 import { bundlesAt, ensureBundles, extensionReport, installBundles, uninstallBundles } from "../../src/cli/extension";
 
+/** The shim is a POSIX shell script, not installed on Windows (docs/SETUP.md); the gate is installed everywhere. */
+const SHIM = process.platform !== "win32";
+
 /** A machine of its own: omp's agent folder and Switchyard's home in a temp dir, and a build that ships two modules and the shim. */
 function machine<T>(fn: (m: { shipped: string; agent: string; home: string }) => T): T {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-ext-"));
@@ -44,18 +47,19 @@ test("install puts the gate and the shim in place; a changed bundle makes the re
 		assert.equal(before.shipped, true);
 
 		const result = installBundles(bundles);
-		assert.deepEqual(result.installed, ["gate", "shim"]);
+		assert.deepEqual(result.installed, SHIM ? ["gate", "shim"] : ["gate"]);
 		assert.equal(result.error, undefined);
 		assert.equal(installBundles(bundles).upToDate, true, "idempotent: the second call writes nothing");
 		const after = extensionReport(undefined, bundles);
 		assert.equal(after.installed, true, "the gate counts only when the package lists mode.js");
 		assert.deepEqual(after.modules, ["checkpoints.js", "mode.js"]);
-		assert.equal(after.current && after.shim.current && after.shim.installed, true);
-		assert.equal(after.shim.inEffect, undefined, "installed, but no daemon to read a PATH from: not claimed either way");
+		assert.equal(after.current && after.shim.current && after.shim.installed, SHIM);
+		assert.equal(after.shim.inEffect, SHIM ? undefined : false, "installed, but no daemon to read a PATH from: not claimed either way");
 		// A daemon whose PATH starts elsewhere (this test process: its own PATH) does not have the shim first.
+		// The daemon's PATH is read from /proc, so only Linux can tell; elsewhere it is not claimed either way.
 		const against = extensionReport(process.pid, bundles).shim;
-		assert.deepEqual([against.onDaemonPath, against.inEffect], [false, false]);
-		assert.ok(fs.statSync(path.join(home, "bin", "omp")).mode & 0o100, "the shim is executable");
+		assert.deepEqual([against.onDaemonPath, against.inEffect], process.platform === "linux" ? [false, false] : [undefined, SHIM ? undefined : false]);
+		if (SHIM) assert.ok(fs.statSync(path.join(home, "bin", "omp")).mode & 0o100, "the shim is executable");
 		assert.equal(fs.existsSync(path.join(agent, "extensions", "switchyard", "package.json")), true);
 
 		// The build changes: the installed copy is older until it is refreshed, and a refresh is not a "first install".
@@ -88,7 +92,7 @@ test("ensureBundles reports the first install; config omp-extension off stops it
 		assert.equal(first?.firstInstall, true);
 		assert.equal(extensionReport(undefined, bundles).installed, true);
 
-		assert.deepEqual(uninstallBundles(), { extensions: true, shim: true });
+		assert.deepEqual(uninstallBundles(), { extensions: true, shim: SHIM });
 		assert.equal(extensionReport(undefined, bundles).installed, false);
 		assert.deepEqual(uninstallBundles(), { extensions: false, shim: false });
 
@@ -96,7 +100,8 @@ test("ensureBundles reports the first install; config omp-extension off stops it
 		fs.mkdirSync(path.join(home, "bin"), { recursive: true });
 		fs.writeFileSync(path.join(home, "bin", "omp"), "#!/bin/sh\nexec real-omp\n");
 		const foreign = installBundles(bundles);
-		assert.match(foreign.error ?? "", /not Switchyard's/, "an omp that isn't ours is reported, not replaced");
+		if (SHIM) assert.match(foreign.error ?? "", /not Switchyard's/, "an omp that isn't ours is reported, not replaced");
+		else assert.equal(foreign.error, undefined, "Windows installs no shim, so a file called omp is no conflict");
 		assert.equal(uninstallBundles().shim, false);
 		assert.equal(fs.readFileSync(path.join(home, "bin", "omp"), "utf8"), "#!/bin/sh\nexec real-omp\n");
 	}));
