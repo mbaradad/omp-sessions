@@ -29,6 +29,7 @@ import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestO
 import { MAX_NOTES, MAX_TITLE } from "../shared/queue";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
+import { MIGRATE_HELP, cmdMigrate } from "./migrate";
 import { renderMessage } from "./render";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, shortId, termWidth, truncate } from "./term";
 
@@ -1419,6 +1420,9 @@ ${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and
                                   plugins are per Hermes profile; default: $HERMES_HOME, else ~/.hermes
                                   (%LOCALAPPDATA%\\hermes on Windows)
 
+${c.bold("Migration")}  ${c.dim("(from omp Sessions to Switchyard on AO)")}
+${MIGRATE_HELP}
+
   --no-color, NO_COLOR=1          plain output · OMP_SESSIONS_NO_SERVER=1 runs without the server
   --                              everything after it is text, not flags (e.g. answer . -- --yes)
 `;
@@ -1493,6 +1497,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	projects: { flags: ["json"], run: cmdProjects },
 	skill: { flags: ["dir", "force"], run: cmdSkill },
 	hermes: { flags: ["force", "profile", "all-profiles", "json"], run: cmdHermes },
+	migrate: { flags: ["apply", "only", "model", "json"], run: cmdMigrate },
 };
 
 async function main(argv: string[]): Promise<number> {
