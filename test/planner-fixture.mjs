@@ -90,11 +90,13 @@ export async function startPlannerFixture(opts) {
 	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO. The
 	// OMP_VSCODE_HOME / OMP_PLANNER_* names are the planner's (src/planner/paths.ts, main.ts); they
 	// follow the planner when it moves to the Switchyard names.
-	const clientEnv = { ...ao.stackEnv, OMP_VSCODE_HOME: stateRoot };
+	// The state dir (OMP_VSCODE_HOME today, SWITCHYARD_HOME once the planner moves) must be a temp dir.
+	const tmpRoot = fs.realpathSync(os.tmpdir());
+	if (path.relative(tmpRoot, path.resolve(stateRoot)).startsWith("..")) throw new Error(`planner fixture: stateRoot ${stateRoot} is not under ${tmpRoot}: tests never touch the real state dirs`);
+	const clientEnv = { ...ao.stackEnv, OMP_VSCODE_HOME: stateRoot, SWITCHYARD_HOME: stateRoot };
 	const env = {
 		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("OMP_PLANNER_"))),
 		...clientEnv,
-		...(ao.home ? { HOME: ao.home } : {}),
 		OMP_PLANNER_STDERR: "1",
 		...(opts.usage === false ? { OMP_PLANNER_USAGE: "off" } : { OMP_PLANNER_OMP: ao.ompBin }),
 		...(opts.retryBaseMs ? { OMP_PLANNER_RETRY_BASE_MS: String(opts.retryBaseMs) } : {}),

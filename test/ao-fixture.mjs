@@ -11,9 +11,15 @@
 //   ...
 //   await ao.stop();                              // daemon, its detached chat hosts and the temp dir
 //
+// ISOLATION (CONTRACT.md "Isolated HOME"), always, no switch: the daemon, its chat hosts and omp run with
+// HOME, XDG_*, SWITCHYARD_HOME and OMP_VSCODE_HOME under the fixture root, and the fixture refuses to start
+// if an override (opts.env) points any of them elsewhere. `ao.stackEnv` carries the same variables, so a
+// CLI, planner or Hermes process started with it stays isolated too. Never run `install CLI/skill/service`
+// outside such an env.
 // Options: { aoBin, realOmp, env, fakeOmpEnv, readyTimeoutMs, keep }
 //   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
-//   realOmp      run the real omp from PATH with the real HOME instead of the fake (smoke tests)
+//   realOmp      run the real omp (from PATH) instead of the fake, for smoke tests. Still isolated: HOME is
+//                the fixture's, with home/.omp/agent linked to the real agent dir (the login lives there)
 //   env          extra daemon env (e.g. AO_* overrides)
 //   fakeOmpEnv   extra env for the fake (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...)
 //   keep         leave the temp dir after stop (default $SWITCHYARD_TEST_KEEP_AO=1), for post-mortems
@@ -82,6 +88,27 @@ export async function removeTree(dir) {
 			await sleep(100);
 		}
 	}
+}
+
+/** The user's real home (from the password database: HOME may already be an isolated one). */
+function realHome() {
+	return fs.realpathSync(os.userInfo().homedir);
+}
+
+/**
+ * Refuses to start a daemon that could touch the user's real state: HOME, the XDG dirs and the
+ * Switchyard state dirs must all lie under the fixture root (opts.env could have overridden them).
+ */
+function assertIsolated(env, root, real) {
+	const inside = p => {
+		const rel = path.relative(fs.realpathSync(root), path.resolve(p));
+		return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+	};
+	for (const key of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
+		const value = env[key];
+		if (!value || !inside(fs.existsSync(value) ? fs.realpathSync(value) : value)) throw new Error(`ao-fixture: ${key}=${value} is not under the fixture root ${root}: tests never run against the real HOME (${real})`);
+	}
+	if (path.resolve(env.HOME) === real) throw new Error(`ao-fixture: HOME is the real home ${real}`);
 }
 
 function freePort() {
@@ -182,19 +209,34 @@ export async function startAoFixture(opts = {}) {
 
 	// The daemon inherits nothing AO-specific from a test run that itself happens to be an AO session.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_")));
-	if (!opts.realOmp) {
+	// CONTRACT.md "Isolated HOME": every run, fake or real omp, gets its own HOME, XDG dirs and Switchyard
+	// state dirs under the fixture root. There is no switch for the real HOME.
+	const isolation = {
+		HOME: home,
+		USERPROFILE: home,
+		XDG_CONFIG_HOME: path.join(home, ".config"),
+		XDG_DATA_HOME: path.join(home, ".local", "share"),
+		XDG_STATE_HOME: path.join(home, ".local", "state"),
+		XDG_CACHE_HOME: path.join(home, ".cache"),
+		SWITCHYARD_HOME: path.join(root, "switchyard"),
+		OMP_VSCODE_HOME: path.join(root, "omp-vscode"),
+	};
+	for (const d of [isolation.XDG_CONFIG_HOME, isolation.XDG_DATA_HOME, isolation.XDG_STATE_HOME, isolation.XDG_CACHE_HOME, isolation.SWITCHYARD_HOME, isolation.OMP_VSCODE_HOME]) fs.mkdirSync(d, { recursive: true });
+	fs.writeFileSync(path.join(home, ".gitconfig"), "[user]\n\tname = ao-fixture\n\temail = ao-fixture@localhost\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
+	Object.assign(env, isolation);
+	if (opts.realOmp) {
+		// Real omp needs the real login, which lives in ~/.omp/agent/agent.db (SQLite): share the whole
+		// agent dir through a link. Nothing of ours may install into it during the migration.
+		if (!env.PI_CODING_AGENT_DIR) {
+			fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
+			fs.symlinkSync(path.join(realHome(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
+		}
+	} else {
 		const fake = fakeOmpAcpPath();
 		if (process.platform === "win32") fs.writeFileSync(path.join(binDir, "omp.cmd"), `@"${process.execPath}" "${fake}" %*\r\n`);
 		else fs.writeFileSync(path.join(binDir, "omp"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
-		fs.writeFileSync(path.join(home, ".gitconfig"), "[user]\n\tname = ao-fixture\n\temail = ao-fixture@localhost\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
 		Object.assign(env, {
 			PATH: [binDir, ...(env.PATH ?? "").split(path.delimiter)].join(path.delimiter),
-			HOME: home,
-			USERPROFILE: home,
-			XDG_CONFIG_HOME: path.join(home, ".config"),
-			XDG_DATA_HOME: path.join(home, ".local", "share"),
-			XDG_STATE_HOME: path.join(home, ".local", "state"),
-			XDG_CACHE_HOME: path.join(home, ".cache"),
 			PI_CODING_AGENT_DIR: agentDir,
 			FAKE_OMP_LOG: fakeOmpLog,
 			FAKE_OMP_USAGE: usageFile,
@@ -216,6 +258,12 @@ export async function startAoFixture(opts = {}) {
 		AO_CLOUD_OFFERING: "off",
 		...opts.env,
 	});
+	try {
+		assertIsolated(env, root, realHome());
+	} catch (err) {
+		await removeTree(root);
+		throw err;
+	}
 
 	const keep = opts.keep ?? process.env.SWITCHYARD_TEST_KEEP_AO === "1";
 	const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
@@ -257,10 +305,11 @@ export async function startAoFixture(opts = {}) {
 	}
 	const baseUrl = `http://127.0.0.1:${port}`;
 	const clientEnv = { AO_PORT: String(port), AO_DATA_DIR: dataDir, AO_RUN_FILE: runFile };
-	/** What a process needs to run the same omp AO runs (the fake, its store, log and usage file). */
-	const ompEnv = opts.realOmp
-		? {}
-		: Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]));
+	/** What a process needs to run the same omp AO runs: the isolated HOME/XDG/state dirs, and the fake with its store, log and usage file. */
+	const ompEnv = {
+		...isolation,
+		...(opts.realOmp ? {} : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
+	};
 
 	const fx = {
 		baseUrl,
@@ -272,13 +321,13 @@ export async function startAoFixture(opts = {}) {
 		/** The omp AO runs: the fake's wrapper in the fixture's bin dir (or `omp` from PATH with realOmp). */
 		ompBin: opts.realOmp ? "omp" : path.join(binDir, process.platform === "win32" ? "omp.cmd" : "omp"),
 		ompEnv,
-		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack. */
+		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack (isolated HOME included). */
 		stackEnv: { ...ompEnv, ...clientEnv },
 		root,
 		dataDir,
 		runFile,
 		logFile,
-		home: opts.realOmp ? os.homedir() : home,
+		home,
 		agentDir: opts.realOmp ? undefined : agentDir,
 		fakeOmpLog: opts.realOmp ? undefined : fakeOmpLog,
 		usageFile: opts.realOmp ? undefined : usageFile,

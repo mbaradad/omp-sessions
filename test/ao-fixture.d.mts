@@ -3,7 +3,7 @@
 export interface AoFixtureOptions {
 	/** ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH). */
 	aoBin?: string;
-	/** Run the real omp from PATH with the real HOME instead of test/fake-omp-acp.mjs. */
+	/** Run the real omp (from PATH) instead of the fake. Still isolated: HOME is the fixture's, with home/.omp/agent linked to the real agent dir. */
 	realOmp?: boolean;
 	/** Extra daemon env (AO_* overrides). */
 	env?: Record<string, string>;
