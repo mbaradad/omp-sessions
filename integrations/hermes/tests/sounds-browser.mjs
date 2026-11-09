@@ -1,7 +1,7 @@
 // The Switchyard page's session sounds in a headless Chromium (`npm run test:hermes:sounds`): the real built dashboard
 // bundle (switchyard/dashboard/dist/index.js + style.css) on a harness page that provides what the Hermes dashboard
 // does (window.__HERMES_PLUGIN_SDK__, __HERMES_PLUGINS__), against a tiny local server that plays the plugin's
-// /sessions endpoint. AudioContext is replaced by a counting fake, so each cue the page plays is observable.
+// /sessions endpoint. AudioContext is replaced by a counting fake, so each cue the page plays is observable (a cue is one playSound: the master low-pass at 3800 Hz).
 //
 // Checks: the bell toggle (title, mute, unmute previews a cue, the choice survives a reload), a working → idle change
 // sounds once, a muted page is silent, a question sounds, and TWO tabs of one browser play a change once even though
@@ -59,6 +59,7 @@ window.__HERMES_PLUGINS__ = { register(name, Page) { createRoot(document.getElem
 const harnessJs = await esbuild.build({ entryPoints: [harnessSrc], bundle: true, write: false, format: "iife", nodePaths: [path.join(depsDir, "node_modules")], define: { "process.env.NODE_ENV": '"production"' }, logLevel: "error" });
 const FAKE_AUDIO = `
 window.__cues = 0;
+window.__cueLog = [];
 window.__voices = 0;
 class FakeNode { connect(n) { return n; } start() { window.__voices++; } stop() {} disconnect() {} }
 const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} });
@@ -66,7 +67,7 @@ window.AudioContext = class {
 	constructor() { this.state = "running"; this.currentTime = 0; this.sampleRate = 44100; this.destination = new FakeNode(); }
 	resume() { return Promise.resolve(); }
 	createGain() { const n = new FakeNode(); n.gain = param(); return n; }
-	createBiquadFilter() { window.__cues++; const n = new FakeNode(); n.frequency = param(); n.Q = param(); n.gain = param(); return n; }
+	createBiquadFilter() { const n = new FakeNode(); n.frequency = param(); n.frequency.setValueAtTime = v => { if (v === 3800) { window.__cues++; window.__cueLog.push(Math.round(performance.timeOrigin + performance.now()) % 100000); } }; n.Q = param(); n.gain = param(); return n; }
 	createOscillator() { const n = new FakeNode(); n.frequency = param(); n.detune = param(); return n; }
 	createBufferSource() { return new FakeNode(); }
 	createConvolver() { return new FakeNode(); }
@@ -188,7 +189,7 @@ try {
 	// A question.
 	const t1 = await total();
 	server.sessions[1] = { id: "s2", state: "needs_input", turnId: "req-1" };
-	check("a question sounds, once across tabs", (await until("cue", async () => (await total()) > t1, 12_000)) && (await sleep(9000), (await total()) === t1 + 1), `added ${(await total()) - t1}`);
+	check("a question sounds, once across tabs", (await until("cue", async () => (await total()) > t1, 12_000)) && (await sleep(9000), (await total()) === t1 + 1), `added ${(await total()) - t1}; cue times a=${JSON.stringify(await a.evaluate(() => window.__cueLog))} b=${JSON.stringify(await b.evaluate(() => window.__cueLog))}`);
 } catch (err) {
 	check("browser test ran", false, String(err?.stack ?? err));
 } finally {

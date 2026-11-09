@@ -110,7 +110,7 @@ describe("Session sounds", () => {
 		assert.equal(got.length, 1, JSON.stringify(got));
 		assert.equal(got[0].variant, "Two-note comfort");
 		assert.equal(got[0].volume, 1);
-		assert.equal(got[0].played, true, "a Web Audio context took the cue");
+		assert.equal(got[0].played, true, `a running Web Audio context took the cue: ${JSON.stringify(got[0])}`);
 		assert.ok(got[0].voices > 0, `voices started: ${got[0].voices}`);
 		console.log(`      audio context state in the board webview: ${got[0].state}, voices: ${got[0].voices}`);
 		shot("sounds-1-board-visible");
@@ -134,7 +134,7 @@ describe("Session sounds", () => {
 		shot("sounds-2-board-hidden");
 		const got = await acksDuring(4000, () => turn("echo third turn, board hidden"));
 		assert.equal(got.length, 1, JSON.stringify(got));
-		assert.equal(got[0].played, true);
+		assert.equal(got[0].played, true, JSON.stringify(got[0]));
 		assert.ok(got[0].voices > 0);
 	});
 
@@ -145,7 +145,7 @@ describe("Session sounds", () => {
 		await sleep(3000);
 		const got = await acksDuring(4000, () => turn("echo fourth turn, chat and board"));
 		assert.equal(got.length, 1, JSON.stringify(got));
-		assert.equal(got[0].played, true);
+		assert.equal(got[0].played, true, JSON.stringify(got[0]));
 		shot("sounds-3-chat-and-board");
 	});
 
@@ -160,7 +160,7 @@ describe("Session sounds", () => {
 		assert.equal(got.length, 1, JSON.stringify(got));
 		assert.equal(got[0].variant, "Glass ping");
 		assert.equal(got[0].volume, 0.5);
-		assert.equal(got[0].played, true);
+		assert.equal(got[0].played, true, JSON.stringify(got[0]));
 	});
 
 	it("a question plays the input cue, then answering and finishing plays the completion cue", async () => {

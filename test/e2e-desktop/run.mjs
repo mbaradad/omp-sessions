@@ -227,6 +227,8 @@ try {
 					"--disable-gpu",
 					// Webview audio is held until a person has interacted with the window; nothing here can click, so the policy is lifted (the cue's acknowledgement then reports a running context).
 					"--autoplay-policy=no-user-gesture-required",
+					// No sound card on the test machine (xvfb, WSL): a null sink keeps the Web Audio context running.
+					"--disable-audio-output",
 					"--new-window",
 					...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 				],

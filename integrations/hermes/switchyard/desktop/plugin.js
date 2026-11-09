@@ -1964,6 +1964,7 @@ var unlockInstalled = false;
 function unlockAudioOnGesture() {
   if (unlockInstalled || typeof window === "undefined") return;
   unlockInstalled = true;
+  audioContext();
   const events = ["pointerdown", "keydown", "touchend"];
   const unlock = () => {
     const ac = audioContext();
@@ -2178,6 +2179,7 @@ function playSound(variant, volume = 1) {
   if (variant === "None" || volume <= 0) return false;
   const ac = audioContext();
   if (!ac) return false;
+  if (ac.state !== "running") return false;
   const now = ac.currentTime;
   const master = ac.createGain();
   const tone = ac.createBiquadFilter();

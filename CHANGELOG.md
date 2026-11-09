@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Sounds when sessions finish** (back on Switchyard's planning layer): the cues of Hermes Desktop (ported Web Audio presets, MIT, attributed in `src/shared/completion-sound.ts`) play in an open Switchyard chat or the Sessions Board when a session finishes its turn, asks something, or a queued task ends (a failed or crash-interrupted task sounds like a question). Settings `switchyard.sound.completion` (*Two-note comfort*), `switchyard.sound.input` (*Glass ping*; *None* silences) and `switchyard.sound.volume`; **Switchyard: Test Completion Sound** previews and picks. Scoped like notifications; a session's finish and its planner task's finish sound once; with several windows only one plays. A hidden-but-retained webview plays; the Hermes dashboard's bell does the same in a browser. **Limitation:** VS Code has no extension audio API ([microsoft/vscode#175986](https://github.com/microsoft/vscode/issues/175986)), so with no Switchyard chat or board open nothing plays. A webview the browser engine still holds silent (no click in the window yet) drops the cue instead of bursting it out at the first click, and tells you once.
+- **Sounds: one cue across tabs and windows.** The dedupe key is the AO turn id (or the waiting question's id) instead of the per-client `updatedAt`, which two tabs read differently and so both played; session transitions and planner `task` events claim the same key. `SessionMeta.turnId` and the `turnId` of `switchyard ls --json`'s `meta` carry it.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
