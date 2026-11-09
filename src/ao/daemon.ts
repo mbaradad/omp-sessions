@@ -11,6 +11,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { shimDir, switchyardHome } from "./native";
 
 export const AO_SERVICE = "agent-orchestrator-daemon";
 export const AO_DEFAULT_PORT = 3001;
@@ -202,8 +203,13 @@ export function daemonUnitName(runFile: string, env: NodeJS.ProcessEnv = process
 	return `ao-daemon-${crypto.createHash("sha256").update(path.resolve(runFile)).digest("hex").slice(0, 8)}`;
 }
 
-/** The variables a started daemon needs: AO's own, and PATH/HOME so it finds `omp` and the user's config. */
-function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, string> {
+/**
+ * The variables a started daemon needs: AO's own, and PATH/HOME so it finds `omp` and the user's config.
+ * When the Switchyard `omp` shim is installed (`<switchyard home>/bin/omp`, G34) its folder comes first
+ * on PATH, so AO launches `omp acp` through it and extra arguments reach the agent. A daemon this
+ * module does not start (AO's desktop app, an installed unit) needs that folder on its PATH by hand.
+ */
+export function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const [key, value] of Object.entries(env)) {
 		if (value === undefined) continue;
@@ -212,6 +218,8 @@ function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, stri
 	out.AO_RUN_FILE = runFile;
 	// The supervisor's own client env (AO_BIN is ours, not the daemon's).
 	delete out.AO_BIN;
+	const shim = shimDir(switchyardHome(env));
+	if (isFile(path.join(shim, "omp")) && !(out.PATH ?? "").split(path.delimiter).includes(shim)) out.PATH = [shim, out.PATH].filter(Boolean).join(path.delimiter);
 	return out;
 }
 

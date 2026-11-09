@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { after, before, test } from "node:test";
-import { type AoEvent, AoClient, AoError } from "../../src/ao/client";
+import { type AoEvent, AoClient, AoError, sessionStateFile } from "../../src/ao/client";
 import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
 
@@ -152,6 +152,32 @@ test("stop and resume the agent (MAPPING D4)", async () => {
 	await until(id, m => m.state === "idle", "idle after resume");
 	const messages = (await ao.getConversation(id)).messages.map(m => m.text);
 	assert.ok(messages.some(t => t.includes("SECOND")), "the transcript is still there");
+});
+
+test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempotent retry; a bad option leaves nothing", async () => {
+	const opts = { dir: REPO, displayName: "src/ao spawn", thinking: "off", mode: "edits" as const, prompt: "Reply with exactly: SPAWNED", clientRequestId: `contract-${Date.now()}`, clientMessageId: `contract-msg-${Date.now()}` };
+	const first = await ao.spawnSwitchyard(opts);
+	const id = first.session.id;
+	try {
+		const settled = await until(id, m => m.state === "idle" && (m.reply ?? "").includes("SPAWNED"), "idle with SPAWNED");
+		assert.equal(settled.conversation?.settings.approvalMode, "bypass-permissions", "AO runs it unguarded: the omp extension's gate is the only one");
+		assert.equal(fs.readFileSync(sessionStateFile(id, "mode"), "utf8"), "edits\n");
+		const thinking = (await ao.configOptions(id)).options.find(o => o.id === "thinking");
+		assert.equal(thinking?.currentValue, "off");
+		// Retrying with the same ids is the same session and the same message.
+		const again = await ao.spawnSwitchyard(opts);
+		assert.equal(again.session.id, id);
+		assert.equal(again.sent?.duplicate, true);
+		assert.equal((await ao.getConversation(id)).turns.length, 1);
+		// An option the agent does not offer: refused, and no session (not even a terminated row) is left.
+		const before = (await ao.listSessions({ project: first.project?.id })).sessions.map(s => s.id);
+		await assert.rejects(ao.spawnSwitchyard({ dir: REPO, thinking: "ludicrous" }), /Unknown thinking level "ludicrous"/);
+		await assert.rejects(ao.spawnSwitchyard({ dir: REPO, model: "nope/model" }), /not in AO's model catalog/);
+		assert.deepEqual((await ao.listSessions({ project: first.project?.id })).sessions.map(s => s.id), before);
+	} finally {
+		await ao.killSession(id).catch(() => undefined);
+		await ao.deleteSession(id).catch(() => undefined);
+	}
 });
 
 test("errors carry AO's code", async () => {
