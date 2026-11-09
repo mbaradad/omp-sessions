@@ -14,6 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
 export { AO_SCHEMA_COMMIT };
@@ -30,7 +31,8 @@ export type AoMessage = AoSchemas["ConversationMessageResponse"];
 export type AoActivity = AoSchemas["ConversationActivityResponse"];
 export type AoUsage = AoSchemas["ConversationUsagePayload"];
 export type AoTurnSettings = AoSchemas["ConversationTurnSettingsPayload"];
-export type AoDiffFile = AoSchemas["ConversationDiffFileResponse"];
+export type AoConfigOptions = AoSchemas["ConversationConfigOptionsResponse"];
+export type AoWorkspaceManifest = AoSchemas["WorkspaceManifestResponse"];
 export type AoProject = AoSchemas["ProjectSummary"];
 export type AoSpawnRequest = AoSchemas["SpawnSessionRequest"];
 export type AoSpawnResponse = AoSchemas["SpawnSessionResponse"];
@@ -49,7 +51,8 @@ export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
-export { nativeSessionFile, readNativeSession, switchyardHome } from "./native";
+export { nativeSessionFile, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
+export type { AoSessionMode, SpawnedSwitchyardSession, SpawnSwitchyardOptions } from "./spawn";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -108,6 +111,14 @@ function errorCode(value: unknown): string | undefined {
 	return typeof value === "object" && value !== null && "code" in value && typeof value.code === "string" ? value.code : undefined;
 }
 
+/**
+ * `X-AO-Attachment-Upload: 1` on a request that carries attachments: AO then raises that request's
+ * deadline to at least 10 minutes, so a large image upload is not cut off by the default timeout.
+ */
+function uploadHeaders(body: { attachments?: readonly unknown[] }): Record<string, string> | undefined {
+	return body.attachments && body.attachments.length > 0 ? { "X-AO-Attachment-Upload": "1" } : undefined;
+}
+
 /** The request never reached a daemon (nothing listens there, or it went away mid-connection). */
 function connectionError(error: unknown): boolean {
 	if (!(error instanceof Error) || error.name === "AbortError") return false;
@@ -121,6 +132,8 @@ export class AoClient {
 	private readonly doFetch: typeof fetch;
 	/** Set when connected through discovery: a refused connection looks for the daemon again (it may have restarted on another port). */
 	private readonly discovery: AoConnectOptions | undefined;
+	/** The probe in flight, shared by every request that failed at once. */
+	private rediscovering: Promise<AoDaemon | undefined> | undefined;
 
 	constructor(options: AoClientOptions, discovery?: AoConnectOptions) {
 		this.doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -148,15 +161,23 @@ export class AoClient {
 	/**
 	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
 	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 * Concurrent callers (every in-flight request fails together when the daemon goes down) share one
+	 * probe.
 	 */
-	async rediscover(): Promise<AoDaemon | undefined> {
-		if (!this.discovery) return undefined;
-		const daemon = await findDaemon(this.discovery);
-		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
-			this.currentBaseUrl = daemon.baseUrl;
-			this.client = this.create();
-		}
-		return daemon;
+	rediscover(): Promise<AoDaemon | undefined> {
+		if (!this.discovery) return Promise.resolve(undefined);
+		const discovery = this.discovery;
+		this.rediscovering ??= (async () => {
+			const daemon = await findDaemon(discovery);
+			if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
+				this.currentBaseUrl = daemon.baseUrl;
+				this.client = this.create();
+			}
+			return daemon;
+		})().finally(() => {
+			this.rediscovering = undefined;
+		});
+		return this.rediscovering;
 	}
 
 	private create(): AoApi {
@@ -203,7 +224,7 @@ export class AoClient {
 	}
 
 	spawnSession(body: AoSpawnRequest): Promise<AoSpawnResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions", { body }));
+		return unwrap(this.client.POST("/api/v1/sessions", { headers: uploadHeaders(body), body }));
 	}
 
 	async renameSession(sessionId: string, displayName: string): Promise<void> {
@@ -249,9 +270,11 @@ export class AoClient {
 	/**
 	 * Sends a message: it starts a turn, or queues one behind the running turn. `clientMessageId` makes
 	 * it idempotent (a retry with the same id is reported `duplicate`); one is generated when absent.
+	 * With `attachments` the request carries `X-AO-Attachment-Upload`, which raises AO's request deadline
+	 * for a large image upload (the same for `steer`, `steerOrSend` and `spawnSession`).
 	 */
 	sendMessage(sessionId: string, body: AoSendRequest): Promise<AoSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/**
@@ -259,12 +282,46 @@ export class AoClient {
 	 * `clientMessageId` (generated when absent); after a CHAT_STEER_UNCERTAIN error, retry only with the same one.
 	 */
 	steerOrSend(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSteerOrSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+	}
+
+	/**
+	 * Steers the running turn with this text (omp's `_session/steering`). Refused when no turn runs
+	 * (CHAT_NO_ACTIVE_TURN: send it as a message instead). It also folds every queued message into the
+	 * same steering call, in queue order, and those queued turns end (VALIDATION.md §5): warn before
+	 * steering a session with a queue. `clientMessageId` is generated when absent.
+	 */
+	steer(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSchemas["SteerConversationResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+	}
+
+	/** Delivers one queued message into the running turn now (steers with its text), leaving the others queued. */
+	promoteQueuedTurn(sessionId: string, turnId: string): Promise<AoSchemas["PromoteQueuedTurnResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
 	}
 
 	/** Stops the running turn. */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
+	}
+
+	/** Compacts the conversation (omp's `/compact`). `tokensBefore`/`tokensAfter` come back when the agent reports them. */
+	compact(sessionId: string): Promise<AoSchemas["CompactConversationResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/compact", { params: { path: { sessionId } } }));
+	}
+
+	/** The slash commands and skills the agent offers in this conversation. */
+	async skills(sessionId: string): Promise<AoSchemas["ConversationSkillResponse"][]> {
+		return (await unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation/skills", { params: { path: { sessionId } } }))).skills;
+	}
+
+	/**
+	 * Tells AO a chat view of this session is open (`active`) or closed: AO keeps a keep-awake lease for
+	 * as long as one is open. `viewId` identifies the view (one per panel); send `active: true` again
+	 * periodically while it stays open, and `false` when it closes.
+	 */
+	async chatView(sessionId: string, viewId: string, active: boolean): Promise<void> {
+		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId } }, body: { viewId, active } }));
 	}
 
 	async resolveApproval(sessionId: string, requestId: string, decisionId: string): Promise<void> {
@@ -288,12 +345,28 @@ export class AoClient {
 		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/settings", { params: { path: { sessionId } }, body }));
 	}
 
-	// ---- projects ----
+	/** The agent's own settings (omp: `mode`, `model`, `thinking`), with their choices. */
+	configOptions(sessionId: string): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId } } }));
+	}
+
+	setConfigOption(sessionId: string, configId: string, body: AoSchemas["SetConversationConfigOptionRequest"]): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId, configId } }, body }));
+	}
+
+	// ---- workspace ----
 
 	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
 	async workspacePath(sessionId: string): Promise<string> {
 		return (await unwrap(this.client.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId } } }))).workspacePath;
 	}
+
+	/** The workspace against the base it started from: every changed file with its line counts (empty outside git). */
+	workspaceManifest(sessionId: string): Promise<AoWorkspaceManifest> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/workspace/manifest", { params: { path: { sessionId } } }));
+	}
+
+	// ---- projects ----
 
 	async listProjects(): Promise<AoProject[]> {
 		return (await unwrap(this.client.GET("/api/v1/projects"))).projects;
@@ -311,5 +384,57 @@ export class AoClient {
 	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
+	}
+
+	/**
+	 * Starts a Switchyard session the way every client does (MAPPING D11: bypass launch, the mode file,
+	 * model and thinking validated against the session's own options, extra omp arguments, then the
+	 * prompt with a `clientMessageId`). See spawn.ts.
+	 */
+	spawnSwitchyard(options?: SpawnSwitchyardOptions): Promise<SpawnedSwitchyardSession> {
+		return spawnSwitchyardSession(this, options);
+	}
+
+	// ---- agent accounts (provider limits and usage) ----
+
+	/** Provider accounts AO knows (Claude, Codex devices…) with their limit windows; `refresh` re-reads the providers. */
+	agentAccounts(refresh = false): Promise<AoSchemas["AgentAccountsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts", { params: { query: { refresh } } }));
+	}
+
+	/** Per-account token and cost usage (`costNanos`) over the last `days`. */
+	agentAccountUsage(days?: number): Promise<AoSchemas["AgentAccountUsageResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts/usage", { params: { query: days === undefined ? {} : { days } } }));
+	}
+
+	// ---- daemon ----
+
+	/** `{hostId, apiVersion}`. */
+	identity(): Promise<AoSchemas["IdentityResponse"]> {
+		return unwrap(this.client.GET("/api/v1/identity"));
+	}
+
+	/** The models a harness offers (`omp`: its provider/model ids). */
+	agentModels(agent = "omp", query: NonNullable<paths["/api/v1/agents/{agent}/models"]["get"]["parameters"]["query"]> = {}): Promise<AoSchemas["AgentModelsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/{agent}/models", { params: { path: { agent }, query } }));
+	}
+
+	// ---- mobile (AO's phone app: LAN/tunnel listener and pairing) ----
+
+	mobileStatus(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.GET("/api/v1/mobile/status"));
+	}
+
+	setMobileEnabled(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(enabled ? this.client.POST("/api/v1/mobile/enable") : this.client.POST("/api/v1/mobile/disable"));
+	}
+
+	/** New connection password and pairing link; paired phones must pair again. */
+	regenerateMobile(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/regenerate"));
+	}
+
+	setMobileSecurePairing(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/secure-pairing", { body: { enabled } }));
 	}
 }

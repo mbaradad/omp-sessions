@@ -11,6 +11,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { shimDir, switchyardHome } from "./native";
 
 export const AO_SERVICE = "agent-orchestrator-daemon";
 export const AO_DEFAULT_PORT = 3001;
@@ -187,14 +188,28 @@ function systemdUserAvailable(): boolean {
 	return r.status === 0;
 }
 
-/** systemd unit name: one per run file, so an isolated instance does not collide with the default one. */
+/** True when HOME is not the user's real home (a smoke or e2e run with an isolated HOME). */
+export function isolatedHome(env: NodeJS.ProcessEnv = process.env): boolean {
+	return path.resolve(env.HOME || os.homedir()) !== path.resolve(os.userInfo().homedir);
+}
+
+/**
+ * systemd unit name: `ao-daemon` only for the default instance of the user's real home. Anything else
+ * gets a unit named after its run file: `systemctl --user` talks to the one real user manager whatever
+ * HOME says, so an isolated run must never touch the real `ao-daemon.service`.
+ */
 export function daemonUnitName(runFile: string, env: NodeJS.ProcessEnv = process.env): string {
-	if (path.resolve(runFile) === path.join(os.homedir(), ".ao", "running.json") && !env.AO_DATA_DIR) return "ao-daemon";
+	if (!isolatedHome(env) && path.resolve(runFile) === path.join(os.homedir(), ".ao", "running.json") && !env.AO_DATA_DIR) return "ao-daemon";
 	return `ao-daemon-${crypto.createHash("sha256").update(path.resolve(runFile)).digest("hex").slice(0, 8)}`;
 }
 
-/** The variables a started daemon needs: AO's own, and PATH/HOME so it finds `omp` and the user's config. */
-function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, string> {
+/**
+ * The variables a started daemon needs: AO's own, and PATH/HOME so it finds `omp` and the user's config.
+ * When the Switchyard `omp` shim is installed (`<switchyard home>/bin/omp`, G34) its folder comes first
+ * on PATH, so AO launches `omp acp` through it and extra arguments reach the agent. A daemon this
+ * module does not start (AO's desktop app, an installed unit) needs that folder on its PATH by hand.
+ */
+export function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const [key, value] of Object.entries(env)) {
 		if (value === undefined) continue;
@@ -203,6 +218,8 @@ function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, stri
 	out.AO_RUN_FILE = runFile;
 	// The supervisor's own client env (AO_BIN is ours, not the daemon's).
 	delete out.AO_BIN;
+	const shim = shimDir(switchyardHome(env));
+	if (isFile(path.join(shim, "omp")) && !(out.PATH ?? "").split(path.delimiter).includes(shim)) out.PATH = [shim, out.PATH].filter(Boolean).join(path.delimiter);
 	return out;
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, pendingActivities, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -97,6 +97,19 @@ test("agentState: session lifecycle before and after the conversation", () => {
 	assert.equal(agentState(view({ status: "pr_open" })), "idle");
 });
 
+test("a pending approval whose turn has ended no longer waits for anyone", () => {
+	// As read live after a person's Stop during an approval: the row stays `pending`, the turn is `interrupted`, the agent is ready.
+	const owned = { ...approval, turnId: "t1" };
+	const stopped = conversation({ turns: [turn("t1", "interrupted")], activities: [owned] });
+	assert.equal(pendingActivities(stopped).length, 0);
+	assert.equal(agentState(view(), stopped), "idle");
+	assert.equal(sessionModel(view(), stopped).question, undefined);
+	// While its turn runs (or is queued) it waits; a request with no turn is kept.
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")], activities: [owned] })), "needs_input");
+	assert.equal(pendingActivities(conversation({ activities: [approval] })).length, 1);
+	for (const state of ["completed", "failed", "cancelled", "recovered"] as const) assert.equal(pendingActivities(conversation({ turns: [turn("t1", state)], activities: [owned] })).length, 0, state);
+});
+
 test("agentState: the conversation decides once there is one", () => {
 	const v = view();
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "completed")] })), "idle");
@@ -174,6 +187,36 @@ test("approvals as omp sends them: bare ACP option ids get labels and kinds", ()
 	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
 });
 
+test("write/edit permission prompts arrive as user_input and are approvals too (G12, VALIDATION.md §3)", () => {
+	// As validate read them under omp's always-ask: summary "Allow tool: write\nPath: …", one enum field, resolved through inputs/{id}/resolve.
+	const write = activity({
+		activityKind: "user_input",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: overlay-edit.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: overlay-edit.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const q = questionOf(write);
+	assert.equal(q.kind, "approval");
+	assert.equal(q.title, "Allow tool: write\nPath: overlay-edit.md");
+	assert.deepEqual(q.options, ["Approve", "Approve write for this session", "Deny"]);
+	assert.deepEqual(q.decisions?.map(d => d.kind), ["allow_once", "allow_always", "reject_once"]);
+	// yes/no, number and label all answer it, through the inputs route with the enum value.
+	const accept = (value: string) => ({ kind: "input", body: { action: "accept", content: { value } } });
+	assert.deepEqual(answerFor(q, "yes"), accept("Approve"));
+	assert.deepEqual(answerFor(q, "2"), accept("Approve write for this session"));
+	assert.deepEqual(answerFor(q, "no"), accept("Deny"));
+	assert.deepEqual(answerFor(q, "deny"), accept("Deny"));
+	assert.ok("error" in answerFor(q, "maybe"));
+	// It waits like any approval: needs_input, and the report shows a select.
+	const waiting = conversation({ turns: [turn("t1", "running")], activities: [{ ...write, turnId: "t1" }] });
+	assert.equal(agentState(view(), waiting), "needs_input");
+	assert.equal(sessionModel(view(), waiting).question?.kind, "approval");
+	// omp's `ask` forms are not permission prompts, nor a form that merely has a Yes/No choice.
+	assert.equal(questionOf(ask).kind, "input");
+	const yesNo = activity({ activityKind: "user_input", requestId: "r", detail: { schema: { type: "object", properties: { ok: { type: "string", enum: ["Yes", "No"] } } } } });
+	assert.equal(questionOf(yesNo).kind, "input");
+});
+
 test("answerFor: approvals by number, label or yes/no", () => {
 	const q = questionOf(approval);
 	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "always" });
@@ -206,6 +249,42 @@ test("answerFor: single-field questions and typed fields", () => {
 	assert.deepEqual(answerFor(free, "a | b"), { kind: "input", body: { action: "accept", content: { name: "a | b" } } });
 });
 
+test("an assistant-only history turn after a compaction does not shadow the real last reply (G33, validate's repro)", () => {
+	// repo-10: "2999" was the last reply before the compaction; every restart appends a recovered turn holding only that
+	// assistant message, with a later sequence than the replies that came after it.
+	const history = { ...turn("h1", "recovered"), providerTurnId: "acp-history-turn:h1" };
+	const c = conversation({
+		turns: [turn("t1", "completed"), turn("t2", "completed"), history],
+		messages: [message(1, "user", "count", "t1"), message(2, "assistant", "2999", "t1"), message(3, "user", "next", "t2"), message(4, "assistant", "REAL LAST", "t2"), message(5, "assistant", "2999", "h1")],
+	});
+	assert.equal(lastReply(c), "REAL LAST");
+	assert.equal(sessionModel(view(), c).reply, "REAL LAST");
+	// Several restarts, several copies: still the real one. A conversation of history turns alone has no reply.
+	const twice = conversation({ ...c, turns: [...c.turns, { ...turn("h2", "recovered"), providerTurnId: "acp-history-turn:h2" }], messages: [...c.messages, message(6, "assistant", "2999", "h2")] });
+	assert.equal(lastReply(twice), "REAL LAST");
+	assert.equal(lastReply(conversation({ turns: [history], messages: [message(1, "assistant", "2999", "h1")] })), undefined);
+	// A normal turn's messages (and a message with no turn) still count.
+	assert.equal(lastReply(conversation({ turns: [turn("t1", "completed")], messages: [message(1, "assistant", "plain", "t1"), message(2, "assistant", "no turn")] })), "no turn");
+});
+
+test("turns AO imports from omp's history after resume are not new work (G33)", () => {
+	// As ext-chat read them: steered and image prompts come back `recovered` with an acp-history-turn providerTurnId.
+	const history = (id: string) => ({ ...turn(id, "recovered"), providerTurnId: `acp-history-turn:${id}` });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	const after = conversation({ turns: [turn("t0", "completed"), lost, history("h1"), history("h2")] });
+	// Not counted: one finished turn and one lost one, not four.
+	const q = queueOf(after);
+	assert.deepEqual({ pending: q.pending, running: q.running, done: q.done, total: q.total }, { pending: 0, running: 0, done: 2, total: 2 });
+	// A history turn last does not hide the lost turn before it: reason kept; with the agent down it is interrupted.
+	assert.equal(sessionModel(view(), after).exitReason, AO_LOST_TURN_ERROR);
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), after), "interrupted");
+	// Alone, history turns are an idle conversation with nothing to report.
+	const onlyHistory = conversation({ turns: [history("h1")] });
+	assert.equal(agentState(view(), onlyHistory), "idle");
+	assert.equal(sessionModel(view(), onlyHistory).queue.total, 0);
+	assert.equal(sessionModel(view(), onlyHistory).exitReason, undefined);
+});
+
 test("queueOf: queued turns in order with their prompts", () => {
 	const c = conversation({
 		turns: [turn("t1", "completed"), turn("t2", "running"), turn("t4", "queued"), turn("t3", "queued"), turn("t0", "cancelled")],
@@ -216,19 +295,25 @@ test("queueOf: queued turns in order with their prompts", () => {
 	assert.deepEqual(q.items.map(i => [i.turnId, i.text]), [["t4", "fourth"], ["t3", "third"]]);
 });
 
-test("changedFiles: per-turn diffs merged; rolled back turns and files left out", () => {
-	const c = conversation({
-		turns: [
-			turn("t1", "completed", { diff: { files: [{ path: "a.ts", status: "added", additions: 10, deletions: 0 }, { path: "b.ts", status: "modified", additions: 1, deletions: 1 }] } }),
-			turn("t2", "completed", { rolledBack: true, diff: { files: [{ path: "c.ts", status: "added", additions: 5, deletions: 0 }] } }),
-			turn("t3", "completed", { diff: { files: [{ path: "a.ts", status: "modified", additions: 2, deletions: 1 }, { path: "d.ts", status: "deleted", additions: 0, deletions: 3, rolledBack: true }] } }),
-			turn("t4", "completed", { diff: { files: [{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 0, deletions: 0 }] } }),
-		],
-	});
-	assert.deepEqual(changedFiles(c), [
-		// Created in this session, then edited: still new.
-		{ path: "a.ts", status: "added", additions: 12, deletions: 1 },
-		{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 1, deletions: 1 },
+test("changedFiles: the workspace manifest's changed files; unmodified entries and stray previous paths left out", () => {
+	const file = (path: string, status: "unmodified" | "modified" | "added" | "deleted" | "renamed", additions: number, deletions: number, previousPath?: string) => ({ path, status, additions, deletions, binary: false, editable: true, fileFingerprint: "", size: 0, ...(previousPath && { previousPath }) });
+	const manifest = {
+		degraded: false,
+		refreshing: false,
+		stale: false,
+		truncated: false,
+		sessionId: "repo-1",
+		workspaceVersion: "v1",
+		sections: {} as never,
+		summary: { files: 4, additions: 13, deletions: 4 },
+		// As AO lists them (shape checked live against /workspace/manifest).
+		files: [file("hello.txt", "added", 1, 0), file("a.ts", "modified", 12, 1), file("b.ts", "unmodified", 0, 0), file("e.ts", "renamed", 0, 0, "old.ts"), file("gone.ts", "deleted", 0, 3, "ignored.ts")],
+	};
+	assert.deepEqual(changedFiles(manifest), [
+		{ path: "hello.txt", status: "added", additions: 1, deletions: 0 },
+		{ path: "a.ts", status: "modified", additions: 12, deletions: 1 },
+		{ path: "e.ts", oldPath: "old.ts", status: "renamed", additions: 0, deletions: 0 },
+		{ path: "gone.ts", status: "deleted", additions: 0, deletions: 3 },
 	]);
 });
 

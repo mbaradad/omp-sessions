@@ -130,6 +130,12 @@ export type AoStreamStatus =
 	 */
 	| { state: "open"; cursor: number; resumed: boolean; reset: boolean }
 	| { state: "retrying"; attempt: number; delayMs: number; error: string }
+	/**
+	 * The first event after (re)connecting with a cursor skipped sequences: `after + 1 … next - 1` are
+	 * gone from the daemon's log (pruned by age or size, or a deleted session's rows). Events may have
+	 * been missed; rebuild derived state, as for `reset`. Delivery continues with `next`.
+	 */
+	| { state: "gap"; after: number; next: number }
 	| { state: "closed" };
 
 export interface AoEventStreamOptions {
@@ -137,7 +143,8 @@ export interface AoEventStreamOptions {
 	baseUrl: string | (() => string | Promise<string>);
 	/** Start after this sequence, or at the head (default). */
 	after?: number | "latest";
-	onEvent(event: AoEvent): void;
+	/** Each event with its sequence (the `Last-Event-ID` to persist and pass back as `after`). */
+	onEvent(event: AoEvent, seq: number): void;
 	onStatus?(status: AoStreamStatus): void;
 	fetch?: typeof fetch;
 	/** Reconnect delay: doubles from `initialMs` (default 1 s) up to `maxMs` (default 30 s), with jitter in [0.5, 1). */
@@ -220,6 +227,8 @@ export function subscribeEvents(options: AoEventStreamOptions): AoEventSubscript
 			const reset = previous !== undefined && cursor !== undefined && cursor < previous;
 			if (reset) lastEventId = cursor;
 			status({ state: "open", cursor: cursor ?? lastEventId ?? 0, resumed: delivered && !reset, reset });
+			// Replay starts right after our cursor unless the daemon pruned what came next.
+			let gapAfter = reset ? undefined : previous;
 			failures = 0;
 			const parser = new SseParser();
 			const decoder = new TextDecoder();
@@ -245,10 +254,14 @@ export function subscribeEvents(options: AoEventStreamOptions): AoEventSubscript
 						if (seq !== undefined) lastEventId = seq;
 						continue;
 					}
-					if (seq !== undefined) lastEventId = seq;
+					if (seq !== undefined) {
+						if (gapAfter !== undefined && seq > gapAfter + 1) status({ state: "gap", after: gapAfter, next: seq });
+						gapAfter = undefined;
+						lastEventId = seq;
+					}
 					delivered = true;
 					try {
-						options.onEvent(event);
+						options.onEvent(event, seq ?? event.seq);
 					} catch {
 						// A consumer's bug must not stop delivery to the rest of the stream.
 					}
