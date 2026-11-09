@@ -62,6 +62,13 @@ omp-sessions sched set 2      # at most 2 queued tasks run at once, across all s
 
 The queue runs its tasks one by one. A failed task pauses the queue: `omp-sessions queue <session>` shows it, and `omp-sessions queue <session> retry` retries. `omp-sessions queue <session> at <when|off>` reschedules or cancels a start time; `omp-sessions stop` on a scheduled session cancels its start.
 
+More planning controls:
+
+- **Dependencies:** `omp-sessions new /abs/repo --task "Integrate" --after <session> --after <other>` (or `queue <session> after <s>…|off`) holds the queue until those sessions have finished. Self-dependencies and cycles are refused.
+- **Requeue:** `omp-sessions queue <session> requeue` runs it again: failed tasks go back to pending, else a paused or interrupted queue restarts, else the last finished task runs again.
+- **Completed:** `omp-sessions complete <session>` marks a finished session as done (a ✓ in `ls`/`show`; `completed`, `completedAt` in `--json`); `uncomplete` reopens it. It doesn't stop queued work.
+- **Usage:** a task added with `--usage spare` starts only while every usage window of its provider is below the `sched usage spare <percent>` threshold. Work is held at `sched usage hold <percent>`, and `sched budget <hour|day|week> <usd|off>` caps what queued work may spend. A held session reports `waitReason` (e.g. a provider limit and when it resets); `omp-sessions sched` lists the limits in force.
+
 If the machine reboots or the planner restarts, queued work that hadn't started yet is started again by the planner. A task that was cut short is marked `interrupted` and its queue pauses: it is never rerun on its own. Tell the user, or run it again deliberately with `omp-sessions queue <session> run` (or reschedule it with `queue <session> at <when>`).
 
 ## Wait for a session and read the result

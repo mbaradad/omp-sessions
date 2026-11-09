@@ -250,8 +250,11 @@ export function queueSummary(s: Session): AoReportQueue {
 	return { pending: l.pending, running: l.running, done: l.done, total: l.total, autoRun: l.autoRun, ...(l.startAt !== undefined && { startAt: l.startAt }), ...(l.interrupted !== undefined && { interrupted: l.interrupted }) };
 }
 
-/** `show`/`wait --json`: src/ao's report, plus the session's AO project and branch (where its work lands). */
-export type CliReport = AoSessionReport & { project?: string; branch?: string };
+/**
+ * `show`/`wait --json`: src/ao's report, plus the session's AO project and branch (where its work lands),
+ * the completed marker (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
+ */
+export type CliReport = AoSessionReport & { project?: string; branch?: string; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number };
 
 /**
  * `live`: what only the running agent or the workspace can say. omp's plan mode is its own `mode`
@@ -259,11 +262,14 @@ export type CliReport = AoSessionReport & { project?: string; branch?: string };
  * counts the changed files.
  */
 export function reportOf(s: Session, live: { ompMode?: string; changedFiles?: number } = {}): CliReport {
-	const report: CliReport = sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s) });
+	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s) }), completed: s.lane?.completed !== undefined };
 	if (live.ompMode === "plan") report.mode = "plan";
 	if (live.changedFiles !== undefined) report.changedFiles = live.changedFiles;
 	if (s.project) report.project = s.project.id;
 	if (s.model.branch) report.branch = s.model.branch;
+	if (s.lane?.completed) report.completedAt = s.lane.completed;
+	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
+	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
 	return report;
 }
 
@@ -299,6 +305,10 @@ export function infoJson(s: Session, order: number) {
 		...(s.archived && { archived: true }),
 		...(s.tags.length && { tags: s.tags }),
 		...(s.lane?.waiting && { waiting: s.lane.waiting }),
+		completed: report.completed,
+		...(report.completedAt && { completedAt: report.completedAt }),
+		...(report.waitReason && { waitReason: report.waitReason }),
+		...(report.waitUntil !== undefined && { waitUntil: report.waitUntil }),
 	};
 }
 

@@ -208,3 +208,46 @@ test("cli: new --task --after waits for the other session; queue after refuses i
 	assert.equal(listed?.meta.permissionMode, "auto");
 	assert.match(listed?.meta.lastText ?? "", /echo B ran/);
 });
+
+test("cli: complete/uncomplete mark a session (✓ in ls and show); queue requeue runs the last task again", { skip, timeout: 180_000 }, () => {
+	const created = json("new", repo, "--task", "echo once", "--mode", "auto", "--json");
+	assert.equal(created.status, 0, created.stderr);
+	const id = created.data.id;
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	type Marked = { id: string; completed: boolean; completedAt?: number; changed: boolean };
+	const first = json<Marked>("complete", id, "--json");
+	assert.equal(first.status, 0, first.stderr);
+	assert.deepEqual([first.data.completed, first.data.changed, typeof first.data.completedAt], [true, true, "number"]);
+	assert.equal(json<Marked>("complete", id, "--json").data.changed, false, "already marked");
+	assert.equal(json<{ completed: boolean }>("show", id, "--json").data.completed, true);
+	assert.match(cli("ls", "--all").stdout, new RegExp(`${id}.*✓`));
+	assert.equal(json<{ completed: boolean; changed: boolean }>("uncomplete", id, "--json").data.completed, false);
+	assert.equal(json<{ completed: boolean }>("show", id, "--json").data.completed, false);
+	// A session that never had a task can be marked too.
+	const bare = json("new", repo, "-p", "echo bare", "--mode", "auto", "--json").data.id;
+	assert.equal(json<Marked>("complete", bare, "--json").data.completed, true);
+
+	type Queue = { tasks: Array<{ startedAt?: number }> };
+	const startedBefore = json<Queue>("queue", id, "--json").data.tasks[0].startedAt ?? 0;
+	assert.ok(startedBefore > 0);
+	assert.equal(cli("queue", id, "requeue").status, 0);
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	const startedAfter = json<Queue>("queue", id, "--json").data.tasks[0].startedAt ?? 0;
+	assert.ok(startedAfter > startedBefore, "the task ran again");
+});
+
+test("cli: sched budget, usage and limits are set through the planner; --usage spare needs --task", { skip }, () => {
+	type Status = { budget?: Record<string, number>; usage: { holdAtPercent: number; spareBelowPercent: number }; limits: unknown[] };
+	assert.equal(json<Status>("sched", "budget", "day", "5", "--json").data.budget?.day, 5);
+	assert.equal(json<Status>("sched", "budget", "hour", "1.5", "--json").data.budget?.day, 5, "setting one window keeps the others");
+	assert.equal(json<Status>("sched", "budget", "day", "off", "--json").data.budget?.day, undefined);
+	const usage = json<Status>("sched", "usage", "spare", "40", "--json").data.usage;
+	assert.equal(usage.spareBelowPercent, 40);
+	assert.ok(Array.isArray(json<Status>("sched", "limits", "--json").data.limits));
+	assert.equal(cli("sched", "budget", "year", "5").status, 2);
+	assert.equal(cli("sched", "usage", "hold", "250").status, 2);
+	assert.equal(cli("new", repo, "-p", "echo x", "--usage", "spare").status, 2);
+	const spare = json("new", repo, "--task", "echo spare work", "--usage", "spare", "--mode", "auto", "--json");
+	assert.equal(spare.status, 0, spare.stderr);
+	assert.equal(cli("wait", spare.data.id, "--timeout", "60s").status, 0, "no usage window is full: a spare task runs");
+});

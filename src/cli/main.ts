@@ -17,7 +17,7 @@ import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } fro
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
-import { type LaneSummary, type Planner, type PlannerQueue, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
+import { type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
 import { itemLines, timeline } from "./render";
 import { type AgentState, APPROVAL_OF, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, loadSession, loadSessions, ompModeOption, orderOf, reportOf, resolveSession } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
@@ -132,7 +132,7 @@ function printTable(sessions: Session[]): void {
 	process.stdout.write(c.dim(`${pad("ID", idWidth)}${pad("STATUS", 13)}${pad("", 3)}${pad("TITLE", titleWidth)}${pad("QUEUE", 9)}${pad("PROJECT", 16)}${pad("ACTIVE", 8)}COST\n`));
 	for (const s of sessions) {
 		const prio = s.priority === "urgent" ? c.red(PRIORITY_MARK.urgent) : s.priority === "high" ? c.yellow(PRIORITY_MARK.high) : c.dim(PRIORITY_MARK[s.priority] ?? "  ");
-		const title = truncate(oneLine(s.title), titleWidth - 1);
+		const title = truncate(`${s.lane?.completed !== undefined ? "✓ " : ""}${oneLine(s.title)}`, titleWidth - 1);
 		const group = s.group ? c.dim(` [${s.group}]`) : "";
 		process.stdout.write(
 			`${pad(c.dim(s.id), idWidth)}${pad(stateText(s), 13)}${pad(prio, 3)}${pad(`${s.state === "stopped" ? c.dim(title) : title}${group}`, titleWidth)}${pad(queueText(s.lane), 9)}${pad(c.dim(truncate(projectName(s), 15)), 16)}${pad(c.dim(ago(s.model.updatedAt)), 8)}${c.dim(costText(s.model.cost))}\n`,
@@ -253,6 +253,9 @@ async function cmdNew(args: Args): Promise<number> {
 	if (atArg !== undefined && !task) throw new UsageError("--at schedules a queued task: add --task");
 	const startAt = atArg === undefined ? undefined : parseWhen(atArg);
 	if (args.multi.has("after") && !task) throw new UsageError("--after makes a queued task wait for other sessions: add --task");
+	const usage = value(args, "usage");
+	if (usage !== undefined && usage !== "normal" && usage !== "spare") throw new UsageError("--usage must be normal or spare");
+	if (usage === "spare" && !task) throw new UsageError("--usage spare holds a queued task until provider usage leaves room: add --task");
 	if (task && prompt) throw new UsageError("--prompt starts the session now, --task queues it: pick one");
 	const json = flag(args, "json");
 	const dir = path.resolve(args._[0] ?? process.cwd());
@@ -287,11 +290,13 @@ async function cmdNew(args: Args): Promise<number> {
 	if (lane && task) {
 		const add: QueueOp = { op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), approvalMode } };
 		const arm: QueueOp = startAt ? { op: "schedule", at: startAt } : { op: "autoRun", value: true };
-		if (after.length) {
-			// Dependencies go in before the queue is armed (the task must not start before them), and in a
-			// call of their own: the planner applies `after` to the tasks the lane has when the call starts.
-			await lane.call("queue", { id, ops: [add] });
-			await lane.call("queue", { id, ops: [{ op: "after", ids: after }] });
+		if (after.length || usage === "spare") {
+			// Dependencies and the usage class go in before the queue is armed (the task must not start before
+			// them), in calls of their own: the planner applies `after` to the tasks the lane has when the call starts.
+			const queued = await lane.call("queue", { id, ops: [add] });
+			const taskId = queued.tasks.at(-1)?.id;
+			if (taskId && usage === "spare") await lane.call("edit", { ops: [{ op: "update", id: taskId, usage }] });
+			if (after.length) await lane.call("queue", { id, ops: [{ op: "after", ids: after }] });
 			await lane.call("queue", { id, ops: [arm] });
 		} else await lane.call("queue", { id, ops: [add, arm] });
 		if (priority && isPriority(priority)) await lane.call("edit", { ops: [{ op: "lane.update", id, priority }] });
@@ -368,7 +373,7 @@ async function reportFor(id: string): Promise<CliReport> {
 
 function printReport(r: CliReport): void {
 	const q = r.queue.total ? c.dim(` · queue ${r.queue.done}/${r.queue.total}`) : "";
-	process.stdout.write(`${STATE_COLOR[r.state](r.state.replace("_", " "))} ${r.id} ${c.bold(r.title)}${q}${r.cost ? c.dim(` · $${r.cost.toFixed(2)}`) : ""}\n`);
+	process.stdout.write(`${STATE_COLOR[r.state](r.state.replace("_", " "))} ${r.id} ${c.bold(r.title)}${r.completed ? c.green(" ✓") : ""}${q}${r.cost ? c.dim(` · $${r.cost.toFixed(2)}`) : ""}\n`);
 	if (r.question) {
 		process.stdout.write(`${c.magenta(`? ${r.question.title}`)}${r.question.message ? `\n${r.question.message}` : ""}\n`);
 		r.question.options?.forEach((o, i) => process.stdout.write(`  ${c.bold(String(i + 1))}. ${o}\n`));
@@ -378,6 +383,7 @@ function printReport(r: CliReport): void {
 		});
 		process.stdout.write(c.dim(`answer: omp-sessions answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
+	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
 }
@@ -853,6 +859,7 @@ async function cmdQueue(args: Args): Promise<void> {
 	const q = await p.call("getQueue", { id: s.id });
 	const json = flag(args, "json");
 	let ops: QueueOp[];
+	let spareTask: "top" | "last" | undefined;
 	switch (sub) {
 		case "ls":
 		case "list":
@@ -878,7 +885,11 @@ async function cmdQueue(args: Args): Promise<void> {
 			if (notes.length > MAX_NOTES) throw new UsageError(`the notes are ${notes.length} characters; a task takes up to ${MAX_NOTES}`);
 			const subs = args.multi.get("sub");
 			ops = [{ op: "add", title, ...(notes ? { notes } : {}), ...(subs && { subtasks: subs }), ...(flag(args, "top") ? { index: 0 } : {}) }];
-			if (flag(args, "run")) ops.push({ op: "autoRun", value: true });
+			// A spare task is marked before the queue is armed: --run waits until it is.
+			const usage = value(args, "usage");
+			if (usage !== undefined && usage !== "normal" && usage !== "spare") throw new UsageError("--usage must be normal or spare");
+			if (usage === "spare") spareTask = flag(args, "top") ? "top" : "last";
+			if (flag(args, "run") && !spareTask) ops.push({ op: "autoRun", value: true });
 			break;
 		}
 		case "run":
@@ -893,6 +904,10 @@ async function cmdQueue(args: Args): Promise<void> {
 			break;
 		case "clear":
 			ops = [{ op: "clearDone" }];
+			break;
+		case "requeue":
+			// Failed tasks go back to pending; else a paused or interrupted queue restarts; else the last finished task runs again.
+			ops = [{ op: "requeue" }];
 			break;
 		case "retry":
 			ops = rest[0] ? [{ op: "update", id: taskRef(q, rest[0]).id, status: "pending" }] : [{ op: "retryFailed" }];
@@ -918,9 +933,14 @@ async function cmdQueue(args: Args): Promise<void> {
 			break;
 		}
 		default:
-			throw new UsageError(`unknown queue command "${sub}" (ls, add, run, start, pause, clear, retry, rm, done, skip, at, after)`);
+			throw new UsageError(`unknown queue command "${sub}" (ls, add, run, start, pause, clear, retry, requeue, rm, done, skip, at, after)`);
 	}
-	const next = await p.call("queue", { id: s.id, ops });
+	let next = await p.call("queue", { id: s.id, ops });
+	if (spareTask) {
+		const t = spareTask === "top" ? next.tasks[0] : next.tasks.at(-1);
+		if (t) await p.call("edit", { ops: [{ op: "update", id: t.id, usage: "spare" }] });
+		if (flag(args, "run")) next = await p.call("queue", { id: s.id, ops: [{ op: "autoRun", value: true }] });
+	}
 	if (json) process.stdout.write(`${JSON.stringify(next, null, 2)}\n`);
 	else printQueue(s, next);
 }
@@ -975,11 +995,29 @@ async function cmdOrganize(cmd: string, args: Args): Promise<void> {
 	process.stdout.write(changed ? `${c.green("updated")} ${s.id} ${s.title}\n` : c.dim("no change\n"));
 }
 
+/** `complete|uncomplete <session>`: the completed marker (PARKED §5), kept on the session's planner lane. */
+async function cmdComplete(args: Args, cmd: string): Promise<number> {
+	const s = await findSession(args._[0] ?? ".");
+	const completed = cmd === "complete";
+	const p = await planner();
+	// A session that never had a task has no lane yet: the marker needs one (it holds no tasks).
+	if (!s.lane) await p.call("edit", { ops: [{ op: "lane.add", id: s.id, session: s.id, autoRun: false }] });
+	const before = (await lanesOf(p)).get(s.id)?.completed;
+	if ((before !== undefined) !== completed) await p.call("edit", { ops: [{ op: "lane.complete", id: s.id, completed }] });
+	const after = (await lanesOf(p)).get(s.id)?.completed;
+	const changed = (before !== undefined) !== (after !== undefined);
+	if (flag(args, "json")) process.stdout.write(`${JSON.stringify({ id: s.id, completed: after !== undefined, ...(after ? { completedAt: after } : {}), changed })}\n`);
+	else if (changed) process.stdout.write(`${completed ? c.green("completed ✓") : c.yellow("reopened")} ${s.id} ${s.title}\n`);
+	else process.stdout.write(c.dim("no change\n"));
+	return 0;
+}
+
 // ---------- scheduler (the planner) ----------
 
 async function cmdSched(args: Args): Promise<void> {
 	const [sub, arg] = args._;
-	let set: { maxConcurrent?: number; paused?: boolean } | undefined;
+	let set: Partial<PlannerConfig> | undefined;
+	let budgetSet: ((now: PlannerStatus) => Partial<PlannerConfig>) | undefined;
 	switch (sub) {
 		case undefined:
 		case "status":
@@ -999,10 +1037,37 @@ async function cmdSched(args: Args): Promise<void> {
 			break;
 		case "stop-when-done":
 			throw new UsageError("sched stop-when-done is gone: AO hibernates a chat that has been idle for 90 s, so a finished queue costs nothing (MAPPING, data migration: stopWhenQueueDone dropped)");
+		case "budget": {
+			// budget <hour|day|week> <usd|off>: a cap on what planner-dispatched work may spend in a rolling window.
+			if (arg === undefined) break;
+			const window = arg;
+			if (window !== "hour" && window !== "day" && window !== "week") throw new UsageError("sched budget <hour|day|week> <usd|off>");
+			const amount = args._[2];
+			const usd = amount === "off" || amount === "none" ? null : Number(amount);
+			if (usd !== null && !(Number.isFinite(usd) && usd > 0)) throw new UsageError("sched budget <hour|day|week> <usd|off>");
+			budgetSet = now => {
+				const next = { ...now.budget };
+				if (usd === null) delete next[window];
+				else next[window] = usd;
+				return { budget: next };
+			};
+			break;
+		}
+		case "usage": {
+			// usage hold|spare <percent>: where a provider's usage window holds work, and below which "spare" tasks start.
+			const pct = Number(args._[2]);
+			if ((arg !== "hold" && arg !== "spare") || !(Number.isFinite(pct) && pct > 0 && pct <= 100)) throw new UsageError("sched usage <hold|spare> <percent 1-100>");
+			budgetSet = now => ({ usage: { ...now.usage, ...(arg === "hold" ? { holdAtPercent: pct } : { spareBelowPercent: pct }) } });
+			break;
+		}
+		case "limits":
+			break;
 		default:
-			throw new UsageError(`unknown sched command "${sub}" (status, set N, pause, resume)`);
+			throw new UsageError(`unknown sched command "${sub}" (status, set N, pause, resume, budget, usage, limits)`);
 	}
-	const p = set ? await planner() : await plannerIfRunning();
+	const p = set || budgetSet ? await planner() : await plannerIfRunning();
+	// Budget and usage thresholds replace their whole object in the planner: start from what it has.
+	if (p && budgetSet) set = budgetSet(await p.call("scheduler", {}));
 	const s = p ? await p.call("scheduler", set ? { set } : {}) : undefined;
 	if (flag(args, "json")) {
 		process.stdout.write(`${JSON.stringify(s ? { ...s, server: true } : { server: false })}\n`);
@@ -1013,19 +1078,24 @@ async function cmdSched(args: Args): Promise<void> {
 		return;
 	}
 	const yes = (v: boolean) => (v ? c.green("yes") : c.dim("no"));
-	process.stdout.write(
-		[
-			`max concurrent  ${s.maxConcurrent ? c.bold(String(s.maxConcurrent)) : c.dim("unlimited")}`,
-			`running         ${s.running}`,
-			`waiting         ${s.waiting}`,
-			`scheduled       ${s.scheduled}  ${c.dim("(start at a set time)")}`,
-			`held            ${s.held}  ${c.dim("(usage limits, budget, retry backoff)")}`,
-			`blocked         ${s.blocked}  ${c.dim("(waiting for other tasks)")}`,
-			`interrupted     ${s.interrupted}`,
-			`paused          ${yes(!!s.paused)}`,
-			`planner         ${c.green("running")} ${c.dim(s.version)}`,
-		].join("\n") + "\n",
-	);
+	const at = (ms: number) => new Date(ms).toLocaleString();
+	const rows = [
+		`max concurrent  ${s.maxConcurrent ? c.bold(String(s.maxConcurrent)) : c.dim("unlimited")}`,
+		`running         ${s.running}`,
+		`waiting         ${s.waiting}`,
+		`scheduled       ${s.scheduled}  ${c.dim("(start at a set time)")}`,
+		`held            ${s.held}  ${c.dim("(usage limits, budget, retry backoff)")}`,
+		`blocked         ${s.blocked}  ${c.dim("(waiting for other tasks)")}`,
+		`interrupted     ${s.interrupted}`,
+		`paused          ${yes(!!s.paused)}`,
+		`usage           ${c.dim(`hold work at ${s.usage.holdAtPercent}% of a provider's window; "spare" tasks start below ${s.usage.spareBelowPercent}%`)}`,
+		`budget          ${s.budget && Object.keys(s.budget).length ? Object.entries(s.budget).map(([w, usd]) => `${w} $${usd}`).join(" · ") : c.dim("none")}`,
+		...s.spend.map(u => `  ${u.window.padEnd(5)} $${u.spent.toFixed(2)} of $${u.cap}${u.over ? c.red(` over${u.freesAt ? `, frees ${at(u.freesAt)}` : ""}`) : ""}`),
+		...s.limits.map(l => `limit           ${c.yellow(l.provider)}${l.model ? `/${l.model}` : ""} until ${at(l.until)}${l.guessed ? c.dim(" (guessed)") : ""}  ${c.dim(oneLine(l.reason).slice(0, 80))}`),
+		...s.usageWindows.map(w => `window          ${w.provider} ${w.window} ${w.usedPercent}%${w.resetsAt ? c.dim(` resets ${at(w.resetsAt)}`) : ""}`),
+		`planner         ${c.green("running")} ${c.dim(s.version)}`,
+	];
+	process.stdout.write(`${rows.join("\n")}\n`);
 }
 
 // ---------- server (the planner service) ----------
@@ -1416,7 +1486,7 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
   board [--all] [--json]          sessions by column: waiting, scheduled, working, needs input, idle,
                                   interrupted (--all: also stopped)
   new [dir] [-p prompt|-] [--task t [--sub s]… [--notes n|-] [--at when]] [--title t] [--mode m]
-      [--tag t]… [--group g] [--model m] [--priority p] [--detach] [--json]
+      [--tag t]… [--group g] [--model m] [--priority p] [--usage spare] [--detach] [--json]
                                   start a session in dir's git project (AO gives it its own worktree; a
                                   folder outside git runs in an AO scratch folder); no prompt: attach to
                                   it; --task queues it, --at schedules it (+30m, 14:30, ISO time)
@@ -1451,7 +1521,7 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
 
 ${c.bold("Queue")}  ${c.dim("(the planner runs a session's tasks one by one)")}
   queue <session> [--json]        show its task queue
-  queue <session> add <task|-> [--notes n|-] [--sub s]… [--top] [--run] [--json]
+  queue <session> add <task|-> [--notes n|-] [--sub s]… [--top] [--run] [--usage spare] [--json]
                                   add a task; - reads stdin: its first line is the title, the rest the
                                   notes (long prompts keep their lines; omp gets title and notes)
   queue <session> run [n] | start | pause | clear | retry [n] | rm n | done n | skip n [--json]
@@ -1462,6 +1532,9 @@ ${c.bold("Queue")}  ${c.dim("(the planner runs a session's tasks one by one)")}
   queue <session> after <session>…|off [--json]
                                   the queue waits until those sessions finished (replaces its dependencies;
                                   refused for itself, unknown sessions and cycles); new --task … --after <s>
+  queue <session> requeue [--json]
+                                  run again: failed tasks go back to pending, else a paused or interrupted
+                                  queue restarts, else the last finished task runs again
 
 ${c.bold("Organize")}
   prio <session> <urgent|high|normal|low>
@@ -1469,11 +1542,19 @@ ${c.bold("Organize")}
   group <session> <name|none>
   move <session> <up|down|top|bottom>
   archive|unarchive <session>
+  complete|uncomplete <session> [--json]
+                                  mark it completed (a ✓ in ls and show; queued work still runs)
 
 ${c.bold("Scheduler")}  ${c.dim("(the planner's global limit on queued tasks running at once)")}
   sched [--json]                  status
   sched set <n>                   max concurrent queued tasks (0 = unlimited)
   sched pause|resume
+  sched budget [hour|day|week <usd|off>]
+                                  cap what queued work may spend per rolling hour, day or week
+  sched usage <hold|spare> <percent>
+                                  hold work at that percent of a provider's usage window; "spare" tasks start
+                                  only while every window is below theirs
+  sched limits                    provider limits in force and usage windows (shown by sched too)
 
 ${c.bold("Server")}  ${c.dim("(the planner service: starts queued and scheduled tasks; started on demand)")}
   server status [--json] | start | stop | restart | log [-f] | install | uninstall
@@ -1544,7 +1625,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	version: { flags: ["json"], run: args => cmdVersion(flag(args, "json")) },
 	ls: { flags: ["all", "json", "project", "cwd", "group", "tag", "state"], run: async args => (await cmdList(args), 0) },
 	board: { flags: ["all", "json"], run: async args => (await cmdBoard(args), 0) },
-	new: { flags: ["prompt", "task", "sub", "notes", "at", "after", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
+	new: { flags: ["prompt", "task", "sub", "notes", "at", "after", "usage", "title", "mode", "tag", "group", "model", "priority", "detach", "attach", "json"], run: cmdNew },
 	send: { flags: ["wait", "steer", "follow-up", "json"], run: cmdSend },
 	attach: { flags: ["lines"], run: cmdAttach },
 	tail: { flags: ["lines", "follow"], run: cmdTail },
@@ -1553,12 +1634,14 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	rm: { flags: ["yes"], run: cmdRemove },
 	abort: { flags: ["json"], run: cmdAbort },
 	mode: { flags: [], run: async args => (await cmdMode(args), 0) },
-	queue: { flags: ["sub", "top", "run", "notes", "json"], run: async args => (await cmdQueue(args), 0) },
+	queue: { flags: ["sub", "top", "run", "notes", "usage", "json"], run: async args => (await cmdQueue(args), 0) },
 	prio: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	color: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	group: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	archive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	unarchive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
+	complete: { flags: ["json"], run: cmdComplete },
+	uncomplete: { flags: ["json"], run: cmdComplete },
 	move: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	sched: { flags: ["json"], run: async args => (await cmdSched(args), 0) },
 	server: { flags: ["follow", "json"], run: cmdServer },

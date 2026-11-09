@@ -12,6 +12,7 @@ import { readSwitchyardConfig } from "../shared/switchyard-config";
 
 export type QueueOp = PlannerQueueOp;
 export type PlannerQueue = QueueView;
+export type { PlannerConfig, PlannerStatus } from "../planner/types";
 
 /** `out/planner.js`, next to `out/cli.js` (resolved on use: `__dirname` exists only in the CommonJS bundle). */
 function plannerScript(): string {
@@ -71,6 +72,12 @@ export interface LaneSummary {
 	/** The next task is ready but waits (a slot, usage limits, dependencies); `position` is 1-based in start order, 0 when it isn't waiting for a slot. */
 	waiting?: { position: number };
 	priority?: Priority;
+	/** Why the next task is held, e.g. `rate-limit anthropic until 14:05` (planner usage gating). */
+	waitReason?: string;
+	/** Earliest known end of the wait (epoch ms). */
+	waitUntil?: number;
+	/** Marked completed (epoch ms of the mark; the marker lives on the lane, PARKED §5). */
+	completed?: number;
 }
 
 /** Every lane that continues an AO session, by session id. */
@@ -87,6 +94,10 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		if (cut) summary.interrupted = cut.interrupted ?? cut.startedAt ?? 0;
 		if (next?.state === "scheduled") summary.scheduled = true;
 		if (next && (next.state === "waiting" || next.state === "held" || next.state === "blocked")) summary.waiting = { position: next.position ?? 0 };
+		// Why queued work waits when it isn't a slot or dependency (provider limit, usage window, budget, retry backoff).
+		if (next?.state === "held" && next.waitReason) summary.waitReason = next.waitReason;
+		if (next?.waitUntil !== undefined) summary.waitUntil = next.waitUntil;
+		if (lane.completed) summary.completed = lane.completedAt ?? 0;
 		out.set(session, summary);
 	}
 	return out;

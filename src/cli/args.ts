@@ -3,7 +3,7 @@
 export class UsageError extends Error {}
 
 /** Flags that take a value; everything else is boolean. */
-const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after"]);
+const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after", "usage"]);
 const MULTI_FLAGS = new Set(["sub", "tag", "profile", "after"]);
 const SHORT: Record<string, string> = { p: "prompt", a: "all", f: "follow", y: "yes", n: "lines", t: "title", m: "model", h: "help", w: "wait", d: "detach" };
 
