@@ -1400,15 +1400,15 @@ async function cmdStatus(args: Args): Promise<number> {
 // ---------- config (~/.switchyard/config.json: the model and mode of new sessions, the planner service) ----------
 
 const CONFIG_KEYS = ["model", "mode", "service", "omp.path", "omp.extraArgs"];
-/** AO starts omp itself (its PATH, `omp acp`): launch flags have no AO equivalent (MAPPING G10, Q3). */
-const NO_OMP_FLAGS = "AO finds omp itself (the daemon's PATH) and starts it as `omp acp`; omp.path and omp.extraArgs no longer apply (MAPPING G10)";
+/** AO resolves omp itself (the daemon's PATH): there is no path to set (MAPPING Q3). */
+const NO_OMP_PATH = "omp.path is gone: AO finds omp on the daemon's PATH (set PATH in its unit); omp.extraArgs still works (config set omp.extraArgs -- --profile work)";
 
 function configValue(key: string): unknown {
 	const s = readSwitchyardConfig();
 	if (key === "model") return s.model ?? null;
 	if (key === "mode") return s.mode ?? null;
 	if (key === "service") return s.service ?? "on";
-	if (key === "omp.extraArgs") return [];
+	if (key === "omp.extraArgs") return s.omp?.extraArgs ?? [];
 	return null;
 }
 
@@ -1435,14 +1435,21 @@ async function cmdConfig(args: Args): Promise<number> {
 					`model          ${s.model ?? c.dim("(not set: omp's default model)")}`,
 					`mode           ${s.mode ?? c.dim("(not set: AO's default for omp)")} ${c.dim("(permission mode of new sessions that ask for none)")}`,
 					`service        ${s.service ?? "on"} ${c.dim("(off: the planner isn't installed as a login service by itself)")}`,
+					`omp.extraArgs  ${s.omp?.extraArgs?.length ? s.omp.extraArgs.join(" ") : c.dim("(none)")} ${c.dim("(added to every omp acp an AO session starts; needs the Switchyard omp shim)")}`,
 					c.dim(switchyardConfigPath()),
 				].join("\n") + "\n",
 			);
 			return 0;
 		}
 		case "set": {
-			if (key === undefined) throw new UsageError(`config set <${CONFIG_KEYS.slice(0, 3).join("|")}> <value>`);
-			if (key === "omp.path" || key === "omp.extraArgs") throw new Error(NO_OMP_FLAGS);
+			if (key === undefined) throw new UsageError(`config set <${CONFIG_KEYS.filter(k => k !== "omp.path").join("|")}> <value>`);
+			if (key === "omp.path") throw new Error(NO_OMP_PATH);
+			if (key === "omp.extraArgs") {
+				// Added to every `omp acp` an AO session starts (the omp shim reads the nested key, G34); `none` or no arguments clears them.
+				const clear = rest.length === 0 || (rest.length === 1 && rest[0] === "none");
+				writeSwitchyardConfig({ omp: clear ? undefined : { extraArgs: rest } });
+				break;
+			}
 			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : "config set service <on|off>");
 			const v = rest[0].trim();
 			if (key === "model") {
@@ -1469,8 +1476,9 @@ async function cmdConfig(args: Args): Promise<number> {
 		}
 		case "unset":
 			if (key === undefined) throw new UsageError(`config unset <${CONFIG_KEYS.slice(0, 3).join("|")}>`);
-			if (key === "omp.path" || key === "omp.extraArgs") throw new Error(NO_OMP_FLAGS);
-			writeSwitchyardConfig(key === "model" ? { model: undefined } : key === "mode" ? { mode: undefined } : { service: undefined });
+			if (key === "omp.path") throw new Error(NO_OMP_PATH);
+			if (key === "omp.extraArgs") writeSwitchyardConfig({ omp: undefined });
+			else writeSwitchyardConfig(key === "model" ? { model: undefined } : key === "mode" ? { mode: undefined } : { service: undefined });
 			break;
 		default:
 			throw new UsageError(`unknown config command "${sub}" (get, set, unset)`);
@@ -1528,13 +1536,16 @@ const HELP = `${c.bold("omp-sessions")} — omp sessions on Agent Orchestrator, 
 ${c.bold("Machine")}
   status [--json]                 AO daemon, planner, omp, sessions by state, queued tasks, scheduler and
                                   remote access; exit 1 when something is wrong (never starts anything)
-  config [get [key]] [--json]     settings (~/.switchyard/config.json): model, mode, service
+  config [get [key]] [--json]     settings (~/.switchyard/config.json): model, mode, service, omp.extraArgs
   config set model <provider/id|none> [--force]
                                   default model of new sessions (an explicit --model wins; none: omp's);
                                   only a model omp offers, unless --force
   config set mode <auto|edits|ask|plan|none>
                                   permission mode of new sessions that ask for none (an explicit --mode wins)
   config set service <on|off>     off: never install the planner as a login service by itself · config unset <key>
+  config set omp.extraArgs [--] <arg>…
+                                  arguments added to every omp acp an AO session starts (e.g. -- --profile
+                                  work; none: clear). Applied by the Switchyard omp shim on the daemon's PATH
   models [search] [--json]        the models omp can use (● = the default)
   version [--json]                this CLI, the planner and the AO daemon (also --version, -v)
 
