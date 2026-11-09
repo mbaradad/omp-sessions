@@ -30,7 +30,10 @@ Same wire as the old server (`src/shared/server-protocol.ts`), so `ServerClient`
 `ensurePlanner(script)` connects, or starts the planner (installed service for this home, else detached)
 and waits for it. Env: `SWITCHYARD_PLANNER_STDERR=1` (log to stderr too), `SWITCHYARD_PLANNER_USAGE=off`
 (no `omp usage` poll), `SWITCHYARD_PLANNER_OMP` (omp binary), `SWITCHYARD_PLANNER_RETRY_BASE_MS`; AO is found
-as `src/ao` does (`AO_RUN_FILE`, `AO_PORT`).
+as `src/ao` does (`AO_RUN_FILE`, `AO_PORT`). Knobs for process tests: `SWITCHYARD_PLANNER_POLL_MS` (periodic
+check of running tasks and a scheduling pass; default 10 s), `SWITCHYARD_PLANNER_USAGE_EVERY_MS` (default 5 min),
+`SWITCHYARD_PLANNER_CLOCK_FILE` (test clock: the planner's `now` is real time plus the milliseconds in that file,
+re-read every 100 ms; the planner sees the jump on its next periodic pass).
 
 ## Model
 
@@ -154,8 +157,9 @@ interface PlannerConfig {
   and sends once more.
 - **Limit replies and dead hosts**: omp reports a provider limit it gave up retrying as a *completed* turn
   whose reply is the error (G35); a short reply that opens like a provider limit error holds the provider
-  (until the stated reset, else backoff) and the task goes back to pending without using an attempt. A turn
-  still `running` in a session that reads `exited` (host died, G39) ends the run as `interrupted`.
+  (until the stated reset, else backoff) and the task goes back to pending without using an attempt. Any other provider error omp ends as a completed reply (`Error: …`, a status code and JSON body, "No API key found", …; heuristic on
+  short replies) fails the run and the retry rules apply. A turn still `running` in a session that reads `exited` (host died, G39) ends the
+  run as `interrupted`: noticed from AO's events, and by asking AO every 10 s when none came.
 
 ## Operations
 
@@ -301,8 +305,9 @@ from `omp/autosched` `limits.ts`); (2) usage windows from `omp usage --json`, po
 reports account windows only for Claude/Codex accounts, never for omp sessions; with several accounts on
 one provider the one with most room counts; tier-scoped windows are ignored); (3) spend of
 planner-dispatched tasks (difference of AO's conversation `usage.cost` before/after the turn) against
-`budget`. The provider of a task is the prefix of its effective `model`; a task without a model is gated
-by the budget only. A task is `held` while its provider is limited, any of its windows is ≥
+`budget`. The provider of a task is the prefix of its effective `model`; a task without a model (none on the task,
+its lane or `PlannerConfig.defaults`) has no known provider and is gated by the budget only: set `defaults.model`
+to gate such tasks (and `usage: "spare"` ones) on a provider. A task is `held` while its provider is limited, any of its windows is ≥
 `holdAtPercent`, or a budget cap is reached; a `usage: "spare"` task also waits until every window of
 its provider is < `spareBelowPercent`. `waitUntil` is the earliest known reset. `OMP_PLANNER_USAGE=off`
 disables the omp poll.

@@ -189,3 +189,22 @@ test("a lane is found by its id and by its AO session; its session is known from
 	assert.equal(p.getQueue(refs.l).tasks.length, 3);
 	assert.equal(p.state.lanes.length, 2);
 });
+
+test("any provider error omp ends as a completed reply fails the run (retries apply); a host that died with no event is noticed", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "errs" } }, { op: "add", task: { title: "retries", options: { retries: 1 } } }, { op: "add", task: { title: "silent death" } }]);
+	const sErr = await until("errs sent", () => byTitle(p, "errs").run?.phase === "sent" && byTitle(p, "errs").run?.session);
+	const sRetry = await until("retries sent", () => byTitle(p, "retries").run?.phase === "sent" && byTitle(p, "retries").run?.session);
+	const sDead = await until("dead sent", () => byTitle(p, "silent death").run?.phase === "sent" && byTitle(p, "silent death").run?.session);
+	ao.finishTurn(sErr, "completed", "Error: fake provider failure");
+	ao.finishTurn(sRetry, "completed", '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+	ao.killHostSilently(sDead);
+	await until("errs failed", () => byTitle(p, "errs").status === "failed");
+	assert.match(byTitle(p, "errs").summary ?? "", /Error: fake provider failure/);
+	await until("retry scheduled", () => byTitle(p, "retries").status === "pending" && byTitle(p, "retries").attempts === 1);
+	assert.match(byTitle(p, "retries").summary ?? "", /Attempt 1 of 2 failed/);
+	await until("silent death interrupted", () => byTitle(p, "silent death").interrupted);
+});

@@ -14,7 +14,7 @@ import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
 import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
-import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, spendUse } from "./usage";
+import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, replyIsProviderError, spendUse } from "./usage";
 
 export interface PlannerOptions {
 	/** plan.json; undefined keeps the plan in memory (tests). */
@@ -29,6 +29,8 @@ export interface PlannerOptions {
 	now?: () => number;
 	version?: string;
 	retryBaseMs?: number;
+	/** How often a running task's session is asked about when no event said it died (default 10 s). */
+	livenessMs?: number;
 	/** Fallback poll of running tasks (events usually come first). */
 	pollMs?: number;
 }
@@ -66,6 +68,8 @@ export class Planner {
 	/** Tasks to look at again once their in-flight step ends. */
 	private readonly recheck = new Set<string>();
 	private readonly interruptSent = new Set<string>();
+	/** When AO was last asked whether a running task's session is still alive. */
+	private readonly livenessAt = new Map<string, number>();
 	private tickTimer: NodeJS.Timeout | undefined;
 	private tickDue = 0;
 	private pollTimer: NodeJS.Timeout | undefined;
@@ -196,6 +200,8 @@ export class Planner {
 	/** Checks every running task (fallback for missed events, and after restarts). */
 	private poll(): void {
 		for (const t of this.state.tasks) if (t.status === "running") this.follow(t.id, 0);
+		// Timers drift when the machine sleeps: a periodic pass notices start times and backoffs that came due.
+		this.schedule(0);
 	}
 
 	// ---------- state changes ----------
@@ -664,7 +670,11 @@ export class Planner {
 		}
 		if (turn.state === "queued" || turn.state === "running") {
 			// A dead chat host leaves the turn `running` for good (G39): the run was cut short.
-			if (this.activity.get(session) === "exited" && (await ao.session(session))?.activity === "exited") {
+			// Events usually say so; a missed one is caught by asking AO now and then (at most every 10 s per task).
+			const asked = this.livenessAt.get(id) ?? 0;
+			const suspect = this.activity.get(session) === "exited" || this.now() - asked > (this.opts.livenessMs ?? 10_000);
+			if (suspect) this.livenessAt.set(id, this.now());
+			if (suspect && (await ao.session(session))?.activity === "exited") {
 				this.finish(id, { kind: "lost", reason: "the agent's host died while the turn ran (AO shows the session as exited)." });
 				return;
 			}
@@ -692,6 +702,11 @@ export class Planner {
 				const reply = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant" && !m.streaming).pop()?.text;
 				// omp reports a provider limit it gave up retrying as a completed turn whose reply is the error (G35).
 				if (reply && replyIsLimitError(reply, this.now())) {
+					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
+					return;
+				}
+				// Other provider errors arrive the same way: the run failed (retries apply), it did not finish.
+				if (reply && replyIsProviderError(reply)) {
 					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
 					return;
 				}

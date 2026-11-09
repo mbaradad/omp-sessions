@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { queueOpsToPlanOps, queueView } from "../../src/planner/compat";
 import { type ReadinessContext, advance, applyOps, emptyState, evaluate, finishRun, normalizeOptions, normalizeState, startRun, taskPrompt } from "../../src/planner/engine";
 import type { PlanOp, PlanState, TaskView } from "../../src/planner/types";
-import { holdFor, isLimitError, parseResetAt, replyIsLimitError, spendUse } from "../../src/planner/usage";
+import { holdFor, isLimitError, parseResetAt, replyIsLimitError, replyIsProviderError, spendUse } from "../../src/planner/usage";
 import { parseOmpUsage } from "../../src/planner/usage-source";
 import { nextOccurrence, normalizeRule, parseStartTime } from "../../src/planner/when";
 
@@ -327,6 +327,11 @@ describe("usage gating", () => {
 			"Done. The limit is 429 requests.",
 			"",
 		]) assert.equal(replyIsLimitError(reply, NOW), false, reply.slice(0, 60));
+	});
+
+	test("other provider errors that arrive as a completed reply are recognized too, ordinary replies are not", () => {
+		for (const reply of ["Error: fake provider failure", '529 {"type":"error","error":{"type":"overloaded_error"}}', "No API key found for anthropic.", "Connection error.", "401 \"invalid x-api-key\""]) assert.equal(replyIsProviderError(reply), true, reply);
+		for (const reply of ["Error handling added to the parser; tests pass.", "404 pages fixed and verified.", "Done. I fixed the connection error in the retry loop.", `Error: ${"x".repeat(2000)}`, ""]) assert.equal(replyIsProviderError(reply), false, reply.slice(0, 50));
 	});
 
 	test("omp usage --json: the account with most room counts; tier windows don't gate the provider", () => {
