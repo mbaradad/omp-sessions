@@ -84,6 +84,12 @@ fs.mkdirSync(ompExtensions, { recursive: true });
 const modules = fs.readdirSync(path.join(repo, "out", "omp-extension")).filter(f => f.endsWith(".js")).sort();
 for (const f of modules) fs.copyFileSync(path.join(repo, "out", "omp-extension", f), path.join(ompExtensions, f));
 fs.writeFileSync(path.join(ompExtensions, "package.json"), `${JSON.stringify({ name: "switchyard", private: true, type: "module", omp: { extensions: modules.map(f => `./${f}`) } }, null, "\t")}\n`);
+// The spawn helper refuses a mode other than auto unless the gate is installed where `gateStatus()` looks (omp's agent folder,
+// G46). The real agent folder is shared and must not get an install, so the extension host (only it: not the daemon, not omp)
+// gets PI_CODING_AGENT_DIR pointing at a scratch agent folder holding the same package; omp itself loads the gate from the project.
+const hostAgentDir = path.join(scratch, "host-agent");
+const hostGate = path.join(hostAgentDir, "extensions", "switchyard");
+fs.cpSync(ompExtensions, hostGate, { recursive: true });
 for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]]) {
 	const r = spawnSync("git", args, { cwd: dirs.repo, encoding: "utf8" });
 	if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
@@ -207,6 +213,7 @@ try {
 				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 			],
 			extensionTestsEnv: {
+				PI_CODING_AGENT_DIR: hostAgentDir,
 				...aoEnv,
 				...isolatedEnv,
 				OMP_VSCODE_HOME: ompHome,
