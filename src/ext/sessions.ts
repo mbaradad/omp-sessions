@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoNativeSession, type AoSpawnResponse, type AoTurnSettings, readNativeSession } from "../ao/client";
-import { type AoAgentState, type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
+import { type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
+import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
@@ -11,6 +11,7 @@ import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../s
 import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
+import { approvalModeFor, launchFlags, metaOf } from "./session-view";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -74,104 +75,6 @@ export interface NewSessionOptions {
 	ompArgs?: string[];
 	/** An omp transcript to continue: AO cannot adopt one yet (GAPS G8). */
 	resumeFile?: string;
-}
-
-/** AO launch settings for a permission mode. omp maps AO `default` to its own asking mode and `bypass-permissions` to yolo; plan is omp's `mode` config option. */
-export function approvalModeFor(mode: PermissionMode): { approvalMode: NonNullable<AoTurnSettings["approvalMode"]>; plan: boolean } {
-	switch (mode) {
-		case "ask":
-			return { approvalMode: "default", plan: false };
-		case "edits":
-			return { approvalMode: "accept-edits", plan: false };
-		case "auto":
-			return { approvalMode: "bypass-permissions", plan: false };
-		case "plan":
-			return { approvalMode: "default", plan: true };
-	}
-}
-
-/** The permission mode a conversation runs in; undefined when AO doesn't say. */
-export function permissionModeOf(settings: AoTurnSettings | undefined): PermissionMode | undefined {
-	if (settings?.planMode) return "plan";
-	switch (settings?.approvalMode) {
-		case "default":
-			return "ask";
-		case "accept-edits":
-		case "auto":
-			return "edits";
-		case "bypass-permissions":
-			return "auto";
-	}
-	return undefined;
-}
-
-/** The status the views show for an AO state; `queued`/`interrupted` show as idle with their detail on the queue or exit reason. */
-export function statusOf(state: AoAgentState): SessionStatus {
-	switch (state) {
-		case "starting":
-			return "starting";
-		case "working":
-			return "working";
-		case "needs_input":
-			return "waiting";
-		case "stopped":
-			return "stopped";
-		default:
-			return "idle";
-	}
-}
-
-/** Last assistant text kept for tooltips and board cards. */
-const LAST_TEXT_MAX = 600;
-
-/**
- * The views' session record for an AO session model (`cwd`: its workspace folder; `native`: the omp session
- * the Switchyard omp extension recorded, for the transcript). Host-only fields stay empty: AO runs the agent.
- */
-export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSession): SessionMeta {
-	const state = model.state;
-	const permissionMode = permissionModeOf(model.conversation?.settings);
-	const stoppedWithError = state === "stopped" && !!model.exitReason;
-	const account = model.conversation?.account;
-	const authProblem = account?.authenticationState === "required" ? account.reauthReason || account.lastAuthFailureReason || "the provider needs a login" : undefined;
-	return {
-		id: model.id,
-		cwd,
-		title: model.title,
-		status: statusOf(state),
-		pid: 0,
-		socket: "",
-		createdAt: model.createdAt,
-		updatedAt: model.updatedAt,
-		changedFiles: model.changedFiles.length,
-		...(model.model && { model: model.model }),
-		...(model.cost !== undefined && { cost: model.cost }),
-		...(model.reply && { lastText: model.reply.length > LAST_TEXT_MAX ? `${model.reply.slice(0, LAST_TEXT_MAX)}…` : model.reply }),
-		...(model.exitReason && { exitReason: model.exitReason }),
-		...(stoppedWithError && { exitCode: 1 }),
-		...(permissionMode && { permissionMode }),
-		...(authProblem && { authProblem }),
-		...(native?.ompSessionId && { ompSessionId: native.ompSessionId }),
-		...(native?.sessionFile && { ompSessionFile: native.sessionFile }),
-	};
-}
-
-/** Parses the omp flags `omp acp` can still honor out of old-style launch arguments; returns the others. */
-export function launchFlags(args: readonly string[]): { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } {
-	const out: { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } = { ignored: [] };
-	for (let i = 0; i < args.length; i++) {
-		const a = args[i];
-		const [flag, inline] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
-		const value = () => inline ?? args[++i];
-		if (flag === "--model") out.model = value();
-		else if (flag === "--thinking") out.effort = value();
-		else if (flag === "--approval-mode") {
-			const v = value();
-			if (v === "ask" || v === "edits" || v === "plan" || v === "auto") out.mode = v;
-			else out.ignored.push(`${flag} ${v}`);
-		} else out.ignored.push(a);
-	}
-	return out;
 }
 
 /**

@@ -1,37 +1,31 @@
-// Parallel agents in isolated git worktrees: start a session on its own `omp/<slug>` branch in a
-// sibling `<repo>.worktrees/<slug>` checkout, run the same task N times (best-of-N), compare a
-// branch with its base, merge the winner back, remove the rest.
+// Parallel agents in isolated git worktrees. AO gives every session in a git project its own worktree on
+// its own branch (`ao/<session>/root`, from the project's default branch): start one for a task, run the
+// same task N times (best-of-N), compare a branch with its base, merge the winner back, remove the rest.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { sendToHost } from "../shared/launch";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { loadModels } from "./launch-options";
 import { plain } from "./plain";
-import { projectRoot, resolveOmpPath } from "./sessions";
+import { projectRoot } from "./sessions";
 import {
 	type ChangedFile,
-	type CreatedWorktree,
 	type WorktreeInfo,
 	aheadCount,
 	branchExists,
 	changedSince,
 	conflictedFiles,
-	createWorktree,
 	currentBranch,
 	diffBase,
 	git,
 	gitOk,
 	headOf,
 	isDirty,
-	localBranches,
 	mainRepoRoot,
 	readWorktreeInfo,
 	resolveBase,
-	slugify,
 	taskTitle,
 	writeWorktreeInfo,
 } from "./worktree-git";
@@ -110,35 +104,6 @@ async function confirm(message: string, detail: string, ...actions: string[]): P
 	return vscode.window.showWarningMessage(message, { modal: true, detail }, ...actions);
 }
 
-/** Sends the first prompt straight to the host (the chat may not be connected yet). */
-async function startPrompt(api: OmpApi, id: string, text: string): Promise<boolean> {
-	const meta = api.sessions.get(id);
-	if (!meta || meta.status === "stopped") return false;
-	return sendToHost(meta, { t: "rpc", cmd: { type: "prompt", message: text } });
-}
-
-/** Stops a running session and waits for its host to exit (so the worktree folder is no longer in use). */
-async function stopAndWait(api: OmpApi, id: string): Promise<void> {
-	const meta = api.sessions.get(id);
-	if (!meta || meta.status === "stopped") return;
-	const kill = () => {
-		try {
-			process.kill(meta.pid, "SIGTERM");
-		} catch {
-			/* already gone */
-		}
-	};
-	if (!(await sendToHost(meta, { t: "stop" }))) kill();
-	const deadline = Date.now() + 10_000;
-	while (Date.now() < deadline) {
-		api.sessions.refresh();
-		if (api.sessions.get(id)?.status === "stopped") return;
-		await sleep(200);
-	}
-	kill();
-	await sleep(500);
-}
-
 // ---------- asking ----------
 
 async function askTask(title: string): Promise<string | undefined> {
@@ -150,34 +115,6 @@ async function askTask(title: string): Promise<string | undefined> {
 		validateInput: v => (v.trim() ? undefined : "Describe the task"),
 	});
 	return task?.trim() || undefined;
-}
-
-type RefItem = vscode.QuickPickItem & { ref: string };
-
-/** Base branch: current HEAD first, then local branches; typing any ref (origin/main, a tag, a commit) works too. */
-async function askBase(cwd: string, title: string): Promise<string | undefined> {
-	const current = await currentBranch(cwd);
-	const branches = await localBranches(cwd);
-	const fixed: RefItem[] = [
-		{ label: `$(git-branch) ${current ?? "HEAD"}`, description: current ? "current branch" : "current commit (detached)", ref: current ?? "HEAD" },
-		...branches.filter(b => b !== current).map(b => ({ label: `$(git-branch) ${b}`, ref: b })),
-	];
-	const qp = vscode.window.createQuickPick<RefItem>();
-	qp.title = title;
-	qp.placeholder = "Base branch (Enter = current); or type any branch, tag or commit";
-	qp.items = fixed;
-	qp.ignoreFocusOut = true;
-	qp.onDidChangeValue(v => {
-		const typed = v.trim();
-		qp.items = typed && !fixed.some(i => i.ref === typed) ? [{ label: `$(edit) ${typed}`, description: "use this ref", ref: typed, alwaysShow: true }, ...fixed] : fixed;
-	});
-	const done = Promise.withResolvers<string | undefined>();
-	qp.onDidAccept(() => done.resolve(qp.selectedItems[0]?.ref));
-	qp.onDidHide(() => done.resolve(undefined));
-	qp.show();
-	const ref = await done.promise;
-	qp.dispose();
-	return ref;
 }
 
 type ModelItem = vscode.QuickPickItem & { selector: string };
@@ -217,14 +154,10 @@ async function askModels(cwd: string, title: string): Promise<string[] | undefin
 	return picked;
 }
 
-/** Folder in a git repository with omp available, or undefined after telling the user why not. */
+/** Folder in a git repository, or undefined after telling the user why not. */
 async function repoFolder(api: OmpApi, arg: unknown): Promise<string | undefined> {
 	const folder = await api.pickFolder(arg);
 	if (!folder) return undefined;
-	if (!resolveOmpPath()) {
-		void vscode.window.showErrorMessage("Could not find the `omp` executable. Set `omp.path` in settings.");
-		return undefined;
-	}
 	if (!(await mainRepoRoot(folder))) {
 		void vscode.window.showErrorMessage(plain(`${folder} is not inside a git repository (or git is not installed). Worktree sessions need git.`));
 		return undefined;
@@ -237,38 +170,25 @@ async function repoFolder(api: OmpApi, arg: unknown): Promise<string | undefined
 async function newWorktreeSession(api: OmpApi, arg: unknown): Promise<void> {
 	const folder = await repoFolder(api, arg);
 	if (!folder) return;
-	const step = (n: number) => `New session in a git worktree (${n}/3)`;
+	const step = (n: number) => `New session in a git worktree (${n}/2)`;
 	const task = await askTask(step(1));
 	if (!task) return;
-	const base = await askBase(folder, step(2));
-	if (!base) return;
 	const start = await vscode.window.showQuickPick(
 		[
 			{ label: "$(play) Start working on it", description: "send the task as the first prompt", start: true },
-			{ label: "$(comment-discussion) Just open the chat", description: "the task only names the branch and session", start: false },
+			{ label: "$(comment-discussion) Just open the chat", description: "the task only names the session", start: false },
 		],
-		{ title: step(3), ignoreFocusOut: true },
+		{ title: step(2), ignoreFocusOut: true },
 	);
 	if (!start) return;
-	let created: CreatedWorktree;
-	try {
-		created = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Creating git worktree…" }, () => createWorktree({ from: folder, slug: slugify(task), base }));
-	} catch (err) {
-		void vscode.window.showErrorMessage(plain(`Could not create the worktree: ${errorText(err)}`));
-		return;
-	}
-	const panel = await api.launchAndOpen({ cwd: created.cwd, title: taskTitle(task) });
-	if (!panel) return;
-	writeWorktreeInfo(panel.sessionId, created);
-	api.refreshTree();
-	if (start.start && !(await startPrompt(api, panel.sessionId, task))) void vscode.window.showWarningMessage("The session did not accept the task; send it from the chat.");
-	panel.focusComposer();
+	const panel = await api.launchAndOpen({ cwd: folder, title: taskTitle(task), prompt: start.start ? task : undefined });
+	panel?.focusComposer();
 }
 
 async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	const folder = await repoFolder(api, arg);
 	if (!folder) return;
-	const step = (n: number) => `Best-of-N in git worktrees (${n}/4)`;
+	const step = (n: number) => `Best-of-N in git worktrees (${n}/3)`;
 	const task = await askTask(step(1));
 	if (!task) return;
 	const models = await askModels(folder, step(2));
@@ -282,48 +202,22 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 		{ title: step(3), placeHolder: "How many parallel runs?", ignoreFocusOut: true },
 	);
 	if (!count) return;
-	const baseRef = await askBase(folder, step(4));
-	if (!baseRef) return;
-	let base: { base: string; baseCommit: string };
-	try {
-		base = await resolveBase(folder, baseRef);
-	} catch (err) {
-		void vscode.window.showErrorMessage(plain(errorText(err)));
-		return;
-	}
 	const runs = runsFor(count.n);
 	const batch = crypto.randomBytes(4).toString("hex");
-	const slug = slugify(task, 34);
-	const created: Array<{ wt: CreatedWorktree; model?: string; index: number }> = [];
-	await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Creating ${runs.length} git worktrees…` }, async () => {
-		// One at a time: concurrent `git worktree add` races on the repository's lock files.
-		for (const [i, model] of runs.entries()) {
-			try {
-				created.push({ wt: await createWorktree({ from: folder, slug: `${slug}-${i + 1}`, ...base }), model, index: i + 1 });
-			} catch (err) {
-				void vscode.window.showErrorMessage(plain(`Could not create worktree ${i + 1}: ${errorText(err)}`));
-			}
-		}
-	});
-	if (!created.length) return;
-	const defaults = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
 	const title = taskTitle(task, 50);
-	const started = await Promise.all(
-		created.map(async ({ wt, model, index }) => {
-			const panel = await api.launchAndOpen({
-				cwd: wt.cwd,
-				title: `${title} #${index}${model ? ` · ${model.split("/").pop()}` : ""}`,
-				ompArgs: model ? [...defaults, "--model", model] : undefined,
-			});
-			if (!panel) return false;
-			writeWorktreeInfo(panel.sessionId, { ...wt, batch });
-			return startPrompt(api, panel.sessionId, task);
-		}),
-	);
+	// One at a time: AO creates each run's worktree, and concurrent `git worktree add` races on the repository's lock files.
+	const started: SessionMeta[] = [];
+	for (const [i, model] of runs.entries()) {
+		const panel = await api.launchAndOpen({ cwd: folder, title: `${title} #${i + 1}${model ? ` · ${model.split("/").pop()}` : ""}`, prompt: task, model });
+		const meta = panel && api.sessions.get(panel.sessionId);
+		const wt = meta && worktreeOf(meta);
+		if (!meta || !wt) continue;
+		writeWorktreeInfo(meta.id, { ...(await withBase(wt)), createdAt: Date.now(), batch });
+		started.push(meta);
+	}
 	api.refreshTree();
-	const ok = started.filter(Boolean).length;
 	const pick = await vscode.window.showInformationMessage(
-		plain(`Started ${ok} of ${runs.length} runs on ${created.map(c => c.wt.branch).join(", ")}. When they finish, compare each with "Compare with Base", merge the best one, then remove the others.`),
+		plain(`Started ${started.length} of ${runs.length} runs, each in its own AO worktree. When they finish, compare each with "Compare with Base", merge the best one, then remove the others.`),
 		"Show Sessions",
 	);
 	if (pick) await vscode.commands.executeCommand("omp.sessions.focus");
@@ -468,24 +362,23 @@ async function mergeIntoMain(api: OmpApi, arg: unknown): Promise<void> {
 	}
 }
 
+/**
+ * Removes the session from AO, which deletes its worktree; AO keeps a worktree with uncommitted changes, so
+ * those are discarded first when the user agrees. Then deletes its branch if asked.
+ */
 async function removeSession(api: OmpApi, meta: SessionMeta, wt: SessionWorktree, opts: { deleteBranch: boolean; forceBranch: boolean }): Promise<boolean> {
-	await stopAndWait(api, meta.id);
-	if (fs.existsSync(wt.worktree)) {
-		let res = await git(wt.mainRoot, ["worktree", "remove", wt.worktree]);
-		if (res.code !== 0) {
-			const force = await confirm(`Could not remove the worktree of "${meta.title}".`, `${res.stderr.trim()}\n\nForce removal deletes its uncommitted and untracked changes.`, "Force Remove");
-			if (force !== "Force Remove") return false;
-			res = await git(wt.mainRoot, ["worktree", "remove", "--force", wt.worktree]);
-			if (res.code !== 0) {
-				void vscode.window.showErrorMessage(plain(`git worktree remove failed: ${res.stderr.trim()}`));
-				return false;
-			}
-		}
-	} else await git(wt.mainRoot, ["worktree", "prune"]);
+	api.closePanel(meta.id);
 	try {
-		fs.rmdirSync(path.dirname(wt.worktree)); // the `<repo>.worktrees` folder, once empty
-	} catch {
-		/* not empty */
+		if (wt.present && (await isDirty(wt.worktree))) {
+			const force = await confirm(`"${meta.title}" has uncommitted changes in its worktree.`, `${wt.worktree}\n\nRemoving the session deletes them (AO refuses to delete a worktree with changes).`, "Discard and Remove");
+			if (force !== "Discard and Remove") return false;
+			await gitOk(wt.worktree, ["reset", "--hard", "-q"]);
+			await gitOk(wt.worktree, ["clean", "-fdq"]);
+		}
+		await api.sessions.remove(meta.id);
+	} catch (err) {
+		void vscode.window.showErrorMessage(plain(`Could not remove "${meta.title}": ${errorText(err)}`));
+		return false;
 	}
 	if (opts.deleteBranch && wt.branch && (await branchExists(wt.mainRoot, wt.branch))) {
 		let res = await git(wt.mainRoot, ["branch", "-d", wt.branch]);
@@ -495,8 +388,6 @@ async function removeSession(api: OmpApi, meta: SessionMeta, wt: SessionWorktree
 			if (force && res.code !== 0) void vscode.window.showWarningMessage(plain(`Could not delete ${wt.branch}: ${res.stderr.trim()}`));
 		}
 	}
-	api.closePanel(meta.id);
-	api.sessions.remove(meta.id);
 	api.refreshTree();
 	return true;
 }
@@ -507,7 +398,7 @@ async function removeWorktree(api: OmpApi, arg: unknown): Promise<void> {
 	const { meta, wt } = picked;
 	const choice = await confirm(
 		`Remove "${meta.title}" and its worktree?`,
-		`${meta.status === "stopped" ? "" : "Stops the session, "}deletes the worktree folder\n${wt.worktree}\nand the session record. The omp transcript is kept.${wt.branch ? `\n\nBranch: ${wt.branch}` : ""}`,
+		`${meta.status === "stopped" ? "" : "Stops the session, "}deletes it from AO with its worktree folder\n${wt.worktree}\nThe omp transcript is kept.${wt.branch ? `\n\nBranch: ${wt.branch}` : ""}`,
 		"Remove",
 		"Remove and Delete Branch",
 	);
