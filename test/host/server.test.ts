@@ -63,7 +63,7 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	};
 
 	const server: ChildProcess = spawn(process.execPath, [SERVER_JS], {
-		env: { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" },
+		env: { ...process.env, OMP_VSCODE_HOME: home, SWITCHYARD_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" },
 		stdio: "ignore",
 	});
 	let viewer: HostConnection | undefined;
@@ -110,6 +110,7 @@ test("server: queued sessions start by priority within the limit; done ones stop
 	assert.equal(settled?.autoRun, false);
 
 	process.env.OMP_VSCODE_HOME = home;
+	process.env.SWITCHYARD_HOME = home;
 	const client = await ServerClient.connect();
 	assert.ok(client, "server answers on its socket");
 	const list = await client.request("list", {});
@@ -140,7 +141,7 @@ test("server after a reboot: queued work resumes, a task the reboot cut short is
 	const old = new Date(Date.now() - 60_000);
 	fs.utimesSync(path.join(home, "server.pid"), old, old);
 
-	const env = { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" };
+	const env = { ...process.env, OMP_VSCODE_HOME: home, SWITCHYARD_HOME: home, FAKE_OMP_SESSIONS: fake, OMP_SESSIONS_DONE_GRACE_MS: "300" };
 	// Started together, only one server keeps running.
 	const servers: ChildProcess[] = [0, 1, 2].map(() => spawn(process.execPath, [SERVER_JS], { env, stdio: "ignore" }));
 	const pids = new Set<number>();
@@ -167,6 +168,7 @@ test("server after a reboot: queued work resumes, a task the reboot cut short is
 	assert.equal(meta("midtask")?.pid, deadPid, "never relaunched");
 
 	process.env.OMP_VSCODE_HOME = home;
+	process.env.SWITCHYARD_HOME = home;
 	const client = await ServerClient.connect();
 	assert.ok(client, "server answers on its socket");
 	const list = await client.request("list", {});
