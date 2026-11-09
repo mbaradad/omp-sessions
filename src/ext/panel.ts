@@ -227,6 +227,8 @@ export class ChatPanel implements vscode.Disposable {
 	/** `!command` output waiting to go into the next prompt's context. */
 	private shellContext: string[] = [];
 	private shell: ChildProcess | undefined;
+	/** Tool cards whose inline diff comes from the checkpoints extension. */
+	private readonly checkpointCards = new Set<string>();
 	/** Identifies this chat's keep-awake lease on the AO chat. */
 	private readonly viewId = crypto.randomUUID();
 	private outbox: ToWebview[] = [];
@@ -337,6 +339,8 @@ export class ChatPanel implements vscode.Disposable {
 
 	/** Feed output, shrunk for the (possibly remote) webview channel. */
 	private postFeed(msg: ToWebview): void {
+		// An edit the checkpoints extension recorded is diffed from its snapshots (what Review and Revert use); AO's text diff is the fallback.
+		if (msg.type === "diffs" && this.checkpointCards.has(msg.toolCallId)) return;
 		if (msg.type !== "event") return this.post(msg);
 		const ev = slimFrame(msg.ev);
 		if (ev) this.post({ type: "event", ev });
@@ -459,7 +463,7 @@ export class ChatPanel implements vscode.Disposable {
 			state: this.state,
 			commands: mergeCommands(this.serverCommands, this.snippets),
 			changes: view.changes,
-			diffs: { ...view.diffs, ...snap.diffs },
+			diffs: { ...snap.diffs, ...view.diffs },
 			connected: this.streamOpen,
 			home: os.homedir(),
 			queue: await this.queueView(),
@@ -603,7 +607,12 @@ export class ChatPanel implements vscode.Disposable {
 			const card = this.feed.activityIdOf(c.toolCallId);
 			if (!card) continue;
 			out.changes.push({ ...c, toolCallId: card });
-			out.diffs[card] = cp.toolDiffs(this.sessionId, c);
+			const diffs = cp.toolDiffs(this.sessionId, c);
+			// A change whose snapshots are too large to diff has no diffs: AO's stay.
+			if (Object.keys(diffs).length) {
+				out.diffs[card] = diffs;
+				this.checkpointCards.add(card);
+			}
 		}
 		return out;
 	}
@@ -614,7 +623,10 @@ export class ChatPanel implements vscode.Disposable {
 		if (!cp) return;
 		for (const c of added) {
 			const card = this.feed.activityIdOf(c.toolCallId);
-			if (card) this.post({ type: "change", change: { ...c, toolCallId: card }, diffs: cp.toolDiffs(this.sessionId, c) });
+			if (!card) continue;
+			const diffs = cp.toolDiffs(this.sessionId, c);
+			if (Object.keys(diffs).length) this.checkpointCards.add(card);
+			this.post({ type: "change", change: { ...c, toolCallId: card }, diffs });
 		}
 		this.post({ type: "checkpoints", redo: cp.redoCount(this.sessionId) });
 		this.schedule();

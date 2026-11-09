@@ -1816,7 +1816,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			return;
 		case "change": {
 			changesByTool.set(msg.change.toolCallId, msg.change);
-			diffsByTool.set(msg.change.toolCallId, msg.diffs);
+			if (Object.keys(msg.diffs).length) diffsByTool.set(msg.change.toolCallId, msg.diffs);
 			const card = cards.get(msg.change.toolCallId);
 			if (card) scheduleCard(card);
 			if (meta) {
