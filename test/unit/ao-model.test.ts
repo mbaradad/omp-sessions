@@ -122,10 +122,14 @@ test("agentState: the conversation decides once there is one", () => {
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "hibernated" })), "queued");
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "connecting" })), "starting");
 	assert.equal(agentState(v, conversation({ controller: "recovering" })), "starting");
-	// The agent died while a turn ran: AO fails the turn and reports the agent exited. Someone has to look.
+	// A person's Stop mid-turn (`exit-agent`, observed live): every turn is settled at once, the first with
+	// "Request cancelled", the rest "controller ended before the turn completed". Nothing is left open: stopped,
+	// with the reason. (A crash leaves the turns open until the agent is resumed: the cases below.)
 	const exited = view({ activity: { state: "exited", lastActivityAt: T } });
 	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
-	assert.equal(agentState(exited, conversation({ turns: [lost] })), "interrupted");
+	const cancelled = turn("t0", "failed", { errorMessage: 'ACP session/prompt: {"code":-32800,"message":"Request cancelled"}' });
+	assert.equal(agentState(exited, conversation({ turns: [lost], controller: "stopped" })), "stopped");
+	assert.equal(agentState(exited, conversation({ turns: [cancelled, lost], controller: "stopped" })), "stopped");
 	assert.equal(sessionModel(exited, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
 	// A turn that failed on its own (provider error) leaves a live agent: idle, with the reason.
 	const failed = conversation({ turns: [turn("t1", "failed", { errorMessage: "rate limited" })] });
@@ -144,6 +148,23 @@ test("agentState: the conversation decides once there is one", () => {
 	// A stale activity signal does not override a settled conversation.
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" }), conversation({ turns: [turn("t1", "completed")] })), "idle");
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "completed")], controller: "busy" })), "working");
+});
+
+test("agentState: a crash and a person's Stop both read `exited`; the open work tells them apart (G39)", () => {
+	const exited = view({ activity: { state: "exited", lastActivityAt: T } });
+	// Crash: a turn left running, or a message left queued (the agent never took it), under a dead agent.
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "running")], controller: "stopped" })), "interrupted");
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "completed"), turn("t2", "queued")], controller: "stopped" })), "interrupted");
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "completed"), turn("t2", "queued")], controller: "stopped" })), "interrupted");
+	// A person's Stop settles the running and the queued turns: nothing open, so it is just stopped.
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "completed"), turn("t2", "interrupted")], controller: "stopped" })), "stopped");
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "completed"), turn("t2", "cancelled")], controller: "stopped" })), "stopped");
+	// Not a crash: an agent that is coming back (activity can still read exited for a moment)...
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "queued")], controller: "connecting" })), "starting");
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "running")], controller: "recovering" })), "working");
+	// ...and one AO hibernated on purpose: its queued message wakes it.
+	assert.equal(agentState(view({ hibernatedAt: T }), conversation({ turns: [turn("t1", "queued")], controller: "hibernated" })), "queued");
+	assert.equal(agentState(view({ hibernatedAt: T, activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "queued")], controller: "stopped" })), "queued");
 });
 
 test("agentState: the planner's lane state wins only while the session itself is idle or stopped", () => {
@@ -275,9 +296,11 @@ test("turns AO imports from omp's history after resume are not new work (G33)", 
 	// Not counted: one finished turn and one lost one, not four.
 	const q = queueOf(after);
 	assert.deepEqual({ pending: q.pending, running: q.running, done: q.done, total: q.total }, { pending: 0, running: 0, done: 2, total: 2 });
-	// A history turn last does not hide the lost turn before it: reason kept; with the agent down it is interrupted.
+	// A history turn last does not hide the lost turn before it: the reason is kept. Under an exited agent nothing is open: stopped.
 	assert.equal(sessionModel(view(), after).exitReason, AO_LOST_TURN_ERROR);
-	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), after), "interrupted");
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), after), "stopped");
+	// But a history turn is never the open work either: a crash is still seen through a real running turn.
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "running"), history("h1")], controller: "stopped" })), "interrupted");
 	// Alone, history turns are an idle conversation with nothing to report.
 	const onlyHistory = conversation({ turns: [history("h1")] });
 	assert.equal(agentState(view(), onlyHistory), "idle");
