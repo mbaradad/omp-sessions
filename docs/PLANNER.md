@@ -174,7 +174,7 @@ interface PlannerConfig {
 | `getQueue` | `{id}` (lane id or AO session id) | `TaskQueue` view of the lane (old shape + `after?` per task) |
 | `queue` | `{id, ops: QueueOp[]}` (old ops + `after`, `requeue`) | same `TaskQueue` view |
 | `sync` | `{id, rerun?}` (task id or AO session id) | `{task, rerun, edges: EdgeView[]}`: propagates now **and answers when done** (commit the worktree, merge into the children); with `rerun` it queues the "re-run with parent changes" run instead (`edges` = the state at that moment) |
-| `scheduler` | `{set?: Partial<PlannerConfig>}` | `PlannerStatus` |
+| `scheduler` | `{set?: Partial<PlannerConfig>, clearLimits?: true \| string[]}` | `PlannerStatus`. `clearLimits`: forget the provider limits learned from failed turns (`true` = all, or the named providers; others stay); held work starts at once. `set.budget` replaces the whole budget object (read-modify-write to change one window) |
 | `status` | – | `PlannerStatus` |
 | `shutdown` | – | `{}` |
 
@@ -220,7 +220,7 @@ Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults
 `lane.update {id, title?, priority?|null, defaults?}`, `lane.remove {id}` (removes its non-running
 tasks), `lane.pause {id}`, `lane.resume {id}` (autoRun on), `lane.startAt {id, at: number|null}`,
 `lane.requeue {id}` (old `requeueOps`), `lane.retryFailed {id}`, `lane.clearDone {id}`,
-`lane.complete {id, completed: boolean}`.
+`lane.complete {id, completed: boolean}`: the mark clears itself when a task of the lane starts, and when a person types a prompt (not a `/command`) into the lane's session while no planner task runs there (PARKED §5).
 
 Recurring ops: `recur.add {recurring: {title?, rule, task, lane?, skipIfRunning?, enabled?}, ref?}`,
 `recur.update {id, …}`, `recur.remove {id}`, `recur.fire {id}` (add a copy now).
@@ -342,6 +342,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
 - 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).
 - 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
 - 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.

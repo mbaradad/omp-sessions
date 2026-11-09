@@ -464,7 +464,8 @@ export interface PlannerOps {
 	 * children's, and (with `rerun`) runs it once more first with the upstream note. `id`: task id or AO session id.
 	 */
 	sync: { args: { id: string; rerun?: boolean }; result: { task: string; rerun: boolean; edges: EdgeView[] } };
-	scheduler: { args: { set?: Partial<PlannerConfig> }; result: PlannerStatus };
+	/** `clearLimits`: forget the provider limits learned from failed turns (`true`: all, or the named providers); held work may start again. */
+	scheduler: { args: { set?: Partial<PlannerConfig>; clearLimits?: true | string[] }; result: PlannerStatus };
 	status: { args: Record<string, never>; result: PlannerStatus };
 	shutdown: { args: Record<string, never>; result: Record<string, never> };
 }

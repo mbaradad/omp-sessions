@@ -184,6 +184,7 @@ export class Planner {
 			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.syncUnlessUndo(t.id, session);
 		}
 		if (activity !== before) this.refreshUndone(session);
+		if (activity === "active" && before !== "active") void this.clearCompletedOnPrompt(session);
 	}
 
 	/** Propagates a finished task's branch after activity in its session, unless that activity was `/undo` or `/redo` (checkpoints: not work to propagate). */
@@ -196,6 +197,25 @@ export class Planner {
 			return;
 		}
 		await this.propagation.sync(id);
+	}
+
+	/** A person typed a prompt into a completed lane's session (not one of ours, not a `/command`): the lane is not completed any more (PARKED §5). */
+	private async clearCompletedOnPrompt(session: string): Promise<void> {
+		const lane = this.state.lanes.find(l => l.completed && l.session === session);
+		if (!lane || this.state.tasks.some(t => t.status === "running" && (t.run?.session ?? t.session) === session)) return;
+		try {
+			const last = (await this.ao?.conversation(session))?.messages.filter(m => m.role === "user").pop()?.text ?? "";
+			if (!last.trim() || last.trim().startsWith("/")) return;
+		} catch {
+			return;
+		}
+		this.commit(s => {
+			const l = s.lanes.find(x => x.id === lane.id);
+			if (l?.completed) {
+				delete l.completed;
+				delete l.completedAt;
+			}
+		});
 	}
 
 	private readonly undoneTimers = new Map<string, NodeJS.Timeout>();
@@ -326,7 +346,17 @@ export class Planner {
 		return this.state.lanes.find(l => l.id === id)?.id ?? this.state.lanes.find(l => l.session === id)?.id ?? id;
 	}
 
-	setConfig(set: Partial<PlannerConfig> | undefined): PlannerStatus {
+	setConfig(set: Partial<PlannerConfig> | undefined, clearLimits?: true | string[]): PlannerStatus {
+		if (clearLimits) {
+			const providers = clearLimits === true ? Object.keys(this.state.limits) : clearLimits.filter(p => p in this.state.limits);
+			if (providers.length) {
+				this.commit(s => {
+					for (const p of providers) delete s.limits[p];
+				});
+				this.log("limits cleared", providers.join(", "));
+				this.schedule(0);
+			}
+		}
 		if (set && Object.keys(set).length) {
 			const config = normalizeConfig({ ...this.state.config, ...set, usage: { ...this.state.config.usage, ...set.usage } }, this.state.config);
 			this.commit(s => {

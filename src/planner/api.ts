@@ -59,7 +59,7 @@ export function createApiServer(opts: ApiOptions): net.Server {
 		edit: a => planner.edit(Array.isArray(a.ops) ? (a.ops as PlanOp[]) : [], typeof a.rev === "number" ? a.rev : undefined),
 		getQueue: a => planner.getQueue(str(a.id, "id")),
 		queue: a => planner.queue(str(a.id, "id"), Array.isArray(a.ops) ? (a.ops as QueueOp[]) : []),
-		scheduler: a => planner.setConfig(rec(a.set) as Partial<PlannerConfig>),
+		scheduler: a => planner.setConfig(rec(a.set) as Partial<PlannerConfig>, a.clearLimits === true || (Array.isArray(a.clearLimits) && a.clearLimits.every(x => typeof x === "string")) ? (a.clearLimits as true | string[]) : undefined),
 		status: () => planner.status(),
 		shutdown: () => {
 			setTimeout(() => opts.shutdown("shutdown request"), 50);

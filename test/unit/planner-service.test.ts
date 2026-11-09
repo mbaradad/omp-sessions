@@ -316,3 +316,49 @@ test("a new session starts with the user's default model and mode (config.json) 
 	assert.equal(byTitle(p, "second").run?.via, "send");
 	assert.equal(byTitle(p, "second").run?.settings?.model, undefined, "a continued session keeps its own model");
 });
+
+test("`scheduler {clearLimits}` forgets a provider limit and held work starts; a completed lane is cleared by new work and by a person's prompt (not by a /command)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "held", options: { model: "anthropic/claude-x" } } }]);
+	const s = await until("sent", () => byTitle(p, "held").run?.phase === "sent" && byTitle(p, "held").run?.session);
+	ao.finishTurn(s, "completed", "429 You have reached your usage limit. Your limit resets at 2099-01-01T00:00:00Z. Try again in 9 hours.");
+	await until("held", () => p.state.limits.anthropic && byTitle(p, "held").status === "pending");
+	assert.equal(p.view().tasks.find(x => x.title === "held")?.state, "held");
+	p.setConfig(undefined, ["openai"]);
+	assert.ok(p.state.limits.anthropic, "naming another provider leaves it");
+	p.setConfig(undefined, true);
+	assert.equal(p.state.limits.anthropic, undefined);
+	await until("held task re-dispatched", () => byTitle(p, "held").status === "running");
+
+	// A lane marked completed: new work clears the mark, so does a person's prompt, a /command doesn't.
+	const q = new FakeAo();
+	const p2 = start(tempPlan(t), q);
+	t.after(() => p2.stop());
+	p2.edit([{ op: "lane.add", id: "l_00000000cc" }, { op: "add", task: { title: "one", lane: "l_00000000cc" } }]);
+	const s2 = await until("one sent", () => byTitle(p2, "one").run?.phase === "sent" && byTitle(p2, "one").run?.session);
+	q.finishTurn(s2, "completed", "done");
+	await until("one done", () => byTitle(p2, "one").status === "done");
+	p2.edit([{ op: "lane.complete", id: "l_00000000cc", completed: true }]);
+	assert.equal(p2.state.lanes[0].completed, true);
+	p2.edit([{ op: "add", task: { title: "two", lane: "l_00000000cc" } }]);
+	await until("two running", () => byTitle(p2, "two").status === "running");
+	assert.equal(p2.state.lanes[0].completed, undefined, "a task of the lane started");
+	q.finishTurn(byTitle(p2, "two").run?.session as string, "completed", "done");
+	await until("two done", () => byTitle(p2, "two").status === "done");
+	p2.edit([{ op: "lane.complete", id: "l_00000000cc", completed: true }]);
+	const session = byTitle(p2, "two").session as string;
+	const personSays = (text: string) => {
+		const sess = q.sessions.get(session);
+		assert.ok(sess);
+		sess.conv.messages.push({ turnId: "t-person", role: "user", text, streaming: false });
+		q.poke(session, "idle");
+		q.poke(session, "active");
+	};
+	personSays("/undo");
+	await sleep(300);
+	assert.equal(p2.state.lanes[0].completed, true, "a /command is not a prompt");
+	personSays("one more thing please");
+	await until("cleared by the prompt", () => p2.state.lanes[0].completed === undefined);
+});
