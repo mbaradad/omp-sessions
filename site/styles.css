@@ -1150,11 +1150,6 @@ em {
 	margin-left: auto;
 }
 
-.pi {
-	color: #d7a6ff;
-	font-weight: 700;
-}
-
 /* Hero sequence: plays once, only with motion allowed. */
 @media (prefers-reduced-motion: no-preference) {
 	.seq {
