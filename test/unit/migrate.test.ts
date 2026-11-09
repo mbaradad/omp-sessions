@@ -8,8 +8,9 @@ import * as path from "node:path";
 import { after, test } from "node:test";
 import { graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "../../src/migrate/graft";
 import { readLegacyState } from "../../src/migrate/legacy";
-import { type Ledger, mergeOrganize, planSessions } from "../../src/migrate/migrate";
+import { type Ledger, mergeOrganize, planSessions, queueImportOps } from "../../src/migrate/migrate";
 import { emptyOrgData, type OrgData } from "../../src/shared/organize";
+import type { QueueTask } from "../../src/shared/protocol";
 
 const temps: string[] = [];
 after(() => {
@@ -182,4 +183,37 @@ test("organize merge: old ids become AO ids, adopted pins leave the file, existi
 	assert.deepEqual(Object.keys(second.data.sessions).sort(), ["ao-a", "ao-b", "ao-c"]);
 	assert.deepEqual(second.data.sessions["ao-c"], { color: "red" });
 	assert.deepEqual(mergeOrganize(second.data, legacy, { a: "ao-a", b: "ao-b", c: "ao-c" }).data, second.data);
+});
+
+test("queue import: one paused lane on the AO session, tasks in order with their status, a future start kept", () => {
+	const now = 1_000;
+	const task = (id: string, status: QueueTask["status"], extra: Partial<QueueTask> = {}): QueueTask => ({ id, title: `T ${id}`, subtasks: [], status, createdAt: 1, ...extra });
+	const ops = queueImportOps(
+		"repo-3",
+		"Old title",
+		{
+			autoRun: true,
+			startAt: 5_000,
+			tasks: [
+				task("a", "done", { summary: "ok" }),
+				task("b", "skipped"),
+				task("c", "failed", { notes: "n", summary: "boom" }),
+				task("d", "running", { options: { model: "p/m", retries: 2 }, subtasks: [{ id: "s", title: "sub", done: true }] }),
+				task("e", "pending"),
+			],
+		},
+		"high",
+		now,
+	);
+	assert.deepEqual(ops, [
+		{ op: "lane.add", id: "repo-3", title: "Old title", session: "repo-3", autoRun: false, priority: "high" },
+		{ op: "add", ref: "old0", task: { title: "T a", subtasks: [], lane: "repo-3", done: true } },
+		{ op: "add", ref: "old1", task: { title: "T b", subtasks: [], lane: "repo-3" } },
+		{ op: "skip", id: "@old1" },
+		{ op: "add", ref: "old2", task: { title: "T c", notes: "n\n\nLast run failed: boom", subtasks: [], lane: "repo-3" } },
+		{ op: "add", ref: "old3", task: { title: "T d", subtasks: [{ title: "sub", done: true }], lane: "repo-3", options: { model: "p/m", retries: 2 } } },
+		{ op: "add", ref: "old4", task: { title: "T e", subtasks: [], lane: "repo-3" } },
+		{ op: "lane.startAt", id: "repo-3", at: 5_000 },
+	]);
+	assert.equal(queueImportOps("x", "t", { autoRun: false, startAt: 500, tasks: [] }, "normal", now).length, 1);
 });

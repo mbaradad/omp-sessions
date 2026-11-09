@@ -12,10 +12,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type AoClient, type AoSchemas, type AoSpawnRequest, gitRoot, nativeSessionFile, switchyardHome, unwrap } from "../ao/client";
+import { type AoClient, AoError, type AoSchemas, type AoSpawnRequest, gitRoot, nativeSessionFile, switchyardHome, unwrap } from "../ao/client";
+import type { PlanOp, PlannerOpName, PlannerOps } from "../planner/types";
 import { ompPaths, locateTranscript } from "../shared/omp-paths";
-import { emptyOrgData, normalizeOrgData, type OrgData } from "../shared/organize";
+import { emptyOrgData, normalizeOrgData, type OrgData, type Priority } from "../shared/organize";
 import { type PermissionMode, permissionModeInArgs, permissionModeOf } from "../shared/permissions";
+import type { TaskQueue } from "../shared/protocol";
 import { graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "./graft";
 import { type LegacySession, type LegacyState, legacyHome, readLegacyState } from "./legacy";
 
@@ -40,6 +42,8 @@ export interface LedgerSession {
 	transcript?: string;
 	/** Messages AO showed after importing the history. */
 	importedMessages?: number;
+	/** Its old task queue is a planner lane now (or had nothing to import). */
+	queueImported?: boolean;
 	spawnedAt: number;
 	updatedAt: number;
 }
@@ -51,6 +55,13 @@ export interface Ledger {
 	backups: string[];
 	/** Old omp Sessions id → its AO session. */
 	sessions: Record<string, LedgerSession>;
+	/** scheduler.json went to the planner's config. */
+	schedulerImported?: boolean;
+}
+
+/** The part of PlannerClient the migration uses. */
+export interface PlannerPort {
+	request<K extends PlannerOpName>(op: K, args: PlannerOps[K]["args"]): Promise<PlannerOps[K]["result"]>;
 }
 
 export interface MigrateOptions {
@@ -65,6 +76,8 @@ export interface MigrateOptions {
 	only?: readonly string[];
 	/** Model the adopted sessions continue with (appended to the copied transcript). */
 	model?: string;
+	/** The planner, for task queues and scheduler.json; without it they wait for a later run. */
+	planner?: PlannerPort;
 	log?: (line: string) => void;
 	/** Tests: how long to wait for the spawned session's transcript. */
 	transcriptTimeoutMs?: number;
@@ -92,6 +105,8 @@ export interface MigrateReport {
 	sessions: SessionOutcome[];
 	organize?: { groups: number; sessions: number; written: boolean };
 	config?: { set: Record<string, string>; written: boolean };
+	/** Task queues: lanes imported now, and those waiting for the planner. */
+	queues?: { imported: number; waiting: number };
 	/** Old state that does not come over, with the reason. */
 	dropped: string[];
 	ledger: string;
@@ -99,6 +114,35 @@ export interface MigrateReport {
 
 const MODE_TO_AO: Record<PermissionMode, AoApprovalMode> = { ask: "default", edits: "accept-edits", plan: "default", auto: "auto" };
 const SPAWN_REQUEST_PREFIX = "switchyard-migrate:";
+
+/**
+ * Planner edits that recreate an old task queue as the session's lane, in order. The lane starts
+ * paused: a migration never starts work by itself (a future `startAt` the user set still arms it).
+ * Done and skipped tasks keep their status; running, failed and pending ones come back pending, a
+ * failure's reason in the notes.
+ */
+export function queueImportOps(lane: string, title: string, queue: TaskQueue, priority: Priority | undefined, now = Date.now()): PlanOp[] {
+	const ops: PlanOp[] = [{ op: "lane.add", id: lane, title, session: lane, autoRun: false, ...(priority && priority !== "normal" && { priority }) }];
+	queue.tasks.forEach((t, i) => {
+		const ref = `old${i}`;
+		const notes = t.status === "failed" && t.summary ? [t.notes, `Last run failed: ${t.summary}`].filter(Boolean).join("\n\n") : t.notes;
+		ops.push({
+			op: "add",
+			ref,
+			task: {
+				title: t.title,
+				...(notes && { notes }),
+				subtasks: t.subtasks.map(s => ({ title: s.title, done: s.done })),
+				lane,
+				...(t.options && { options: { ...t.options } }),
+				...(t.status === "done" && { done: true }),
+			},
+		});
+		if (t.status === "skipped") ops.push({ op: "skip", id: `@${ref}` });
+	});
+	if (queue.startAt && queue.startAt > now) ops.push({ op: "lane.startAt", id: lane, at: queue.startAt });
+	return ops;
+}
 
 function readLedger(file: string, source: string): Ledger {
 	try {
@@ -344,9 +388,21 @@ async function adopt(ctx: AdoptContext, action: Extract<SessionAction, { kind: "
 	}
 	if (entry.state === "grafted") {
 		if ((await activityState(client, aoId)) === "exited") {
-			await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: aoId } } }));
+			try {
+				await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: aoId } } }));
+			} catch (err) {
+				// An interrupted run's resume may still be in flight in AO; wait for it below instead.
+				if (!(err instanceof AoError && err.status === 409)) throw err;
+			}
 		}
-		const conversation = await client.getConversation(aoId);
+		// AO imports the replayed history while the controller connects; it is complete once ready.
+		const deadline = Date.now() + ctx.transcriptTimeoutMs * 4;
+		let conversation = await client.getConversation(aoId);
+		while (conversation.controller !== "ready" && Date.now() < deadline) {
+			await sleep(1000);
+			conversation = await client.getConversation(aoId);
+		}
+		if (conversation.controller !== "ready") throw new Error(`AO did not finish resuming ${aoId} (controller ${conversation.controller})`);
 		entry.importedMessages = conversation.messages.length;
 		if (!entry.importedMessages) throw new Error(`AO resumed ${aoId} but shows no history`);
 		// Stopped like any idle session; the next message resumes it.
@@ -390,15 +446,14 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	report.dropped = droppedItems(state);
 
 	log(`${opts.apply ? "Migrating" : "Dry run: would migrate"} ${source} → AO + ${home}`);
-	const pending = actions.filter(a => a.kind === "adopt");
-	const writes = pending.length > 0 || !!state.organize || Object.keys(legacyConfig).length > 0;
-	if (opts.apply && writes) {
+	// The first write of a run (an AO spawn, a file of ours, a planner edit) is preceded by a backup.
+	const beforeWrite = () => {
+		if (report.backup) return;
 		report.backup = backupLegacy(source, home);
 		ledger.backups.push(report.backup);
 		writeJsonAtomic(ledgerFile, ledger);
 		log(`Backed up ${source} to ${report.backup}`);
-	}
-
+	};
 	const saveLedger = () => writeJsonAtomic(ledgerFile, ledger);
 	for (const action of actions) {
 		if (action.kind === "done") {
@@ -422,6 +477,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		const outcome: SessionOutcome = { id: action.id, title: action.title, kind: "adopt", ...(action.notes.length && { notes: action.notes }) };
 		if (opts.apply && opts.client) {
 			try {
+				beforeWrite();
 				outcome.aoSessionId = await adopt(
 					{ client: opts.client, ledger, saveLedger, sessionsDir, home, model: opts.model, pinned: state.organize?.sessions[action.id]?.pinned === true, log, transcriptTimeoutMs: opts.transcriptTimeoutMs ?? 30_000 },
 					action,
@@ -439,6 +495,8 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 
 	const idMap: Record<string, string> = {};
 	for (const [oldId, e] of Object.entries(ledger.sessions)) if (e.state === "done") idMap[oldId] = e.aoSessionId;
+	// A dry run counts the sessions it would adopt as adopted (their AO ids are not known yet).
+	if (!opts.apply) for (const a of actions) if (a.kind === "adopt") idMap[a.id] = `<AO id of ${a.id}>`;
 	if (state.organize) {
 		let existing: OrgData | undefined;
 		try {
@@ -449,7 +507,10 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		const merged = mergeOrganize(existing, state.organize, idMap);
 		const changed = JSON.stringify(merged.data) !== JSON.stringify(existing ?? emptyOrgData());
 		report.organize = { groups: merged.groups, sessions: merged.sessions, written: opts.apply && changed };
-		if (opts.apply && changed) writeJsonAtomic(organizeFile, merged.data);
+		if (opts.apply && changed) {
+			beforeWrite();
+			writeJsonAtomic(organizeFile, merged.data);
+		}
 		log(`organize.json: ${merged.groups} group(s), ${merged.sessions} session entr${merged.sessions === 1 ? "y" : "ies"} ${opts.apply ? (changed ? "merged into" : "already in") : "would be merged into"} ${organizeFile}`);
 	} else if (state.organizeError) {
 		log(`organize.json: unreadable (${state.organizeError}); not migrated`);
@@ -466,10 +527,61 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		const set: Record<string, string> = {};
 		for (const [k, v] of Object.entries(legacyConfig)) if (!(k in existing)) set[k] = v;
 		const written = opts.apply && Object.keys(set).length > 0;
-		if (written) writeJsonAtomic(configFile, { ...existing, ...set });
+		if (written) {
+			beforeWrite();
+			writeJsonAtomic(configFile, { ...existing, ...set });
+		}
 		report.config = { set, written };
 		const text = Object.entries(set).map(([k, v]) => `${k}=${v}`).join(", ") || "nothing new";
 		log(`launcher.json → ${configFile}: ${text}${opts.apply ? "" : " (dry run)"}`);
+	}
+
+	// Task queues → planner lanes keyed by the AO session id; scheduler.json → the planner's config.
+	const queues = { imported: 0, waiting: 0 };
+	for (const s of state.sessions) {
+		if (!s.queue || (opts.only && !opts.only.includes(s.id))) continue;
+		const entry = ledger.sessions[s.id];
+		if (entry?.queueImported) continue;
+		const pending = s.queue.tasks.filter(t => t.status !== "done" && t.status !== "skipped").length;
+		const what = `${s.queue.tasks.length} task(s), ${pending} not done`;
+		if (!opts.apply) {
+			if (idMap[s.id]) log(`queue of ${s.id}: ${what} would become a paused planner lane`);
+			continue;
+		}
+		if (entry?.state !== "done") continue;
+		if (!opts.planner) {
+			queues.waiting++;
+			continue;
+		}
+		try {
+			// A lane already holding tasks was imported by a run that stopped before its ledger write.
+			const existing = await opts.planner.request("getQueue", { id: entry.aoSessionId });
+			if (!existing.tasks.length) {
+				beforeWrite();
+				await opts.planner.request("edit", { ops: queueImportOps(entry.aoSessionId, s.title, s.queue, state.organize?.sessions[s.id]?.priority) });
+			}
+			entry.queueImported = true;
+			saveLedger();
+			queues.imported++;
+			log(`queue of ${s.id}: ${what} → paused planner lane ${entry.aoSessionId}`);
+		} catch (err) {
+			queues.waiting++;
+			log(`queue of ${s.id}: the planner refused it (${errorText(err)})`);
+		}
+	}
+	if (queues.waiting) log(`${queues.waiting} task queue(s) wait for the planner: run migrate --apply again once it runs`);
+	if (opts.apply) report.queues = queues;
+	if (state.scheduler && !ledger.schedulerImported) {
+		const set = { maxConcurrent: state.scheduler.maxConcurrent, ...(state.scheduler.paused && { paused: true }) };
+		const text = `max ${set.maxConcurrent || "unlimited"} at once${set.paused ? ", paused" : ""}`;
+		if (!opts.apply) log(`scheduler.json: ${text} would go to the planner`);
+		else if (opts.planner) {
+			beforeWrite();
+			await opts.planner.request("scheduler", { set });
+			ledger.schedulerImported = true;
+			saveLedger();
+			log(`scheduler.json: ${text} → planner`);
+		} else log("scheduler.json waits for the planner: run migrate --apply again once it runs");
 	}
 	for (const d of report.dropped) log(`not migrated: ${d}`);
 	if (!opts.apply) log("Dry run: nothing was written. Run again with --apply to migrate.");
