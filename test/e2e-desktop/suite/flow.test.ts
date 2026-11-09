@@ -14,6 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { sessionReport } from "../../../src/ao/report";
 import type { OmpApi } from "../../../src/ext/api";
+import { ensurePlanner } from "../../../src/planner/client";
 import type { ChatPanel } from "../../../src/ext/panel";
 
 const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
@@ -85,6 +86,8 @@ describe(`Switchyard flow, phase ${PHASE}`, () => {
 
 		it("queue three tasks from the composer and run the queue; they are still open when VS Code closes", async () => {
 			const { id, cwd } = JSON.parse(fs.readFileSync(STATE, "utf8")) as FlowState;
+			// The planner is the user service that starts on demand; the run pins SWITCHYARD_NO_SERVER, which also keeps this window from starting it.
+			assert.ok(await ensurePlanner(path.join(vscode.extensions.getExtension("mbaradad.switchyard")?.extensionPath ?? "", "out", "planner.js")), "the planner is running (isolated SWITCHYARD_HOME)");
 			await vscode.commands.executeCommand("switchyard.setPermissionMode", id, "auto");
 			await waitFor("auto mode", () => api.sessions.get(id)?.permissionMode === "auto", 60_000);
 			const panel = api.openPanel(id, "editor");
@@ -105,7 +108,20 @@ describe(`Switchyard flow, phase ${PHASE}`, () => {
 			await vscode.commands.executeCommand("switchyard.tasks.focus");
 			await sleep(2000);
 			shot("flow-3-tasks-done");
-			const undone = await vscode.commands.executeCommand("switchyard.undo", id);
+			// Undo asks first in a modal VS Code refuses to show under test: answer it as the person would (Undo), and keep what it said.
+			const realWarning = vscode.window.showWarningMessage;
+			const asked: string[] = [];
+			(vscode.window as { showWarningMessage: unknown }).showWarningMessage = async (message: string, _options: unknown, ...items: string[]) => {
+				asked.push(message);
+				return items[0];
+			};
+			let undone: unknown;
+			try {
+				undone = await vscode.commands.executeCommand("switchyard.undo", id);
+			} finally {
+				(vscode.window as { showWarningMessage: unknown }).showWarningMessage = realWarning;
+			}
+			assert.deepEqual(asked, ["Undo the last prompt?"]);
 			assert.ok(undone, "undo resolved with omp's result");
 			await waitFor("c.txt gone after undo", () => !fs.existsSync(path.join(cwd, "c.txt")), 120_000);
 			assert.ok(fs.existsSync(path.join(cwd, "a.txt")) && fs.existsSync(path.join(cwd, "b.txt")), "earlier tasks' files stay");

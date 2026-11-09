@@ -267,6 +267,9 @@ try {
 	} catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
+	// The planner outlives VS Code on purpose: this run's one (its state dir is the scratch one) is ended here.
+	const plannerStop = spawnSync(process.execPath, [path.join(repo, "out", "cli.js"), "server", "stop"], { env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome }, encoding: "utf8", timeout: 30_000 });
+	check("scratch planner stopped", plannerStop.status === 0 || /not running/i.test(`${plannerStop.stdout}${plannerStop.stderr}`), `${plannerStop.stdout}${plannerStop.stderr}`.trim().slice(0, 120));
 	// `ao stop` with the instance's env (POST /shutdown answers DAEMON_OWNER_CHANGED to a client that did not start it).
 	const stop = spawnSync(ao, ["stop"], { env: { ...process.env, ...aoEnv, ...isolatedEnv }, encoding: "utf8", timeout: 30_000 });
 	for (const p of watched) check(`real ${path.relative(realHome, p)} untouched`, fingerprint(p) === realBefore.get(p), `${realBefore.get(p)} → ${fingerprint(p)}`);
