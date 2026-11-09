@@ -42,11 +42,10 @@ if [ -z "$real" ]; then
 	exit 127
 fi
 
-if [ "$1" = acp ] && [ -n "$AO_SESSION_ID" ]; then
-	runtime=$(command -v node || command -v bun || true)
-	extra=
-	if [ -n "$runtime" ]; then
-		js=$(cat <<'JS'
+# The JSON reader, as a function: a here-document inside `$(…)` is misparsed by macOS's /bin/sh (bash 3.2),
+# which takes the quotes and parentheses of the body for shell syntax and fails the whole script.
+extra_js() {
+	cat <<'JS'
 const fs = require("fs"), path = require("path");
 const home = process.env.SWITCHYARD_HOME || path.join(process.env.HOME || "", ".switchyard");
 const strings = v => (Array.isArray(v) && v.every(x => typeof x === "string") ? v : undefined);
@@ -68,8 +67,13 @@ const id = process.env.AO_SESSION_ID || "";
 if (/^[A-Za-z0-9._-]+$/.test(id) && id !== "." && id !== "..") out.push(...attempt(() => words(fs.readFileSync(path.join(home, "sessions", id, "omp-args"), "utf8"))));
 process.stdout.write(out.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(" "));
 JS
-)
-		extra=$("$runtime" -e "$js" 2>/dev/null) || extra=
+}
+
+if [ "$1" = acp ] && [ -n "$AO_SESSION_ID" ]; then
+	runtime=$(command -v node || command -v bun || true)
+	extra=
+	if [ -n "$runtime" ]; then
+		extra=$("$runtime" -e "$(extra_js)" 2>/dev/null) || extra=
 	else
 		home=${SWITCHYARD_HOME:-$HOME/.switchyard}
 		file="$home/sessions/$AO_SESSION_ID/omp-args"
