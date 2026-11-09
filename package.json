@@ -2187,7 +2187,8 @@
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",
 		"test:hermes": "node integrations/hermes/tests/run.mjs",
-		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs"
+		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs",
+		"ao:schema": "node scripts/ao-schema.mjs"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",
@@ -2199,6 +2200,7 @@
 		"highlight.js": "^11.12.0",
 		"marked": "^18.1.3",
 		"mocha": "^11.8.0",
+		"openapi-fetch": "^0.17.0",
 		"qrcode-generator": "^2.0.4",
 		"typescript": "^7.0.2"
 	}
