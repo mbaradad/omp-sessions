@@ -49,8 +49,7 @@ interface TaskOptions {               // superset of QueueTaskOptions
   timeoutMinutes?: number;            // interrupt the turn → failed (or retried)
   cwd?: string;                       // folder to work in (planner maps it to an AO project)
   project?: string;                   // AO project id (wins over cwd)
-  worktree?: "auto" | "always" | "never";   // see "Worktrees" below
-  approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
+  mode?: "ask" | "edits" | "plan" | "auto";   // permission mode of a session the planner starts (default auto); enforced by the Switchyard omp extension's gate
 }
 
 interface Task {                      // superset of QueueTask: same names, same meaning
@@ -140,21 +139,21 @@ interface PlannerConfig {
 - **Session lanes**: a lane whose id is an AO session id (`queue` op on a session) continues that
   session; tasks dispatch only while it has no turn running. A free task that runs again (requeue, `run`)
   continues its own session unless `freshContext` is set or AO no longer has it (then a new session starts).
-- **Worktrees**: `cwd` inside a git repo → AO project session for that repo (registered on first use);
-  AO gives every project session its own worktree and branch `ao/<slug>/root`, so parallel tasks never
-  share a checkout (`auto` and `always` behave the same). `always` outside git fails the dispatch;
-  `never` in a git folder fails it too (AO can't run in the checkout itself). Outside git → standalone
-  session (AO scratch dir).
-- **Approvals**: sessions the planner spawns start in `bypass-permissions` (MAPPING D11: an unattended
-  task can't wait for an approval) unless `approvalMode` says otherwise (task, lane `defaults` or planner
-  `defaults`). A task whose agent does ask (approval or question) stays `running`, and AO shows the session
-  as needing input until a person answers through AO.
-- **Dispatch sequence** (MAPPING D11, idempotent step by step; each step is written to the plan first):
-  check the model against AO's list (unknown → the task fails at once, no session is left behind), spawn
-  with no prompt (`clientRequestId`), set `thinking` through the session's config options, send the task
-  as a message (`clientMessageId`). A continued session first gets `resume-agent` when it reads `exited`,
-  and model/thinking are put back after the turn. A `CHAT_CONTROLLER_NOT_READY` on send resumes the agent
-  and sends once more.
+- **Worktrees** (user decision Q1): every git task runs in an AO worktree, there is no option: `cwd` inside a git
+  repo → AO project session for that repo (registered on first use); AO gives every project session its own
+  worktree and branch `ao/<slug>/root`, so parallel tasks never share a checkout. Outside git → standalone
+  session (AO scratch dir). (`worktree` and `approvalMode` are no longer task options: unknown option fields are ignored.)
+- **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
+  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
+  checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
+  `bypass-permissions` with no prompt; the session's own options are checked and set (model, then thinking);
+  the permission mode is set (`options.mode`, default `auto`; the mode file is written before the first
+  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task and
+  removes the session. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
+  the session as needing input until a person answers through AO.
+- **Continued sessions** (lane or re-run): `resume-agent` first when the session reads `exited`; model and
+  thinking are set before the prompt and put back after the turn; `mode` applies to new sessions only. A
+  `CHAT_CONTROLLER_NOT_READY` on send resumes the agent and sends once more.
 - **Limit replies and dead hosts**: omp reports a provider limit it gave up retrying as a *completed* turn
   whose reply is the error (G35); a short reply that opens like a provider limit error holds the provider
   (until the stated reset, else backoff) and the task goes back to pending without using an attempt. Any other provider error omp ends as a completed reply (`Error: …`, a status code and JSON body, "No API key found", …; heuristic on
@@ -330,6 +329,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
 - 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.
 - 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.
 - 2026-11-09: lanes resolve by session id; `lane.session` set at dispatch; `state`/`waitUntil` on `LaneView` and `QueueView`.

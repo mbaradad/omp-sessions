@@ -9,7 +9,7 @@ import * as path from "node:path";
 import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AoError } from "../../src/ao/client";
-import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
+import { type AoConversationInfo, type AoPort, type AoStreamHandlers, type AoTurnInfo, DispatchRefused, type StartSession } from "../../src/planner/ao-port";
 import { Planner, type PlannerOptions } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
@@ -95,6 +95,18 @@ export class FakeAo implements AoPort {
 		if (this.dropAnswers) return new Promise<never>(() => {});
 		const created = this.sessions.get(id);
 		return { session: id, ...(created?.branch ? { branch: created.branch } : {}) };
+	}
+
+	/** The D11 sequence as the port sees it: spawn (idempotent in the key), then the prompt (idempotent in the key). */
+	async startSession(opts: StartSession) {
+		if (this.modelIds.length && opts.model && !this.modelIds.includes(opts.model)) throw new DispatchRefused(`Unknown omp model "${opts.model}"`);
+		const { prompt, key, ...rest } = opts;
+		const res = await this.spawn({ ...rest, harness: "omp", approvalMode: "bypass-permissions", clientRequestId: key });
+		const s = this.sessions.get(res.session);
+		assert.ok(s);
+		let turn = s.conv.messages.find(m => m.clientMessageId === key)?.turnId;
+		if (!turn) turn = this.turn(s, prompt, key);
+		return { ...res, turn };
 	}
 
 	async send(session: string, text: string, clientMessageId: string) {

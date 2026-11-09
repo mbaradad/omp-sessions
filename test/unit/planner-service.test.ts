@@ -126,18 +126,20 @@ test("a limit omp gave up retrying arrives as a completed turn: the task is held
 	await until("done", () => byTitle(p, "talks about limits").status === "done");
 });
 
-test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in bypass-permissions unless told otherwise", async t => {
+test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in AO bypass with the mode the task names (D11)", async t => {
 	const ao = new FakeAo();
 	ao.modelIds = ["anthropic/claude-x"];
 	const p = start(tempPlan(t), ao);
 	t.after(() => p.stop());
-	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { approvalMode: "default" } } }, { op: "add", task: { title: "plain" } }]);
+	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { mode: "ask", thinking: "low" } } }, { op: "add", task: { title: "plain" } }]);
 	await until("typo failed", () => byTitle(p, "typo").status === "failed");
 	assert.match(byTitle(p, "typo").summary ?? "", /doesn't know the model "anthropic\/claude-xx"/);
 	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
 	assert.equal(ao.created, 2);
-	assert.equal(ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody.approvalMode, "default");
-	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.approvalMode, "bypass-permissions");
+	const asks = ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody;
+	assert.deepEqual([asks?.mode, asks?.thinking, asks?.approvalMode], ["ask", "low", "bypass-permissions"]);
+	const plain = ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody;
+	assert.deepEqual([plain?.mode, plain?.approvalMode], [undefined, "bypass-permissions"]);
 	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.prompt, undefined, "the task goes out as a message, not with the spawn");
 });
 

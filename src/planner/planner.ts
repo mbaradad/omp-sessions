@@ -13,7 +13,7 @@ import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyStat
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
-import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
+import type { PlanOp, PlanState, SessionStart, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, replyIsProviderError, spendUse } from "./usage";
 
 export interface PlannerOptions {
@@ -448,7 +448,7 @@ export class Planner {
 			// The session this task continues (its lane's, or its own from an earlier run); one AO no longer knows starts a new one.
 			let session = targetSession(this.state, task);
 			if (session && !(await ao.session(session))) session = undefined;
-			let spawn: Record<string, unknown> | undefined;
+			let spawn: SessionStart | undefined;
 			let repo: string | undefined;
 			let seeded: SeedResult = {};
 			// `requeue {clean}`: the failed attempt is undone first, so the retry starts from before it.
@@ -471,25 +471,18 @@ export class Planner {
 				const cwd = opts.cwd;
 				// Registering a folder as an AO project must not race with another task registering the same one.
 				if (!projectId && cwd) projectId = await this.serialProject(() => ao.projectFor(cwd));
-				if (opts.worktree === "always" && !projectId) throw new PlanError(`worktree "always" needs a git folder; ${opts.cwd ?? "no cwd"} is not in git`);
-				// AO runs every project session in its own worktree (ao/<session>/root); there is no way to run in the checkout itself.
-				if (opts.worktree === "never" && projectId) throw new PlanError(`worktree "never" can't be honored: AO runs every session of a git project in its own worktree (drop the option, or use a folder outside git)`);
 				const projectPath = projectId ? await ao.projectPath(projectId) : undefined;
 				repo = projectPath ? await gitRoot(projectPath) : undefined;
 				// A task with finished parents in this repo starts from their work (GRAPH-PROPAGATION.md).
 				if (repo) seeded = await this.propagation.prepareSpawn(task, repo);
-				// D11: spawn with no prompt (AO refuses `effort` for omp; the thinking level is a config option), then send the task.
-				// An unattended task can't wait for an approval, so sessions start in bypass-permissions unless the task says otherwise.
+				// D11 (src/ao/spawn.ts) does the rest at dispatch: spawn without a prompt, model and thinking, the mode, then the task.
 				spawn = {
-					harness: "omp",
-					mode: "chat",
-					kind: "worker",
 					displayName: task.title.slice(0, 100),
-					clientRequestId: key,
-					approvalMode: opts.approvalMode ?? "bypass-permissions",
 					...(projectId ? { projectId } : {}),
 					...(seeded.branch ? { branch: seeded.branch } : {}),
 					...(opts.model ? { model: opts.model } : {}),
+					...(opts.thinking ? { thinking: opts.thinking } : {}),
+					...(opts.mode ? { mode: opts.mode } : {}),
 				};
 			}
 			const donor = session ? this.state.tasks.find(x => x.id !== id && x.session === session && x.git) : undefined;
@@ -497,8 +490,8 @@ export class Planner {
 			// The task may have changed while the project was looked up.
 			const now = this.now();
 			if (!this.evaluateNow().dispatch.some(t => t.id === id)) return;
-			// A spawn already carries the model; a continued session gets model and thinking before the prompt.
-			const settings = session ? { ...(opts.model ? { model: opts.model } : {}), ...(opts.thinking ? { thinking: opts.thinking } : {}) } : opts.thinking ? { thinking: opts.thinking } : {};
+			// A new session gets model and thinking from the start sequence; a continued one before the prompt.
+			const settings = session ? { ...(opts.model ? { model: opts.model } : {}), ...(opts.thinking ? { thinking: opts.thinking } : {}) } : {};
 			this.commit(s => {
 				const t = startRun(
 					s,
@@ -642,7 +635,8 @@ export class Planner {
 		let t = this.task(id);
 		if (!t?.run) return;
 		if (t.run.via === "spawn" && !t.run.session) {
-			const { session, branch } = await ao.spawn(t.run.spawn ?? {});
+			// One idempotent sequence (spawn, options, mode, prompt); a replay after a crash finds the same session and turn.
+			const { session, branch, turn } = await ao.startSession({ ...(t.run.spawn as unknown as SessionStart), key: t.run.key, prompt: t.run.prompt });
 			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
 			// The lane learns its session now (not when the task ends): `show`/`wait` on the lane follow it.
 			this.commit(s => {
@@ -650,12 +644,14 @@ export class Planner {
 				if (x?.status !== "running" || !x.run) return;
 				x.run.session = session;
 				x.session = session;
+				if (turn) x.run.turn = turn;
+				x.run.phase = "sent";
 				delete x.run.tries;
 				const l = laneOf(s, x);
 				if (l) l.session = session;
 			});
-			t = this.task(id);
-			if (!t?.run) return;
+			this.follow(id, 500);
+			return;
 		}
 		const session = t.run.session as string;
 		if (t.run.via === "send") {

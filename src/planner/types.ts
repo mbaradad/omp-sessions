@@ -8,9 +8,9 @@ export type Priority = (typeof PRIORITIES)[number];
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
 /** What omp accepts for its `thinking` option over ACP (`minimal` is read as `low`, see normalizeOptions). */
 export const THINKING_LEVELS = ["off", "auto", "low", "medium", "high", "xhigh", "max"] as const;
-export const APPROVAL_MODES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
-export type ApprovalMode = (typeof APPROVAL_MODES)[number];
-export type WorktreeMode = "auto" | "always" | "never";
+/** The permission modes the Switchyard omp extension's gate enforces (AO itself always runs the session in bypass). */
+export const PERMISSION_MODES = ["ask", "edits", "plan", "auto"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export interface Subtask {
 	id: string;
@@ -33,8 +33,19 @@ export interface TaskOptions {
 	cwd?: string;
 	/** AO project id; wins over cwd. */
 	project?: string;
-	worktree?: WorktreeMode;
-	approvalMode?: ApprovalMode;
+	/** Permission mode of a session the planner starts (default `auto`: the gate lets everything through). Unattended work that asks will wait for a person. */
+	mode?: PermissionMode;
+}
+
+/** What a new AO session starts with (the `spawn` of a TaskRun; MAPPING D11). */
+export interface SessionStart {
+	displayName: string;
+	projectId?: string;
+	/** An existing local branch AO checks out (graph propagation seeds one at the parent's head). */
+	branch?: string;
+	model?: string;
+	thinking?: string;
+	mode?: PermissionMode;
 }
 
 /**
@@ -49,7 +60,7 @@ export interface TaskRun {
 	/** `spawn`: a new AO session; `send`: a message to the lane's session. */
 	via: "spawn" | "send";
 	/** Exact spawn body (replayed verbatim after a restart; AO answers a replay with the same session). */
-	spawn?: Record<string, unknown>;
+	spawn?: SessionStart;
 	/** The git repo (AO project folder) a spawned session works in: its branch is recorded once AO answers. */
 	repo?: string;
 	/** AO session (known up front for `send`, after the spawn otherwise). */

@@ -10,7 +10,6 @@ import * as crypto from "node:crypto";
 import { type Hold, type TurnError, type UsageContext, holdFor, isLimitError, normalizeBudget, providerOf, recordLimit } from "./usage";
 import { nextOccurrence, normalizeRule } from "./when";
 import {
-	APPROVAL_MODES,
 	type EdgeSync,
 	type Lane,
 	type LaneView,
@@ -20,6 +19,7 @@ import {
 	PRIORITIES,
 	type Priority,
 	type Recurring,
+	type SessionStart,
 	type Subtask,
 	type Task,
 	type TaskInput,
@@ -28,6 +28,7 @@ import {
 	type TaskState,
 	type TaskStatus,
 	type TaskView,
+	PERMISSION_MODES,
 	THINKING_LEVELS,
 } from "./types";
 
@@ -101,8 +102,7 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	if (timeout !== undefined && timeout > 0) out.timeoutMinutes = Math.min(MAX_TIMEOUT_MINUTES, timeout);
 	if (typeof r.cwd === "string" && r.cwd.trim()) out.cwd = r.cwd.trim();
 	if (typeof r.project === "string" && r.project.trim()) out.project = r.project.trim();
-	if (r.worktree === "auto" || r.worktree === "always" || r.worktree === "never") out.worktree = r.worktree;
-	if (typeof r.approvalMode === "string" && (APPROVAL_MODES as readonly string[]).includes(r.approvalMode)) out.approvalMode = r.approvalMode as TaskOptions["approvalMode"];
+	if (typeof r.mode === "string" && (PERMISSION_MODES as readonly string[]).includes(r.mode)) out.mode = r.mode as TaskOptions["mode"];
 	return Object.keys(out).length ? out : undefined;
 }
 
@@ -164,7 +164,7 @@ function normalizeRun(raw: unknown): TaskRun | undefined {
 	if (typeof r.turn === "string") run.turn = r.turn;
 	if (typeof r.provider === "string") run.provider = r.provider;
 	const spawn = rec(r.spawn);
-	if (spawn) run.spawn = spawn;
+	if (spawn && typeof spawn.displayName === "string") run.spawn = spawn as unknown as SessionStart;
 	if (typeof r.repo === "string") run.repo = r.repo;
 	for (const k of ["settings", "restore"] as const) {
 		const v = rec(r[k]);
