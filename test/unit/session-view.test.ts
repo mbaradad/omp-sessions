@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -255,4 +255,20 @@ test("taskTransitions: only tasks that were known and changed state; the next ma
 	// A task in a lane resolves its session through the lane.
 	const third = taskTransitions(second.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }), task("c", "running")));
 	assert.deepEqual(third.changes.map(c => [c.task.id, c.sessionId]), [["b", "S"]]);
+});
+
+test("parentBranches: the branches of the tasks another session's tasks build on; its own lane's tasks do not count", () => {
+	const lane = (id: string): LaneView => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 0, running: 0, done: 1, failed: 0, total: 1 });
+	const task = (id: string, extra: Partial<TaskView>): TaskView => ({ id, title: `task ${id}`, subtasks: [], status: "done", createdAt: 0, state: "done", ...extra });
+	const git = (branch: string) => ({ repo: "/r", branch });
+	const plan: PlanView = {
+		rev: 1,
+		lanes: [lane("p"), lane("q"), lane("c")],
+		tasks: [task("tp", { lane: "p", git: git("switchyard/tp") }), task("tq", { lane: "q" }), task("tc1", { lane: "c", git: git("switchyard/tc1") }), task("tc2", { lane: "c", after: ["tc1", "tp", "tq"] })],
+		recurring: [],
+		status: {} as PlanView["status"],
+	};
+	assert.deepEqual(parentBranches(plan, "C"), [{ title: "task tp", branch: "switchyard/tp" }]);
+	assert.deepEqual(parentBranches(plan, "P"), []);
+	assert.deepEqual(parentBranches(undefined, "C"), []);
 });
