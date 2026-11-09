@@ -76,7 +76,7 @@ test("spawnSwitchyardSession fails closed: a mode other than auto is refused, be
 		const missing = ompHome(false);
 		for (const mode of ["ask", "edits", "plan"] as const) {
 			const { ao, calls } = fakeAo();
-			await assert.rejects(spawnSwitchyardSession(ao, { mode, prompt: "go", home, gate: missing }), /Permission mode "(ask|edits|plan)" needs the Switchyard permission gate.*switchyard install/s);
+			await assert.rejects(spawnSwitchyardSession(ao, { mode, prompt: "go", home, gate: missing }), /Permission mode "(ask|edits|plan)" needs the Switchyard permission gate.*switchyard omp-extension install/s);
 			assert.deepEqual(calls, [], `${mode}: no AO call was made, no session created`);
 		}
 		assert.equal(fs.existsSync(path.join(home, "sessions")), false, "no mode file or omp-args written");
