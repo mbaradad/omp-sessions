@@ -13,7 +13,9 @@ import { randomUUID } from "node:crypto";
 import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
+import { readHibernationSetting } from "./native";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type AoQueueItem, queueOf, turnReply } from "./model";
 import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
@@ -45,13 +47,19 @@ export type AoListSessionsQuery = NonNullable<paths["/api/v1/sessions"]["get"]["
 export type AoConversationQuery = NonNullable<paths["/api/v1/sessions/{sessionId}/conversation"]["get"]["parameters"]["query"]>;
 
 export type { AoDaemon, AoStartOptions } from "./daemon";
-export { defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "./daemon";
+export { applyChatHibernation, defaultRunFile, ensureDaemon, findDaemon, getChatHibernation, stopDaemon } from "./daemon";
 export type { AoEvent, AoEventStreamOptions, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
+export type { SwitchyardConfig } from "./config";
+export { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "./config";
+export type { PairingEndpoint, PairingStatus } from "./mobile";
+export { ANDROID_APP_URL, IOS_APP_URL, PAIRING_LINK_BASE, pairingLink, pairingPending, pairingReady, reachSummary, tunnelHost } from "./mobile";
 export type { AoProjectForFolderOptions } from "./projects";
+export type { AoGateStatus } from "./gate";
+export { gateStatus } from "./gate";
 export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
-export { nativeSessionFile, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
+export { nativeSessionFile, readHibernationSetting, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
 export type { AoSessionMode, SpawnedSwitchyardSession, SpawnSwitchyardOptions } from "./spawn";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
@@ -300,9 +308,55 @@ export class AoClient {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
 	}
 
-	/** Stops the running turn. */
+	/**
+	 * Stops the running turn. AO also settles every queued turn as `interrupted`: they never run, and the
+	 * queue is empty afterwards (G41, checked live). The 204 comes back **before** that: the turns are still
+	 * `running` and `queued` for a few hundred ms. Use `interruptWithQueue` to get the prompts back.
+	 */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
+	}
+
+	/**
+	 * Stops the running turn and returns the queued prompts the interrupt discarded (G41), in queue order, so
+	 * the caller can warn about them or send them again. AO settles the turns after it has answered, so this
+	 * waits (up to `settleTimeoutMs`, default 10 s) until the running turn has ended and none of the prompts
+	 * that were queued is still queued. A prompt that started running in between ended up running, not
+	 * discarded, and is not reported.
+	 */
+	async interruptWithQueue(sessionId: string, settleTimeoutMs = 10_000): Promise<{ discarded: AoQueueItem[] }> {
+		const before = await this.getConversation(sessionId);
+		const queued = queueOf(before).items;
+		const running = new Set(before.turns.filter(t => t.state === "running").map(t => t.id));
+		await this.interrupt(sessionId);
+		if (queued.length === 0) return { discarded: [] };
+		const watched = new Set(queued.map(q => q.turnId));
+		const deadline = Date.now() + settleTimeoutMs;
+		for (;;) {
+			const turns = (await this.getConversation(sessionId)).turns;
+			const open = turns.some(t => (running.has(t.id) && t.state === "running") || (watched.has(t.id) && t.state === "queued"));
+			if (!open || Date.now() > deadline) {
+				const ended = new Set(turns.filter(t => t.state === "interrupted" || t.state === "cancelled").map(t => t.id));
+				return { discarded: queued.filter(item => ended.has(item.turnId)) };
+			}
+			await new Promise(resolve => setTimeout(resolve, 150));
+		}
+	}
+
+	/**
+	 * The reply of one turn once it is final (turnReply): AO can mark a turn `completed` a moment before its
+	 * last assistant message stops streaming, and a read in that window returns nothing or a half reply. Reads
+	 * the conversation until the turn has ended and its reply is final, or `graceMs` (default 3 s) has passed,
+	 * and returns what there is then with `final: false` (a turn that ended with no assistant text never
+	 * becomes final). For anything that stores a turn's summary: the planner's task result.
+	 */
+	async awaitTurnReply(sessionId: string, turnId: string, options: { graceMs?: number; pollMs?: number } = {}): Promise<{ text?: string; final: boolean }> {
+		const deadline = Date.now() + (options.graceMs ?? 3_000);
+		for (;;) {
+			const reply = turnReply(await this.getConversation(sessionId), turnId);
+			if (reply.final || Date.now() >= deadline) return reply;
+			await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 150));
+		}
 	}
 
 	/** Compacts the conversation (omp's `/compact`). `tokensBefore`/`tokensAfter` come back when the agent reports them. */
@@ -412,6 +466,26 @@ export class AoClient {
 	/** `{hostId, apiVersion}`. */
 	identity(): Promise<AoSchemas["IdentityResponse"]> {
 		return unwrap(this.client.GET("/api/v1/identity"));
+	}
+
+	/** Whether AO hibernates idle chats now (`GET /settings` `chatHibernationEnabled`). In memory in AO: false after every daemon boot. */
+	async chatHibernation(): Promise<boolean> {
+		return (await unwrap(this.client.GET("/api/v1/settings"))).chatHibernationEnabled;
+	}
+
+	/**
+	 * Makes AO's chat hibernation match `enabled`, or, with none, the opt-in `hibernation` key of
+	 * `<SWITCHYARD_HOME>/config.json` (G28); with neither it leaves AO alone and returns undefined. Writes only
+	 * when it differs. AO forgets the setting on every boot, so call it after a daemon (re)start and whenever
+	 * the connection to the daemon comes back (the planner's reconnect). `ensureDaemon` already does it for a
+	 * daemon it starts.
+	 */
+	async applyChatHibernation(enabled?: boolean): Promise<{ enabled: boolean; changed: boolean } | undefined> {
+		const wanted = enabled ?? readHibernationSetting();
+		if (wanted === undefined) return undefined;
+		if ((await this.chatHibernation()) === wanted) return { enabled: wanted, changed: false };
+		await unwrap(this.client.PATCH("/api/v1/settings/chat-hibernation", { body: { enabled: wanted } }));
+		return { enabled: wanted, changed: true };
 	}
 
 	/** The models a harness offers (`omp`: its provider/model ids). */

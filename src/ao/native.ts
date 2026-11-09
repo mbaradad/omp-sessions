@@ -20,6 +20,16 @@ export function switchyardHome(env: NodeJS.ProcessEnv = process.env): string {
 	return env.SWITCHYARD_HOME ? path.resolve(env.SWITCHYARD_HOME) : path.join(os.homedir(), ".switchyard");
 }
 
+/**
+ * Under `node --test` (which sets NODE_TEST_CONTEXT), refuses a state dir that is the machine's real
+ * `~/.switchyard`: a test that forgot to set SWITCHYARD_HOME would otherwise write the user's real
+ * sessions/<id>/mode and omp-args (CONTRACT.md, "Isolated HOME"). Production code is never under it.
+ */
+export function refuseRealStateInTests(home: string): void {
+	if (!process.env.NODE_TEST_CONTEXT) return;
+	if (path.resolve(home) === path.join(os.userInfo().homedir, ".switchyard")) throw new Error(`refusing to use ${home} from a test run: set SWITCHYARD_HOME to a temp dir (CONTRACT.md, "Isolated HOME")`);
+}
+
 export function nativeSessionFile(aoSessionId: string, home = switchyardHome()): string {
 	return path.join(home, "sessions", aoSessionId, "omp.json");
 }
@@ -36,6 +46,21 @@ export function sessionStateFile(aoSessionId: string, name: string, home = switc
 /** Where the `omp` shim lives (G34): first on the PATH of a daemon Switchyard starts. */
 export function shimDir(home = switchyardHome()): string {
 	return path.join(home, "bin");
+}
+
+/**
+ * The opt-in `hibernation` key of `<home>/config.json` (G28): `"on"` / `"off"` -> true / false, anything else
+ * or no file -> undefined, which means "leave AO alone". AO keeps the setting in memory and starts every
+ * boot with it off, so Switchyard applies it after it starts a daemon and when the planner reconnects.
+ */
+export function readHibernationSetting(home = switchyardHome()): boolean | undefined {
+	try {
+		const value: unknown = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+		const key = typeof value === "object" && value !== null && "hibernation" in value ? value.hibernation : undefined;
+		return key === "on" ? true : key === "off" ? false : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** What the extension recorded for this AO session, or undefined before it ran (or for a non-omp session). */

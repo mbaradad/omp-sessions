@@ -4,13 +4,32 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { after, before, test } from "node:test";
-import { type AoEvent, AoClient, AoError, sessionStateFile } from "../../src/ao/client";
+import { type AoEvent, AoClient, AoError, sessionStateFile, switchyardHome } from "../../src/ao/client";
 import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
+import { ompExtensionDir } from "../../src/shared/omp-extension-install";
+
+const strays: string[] = [];
+
+/** omp's agent folder of a temp "user home" with the Switchyard gate package in it (never the machine's own). */
+function standInGate(): { omp: { home: string; env: NodeJS.ProcessEnv } } {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "ao-contract-omp-"));
+	strays.push(home);
+	const omp = { home, env: {} as NodeJS.ProcessEnv };
+	const dir = ompExtensionDir(omp);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } }));
+	fs.writeFileSync(path.join(dir, "mode.js"), "export default () => {};\n");
+	return { omp };
+}
 
 const REPO = "/tmp/ao-smoke-foundation/repo";
-const TURN_TIMEOUT_MS = 90_000;
+// Below the runner's 120 s limit for the whole file (test/run.mjs): a wait that is stuck must fail with its own
+// message, not as a nameless file timeout.
+const TURN_TIMEOUT_MS = 45_000;
 
 let ao: AoClient;
 let watcher: AoSessionWatcher;
@@ -26,6 +45,26 @@ function scratchRepo(): void {
 	fs.writeFileSync(`${REPO}/README.md`, "scratch repo for the src/ao contract test\n");
 	git("add", "-A");
 	git("-c", "user.name=ao-smoke", "-c", "user.email=ao-smoke@localhost", "commit", "-qm", "init");
+}
+
+/**
+ * Removes a session this suite made, and its worktree. AO refuses to delete a session whose worktree has
+ * uncommitted changes ("a dirty worktree is never forced"), so a session that wrote files would leave its
+ * worktree behind for good: its own changes are discarded first (only this session's AO worktree, never the repo).
+ */
+async function dispose(id: string): Promise<void> {
+	await ao.killSession(id).catch(() => undefined);
+	const worktree = await ao.workspacePath(id).catch(() => undefined);
+	if (worktree?.includes(`${path.sep}worktrees${path.sep}`)) {
+		for (const args of [["checkout", "--", "."], ["clean", "-fdq"]]) {
+			try {
+				execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+			} catch {
+				/* nothing to discard, or no worktree any more */
+			}
+		}
+	}
+	await ao.deleteSession(id).catch(e => console.warn(`dispose ${id}: ${String(e)}`));
 }
 
 /** Resolves with the session's model once `done` holds for it; fails after TURN_TIMEOUT_MS. */
@@ -51,20 +90,22 @@ function until(id: string, done: (m: AoSessionModel) => boolean, what: string): 
 before(async () => {
 	// CONTRACT.md "Isolated HOME": run through `npm run test:ao`, which sets one up.
 	assert.ok(isolatedHome(), "run this test with an isolated HOME (npm run test:ao), never the real one");
+	// The Switchyard state folder too: the spawn helper writes the mode file there (the real ~/.switchyard is kept empty until cutover).
+	assert.ok(switchyardHome() !== path.join(os.userInfo().homedir, ".switchyard"), `SWITCHYARD_HOME is the real ~/.switchyard: ${switchyardHome()}`);
 	ao = await AoClient.connect();
 	scratchRepo();
 	watcher = new AoSessionWatcher(ao, { query: { active: true } });
 	await watcher.start();
 	stream = ao.events({ onEvent: e => events.push(e) });
+	// A run killed by the runner's file timeout never reaches its `finally`s: remove what earlier runs left (all are named "src/ao ...").
+	for (const s of (await ao.listSessions({})).sessions) if (/^src\/ao /.test(s.displayName ?? "") && !s.isTerminated) await dispose(s.id);
 });
 
 after(async () => {
 	stream?.close();
 	watcher?.close();
-	if (sessionId) {
-		await ao.killSession(sessionId).catch(() => undefined);
-		await ao.deleteSession(sessionId).catch(() => undefined);
-	}
+	if (sessionId) await dispose(sessionId);
+	for (const dir of strays) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("a scratch repo maps to one AO project", async () => {
@@ -161,7 +202,9 @@ test("stop and resume the agent (MAPPING D4)", async () => {
 });
 
 test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempotent retry; a bad option leaves nothing", async () => {
-	const opts = { dir: REPO, displayName: "src/ao spawn", thinking: "off", mode: "edits" as const, prompt: "Reply with exactly: SPAWNED", clientRequestId: `contract-${Date.now()}`, clientMessageId: `contract-msg-${Date.now()}` };
+	// Mode `edits` needs the gate installed (G46: spawn fails closed). The machine's omp has none, and this suite must not install one
+	// there: a stand-in in a temp folder shows spawn what an installed gate looks like. The enforcement itself is checkpoints' to test.
+	const opts = { dir: REPO, displayName: "src/ao spawn", thinking: "off", mode: "edits" as const, gate: standInGate(), prompt: "Reply with exactly: SPAWNED", clientRequestId: `contract-${Date.now()}`, clientMessageId: `contract-msg-${Date.now()}` };
 	const first = await ao.spawnSwitchyard(opts);
 	const id = first.session.id;
 	try {
@@ -181,8 +224,106 @@ test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempote
 		await assert.rejects(ao.spawnSwitchyard({ dir: REPO, model: "nope/model" }), /not in AO's model catalog/);
 		assert.deepEqual((await ao.listSessions({ project: first.project?.id })).sessions.map(s => s.id), before);
 	} finally {
-		await ao.killSession(id).catch(() => undefined);
-		await ao.deleteSession(id).catch(() => undefined);
+		await dispose(id);
+	}
+});
+
+test("a crash reads interrupted, a person's Stop stopped: both exit the agent, only a crash leaves work open (G39)", async () => {
+	const start = (displayName: string) => ao.spawnSwitchyard({ dir: REPO, displayName, prompt: "Run the bash command `sleep 40` and then reply DONE." }).then(r => r.session.id);
+	const crashed = await start("src/ao crash");
+	const stopped = await start("src/ao stop");
+	try {
+		// A running turn and a message queued behind it, in both.
+		for (const id of [crashed, stopped]) {
+			await until(id, m => m.conversation?.turns.some(t => t.state === "running") === true, "running a turn");
+			await ao.sendMessage(id, { text: "Reply with exactly: QUEUED" });
+			await until(id, m => m.queue.pending === 1, "one queued message");
+		}
+		// Kill the omp of one (the process in its worktree that runs `acp`); stop the other as a person would.
+		const cwd = watcher.get(crashed)?.cwd;
+		const omp = execFileSync("pgrep", ["-f", "omp"], { encoding: "utf8" }).trim().split("\n").find(pid => {
+			try {
+				return fs.readlinkSync(`/proc/${pid}/cwd`) === cwd && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("acp");
+			} catch {
+				return false;
+			}
+		});
+		assert.ok(omp, `the omp of ${crashed} in ${cwd}`);
+		process.kill(Number(omp), "SIGKILL");
+		await ao.exitAgent(stopped);
+		// Same `exited`; the crash left its turns open, the Stop settled them.
+		const crash = await until(crashed, m => m.state === "interrupted", "interrupted after a crash");
+		// One running and one queued turn, left open; their order in the list is AO's (it varied between runs) and not the claim.
+		assert.deepEqual(crash.conversation?.turns.map(t => t.state).sort(), ["queued", "running"]);
+		const stop = await until(stopped, m => m.state === "stopped", "stopped after a person's Stop");
+		assert.ok(stop.conversation?.turns.every(t => t.state === "failed"));
+		assert.equal(stop.view.activity.state, "exited");
+		// Resumed, both are idle agents again (AO fails what was left open).
+		await ao.resumeAgent(crashed);
+		await ao.resumeAgent(stopped);
+		await until(crashed, m => m.state === "idle", "idle after resuming the crash");
+		await until(stopped, m => m.state === "idle", "idle after resuming the Stop");
+	} finally {
+		for (const id of [crashed, stopped]) await dispose(id);
+	}
+});
+
+test("an interrupt discards the queued prompts too, and interruptWithQueue hands them back (G41)", async () => {
+	const { session } = await ao.spawnSwitchyard({ dir: REPO, displayName: "src/ao interrupt", prompt: "Run the bash command `sleep 40` and then reply DONE." });
+	const id = session.id;
+	try {
+		await until(id, m => m.conversation?.turns.some(t => t.state === "running") === true, "running a turn");
+		await ao.sendMessage(id, { text: "queued one: ONE" });
+		await ao.sendMessage(id, { text: "queued two: TWO" });
+		await until(id, m => m.queue.pending === 2, "two queued prompts");
+		const { discarded } = await ao.interruptWithQueue(id);
+		assert.deepEqual(discarded.map(d => d.text), ["queued one: ONE", "queued two: TWO"]);
+		// Nothing is left to run: the queue is empty and the agent is idle, though the prompts are in the conversation.
+		const settled = await until(id, m => m.state === "idle", "idle after the interrupt");
+		assert.equal(settled.queue.pending, 0);
+		assert.ok(settled.conversation?.turns.every(t => t.state === "interrupted"), "the running turn and both queued ones ended interrupted");
+	} finally {
+		await dispose(id);
+	}
+});
+
+test("after a compaction every restart replays the last reply as a history turn: the model does not count it, and the compaction turn owes no reply (G33)", async () => {
+	const { session } = await ao.spawnSwitchyard({ dir: REPO, displayName: "src/ao compaction" });
+	const id = session.id;
+	const restart = async () => {
+		await ao.exitAgent(id);
+		await until(id, m => m.state === "stopped", "stopped");
+		await ao.resumeAgent(id);
+		await until(id, m => m.state === "idle", "idle after resume");
+	};
+	try {
+		await ao.sendMessage(id, { text: "Reply with exactly: ONE" });
+		await until(id, m => m.reply === "ONE", "answered ONE");
+		fs.writeFileSync(path.join((await ao.workspacePath(id)) ?? "", "big.txt"), `${Array.from({ length: 3000 }, (_, i) => `line ${i}: the quick brown fox jumps over the lazy dog ${i}`).join("\n")}\n`);
+		await ao.sendMessage(id, { text: "Run with bash: `cat big.txt` (full output). Then reply with the last line number only." });
+		await until(id, m => m.reply?.trim() === "2999", "answered 2999");
+		await ao.compact(id);
+		// POST /compact is a turn of its own: completed, with no messages, nothing asked and nothing owed.
+		await until(id, m => m.conversation?.turns.length === 3 && m.conversation.turns[2].state === "completed", "compaction turn completed");
+		const compacted = watcher.get(id);
+		assert.equal(compacted?.conversation?.messages.filter(x => x.turnId === compacted.conversation?.turns[2].id).length, 0);
+		assert.equal(compacted?.replyPending, undefined);
+		for (const restarts of [1, 2]) {
+			await restart();
+			// Every restart adds an assistant-only `recovered` copy of the last pre-compaction reply (acp-history-turn).
+			const m = await until(id, x => (x.conversation?.turns.filter(t => t.providerTurnId?.startsWith("acp-history-turn:")).length ?? 0) >= restarts, `history turn ${restarts}`);
+			assert.equal(m.state, "idle");
+			assert.equal(m.queue.pending, 0);
+			assert.equal(m.queue.done, 3, "ask, ask and the compaction turn; the replayed copies are not work");
+			assert.equal(m.reply?.trim(), "2999");
+			assert.equal(m.replyPending, undefined);
+		}
+		// A real turn afterwards is the last reply again, not shadowed by the replayed one.
+		await ao.sendMessage(id, { text: "Reply with exactly: THREE" });
+		const three = await until(id, m => m.reply?.trim() === "THREE", "answered THREE");
+		assert.equal(three.queue.done, 4);
+	} finally {
+		await dispose(id);
 	}
 });
 

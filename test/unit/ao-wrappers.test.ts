@@ -62,3 +62,47 @@ test("chatView, skills and compact hit AO's routes with the right bodies", async
 		],
 	);
 });
+
+test("interruptWithQueue: AO ends the running turn and every queued one; the prompts that never ran come back in queue order (G41)", async () => {
+	const T = "2026-11-09T15:00:00Z";
+	const turn = (id: string, state: string) => ({ id, state, requestedAt: T });
+	const user = (sequence: number, turnId: string, text: string) => ({ kind: "message", id: `m${sequence}`, sequence, revision: 0, role: "user", origin: "human", text, editAvailable: false, streaming: false, createdAt: T, turnId });
+	const snapshot = (turns: unknown[]) => ({ activities: [], branchedFromEarlierMessage: false, continueTurnId: "", controller: "ready", conversationId: "c", hasMoreBefore: false, latestSequence: 9, mode: "chat", nativeForkAvailableAfterSequence: 0, sessionId: "repo-1", settings: {}, messages: [user(1, "t0", "run"), user(2, "t1", "first queued"), user(3, "t2", "second queued")], turns });
+	const open = snapshot([turn("t0", "running"), turn("t1", "queued"), turn("t2", "queued")]);
+	const ended = snapshot([turn("t0", "interrupted"), turn("t1", "interrupted"), turn("t2", "cancelled")]);
+	const reads: unknown[] = [];
+	const seen: string[] = [];
+	const fetch = async (input: RequestInfo | URL): Promise<Response> => {
+		const request = input instanceof Request ? input : new Request(input);
+		seen.push(`${request.method} ${new URL(request.url).pathname.replace("/api/v1/sessions/repo-1/", "")}`);
+		if (request.method === "POST") return new Response(null, { status: 204 });
+		return new Response(JSON.stringify(reads.shift()), { status: 200, headers: { "content-type": "application/json" } });
+	};
+	const ao = new AoClient({ baseUrl: "http://127.0.0.1:1", fetch });
+	const GET = "GET conversation";
+	const POST = "POST conversation/interrupt";
+
+	// As observed live: the 204 comes back while every turn is still open; AO settles them a moment later.
+	reads.push(open, open, open, ended);
+	const { discarded } = await ao.interruptWithQueue("repo-1");
+	assert.deepEqual(discarded.map(d => [d.turnId, d.text]), [["t1", "first queued"], ["t2", "second queued"]]);
+	assert.deepEqual(seen, [GET, POST, GET, GET, GET], "it kept reading until AO had settled the turns");
+
+	// Nothing queued: one read, the interrupt, and no waiting.
+	seen.length = 0;
+	reads.push(snapshot([turn("t0", "running")]));
+	assert.deepEqual((await ao.interruptWithQueue("repo-1")).discarded, []);
+	assert.deepEqual(seen, [GET, POST]);
+
+	// A queued prompt that AO started instead of ending went on running: not discarded. t2 was ended.
+	seen.length = 0;
+	reads.push(open, snapshot([turn("t0", "interrupted"), turn("t1", "running"), turn("t2", "interrupted")]));
+	assert.deepEqual((await ao.interruptWithQueue("repo-1")).discarded.map(d => d.turnId), ["t2"]);
+
+	// AO never settles them: the wait ends at the deadline with what had ended by then (nothing), not forever.
+	seen.length = 0;
+	reads.length = 0;
+	reads.push(open, ...Array.from({ length: 40 }, () => open));
+	assert.deepEqual((await ao.interruptWithQueue("repo-1", 400)).discarded, []);
+});
+
