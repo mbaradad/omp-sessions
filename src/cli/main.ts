@@ -13,7 +13,7 @@ import { ORG_COLORS, OrganizeStore, PRIORITIES, isOrgColor, isPriority } from ".
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode, permissionModeOf } from "../shared/permissions";
 import { MAX_NOTES, MAX_TITLE } from "../shared/queue";
 import { qrHalfBlocks } from "../shared/remote-qr";
-import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "../ao/config";
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";

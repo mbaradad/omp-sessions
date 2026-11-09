@@ -236,7 +236,7 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		log(`organize.json: unreadable (${state.organizeError}); not migrated`);
 	}
 
-	// Defaults go through the shared settings module (src/shared/switchyard-config.ts): what is already
+	// Defaults go through the shared settings module (src/ao/config.ts): what is already
 	// set wins, and keys it doesn't know stay.
 	const configFile = path.join(home, "config.json");
 	const current = readSwitchyardConfig(configFile);
