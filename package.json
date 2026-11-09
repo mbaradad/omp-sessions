@@ -2164,6 +2164,12 @@
 					"scope": "machine",
 					"description": "Extra omp CLI arguments for every omp session on this machine, from any client, e.g. [\"--profile\", \"work\"]. Mirrored to ~/.switchyard/config.json and applied by the Switchyard omp shim when AO launches omp. Can't be set per workspace."
 				},
+				"omp.vscodeTools": {
+					"type": "boolean",
+					"default": true,
+					"scope": "machine",
+					"markdownDescription": "Lets omp sessions started in a terminal read your open VS Code windows' language data (diagnostics, symbols, definitions, references, implementations, call hierarchy, hover and signature docs, the active editor's file and selection: **read-only**) through the VS Code bridge. Off: sessions start without the VS Code tools, and the bridge's local socket is not served. Can't be set per workspace."
+				},
 				"omp.sendWhileBusy": {
 					"type": "string",
 					"enum": [
