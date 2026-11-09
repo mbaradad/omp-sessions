@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
+import { AoError, type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
@@ -96,8 +96,6 @@ export class SessionManager implements vscode.Disposable {
 	private readonly models = new Map<string, AoSessionModel>();
 	/** Workspace folder of each session (AO's list has none; a session's folder never moves). */
 	private readonly workspaces = new Map<string, string>();
-	/** Files changed in each session's worktree, as last counted. */
-	private readonly fileCounts = new Map<string, number>();
 	private readonly emitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.emitter.event;
 	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
@@ -183,8 +181,7 @@ export class SessionManager implements vscode.Disposable {
 	private async workspaceOf(client: AoClient, model: AoSessionModel): Promise<string> {
 		const known = this.workspaces.get(model.id);
 		if (known) return known;
-		const { data } = await client.api.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId: model.id } } }).catch(() => ({ data: undefined }));
-		const dir = data?.workspacePath;
+		const dir = await client.workspacePath(model.id).catch(() => undefined);
 		// A terminated session may have released its workspace: retry on its next change.
 		if (dir) this.workspaces.set(model.id, dir);
 		return dir ?? "";
@@ -200,11 +197,8 @@ export class SessionManager implements vscode.Disposable {
 			next.delete(id);
 			this.models.delete(id);
 		}
-		const recount: string[] = [];
 		changed.forEach((model, i) => {
 			const meta = metaOf(model, cwds[i], readNativeSession(model.id));
-			// Turn diffs miss files the agent created; the worktree's changes (counted below) don't.
-			meta.changedFiles = Math.max(meta.changedFiles, this.fileCounts.get(model.id) ?? 0);
 			const queue = laneQueue(this.planSource?.plan, model.id);
 			const prev = next.get(model.id);
 			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
@@ -212,32 +206,18 @@ export class SessionManager implements vscode.Disposable {
 			next.set(model.id, meta);
 			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title || prev.cwd !== meta.cwd || prev.cost !== meta.cost) dirty = true;
 			if (prev && prev.status !== meta.status) transitions.push({ meta, from: prev.status });
-			if (meta.status !== "working" && meta.status !== "starting" && (!prev || prev.status !== meta.status)) recount.push(model.id);
 		});
 		this.sessions = next;
 		this.loaded = true;
 		for (const t of transitions) this.transitionEmitter.fire(t);
 		if (dirty) this.emitter.fire();
-		for (const id of recount) void this.recountFiles(id);
 	}
 
-	/** Updates a session's changed-file count from its worktree (after a turn, on first sight). */
-	private async recountFiles(id: string): Promise<void> {
-		const files = await this.workspaceFiles(id).catch(() => undefined);
-		if (!files || this.disposed) return;
-		this.fileCounts.set(id, files.length);
-		const meta = this.sessions.get(id);
-		if (!meta || meta.changedFiles === files.length) return;
-		this.sessions.set(id, { ...meta, changedFiles: files.length });
-		this.emitter.fire();
-	}
-
-	/** Files the session changed in its workspace compared with its base branch (AO `workspace/files`), paths relative to its folder. */
+	/** Files the session changed in its workspace compared with its base branch (AO's workspace manifest), paths relative to its folder. */
 	async workspaceFiles(id: string): Promise<AoChangedFile[]> {
 		const client = await this.ao.client();
-		const { data, error, response } = await client.api.GET("/api/v1/sessions/{sessionId}/workspace/files", { params: { path: { sessionId: id } } });
-		if (!response.ok || !data) throw new Error(errorMessage(error, response));
-		return data.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
+		const manifest = await client.workspaceManifest(id);
+		return manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
 	}
 
 	/** Re-runs the session's tasks on top of their parents' current work (propagation states `upstream-changed` and `conflict`); resolves with how many. */
@@ -389,18 +369,13 @@ export class SessionManager implements vscode.Disposable {
 	/** omp's plan mode (its `mode` config option): live, no restart. */
 	async setPlanMode(id: string, plan: boolean): Promise<void> {
 		const client = await this.ao.client();
-		const { response, error } = await client.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", {
-			params: { path: { sessionId: id, configId: "mode" } },
-			body: { value: plan ? "plan" : "default" },
-		});
-		if (!response.ok) throw new Error(errorMessage(error, response));
+		await client.setConfigOption(id, "mode", { value: plan ? "plan" : "default" });
 	}
 
 	/** Stops the session's agent; the session and its transcript stay (MAPPING D4: AO `exit-agent`). */
 	async stop(id: string): Promise<void> {
 		const client = await this.ao.client();
-		const { response, error } = await client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: id } } });
-		if (!response.ok) throw new Error(errorMessage(error, response));
+		await client.exitAgent(id);
 		await this.refreshSession(id);
 	}
 
@@ -409,10 +384,7 @@ export class SessionManager implements vscode.Disposable {
 		const client = await this.ao.client();
 		const view = this.models.get(id)?.view ?? (await client.getSession(id));
 		if (view.isTerminated) await client.restoreSession(id);
-		else {
-			const { response, error } = await client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: id } } });
-			if (!response.ok) throw new Error(errorMessage(error, response));
-		}
+		else await client.resumeAgent(id);
 		await this.refreshSession(id);
 	}
 
@@ -430,11 +402,14 @@ export class SessionManager implements vscode.Disposable {
 		const client = await this.ao.client();
 		const view = this.models.get(id)?.view;
 		if (!view?.isTerminated) await client.killSession(id);
-		const { response, error } = await client.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId: id }, query: { cleanup: true } } });
-		if (!response.ok && response.status !== 404) {
+		try {
+			await client.deleteSession(id);
+		} catch (err) {
+			if (err instanceof AoError && err.status === 404) return void (await this.refreshSession(id));
 			const cwd = this.sessions.get(id)?.cwd;
 			await this.refreshSession(id);
-			throw new Error(`${errorMessage(error, response)}${response.status === 409 && cwd ? ` (${cwd}: commit or discard the changes there, then remove it again)` : ""}`);
+			if (err instanceof AoError && err.status === 409 && cwd) throw new Error(`${err.message} (${cwd}: commit or discard the changes there, then remove it again)`);
+			throw err;
 		}
 		await this.refreshSession(id);
 	}
@@ -442,9 +417,7 @@ export class SessionManager implements vscode.Disposable {
 	/** Pins or unpins the session in AO (its own pin, shown by AO's apps too). */
 	async setPinned(id: string, pinned: boolean): Promise<void> {
 		const client = await this.ao.client();
-		const params = { params: { path: { sessionId: id } } };
-		const { response, error } = pinned ? await client.api.POST("/api/v1/sessions/{sessionId}/pin", params) : await client.api.DELETE("/api/v1/sessions/{sessionId}/pin", params);
-		if (!response.ok) throw new Error(errorMessage(error, response));
+		await client.setPinned(id, pinned);
 		await this.refreshSession(id);
 	}
 
@@ -471,10 +444,8 @@ export class SessionManager implements vscode.Disposable {
 		if (want.approvalMode !== current) {
 			if (meta.status !== "idle") throw new Error(`AO restarts omp to change how approvals are answered, which only happens while the session is idle (it is ${meta.status})`);
 			await client.setTurnSettings(id, { approvalMode: want.approvalMode });
-			const exit = await client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: id } } });
-			if (!exit.response.ok) throw new Error(errorMessage(exit.error, exit.response));
-			const resume = await client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: id } } });
-			if (!resume.response.ok) throw new Error(errorMessage(resume.error, resume.response));
+			await client.exitAgent(id);
+			await client.resumeAgent(id);
 			how = "restarted";
 		}
 		await this.setPlanMode(id, want.plan);
@@ -517,11 +488,6 @@ export class SessionManager implements vscode.Disposable {
 		this.transitionEmitter.dispose();
 		this.missingEmitter.dispose();
 	}
-}
-
-function errorMessage(error: unknown, response: Response): string {
-	const message = isRecord(error) && typeof error.message === "string" ? error.message : undefined;
-	return message ?? `AO answered HTTP ${response.status}`;
 }
 
 export interface HistoryEntry {
