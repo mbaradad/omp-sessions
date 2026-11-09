@@ -41,16 +41,6 @@ export function targetColumn(chatColumn?: vscode.ViewColumn): vscode.ViewColumn 
 	return chatColumn === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
 }
 
-/** Diff of one tool call's effect on one file. */
-export async function openToolDiff(provider: SnapshotProvider, session: string, change: FileChange, file: string, chatColumn?: vscode.ViewColumn): Promise<void> {
-	const entry = change.files.find(f => f.path === file) ?? change.files[0];
-	if (!entry) return;
-	const left = provider.blobUri(entry.path, session, entry.before, "before");
-	const right = provider.blobUri(entry.path, session, entry.after, "after");
-	const verb = entry.op === "create" ? "created" : entry.op === "delete" ? "deleted" : change.toolName;
-	await vscode.commands.executeCommand("vscode.diff", left, right, `${path.basename(entry.path)} (omp ${verb})`, { preview: true, viewColumn: targetColumn(chatColumn) });
-}
-
 export async function openTextDiff(provider: SnapshotProvider, file: string, oldText: string, newText: string, title: string, chatColumn?: vscode.ViewColumn): Promise<void> {
 	const left = provider.textUri(file, oldText, "before");
 	const right = provider.textUri(file, newText, "after");

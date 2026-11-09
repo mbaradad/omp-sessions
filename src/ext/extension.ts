@@ -8,6 +8,8 @@ import { OrganizeStore, organizeFile } from "../shared/organize";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { registerAgentSkill } from "./agent-skill";
+import { type PermissionMode, readMode } from "../shared/session-mode";
+import { setSessionMode } from "../shared/session-mode-ops";
 import { Checkpoints } from "./checkpoints";
 import { registerBoard } from "./board";
 import { registerBridge } from "./bridge";
@@ -52,14 +54,10 @@ export function activate(context: vscode.ExtensionContext): void {
 	const hostScript = vscode.Uri.joinPath(context.extensionUri, "out", "host.js").fsPath;
 	const sessions = new SessionManager(hostScript);
 	const snapshots = new SnapshotProvider();
-	// Checkpoints talk to AO (`/undo`, `/redo` are sent as messages): connect, or start the daemon, on first use.
-	let ao: Promise<AoClient> | undefined;
-	const connectAo = () =>
-		(ao ??= AoClient.connect({ start: true }).catch(err => {
-			ao = undefined;
-			throw err;
-		}));
-	const checkpoints = new Checkpoints(connectAo);
+	// Checkpoints send `/undo` and `/redo` through AO; `connectAo` (below) connects on first use.
+	const checkpoints = new Checkpoints(() => connectAo());
+	// The permission-mode gate (Switchyard omp extension): a switch rewrites the session's mode file.
+	const modes = { read: readMode, write: async (id: string, mode: PermissionMode) => void (await setSessionMode(await connectAo(), id, mode)) };
 	// Sessions that finished or asked something while their chat was not in view.
 	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
 	const setUnread = (id: string, value: boolean) => {
@@ -78,10 +76,19 @@ export function activate(context: vscode.ExtensionContext): void {
 	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
+	// ---------- AO (the chat reads and drives sessions through it) ----------
+	let ao: Promise<AoClient> | undefined;
+	const connectAo = (): Promise<AoClient> =>
+		(ao ??= AoClient.connect().catch((err: unknown) => {
+			// Retried on the next ask: the daemon may start later.
+			ao = undefined;
+			throw err;
+		}));
+
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, checkpoints);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo, undefined, checkpoints, modes);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -116,7 +123,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, checkpoints);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo, undefined, checkpoints, modes);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;

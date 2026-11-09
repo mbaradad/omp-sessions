@@ -98,35 +98,21 @@ export type ToWebview =
 export type PanelCommand =
 	| "compact"
 	| "newSession"
-	| "newInPlace"
 	| "stopSession"
 	| "resumeSession"
-	| "resumeTranscript"
 	| "rename"
 	| "sessionChanges"
 	| "reviewChanges"
-	| "openLog"
-	| "fork"
-	| "rewind"
-	| "export"
 	| "exportMarkdownCopy"
 	| "exportMarkdownSave"
 	| "stats"
 	| "copyLast"
-	| "toggleFast"
-	| "toggleAutoCompact"
-	| "goal"
 	| "login"
 	| "logout"
-	| "agents"
 	| "help"
 	| "settings"
 	| "undoTurn"
 	| "redoTurn"
-	| "voiceStart"
-	| "voiceStop"
-	| "voiceMute"
-	| "openTui"
 	| "openHermesCard"
 	| "showHermesCard";
 
@@ -151,14 +137,13 @@ export type FromWebview =
 	| { type: "pickFiles" }
 	/** Insert prompt snippet `name` (without the `p:` prefix) with its placeholders expanded. */
 	| { type: "expandSnippet"; name: string }
-	/** Rewind / fork the conversation at the user message with this text. */
-	| { type: "rewindTo"; text: string }
-	| { type: "forkFrom"; text: string }
+	/** Rewind the conversation to the user message with this text (edit & resend). */
+	| { type: "rewindTo"; text: string; turnId?: string }
 	/** Restore one file to its content before a given tool call. */
 	| { type: "revertFile"; toolCallId: string; path: string }
 	| { type: "queueOp"; ops: QueueOp[] }
 	| { type: "focusTasks" }
 	| { type: "setMode"; mode: PermissionMode }
 	/** Restore the checkpoint before the prompt with this text: files and conversation. */
-	| { type: "restoreCheckpoint"; text: string }
+	| { type: "restoreCheckpoint"; text: string; turnId?: string }
 	| { type: "starModel"; provider: string; id: string };
