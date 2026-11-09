@@ -318,6 +318,10 @@ export function infoJson(s: Session, order: number) {
 		...(s.archived && { archived: true }),
 		...(s.tags.length && { tags: s.tags }),
 		...(s.lane?.waiting && { waiting: s.lane.waiting }),
+		// The planner's state of the next task and the sessions it waits for: the card graph of Hermes shows them (blocked, held, scheduled).
+		...(s.lane?.planState && { planState: s.lane.planState }),
+		...(s.lane?.after && { after: s.lane.after }),
+		...(s.lane?.blockedBy && { blockedBy: s.lane.blockedBy }),
 		completed: report.completed,
 		...(report.completedAt && { completedAt: report.completedAt }),
 		...(report.waitReason && { waitReason: report.waitReason }),
