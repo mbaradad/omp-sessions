@@ -10,21 +10,48 @@ import { type OmpPathOptions, ompPaths } from "./omp-paths";
 export const OMP_EXTENSION_PACKAGE = "switchyard";
 /** The package's name before the Switchyard rename; a copy left beside it would load every module twice. */
 const LEGACY_PACKAGE = "omp-sessions";
+/** Folders the VS Code bridge's stand-alone omp extension was installed into before it became a module of the package. */
+const LEGACY_BRIDGE_DIRS = ["omp-vscode-bridge", "switchyard-bridge"];
 
 export function ompExtensionDir(opts?: OmpPathOptions): string {
 	return path.join(ompPaths(opts).agentDir, "extensions", OMP_EXTENSION_PACKAGE);
 }
 
-/** Removes the pre-rename package next to `targetDir` when it is ours (its package.json says so). */
-export function removeLegacyOmpExtensions(targetDir: string): boolean {
-	const legacy = path.join(path.dirname(targetDir), LEGACY_PACKAGE);
+/** A stand-alone bridge extension we installed: a lone `index.js` that registers the `mcp__vscode_*` tools. */
+function isLegacyBridge(dir: string): boolean {
 	try {
-		if (JSON.parse(fs.readFileSync(path.join(legacy, "package.json"), "utf8"))?.name !== LEGACY_PACKAGE) return false;
+		if (fs.readdirSync(dir).join() !== "index.js") return false;
+		const code = fs.readFileSync(path.join(dir, "index.js"), "utf8");
+		return code.includes("mcp__") && code.includes("mcpServerName") && code.includes("bridge");
 	} catch {
 		return false;
 	}
-	fs.rmSync(legacy, { recursive: true, force: true });
-	return true;
+}
+
+/**
+ * Removes what an earlier layout installed next to `targetDir` and would load every module twice:
+ * the pre-rename package (when its package.json says it is ours) and the bridge's own extension
+ * folder. True when something was removed.
+ */
+export function removeLegacyOmpExtensions(targetDir: string): boolean {
+	const parent = path.dirname(targetDir);
+	let removed = false;
+	const legacy = path.join(parent, LEGACY_PACKAGE);
+	try {
+		if (JSON.parse(fs.readFileSync(path.join(legacy, "package.json"), "utf8"))?.name === LEGACY_PACKAGE) {
+			fs.rmSync(legacy, { recursive: true, force: true });
+			removed = true;
+		}
+	} catch {
+		/* not there, or not ours */
+	}
+	for (const name of LEGACY_BRIDGE_DIRS) {
+		const dir = path.join(parent, name);
+		if (!isLegacyBridge(dir)) continue;
+		fs.rmSync(dir, { recursive: true, force: true });
+		removed = true;
+	}
+	return removed;
 }
 
 /** Copies the modules in `sourceDir` into `targetDir` when they differ; true when anything changed. */
