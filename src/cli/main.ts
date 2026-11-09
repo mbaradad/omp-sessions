@@ -318,6 +318,8 @@ async function cmdNew(args: Args): Promise<number> {
 		...(model && { model }),
 		...(effectiveMode && { mode: effectiveMode }),
 		...(ompArgs.length && { ompArgs }),
+		// checkpoints' setSessionMode: the mode file is never written by hand (D11, G40).
+		setMode: async (sessionId, sessionMode) => void (await setSessionMode(client, sessionId, sessionMode)),
 	});
 	const id = res.session.id;
 	organizeNew(id, { tags: args.multi.get("tag"), group: value(args, "group") });
@@ -783,14 +785,21 @@ async function cmdRemove(args: Args): Promise<number> {
 	return 0;
 }
 
-/** Aborts the current turn; exit 1 when there is none to abort. */
+/**
+ * Aborts the current turn; exit 1 when there is none to abort. AO discards the prompts queued behind an
+ * interrupted turn (G41): they are reported (`discarded` in --json, a warning otherwise) so the caller can send them again.
+ */
 async function cmdAbort(args: Args): Promise<number> {
 	const s = await findSession(args._[0] ?? ".");
 	const busy = !!s.model.conversation?.turns.some(t => t.state === "running");
-	if (busy) await (await ao()).interrupt(s.id);
-	if (flag(args, "json")) process.stdout.write(`${JSON.stringify({ id: s.id, aborted: busy })}\n`);
+	const discarded = busy ? (await (await ao()).interruptWithQueue(s.id)).discarded : [];
+	if (flag(args, "json")) process.stdout.write(`${JSON.stringify({ id: s.id, aborted: busy, discarded })}\n`);
 	else if (busy) process.stdout.write(`${c.yellow("aborted")} ${s.id} ${s.title}\n`);
 	if (!busy) process.stderr.write(`omp-sessions: ${s.id} ${s.title} is not working\n`);
+	else if (discarded.length && !flag(args, "json")) {
+		process.stderr.write(c.yellow(`AO discarded ${discarded.length} queued message${discarded.length === 1 ? "" : "s"}; send ${discarded.length === 1 ? "it" : "them"} again if still wanted:\n`));
+		for (const d of discarded) process.stderr.write(c.dim(`  ${truncate(oneLine(d.text), 100)}\n`));
+	}
 	return busy ? 0 : 1;
 }
 

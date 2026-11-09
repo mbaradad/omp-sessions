@@ -198,7 +198,12 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 test("cli: wait exits 124 while it works; abort ends the turn", { skip }, () => {
 	const id = started("slow 20000", "--mode", "auto");
 	assert.equal(cli("wait", id, "--timeout", "2s").status, 124);
-	assert.equal(cli("abort", id).status, 0);
+	// A follow-up queued behind the running turn: AO discards it on abort (G41), the CLI hands it back.
+	assert.equal(json("send", id, "echo queued reply", "--json").data.sent, true);
+	const aborted = json<{ aborted: boolean; discarded: Array<{ text: string }> }>("abort", id, "--json");
+	assert.equal(aborted.status, 0, aborted.stderr);
+	assert.equal(aborted.data.aborted, true);
+	assert.deepEqual(aborted.data.discarded.map(d => d.text), ["echo queued reply"]);
 	assert.notEqual(cli("wait", id, "--timeout", "30s").status, 124);
 	assert.equal(cli("abort", id).status, 1, "nothing to abort");
 });

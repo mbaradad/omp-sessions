@@ -46,7 +46,7 @@ Tool approvals are `approval` questions titled with the tool call (e.g. the comm
 ## Stop, resume, clean up
 
 ```sh
-omp-sessions abort <session>      # interrupt the current turn
+omp-sessions abort <session>      # interrupt the current turn; AO discards messages queued behind it: --json has them in `discarded` ([{turnId, text, requestedAt}]), send them again if still wanted
 omp-sessions stop <session>       # end the omp process; the session, its worktree and transcript stay
 omp-sessions resume <session>     # restart it on the same transcript
 omp-sessions rm <session> -y      # delete the session, its worktree and history (only ones you created and no longer need;
