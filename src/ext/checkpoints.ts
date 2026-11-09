@@ -143,7 +143,8 @@ export class Checkpoints implements vscode.Disposable {
 			plan.rewound.length > 1 ? `${plan.rewound.length} prompts are undone: this one and every later one.` : "",
 			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
 			"The conversation rewinds to before the prompt, which goes back into the composer.",
-			plan.overwritten.length ? `Changed since omp last wrote them (your edits are overwritten): ${listNames(plan.overwritten.map(rel))}.` : "",
+			plan.merged.length ? `Changed since omp wrote them, without overlapping its edits (kept): ${listNames(plan.merged.map(rel))}.` : "",
+			plan.conflicts.length ? `Changed since omp wrote them, overlapping its edits (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
 			busy ? "omp is working: the turn is interrupted first." : "",
 			"Changes made by shell commands are not tracked. Redo brings everything back.",
 		]
@@ -155,7 +156,7 @@ export class Checkpoints implements vscode.Disposable {
 			void vscode.window.showErrorMessage("omp did not stop; nothing was undone.");
 			return undefined;
 		}
-		return this.run(ao, sessionId, plan.command);
+		return this.run(ao, sessionId, plan.conflicts.length ? `${plan.command} --force` : plan.command);
 	}
 
 	/** Brings back what the newest undo removed: the conversation and the files. */
@@ -171,12 +172,18 @@ export class Checkpoints implements vscode.Disposable {
 			void vscode.window.showWarningMessage("omp is working: stop it before redoing.");
 			return undefined;
 		}
-		if (plan.overwritten.length) {
-			const names = plan.overwritten.map(f => path.relative(plan.cwd, f) || f);
-			const ok = await vscode.window.showWarningMessage("Redo?", { modal: true, detail: `Changed since the undo (your edits are overwritten): ${listNames(names)}.` }, "Redo");
+		if (plan.conflicts.length || plan.merged.length) {
+			const rel = (f: string) => path.relative(plan.cwd, f) || f;
+			const detail = [
+				plan.merged.length ? `Changed since the undo, without overlapping (kept): ${listNames(plan.merged.map(rel))}.` : "",
+				plan.conflicts.length ? `Changed since the undo, overlapping (overwritten if you continue): ${listNames(plan.conflicts.map(rel))}.` : "",
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			const ok = await vscode.window.showWarningMessage("Redo?", { modal: true, detail }, "Redo");
 			if (ok !== "Redo") return undefined;
 		}
-		return this.run(ao, sessionId, plan.command);
+		return this.run(ao, sessionId, plan.conflicts.length ? "/redo --force" : plan.command);
 	}
 
 	private async run(ao: AoClient, sessionId: string, command: string): Promise<CheckpointResult | undefined> {

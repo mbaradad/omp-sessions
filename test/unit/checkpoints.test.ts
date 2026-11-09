@@ -197,6 +197,33 @@ test("subagent edits belong to the main session's prompt", async () => {
 	assert.equal(omp.read("a.txt"), "a0");
 });
 
+test("undo keeps later changes elsewhere in a file (a person's edit, a merge from a parent task) and refuses overlapping ones unless forced", async () => {
+	const { omp, dir } = setup();
+	const lines = (...l: string[]) => `${l.join("\n")}\n`;
+	fs.writeFileSync(path.join(omp.cwd, "a.txt"), lines("1", "2", "3", "4", "5", "6", "7", "8"));
+	await omp.start();
+	await omp.turn("edit the top", [["a.txt", lines("1", "TWO", "3", "4", "5", "6", "7", "8")]]);
+	// Someone (or a merge) changes the bottom of the file afterwards.
+	fs.writeFileSync(path.join(omp.cwd, "a.txt"), lines("1", "TWO", "3", "4", "5", "6", "7", "EIGHT"));
+	await omp.command("/undo");
+	assert.equal(omp.read("a.txt"), lines("1", "2", "3", "4", "5", "6", "7", "EIGHT"), "only omp's change is reverted");
+	assert.deepEqual(readState(dir)?.last?.merged.map(f => path.basename(f)), ["a.txt"]);
+	await omp.command("/redo");
+	assert.equal(omp.read("a.txt"), lines("1", "TWO", "3", "4", "5", "6", "7", "EIGHT"), "redo reapplies it on top");
+
+	// An overlapping change: nothing happens (not even the conversation) until --force.
+	fs.writeFileSync(path.join(omp.cwd, "a.txt"), lines("1", "MINE", "3", "4", "5", "6", "7", "EIGHT"));
+	await omp.command("/undo");
+	assert.equal(omp.read("a.txt"), lines("1", "MINE", "3", "4", "5", "6", "7", "EIGHT"));
+	assert.deepEqual(omp.activePrompts(), ["edit the top"], "the conversation did not move");
+	assert.equal(readState(dir)?.last?.ok, false);
+	assert.equal(readState(dir)?.last?.conflicts.length, 1);
+	await omp.command("/undo --force");
+	assert.equal(omp.read("a.txt"), lines("1", "2", "3", "4", "5", "6", "7", "8"));
+	assert.deepEqual(omp.activePrompts(), []);
+	assert.equal(readState(dir)?.last?.forced, true);
+});
+
 test("an omp AO did not start (no AO_SESSION_ID) gets no hooks and no commands", () => {
 	const { omp } = setup();
 	delete process.env.AO_SESSION_ID;

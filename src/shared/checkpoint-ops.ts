@@ -14,7 +14,7 @@ import {
 	type RedoSummary,
 	aoCheckpointDir,
 	aoTurns,
-	fileMatches,
+	planFileRestore,
 	matchTurns,
 	planRestore,
 	readChanges,
@@ -32,8 +32,10 @@ export interface UndoPlan {
 	rewound: CheckpointPrompt[];
 	/** Files that go back, with the content they get (`before`). */
 	files: CheckpointFile[];
-	/** Of those, the ones changed since omp last wrote them (overwritten by the undo). */
-	overwritten: string[];
+	/** Files changed since omp wrote them whose later changes are kept (3-way merge). */
+	merged: string[];
+	/** Files whose later changes overlap omp's edits: the undo refuses unless sent with `--force`. */
+	conflicts: string[];
 	/** The session's working folder. */
 	cwd: string;
 }
@@ -41,8 +43,9 @@ export interface UndoPlan {
 export interface RedoPlan {
 	command: "/redo";
 	next: RedoSummary;
-	/** Files changed since the undo (overwritten by the redo). */
-	overwritten: string[];
+	merged: string[];
+	/** Overlapping later changes: the redo refuses unless sent with `--force`. */
+	conflicts: string[];
 	cwd: string;
 }
 
@@ -62,14 +65,8 @@ export function planUndo(sessionId: string, conversation: AoConversation, target
 	const rewound = active.slice(active.indexOf(prompt));
 	const dir = aoCheckpointDir(sessionId);
 	const files = planRestore(readChanges(dir), new Set(rewound.map(p => p.id)));
-	return {
-		command: target ? `/undo ${prompt.id}` : "/undo",
-		prompt,
-		rewound,
-		files,
-		overwritten: files.filter(f => !fileMatches(dir, f.path, f.after)).map(f => f.path),
-		cwd: state.cwd,
-	};
+	const restore = planFileRestore(dir, files, "before");
+	return { command: target ? `/undo ${prompt.id}` : "/undo", prompt, rewound, files, merged: restore.merged, conflicts: restore.conflicts, cwd: state.cwd };
 }
 
 /** What `/redo` would do now, or why it can't. */
@@ -78,7 +75,8 @@ export function planRedo(sessionId: string): RedoPlan | { error: string } {
 	const state = readState(dir);
 	const next = state?.redo[0];
 	if (!state || !next) return { error: "Nothing to redo." };
-	return { command: "/redo", next, overwritten: next.files.filter(f => !fileMatches(dir, f.path, f.before)).map(f => f.path), cwd: state.cwd };
+	const restore = planFileRestore(dir, next.files, "after");
+	return { command: "/redo", next, merged: restore.merged, conflicts: restore.conflicts, cwd: state.cwd };
 }
 
 /** omp is running a turn, waiting for an answer, or starting: a command would wait behind it. */

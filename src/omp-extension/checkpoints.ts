@@ -28,13 +28,14 @@ import {
 	type SessionEntryLike,
 	aoCheckpointDir,
 	appendChange,
+	applyFileRestore,
 	candidatePaths,
 	currentPrompt,
 	detailPaths,
-	fileMatches,
 	isPromptEntry,
 	listPrompts,
 	messageText,
+	planFileRestore,
 	planRestore,
 	readChanges,
 	readState,
@@ -43,7 +44,6 @@ import {
 	storeBlob,
 	undoTarget,
 	writeFileAtomic,
-	writeSnapshots,
 	writeState,
 } from "../shared/checkpoints";
 import { EDIT_TOOLS } from "../shared/permissions";
@@ -205,75 +205,100 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 
 	/** Tells the person (TUI) and records the outcome for clients that cannot see omp's notices (ACP). */
 	const report = (ctx: ContextLike, result: Omit<CheckpointResult, "at">) => {
-		ctx.ui.notify(result.message, result.ok ? (result.failed.length || result.overwritten.length ? "warning" : "info") : "warning");
+		ctx.ui.notify(result.message, result.ok && !result.failed.length && !(result.forced && result.conflicts.length) ? "info" : "warning");
 		syncState(ctx.sessionManager, { ...result, at: Date.now() });
 	};
 
-	/** In the TUI, asks before overwriting files changed since omp wrote them; other clients ask before sending. */
-	const confirmOverwrite = async (ctx: ContextLike, title: string, paths: string[]) =>
-		!paths.length || ctx.mode !== "tui" || !ctx.hasUI || (await ctx.ui.confirm(title, `Changed since omp last wrote them (your edits are overwritten): ${listNames(paths, ctx.cwd)}.`));
+	/**
+	 * The file side of an undo (`to: "before"`) or redo. Later changes to the files are kept by a
+	 * 3-way merge; overlapping ones are conflicts, overwritten only with `--force` (or, in the TUI,
+	 * when the person says so). Undefined `plan` = refused because of conflicts.
+	 */
+	const restoreFor = async (ctx: ContextLike, files: readonly CheckpointFile[], to: "before" | "after", force: boolean, title: string) => {
+		const plan = planFileRestore(dir, files, to, force);
+		if (!plan.conflicts.length || force) return { plan, forced: force, conflicts: plan.conflicts };
+		const ask = ctx.mode === "tui" && ctx.hasUI && (await ctx.ui.confirm(title, `Changed since omp wrote them, overlapping its edits: ${listNames(plan.conflicts, ctx.cwd)}. Overwrite them?`));
+		return ask ? { plan: planFileRestore(dir, files, to, true), forced: true, conflicts: plan.conflicts } : { plan: undefined, forced: false, conflicts: plan.conflicts };
+	};
+
+	const outcome = (files: readonly CheckpointFile[], failed: string[], merged: string[], cwd: string) => {
+		const restored = files.map(f => f.path).filter(p => !failed.includes(p));
+		const text = `${merged.length ? ` Kept the later changes to ${listNames(merged, cwd)}.` : ""}${failed.length ? ` Could not write ${listNames(failed, cwd)}.` : ""}`;
+		return { restored, text };
+	};
+
+	/** `--force` and the remaining argument of a command line. */
+	const parseArgs = (args: string) => {
+		const words = args.trim().split(/\s+/).filter(Boolean);
+		return { force: words.includes("--force"), rest: words.filter(w => w !== "--force").join(" ") || undefined };
+	};
 
 	pi.registerCommand("undo", {
 		description: "Undo the last prompt: rewind the conversation to before it and put back the files omp's edits changed since (/redo brings both back)",
 		handler: async (args, ctx) => {
 			if (!ctx.isIdle()) await ctx.waitForIdle();
 			const sm = ctx.sessionManager;
-			const fail = (message: string) => report(ctx, { op: "undo", ok: false, message, restored: [], failed: [], overwritten: [] });
+			const { force, rest } = parseArgs(args);
+			const fail = (message: string, conflicts: string[] = []) => report(ctx, { op: "undo", ok: false, message, restored: [], failed: [], merged: [], conflicts });
 			const branch = sm.getBranch();
-			const target = undoTarget(branch, args.trim() || undefined);
-			if (!target) return fail(args.trim() ? "That prompt is not on the current branch: nothing undone." : "Nothing to undo: no prompt on the current branch.");
+			const target = undoTarget(branch, rest);
+			if (!target) return fail(rest ? "That prompt is not on the current branch: nothing undone." : "Nothing to undo: no prompt on the current branch.");
 			const leaf = sm.getLeafId();
 			if (!leaf) return fail("Nothing to undo.");
 			const prompt = messageText(target.prompt);
 			const files = planRestore(readChanges(dir), target.rewound);
-			const overwritten = files.filter(f => !fileMatches(dir, f.path, f.after)).map(f => f.path);
-			if (!(await confirmOverwrite(ctx, "Undo the last prompt?", overwritten))) return;
+			const { plan, forced, conflicts } = await restoreFor(ctx, files, "before", force, "Undo the last prompt?");
+			if (!plan) return fail(`Nothing undone: ${listNames(conflicts, ctx.cwd)} changed since omp edited them, and the changes overlap. /undo --force${rest ? ` ${rest}` : ""} overwrites them.`, conflicts);
 			const nav = await ctx.navigateTree(String(target.prompt.id));
 			if (nav.cancelled) return fail("omp cancelled the rewind: nothing undone.");
-			const failed = writeSnapshots(dir, files, "before");
+			const failed = applyFileRestore(plan);
 			const marker: MarkerData = { v: 1, op: "undo", redo: [...redoStack(branch), { leaf, prompt, files }] };
 			pi.appendEntry(MARKER_TYPE, marker);
-			const restored = files.map(f => f.path).filter(p => !failed.includes(p));
+			const { restored, text } = outcome(files, failed, plan.merged, ctx.cwd);
 			report(ctx, {
 				op: "undo",
 				ok: true,
 				prompt,
 				restored,
 				failed,
-				overwritten,
-				message: `Undone: the conversation is back to before that prompt${restored.length ? `; restored ${listNames(restored, ctx.cwd)}` : "; no file edits to revert"}.${failed.length ? ` Could not write ${listNames(failed, ctx.cwd)}.` : ""} /redo brings it back.`,
+				merged: plan.merged,
+				conflicts: forced ? conflicts : [],
+				forced,
+				message: `Undone: the conversation is back to before that prompt${restored.length ? `; restored ${listNames(restored, ctx.cwd)}` : "; no file edits to revert"}.${text}${forced && conflicts.length ? ` Overwrote ${listNames(conflicts, ctx.cwd)}.` : ""} /redo brings it back.`,
 			});
 		},
 	});
 
 	pi.registerCommand("redo", {
 		description: "Redo what the last /undo removed: the conversation and the files",
-		handler: async (_args, ctx) => {
+		handler: async (args, ctx) => {
 			if (!ctx.isIdle()) await ctx.waitForIdle();
 			const sm = ctx.sessionManager;
-			const fail = (message: string) => report(ctx, { op: "redo", ok: false, message, restored: [], failed: [], overwritten: [] });
+			const { force } = parseArgs(args);
+			const fail = (message: string, conflicts: string[] = []) => report(ctx, { op: "redo", ok: false, message, restored: [], failed: [], merged: [], conflicts });
 			const stack = redoStack(sm.getBranch());
 			const top = stack.at(-1);
 			if (!top) return fail("Nothing to redo.");
 			const target = sm.getEntry(top.leaf);
 			if (!target) return fail("The undone conversation is gone from the transcript: nothing redone.");
-			const files: CheckpointFile[] = top.files;
-			const overwritten = files.filter(f => !fileMatches(dir, f.path, f.before)).map(f => f.path);
-			if (!(await confirmOverwrite(ctx, "Redo?", overwritten))) return;
+			const { plan, forced, conflicts } = await restoreFor(ctx, top.files, "after", force, "Redo?");
+			if (!plan) return fail(`Nothing redone: ${listNames(conflicts, ctx.cwd)} changed since the undo, and the changes overlap. /redo --force overwrites them.`, conflicts);
 			// Navigating onto a prompt rewinds past it, so a prompt that never got a reply comes back as files only.
 			const nav = await ctx.navigateTree(top.leaf);
 			if (nav.cancelled) return fail("omp cancelled the navigation: nothing redone.");
-			const failed = writeSnapshots(dir, files, "after");
+			const failed = applyFileRestore(plan);
 			const marker: MarkerData = { v: 1, op: "redo", redo: stack.slice(0, -1) };
 			pi.appendEntry(MARKER_TYPE, marker);
-			const restored = files.map(f => f.path).filter(p => !failed.includes(p));
+			const { restored, text } = outcome(top.files, failed, plan.merged, ctx.cwd);
 			report(ctx, {
 				op: "redo",
 				ok: true,
 				restored,
 				failed,
-				overwritten,
-				message: `Redone: the conversation is back${restored.length ? ` and so are ${listNames(restored, ctx.cwd)}` : ""}.${isPromptEntry(target) ? " (The prompt had no reply, so only its files came back.)" : ""}${failed.length ? ` Could not write ${listNames(failed, ctx.cwd)}.` : ""}`,
+				merged: plan.merged,
+				conflicts: forced ? conflicts : [],
+				forced,
+				message: `Redone: the conversation is back${restored.length ? ` and so are ${listNames(restored, ctx.cwd)}` : ""}.${isPromptEntry(target) ? " (The prompt had no reply, so only its files came back.)" : ""}${text}${forced && conflicts.length ? ` Overwrote ${listNames(conflicts, ctx.cwd)}.` : ""}`,
 			});
 		},
 	});

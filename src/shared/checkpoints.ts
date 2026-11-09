@@ -10,6 +10,7 @@
 //   blobs/<sha1>    file contents (EMPTY_BLOB stands for an empty file, null for absent)
 //   state.json      CheckpointState: the session's prompts and the redo stack
 // Node-only (fs); no VS Code and no omp imports, so the omp extension bundles it.
+import { spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -96,8 +97,11 @@ export interface CheckpointResult {
 	restored: string[];
 	/** Files that could not be written. */
 	failed: string[];
-	/** Files that had changed since omp last wrote them (overwritten anyway). */
-	overwritten: string[];
+	/** Restored files that had changed since omp wrote them: those later changes were kept (3-way merge). */
+	merged: string[];
+	/** Files whose later changes overlap the restore: nothing was done, or with `--force` they were overwritten. */
+	conflicts: string[];
+	forced?: boolean;
 	/** The prompt the undo rewound (its text goes back into the composer). */
 	prompt?: string;
 }
@@ -235,20 +239,72 @@ export function fileMatches(dir: string, file: string, hash: string | null): boo
 	}
 }
 
-/** Writes each file's `side` snapshot, deleting files that did not exist; returns the failed paths. */
-export function writeSnapshots(dir: string, files: readonly CheckpointFile[], side: "before" | "after"): string[] {
-	const failed: string[] = [];
+/** One file of a restore: its new content (null: delete it). */
+export interface FileWrite {
+	path: string;
+	content: Buffer | null;
+}
+
+export interface RestorePlan {
+	writes: FileWrite[];
+	/** Files changed since omp wrote them whose later changes merge cleanly with the restore. */
+	merged: string[];
+	/** Files changed since omp wrote them in ways the restore can't merge (overwritten when forced). */
+	conflicts: string[];
+}
+
+/** `current` with the change from `base` to `other` applied (`git merge-file`), or undefined on a conflict or a binary file. */
+function merge3(dir: string, current: string, base: string, other: string): Buffer | undefined {
+	const empty = blobFile(dir, EMPTY_BLOB);
+	if (!fs.existsSync(empty)) {
+		fs.mkdirSync(path.dirname(empty), { recursive: true });
+		fs.writeFileSync(empty, "");
+	}
+	const res = spawnSync("git", ["merge-file", "-p", "-q", current, blobFile(dir, base), blobFile(dir, other)], { maxBuffer: 4 * MAX_SNAPSHOT_BYTES });
+	return res.status === 0 && Buffer.isBuffer(res.stdout) ? res.stdout : undefined;
+}
+
+/**
+ * How to take `files` back to side `to` (undo: `before`; redo: `after`) while keeping what changed
+ * in them since omp wrote them: a person's edits, or a merge the planner propagated from a parent
+ * task. A file still as omp left it gets its snapshot; a changed text file gets a 3-way merge that
+ * reverts (or reapplies) only omp's change; anything else is a conflict, overwritten only when
+ * `force` is set. Reads and computes; writes nothing.
+ */
+export function planFileRestore(dir: string, files: readonly CheckpointFile[], to: "before" | "after", force = false): RestorePlan {
+	const plan: RestorePlan = { writes: [], merged: [], conflicts: [] };
 	for (const f of files) {
-		const hash = f[side];
+		const left = to === "before" ? f.after : f.before;
+		const target = f[to];
+		const snapshot = () => ({ path: f.path, content: target === null ? null : readBlob(dir, target) });
+		if (fileMatches(dir, f.path, left)) plan.writes.push(snapshot());
+		else if (fileMatches(dir, f.path, target)) continue;
+		else {
+			const merged = left !== null && target !== null && fs.existsSync(f.path) ? merge3(dir, f.path, left, target) : undefined;
+			if (merged) {
+				plan.writes.push({ path: f.path, content: merged });
+				plan.merged.push(f.path);
+			} else {
+				plan.conflicts.push(f.path);
+				if (force) plan.writes.push(snapshot());
+			}
+		}
+	}
+	return plan;
+}
+
+/** Writes a restore plan; returns the paths that failed. */
+export function applyFileRestore(plan: RestorePlan): string[] {
+	const failed: string[] = [];
+	for (const w of plan.writes) {
 		try {
-			if (hash === null) fs.rmSync(f.path, { force: true });
+			if (w.content === null) fs.rmSync(w.path, { force: true });
 			else {
-				const content = readBlob(dir, hash);
-				fs.mkdirSync(path.dirname(f.path), { recursive: true });
-				fs.writeFileSync(f.path, content);
+				fs.mkdirSync(path.dirname(w.path), { recursive: true });
+				fs.writeFileSync(w.path, w.content);
 			}
 		} catch {
-			failed.push(f.path);
+			failed.push(w.path);
 		}
 	}
 	return failed;
