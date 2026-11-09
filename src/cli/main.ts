@@ -5,6 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type AoClient, AoError, type AoSchemas, findDaemon, switchyardHome, unwrap } from "../ao/client";
+import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "../ao/config";
+import { pairingLink } from "../ao/mobile";
 // Two `permissionModeOf`s: src/ao's reads AO turn settings; src/shared/permissions' parses a typed word.
 import { SETTLED_STATES, answerFor, approvalModeFor, permissionModeOf as aoPermissionMode } from "../ao/model";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
@@ -13,11 +15,12 @@ import { ORG_COLORS, OrganizeStore, PRIORITIES, isOrgColor, isPriority } from ".
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode, permissionModeOf } from "../shared/permissions";
 import { MAX_NOTES, MAX_TITLE } from "../shared/queue";
 import { qrHalfBlocks } from "../shared/remote-qr";
-import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { setSessionMode } from "../shared/session-mode-ops";
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
-import { applySessionMode, gateInstalled, gateModulePath, modeProblem, shimPath } from "./gate";
+import { ensureBundles, extensionReport, installBundles, shippedBundles, uninstallBundles } from "./extension";
+import { modeProblem } from "./gate";
 import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
@@ -266,6 +269,8 @@ async function cmdNew(args: Args): Promise<number> {
 	const worktree = flag(args, "no-worktree") ? "never" : worktreeArg;
 	if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`not a folder: ${dir}`);
 	const defaults = readSwitchyardConfig();
+	// Install or refresh Switchyard's omp extension and shim when this build ships them (G38): ask, edits and plan need the gate.
+	refreshBundles();
 	// Explicit flag, then the config file; none: the spawn helper's default (`auto`: AO's bypass, the gate lets everything through).
 	const effectiveMode = mode ?? defaults.mode;
 	if (effectiveMode) {
@@ -274,7 +279,11 @@ async function cmdNew(args: Args): Promise<number> {
 	}
 	// Words after `--` are omp's own flags for this session (G34): the `omp` shim appends them to `omp acp`.
 	const ompArgs = args.dashes;
-	if (ompArgs.length && !fs.existsSync(shimPath())) throw new Error(`omp flags after -- need Switchyard's omp shim (${shimPath()}), which is not installed: it appends them to omp acp`);
+	if (ompArgs.length) {
+		const report = extensionReport((await findDaemon().catch(() => undefined))?.pid);
+		if (!report.shim.installed) throw new Error(`omp flags after -- need Switchyard's omp shim (${report.shim.path}), which is not installed: it appends them to omp acp (omp-sessions omp-extension install)`);
+		if (report.shim.onDaemonPath === false) throw new Error(`the AO daemon was not started with ${path.dirname(report.shim.path)} first on its PATH, so omp flags after -- would be ignored: restart AO through Switchyard (it starts it that way)`);
+	}
 	const model = value(args, "model") ?? defaults.model;
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
@@ -824,9 +833,9 @@ async function cmdMode(args: Args): Promise<void> {
 	if (!mode) throw new UsageError(`unknown mode "${want}" (${PERMISSION_MODES.join(", ")})`);
 	// A session started by Switchyard has a mode file: the gate reads it at the next tool call, no restart (D11).
 	if (s.mode !== undefined) {
-		const problem = modeProblem(mode);
-		if (problem) throw new Error(problem.replace(/^--mode /, "mode "));
-		await applySessionMode(client, s.id, mode);
+		const problem = modeProblem(mode, `mode ${mode}`);
+		if (problem) throw new Error(problem);
+		await setSessionMode(client, s.id, mode);
 		process.stdout.write(`${c.green(PERMISSION_MODE_INFO[mode].label)} ${s.id} ${s.title}${c.dim(" (live)")}\n`);
 		return;
 	}
@@ -1267,13 +1276,6 @@ async function cmdServer(args: Args): Promise<number> {
 
 type MobileStatus = AoSchemas["MobileStatusResponse"];
 
-/** The link AO's desktop app puts in its pairing QR (`aomobile://pair#<base64url offer>`, frontend lib/pairing-payload.ts). */
-function pairingLink(s: MobileStatus): string | undefined {
-	if (!s.enabled || !s.endpoints.length) return undefined;
-	const offer = { v: 2, hostId: s.hostId, name: s.endpoints[0].host, platform: "", endpoints: s.endpoints, token: s.password };
-	return `aomobile://pair#${Buffer.from(JSON.stringify(offer)).toString("base64url")}`;
-}
-
 function remoteJson(s: MobileStatus) {
 	return {
 		enabled: s.enabled,
@@ -1362,7 +1364,54 @@ const STATE_ORDER = ["needs_input", "working", "starting", "queued", "scheduled"
 
 type Readiness = AoSchemas["AgentReadinessResponse"]["agents"][number];
 
+/** `new` and `status`: installs or refreshes Switchyard's omp extension and shim when this build ships newer ones (G38); one notice on a first install. */
+function refreshBundles(): void {
+	try {
+		const done = ensureBundles();
+		if (done?.firstInstall) process.stderr.write(c.dim(`installed Switchyard's omp extension into ${done.dir} (omp-sessions omp-extension status; config set omp-extension off stops this)\n`));
+	} catch (err) {
+		process.stderr.write(c.yellow(`warning: could not install Switchyard's omp extension: ${err instanceof Error ? err.message : String(err)}\n`));
+	}
+}
+
+/** `omp-extension install|status|uninstall`: the omp extension (mode gate, checkpoints, todos, bridge) and the `omp` shim, without VS Code. */
+async function cmdOmpExtension(args: Args): Promise<number> {
+	const sub = args._[0] ?? "status";
+	const json = flag(args, "json");
+	if (sub === "install") {
+		const result = installBundles();
+		const report = extensionReport((await findDaemon().catch(() => undefined))?.pid);
+		if (json) process.stdout.write(`${JSON.stringify({ ...result, ...report })}\n`);
+		else {
+			process.stdout.write(`${c.green("extension")} ${result.extensions ? "installed" : "unchanged"} ${c.dim(report.dir)}\n`);
+			process.stdout.write(`${c.green("shim")} ${result.shim} ${c.dim(report.shim.path)}\n`);
+			if (result.shim === "skipped") process.stderr.write(c.yellow(`warning: ${report.shim.path} is not Switchyard's shim (or this platform has none): left alone\n`));
+			if (report.shim.onDaemonPath === false) process.stderr.write(c.yellow(`note: the running AO daemon doesn't have ${path.dirname(report.shim.path)} first on its PATH: restart it through Switchyard for omp flags to apply\n`));
+		}
+		return 0;
+	}
+	if (sub === "uninstall") {
+		const result = uninstallBundles();
+		if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
+		else process.stdout.write(`${result.extensions || result.shim ? c.green("removed") : c.dim("nothing installed")}${result.extensions ? " extension" : ""}${result.shim ? " shim" : ""}\n`);
+		return 0;
+	}
+	if (sub !== "status") throw new UsageError(`unknown omp-extension command "${sub}" (status, install, uninstall)`);
+	const report = extensionReport((await findDaemon().catch(() => undefined))?.pid);
+	const ok = report.installed && report.current;
+	if (json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+	else {
+		process.stdout.write(`${c.bold("extension")} ${report.installed ? (report.current ? c.green("installed") : c.yellow("installed, older than this build")) : c.red("not installed")} ${c.dim(report.dir)}\n`);
+		if (report.modules.length) process.stdout.write(c.dim(`  modules: ${report.modules.join(", ")}\n`));
+		process.stdout.write(`${c.bold("shim")}      ${report.shim.installed ? (report.shim.current ? c.green("installed") : c.yellow("installed, older than this build")) : c.red("not installed")} ${c.dim(report.shim.path)}${report.shim.onDaemonPath === false ? c.yellow(" (not first on the running AO daemon's PATH)") : ""}\n`);
+		process.stdout.write(c.dim(`auto-install ${report.auto}${report.shipped ? "" : " · this build ships neither (no omp-extension/ or omp-shim/ next to cli.js)"}\n`));
+		if (!ok) process.stdout.write(c.dim("omp-sessions omp-extension install\n"));
+	}
+	return ok ? 0 : 1;
+}
+
 async function cmdStatus(args: Args): Promise<number> {
+	refreshBundles();
 	const problems: string[] = [];
 	const daemon = await findDaemon().catch(() => undefined);
 	const client = daemon ? await aoIfRunning() : undefined;
@@ -1398,9 +1447,12 @@ async function cmdStatus(args: Args): Promise<number> {
 	}
 	const config = readSwitchyardConfig();
 	// Mode gating depends on the omp extension (G38): without it nothing asks in ask, edits or plan.
-	const extensionInstalled = gateInstalled();
-	const shimInstalled = fs.existsSync(shimPath());
-	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror");
+	const extReport = extensionReport(daemon?.pid);
+	const extensionInstalled = extReport.installed;
+	const shimInstalled = extReport.shim.installed;
+	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror (omp-sessions omp-extension install)");
+	else if (!extReport.current) problems.push("Switchyard's omp extension is older than this build (omp-sessions omp-extension install)");
+	if (extReport.shim.onDaemonPath === false) problems.push(`the AO daemon was not started with ${path.dirname(extReport.shim.path)} first on its PATH: omp flags (config omp.extraArgs, new -- …) are ignored until AO is restarted through Switchyard`);
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
@@ -1412,8 +1464,8 @@ async function cmdStatus(args: Args): Promise<number> {
 		omp: {
 			...(omp && { installed: omp.installation.state === "installed", authenticated: omp.authentication.state, readiness: omp.effectiveReadiness }),
 			extraArgs: config.omp?.extraArgs ?? [],
-			extension: { installed: extensionInstalled, path: gateModulePath() },
-			shim: { installed: shimInstalled, path: shimPath() },
+			extension: { installed: extensionInstalled, path: extReport.dir, modules: extReport.modules, current: extReport.current, shipped: extReport.shipped, auto: extReport.auto },
+			shim: extReport.shim,
 			...(config.model && { defaultModel: config.model }),
 			...(config.mode && { defaultMode: config.mode }),
 		},
@@ -1449,7 +1501,9 @@ async function cmdStatus(args: Args): Promise<number> {
 
 // ---------- config (~/.switchyard/config.json: the model and mode of new sessions, the planner service) ----------
 
-const CONFIG_KEYS = ["model", "mode", "service", "omp.path", "omp.extraArgs"];
+const CONFIG_KEYS = ["model", "mode", "service", "omp-extension", "hibernation", "omp.path", "omp.extraArgs"];
+/** The on/off settings and the config.json key each is stored under. */
+const ON_OFF_KEYS: Record<string, "service" | "ompExtension" | "hibernation"> = { service: "service", "omp-extension": "ompExtension", hibernation: "hibernation" };
 /** AO resolves omp itself (the daemon's PATH): there is no path to set (MAPPING Q3). */
 const NO_OMP_PATH = "omp.path is gone: AO finds omp on the daemon's PATH (set PATH in its unit); omp.extraArgs still works (config set omp.extraArgs -- --profile work)";
 
@@ -1458,6 +1512,8 @@ function configValue(key: string): unknown {
 	if (key === "model") return s.model ?? null;
 	if (key === "mode") return s.mode ?? null;
 	if (key === "service") return s.service ?? "on";
+	if (key === "omp-extension") return s.ompExtension ?? "on";
+	if (key === "hibernation") return s.hibernation ?? null;
 	if (key === "omp.extraArgs") return s.omp?.extraArgs ?? [];
 	return null;
 }
@@ -1483,10 +1539,11 @@ async function cmdConfig(args: Args): Promise<number> {
 			process.stdout.write(
 				[
 					`model          ${s.model ?? c.dim("(not set: omp's default model)")}`,
-					`mode           ${s.mode ?? c.dim("(not set: AO's default for omp)")} ${c.dim("(permission mode of new sessions that ask for none)")}`,
+					`mode           ${s.mode ?? c.dim("(not set: auto)")} ${c.dim("(permission mode of new sessions that ask for none)")}`,
 					`service        ${s.service ?? "on"} ${c.dim("(off: the planner isn't installed as a login service by itself)")}`,
+					`omp-extension  ${s.ompExtension ?? "on"} ${c.dim("(off: the CLI doesn't install or refresh Switchyard's omp extension and shim by itself)")}`,
+					`hibernation    ${s.hibernation ?? c.dim("(not set: AO's own setting)")} ${c.dim("(on: AO stops the omp of a chat nobody views after 90 s)")}`,
 					`omp.extraArgs  ${s.omp?.extraArgs?.length ? s.omp.extraArgs.join(" ") : c.dim("(none)")} ${c.dim("(added to every omp acp an AO session starts; needs the Switchyard omp shim)")}`,
-					c.dim(switchyardConfigPath()),
 				].join("\n") + "\n",
 			);
 			return 0;
@@ -1500,7 +1557,7 @@ async function cmdConfig(args: Args): Promise<number> {
 				writeSwitchyardConfig({ omp: clear ? undefined : { extraArgs: rest } });
 				break;
 			}
-			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : "config set service <on|off>");
+			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : `config set ${key} <on|off>`);
 			const v = rest[0].trim();
 			if (key === "model") {
 				if (v !== "none" && !/^[^/\s]+\/\S+$/.test(v)) throw new UsageError(`a model is provider/id (omp-sessions models lists them), not "${v}"`);
@@ -1519,16 +1576,18 @@ async function cmdConfig(args: Args): Promise<number> {
 				if (v !== "none" && !isPermissionMode(v)) throw new UsageError("config set mode <auto|edits|ask|plan|none> (auto approves every tool call; edits asks before commands; ask asks for edits and commands; plan is read-only)");
 				writeSwitchyardConfig({ mode: isPermissionMode(v) ? v : undefined });
 			} else {
-				if (v !== "on" && v !== "off") throw new UsageError("config set service <on|off>");
-				writeSwitchyardConfig({ service: v });
+				if (v !== "on" && v !== "off") throw new UsageError(`config set ${key} <on|off>`);
+				writeSwitchyardConfig({ [ON_OFF_KEYS[key]]: v });
 			}
 			break;
 		}
 		case "unset":
-			if (key === undefined) throw new UsageError(`config unset <${CONFIG_KEYS.slice(0, 3).join("|")}>`);
+			if (key === undefined) throw new UsageError(`config unset <${CONFIG_KEYS.filter(k => k !== "omp.path").join("|")}>`);
 			if (key === "omp.path") throw new Error(NO_OMP_PATH);
 			if (key === "omp.extraArgs") writeSwitchyardConfig({ omp: undefined });
-			else writeSwitchyardConfig(key === "model" ? { model: undefined } : key === "mode" ? { mode: undefined } : { service: undefined });
+			else if (key === "model") writeSwitchyardConfig({ model: undefined });
+			else if (key === "mode") writeSwitchyardConfig({ mode: undefined });
+			else writeSwitchyardConfig({ [ON_OFF_KEYS[key]]: undefined });
 			break;
 		default:
 			throw new UsageError(`unknown config command "${sub}" (get, set, unset)`);
@@ -1719,6 +1778,11 @@ ${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and
                                   plugins are per Hermes profile; default: $HERMES_HOME, else ~/.hermes
                                   (%LOCALAPPDATA%\\hermes on Windows)
 
+${c.bold("Omp extension")}  ${c.dim("(permission modes, /undo and the todo mirror run in an omp extension; extra omp flags through a shim)")}
+  omp-extension [status] [--json] whether Switchyard's omp extension and shim are installed and current
+  omp-extension install|uninstall copy them into omp's agent folder and ~/.switchyard/bin (new and status do it
+                                  by themselves unless: config set omp-extension off)
+
   --no-color, NO_COLOR=1          plain output
   --                              everything after it is text, not flags (e.g. answer . -- --yes)
 `;
@@ -1795,6 +1859,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	projects: { flags: ["json"], run: cmdProjects },
 	skill: { flags: ["dir", "force"], run: cmdSkill },
 	hermes: { flags: ["force", "profile", "all-profiles", "json"], run: cmdHermes },
+	"omp-extension": { flags: ["json"], run: cmdOmpExtension },
 };
 
 async function main(argv: string[]): Promise<number> {

@@ -33,7 +33,7 @@ omp-sessions new /abs/path/to/repo -p "Fix the flaky checkout test. Run the test
 This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and returns right away (`cwd`: the session's worktree). The session keeps working in the background. Ids look like `<project>-<n>`, e.g. `myrepo-3`.
 
 - `-p -` reads the prompt from stdin, which is better for long prompts.
-- Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`omp-sessions config get mode`), else in `auto`. AO runs every session without its own prompts and the Switchyard omp extension's gate asks instead, so `ask`, `edits` and `plan` work only where that extension is installed (`omp-sessions status --json`: `omp.extension.installed`); `new --mode ask|edits|plan` fails (exit 1, nothing started) without it. The modes:
+- Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`omp-sessions config get mode`), else in `auto`. AO runs every session without its own prompts and the Switchyard omp extension's gate asks instead, so `ask`, `edits` and `plan` work only where that extension is installed (`omp-sessions status --json`: `omp.extension.installed`); `new --mode ask|edits|plan` fails (exit 1, nothing started) without it. `omp-sessions omp-extension [status|install|uninstall] [--json]` manages it (and the shim for omp flags); `new` and `status` install or refresh it by themselves when this build ships it, unless `config set omp-extension off`. The modes:
   - `auto` approves every tool call;
   - `edits` applies file edits but asks before every command (bash included);
   - `ask` asks before every tool call;

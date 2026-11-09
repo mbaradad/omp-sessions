@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
 import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
-import { readSessionMode } from "./gate";
+import { readMode } from "../shared/session-mode";
 import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
 
@@ -130,7 +130,7 @@ export async function buildSession(client: AoClient, view: AoSessionView, projec
 	const project = view.projectId ? projects.get(view.projectId) : undefined;
 	const org = opts.org ?? readOrgFile();
 	const e = org.sessions[view.id];
-	const mode = readSessionMode(view.id);
+	const mode = readMode(view.id);
 	const session: Session = {
 		id: view.id,
 		title: model.title,

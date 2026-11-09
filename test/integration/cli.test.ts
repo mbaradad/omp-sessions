@@ -108,9 +108,10 @@ async function startedAsking(script: string): Promise<string> {
 /** The files Switchyard's omp extension and shim leave on a machine that has them (the gate is what makes ask, edits and plan enforceable). */
 function installGate(): void {
 	// The fixture points omp at its own agent folder (PI_CODING_AGENT_DIR); the CLI looks where omp does.
-	const gate = path.join(env.PI_CODING_AGENT_DIR ?? path.join(fakeHome, ".omp", "agent"), "extensions", "switchyard", "mode.js");
-	fs.mkdirSync(path.dirname(gate), { recursive: true });
-	fs.writeFileSync(gate, "// test gate\n");
+	const dir = path.join(env.PI_CODING_AGENT_DIR ?? path.join(fakeHome, ".omp", "agent"), "extensions", "switchyard");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "mode.js"), "// test gate\n");
+	fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } })}\n`);
 }
 
 test("cli: usage errors exit 2; status says what runs and never starts the planner", { skip }, () => {
@@ -376,13 +377,15 @@ test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what 
 	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "edits", "switched live: the next tool call reads it");
 	assert.equal(json("show", id, "--json").data.mode, "edits");
 
-	// Flags after -- go to the omp shim through the session's omp-args file (omp restarts to read them).
+	// Flags after -- reach omp only through the shim on the AO daemon's PATH. This daemon was not started that way, so
+	// the CLI refuses instead of writing flags that would be ignored (the omp-args file itself is src/ao/spawn.ts's).
 	fs.mkdirSync(path.join(home, "switchyard", "bin"), { recursive: true });
-	fs.writeFileSync(path.join(home, "switchyard", "bin", "omp"), "#!/bin/sh\n");
-	// Everything after -- is omp's: --json goes before it.
-	const made = json("new", repo, "-p", "echo flagged", "--mode", "auto", "--json", "--", "--advisor", "plan");
-	assert.equal(made.status, 0, made.stderr);
-	const flagged = made.data.id;
-	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", flagged, "omp-args"), "utf8").trim(), "--advisor plan");
-	assert.equal(cli("wait", flagged, "--timeout", "60s").status, 0);
+	fs.writeFileSync(path.join(home, "switchyard", "bin", "omp"), "#!/bin/sh\n# switchyard-omp-shim test\n");
+	const flagged = cli("new", repo, "-p", "echo flagged", "--mode", "auto", "--json", "--", "--advisor", "plan");
+	assert.equal(flagged.status, 1);
+	assert.match(flagged.stderr, /first on its PATH/);
+	const shim = json<{ omp: { shim: { installed: boolean; onDaemonPath?: boolean } }; problems: string[] }>("status", "--json").data;
+	assert.equal(shim.omp.shim.installed, true);
+	assert.equal(shim.omp.shim.onDaemonPath, false);
+	assert.ok(shim.problems.some(p => /first on its PATH/.test(p)));
 });

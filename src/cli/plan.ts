@@ -8,7 +8,7 @@ import { logPath, socketPath } from "../planner/paths";
 import { SYSTEMD_UNIT, type ServiceKind, installService, serviceKind, serviceUnitPath, uninstallService } from "../planner/service";
 import type { PlanView, PlannerOpName, PlannerOps, QueueOp as PlannerQueueOp, QueueView } from "../planner/types";
 import type { Priority } from "../shared/organize";
-import { readSwitchyardConfig } from "../shared/switchyard-config";
+import { readSwitchyardConfig } from "../ao/config";
 
 export type QueueOp = PlannerQueueOp;
 export type PlannerQueue = QueueView;

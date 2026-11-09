@@ -17,6 +17,8 @@ export interface SwitchyardConfig {
 	service?: "on" | "off";
 	/** G28: "on" / "off" makes Switchyard set AO's chat hibernation after it starts a daemon and on every planner reconnect; absent: leave AO alone. (`ensureDaemon` reads this key through native.ts's `readHibernationSetting`; the values agree.) */
 	hibernation?: "on" | "off";
+	/** G38: "off" stops the CLI from installing or refreshing Switchyard's omp extension and shim by itself (`omp-extension install` still works). */
+	ompExtension?: "on" | "off";
 	/** The nested key the `omp` shim reads (G34): arguments added to every `omp acp` an AO session starts, e.g. `["--profile", "work"]`. */
 	omp?: { extraArgs?: string[] };
 }
@@ -41,6 +43,7 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 	if (isPermissionMode(raw.mode)) out.mode = raw.mode;
 	if (raw.service === "on" || raw.service === "off") out.service = raw.service;
 	if (raw.hibernation === "on" || raw.hibernation === "off") out.hibernation = raw.hibernation;
+	if (raw.ompExtension === "on" || raw.ompExtension === "off") out.ompExtension = raw.ompExtension;
 	const omp = raw.omp;
 	if (omp && typeof omp === "object" && "extraArgs" in omp && Array.isArray(omp.extraArgs)) {
 		const extraArgs = omp.extraArgs.filter((a): a is string => typeof a === "string");
