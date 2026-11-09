@@ -29,7 +29,7 @@ export interface BoardCard {
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
 	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */
-	sync?: { state: SyncState; parents: string[]; edges?: Record<string, SyncState> };
+	sync?: { state: SyncState; parents: string[]; edges?: Record<string, SyncState>; files?: string[] };
 	createdAt: number;
 	updatedAt: number;
 	unread: boolean;

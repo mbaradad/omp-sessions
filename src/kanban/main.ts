@@ -477,7 +477,8 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 	meta.title = c.cwd;
 	if (c.sync && c.sync.state !== "in-sync") {
 		const sync = el("span", `pill sync sync-${c.sync.state}`, icon(c.sync.state === "conflict" ? "bell" : "clock"), SYNC_LABEL[c.sync.state]);
-		sync.title = `${SYNC_LABEL[c.sync.state]}${c.sync.parents.length ? ` (from ${c.sync.parents.join(", ")})` : ""}`;
+		const from = c.sync.parents.map(id => data.cards.find(x => x.id === id)?.title ?? id.slice(0, 8));
+		sync.title = [`${SYNC_LABEL[c.sync.state]}${from.length ? ` (from ${from.join(", ")})` : ""}`, ...(c.sync.files?.length ? [`Conflicts: ${c.sync.files.join(", ")}`] : [])].join("\n");
 		meta.append(sync);
 	}
 

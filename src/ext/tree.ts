@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { SYNC_LABEL } from "../kanban/board";
 import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin";
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
@@ -179,6 +180,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.sync) {
+			const from = m.queue.sync.parents.map(id => this.sessions.get(id)?.title ?? id.slice(0, 8)).join(", ");
+			const files = m.queue.sync.files?.length ? ` in ${m.queue.sync.files.slice(0, 5).join(", ")}${m.queue.sync.files.length > 5 ? ", …" : ""}` : "";
+			tip.appendMarkdown(`$(git-merge) ${SYNC_LABEL[m.queue.sync.state]}${from ? ` — from ${from.replace(/[*_`[\]]/g, "\\$&")}` : ""}${files.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		}
 		if (m.queue?.after?.length) {
 			const names = m.queue.after.map(id => `“${(this.sessions.get(id)?.title ?? `${id.slice(0, 8)} (deleted)`).replace(/[*_`[\]]/g, "\\$&")}”`);
 			tip.appendMarkdown(`$(type-hierarchy) Queued tasks wait for ${names.join(", ")} to finish  \n`);

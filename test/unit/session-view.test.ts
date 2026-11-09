@@ -180,14 +180,14 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 		rev: 1,
 		lanes: [lane({ id: "repo-3", done: 1, total: 1 }), lane({ id: "repo-1" }), lane({ id: "repo-2" })],
 		tasks: [
-			task({ id: "c", lane: "repo-3", after: ["a", "b"], sync: { a: { state: "upstream-changed", at: 1 }, b: { state: "conflict", at: 1 } } }),
+			task({ id: "c", lane: "repo-3", after: ["a", "b"], sync: { a: { state: "upstream-changed", at: 1 }, b: { state: "conflict", at: 1, files: ["x.ts"] } } }),
 			task({ id: "a", lane: "repo-1" }),
 			task({ id: "b", lane: "repo-2" }),
 		],
 		recurring: [],
 		status: {} as PlanView["status"],
 	} satisfies PlanView;
-	assert.deepEqual(laneQueue(plan, "repo-3")?.sync, { state: "conflict", parents: ["repo-2"], edges: { "repo-1": "upstream-changed", "repo-2": "conflict" } });
+	assert.deepEqual(laneQueue(plan, "repo-3")?.sync, { state: "conflict", parents: ["repo-2"], edges: { "repo-1": "upstream-changed", "repo-2": "conflict" }, files: ["x.ts"] });
 	assert.equal(laneQueue(plan, "repo-1")?.sync, undefined);
 	const clean: PlanView = { ...plan, tasks: plan.tasks.map(t => (t.id === "c" ? { ...t, sync: { a: { state: "in-sync" as const, at: 1 }, b: { state: "in-sync" as const, at: 1 } } } : t)) };
 	assert.equal(laneQueue(clean, "repo-3")?.sync, undefined);

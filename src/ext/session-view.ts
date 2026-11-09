@@ -129,12 +129,13 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	// Propagation (GRAPH-PROPAGATION.md): the worst state over every parent edge of the session's tasks, and the parent sessions in it.
 	const edges = tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, edge]) => ({ parent, state: edge.state })));
 	const syncState = edges.reduce<SyncState | undefined>((worst, e) => (worst === undefined || SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worst] ? e.state : worst), undefined);
+	const files = [...new Set(Object.values(tasks.flatMap(t => Object.values(t.sync ?? {}))).filter(e => e.state === syncState).flatMap(e => e.files ?? []))];
 	const worstByParent = new Map<string, SyncState>();
 	for (const e of edges) {
 		const parent = sessionOf(e.parent);
 		if (parent && parent !== sessionId && e.state !== "in-sync" && SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worstByParent.get(parent) ?? "in-sync"]) worstByParent.set(parent, e.state);
 	}
-	const sync = syncState && syncState !== "in-sync" ? { state: syncState, parents: sessionsOf(edges.filter(e => e.state === syncState).map(e => e.parent)), edges: Object.fromEntries(worstByParent) } : undefined;
+	const sync = syncState && syncState !== "in-sync" ? { state: syncState, parents: sessionsOf(edges.filter(e => e.state === syncState).map(e => e.parent)), edges: Object.fromEntries(worstByParent), ...(files.length && { files }) } : undefined;
 	return {
 		pending: total("pending"),
 		running: total("running"),
