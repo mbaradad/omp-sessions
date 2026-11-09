@@ -6,7 +6,7 @@ import { pidAlive } from "../shared/process-lock";
 import { BridgeConnection } from "./client";
 import { formatResult } from "./format";
 
-export const NOT_CONNECTED = `VS Code is not connected: no VS Code window with the omp extension (and \`switchyard.vscodeTools\` enabled) is open on this machine. Use omp's built-in tools (read, grep, find, lsp…) instead.`;
+export const NOT_CONNECTED = `VS Code is not connected: no VS Code window with the Switchyard extension (and \`switchyard.vscodeTools\` enabled) is open on this machine. Use omp's built-in tools (read, grep, find, lsp…) instead.`;
 
 export interface CallOutcome {
 	text: string;

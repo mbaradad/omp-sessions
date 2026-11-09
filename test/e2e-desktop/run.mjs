@@ -41,7 +41,7 @@ if (build.status !== 0) process.exit(build.status ?? 1);
 const outDir = path.join(here, "out-views");
 fs.rmSync(outDir, { recursive: true, force: true });
 await esbuild.build({
-	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts")],
+	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts"), path.join(here, "suite", "flow.test.ts")],
 	outdir: outDir,
 	bundle: true,
 	platform: "node",
@@ -198,42 +198,73 @@ try {
 
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
 	const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(repo, ".vscode-test") });
-	try {
-		await runTests({
-			vscodeExecutablePath,
-			extensionDevelopmentPath: repo,
-			extensionTestsPath: path.join(outDir, "index.js"),
-			launchArgs: [
-				dirs.repo,
-				`--user-data-dir=${userData}`,
-				`--extensions-dir=${extensions}`,
-				"--disable-extensions",
-				"--disable-gpu",
-				"--new-window",
-				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
-			],
-			extensionTestsEnv: {
-				PI_CODING_AGENT_DIR: hostAgentDir,
-				// The host never installs omp extensions or the shim, whatever its extension mode (CONTRACT.md, Isolated HOME).
-				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
-				...aoEnv,
-				...isolatedEnv,
-				OMP_VSCODE_HOME: ompHome,
-				SWITCHYARD_HOME: switchyardHome,
-				// Never start (or find) the user's own daemon: the run file above is the only one.
-				SWITCHYARD_NO_SERVER: "1",
-				SWITCHYARD_E2E_REPO: dirs.repo,
-				SWITCHYARD_E2E_SHOTS: dirs.shots,
-				SWITCHYARD_E2E_AO_URL: baseUrl,
-			},
-			stdout: echo(process.stdout),
-			stderr: echo(process.stderr),
-		});
-		check("extension-host views suite passed (VS Code exited 0)", true);
-	} catch (err) {
-		check("extension-host views suite passed", false, String(err?.message ?? err));
+	const flowState = path.join(dirs.vscode, "flow-state.json");
+	/** One VS Code instance running one suite file; the window closes when the suite ends. */
+	const runSuite = async (suite, name, extraEnv = {}) => {
+		try {
+			await runTests({
+				vscodeExecutablePath,
+				extensionDevelopmentPath: repo,
+				extensionTestsPath: path.join(outDir, "index.js"),
+				launchArgs: [
+					dirs.repo,
+					`--user-data-dir=${userData}`,
+					`--extensions-dir=${extensions}`,
+					"--disable-extensions",
+					"--disable-gpu",
+					"--new-window",
+					...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
+				],
+				extensionTestsEnv: {
+					PI_CODING_AGENT_DIR: hostAgentDir,
+					// The host never installs omp extensions or the shim, whatever its extension mode (CONTRACT.md, Isolated HOME).
+					SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
+					...aoEnv,
+					...isolatedEnv,
+					OMP_VSCODE_HOME: ompHome,
+					SWITCHYARD_HOME: switchyardHome,
+					// Never start (or find) the user's own daemon: the run file above is the only one.
+					SWITCHYARD_NO_SERVER: "1",
+					SWITCHYARD_E2E_REPO: dirs.repo,
+					SWITCHYARD_E2E_SHOTS: dirs.shots,
+					SWITCHYARD_E2E_AO_URL: baseUrl,
+					SWITCHYARD_E2E_STATE: flowState,
+					SWITCHYARD_E2E_SUITE: suite,
+					...extraEnv,
+				},
+				stdout: echo(process.stdout),
+				stderr: echo(process.stderr),
+			});
+			return check(`${name} passed (VS Code exited 0)`, true);
+		} catch (err) {
+			return check(`${name} passed`, false, String(err?.message ?? err));
+		}
+	};
+	const viewsOk = await runSuite("desktop", "views suite");
+	// The flow: chat, approval and a three-task queue in one window; the planner (a detached process that is not
+	// VS Code's) finishes the tasks while no VS Code runs; a new window undoes and redoes the last prompt.
+	if (viewsOk && (await runSuite("flow", "flow phase 1: session, chat, approval, queued tasks", { SWITCHYARD_E2E_PHASE: "1" }))) {
+		const cli = [path.join(repo, "out", "cli.js")];
+		const { id } = JSON.parse(fs.readFileSync(flowState, "utf8"));
+		const queueState = () => {
+			const r = spawnSync(process.execPath, [...cli, "queue", id, "--json"], { env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PI_CODING_AGENT_DIR: hostAgentDir }, encoding: "utf8", timeout: 30_000 });
+			try {
+				return JSON.parse(r.stdout);
+			} catch {
+				return undefined;
+			}
+		};
+		const deadline = Date.now() + 8 * 60_000;
+		let q = queueState();
+		while (Date.now() < deadline && !(q?.summary?.done === 3 || q?.done === 3 || q?.tasks?.filter?.(t => t.status === "done").length === 3)) {
+			await sleep(3000);
+			q = queueState();
+		}
+		const doneCount = q?.summary?.done ?? q?.done ?? q?.tasks?.filter?.(t => t.status === "done").length;
+		check("the planner finished the three queued tasks with no VS Code running", doneCount === 3, JSON.stringify(q)?.slice(0, 300));
+		if (doneCount === 3) await runSuite("flow", "flow phase 2: new window, tasks done, undo and redo", { SWITCHYARD_E2E_PHASE: "2" });
 	}
-} catch (err) {
+	} catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
 	// `ao stop` with the instance's env (POST /shutdown answers DAEMON_OWNER_CHANGED to a client that did not start it).
