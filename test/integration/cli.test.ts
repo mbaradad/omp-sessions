@@ -127,6 +127,10 @@ test("cli: usage errors exit 2; status says what runs and never starts the plann
 	assert.equal(s.status, 1, "the planner is down");
 	assert.equal(s.data.ao.running, true);
 	assert.equal(s.data.ao.url, ao.baseUrl);
+	const hib = json<{ ao: { chatHibernation?: boolean }; notes: string[]; problems: string[] }>("status", "--json").data;
+	assert.equal(hib.ao.chatHibernation, false, "AO starts with chat hibernation off");
+	assert.ok(hib.notes.some(n => /chat-hibernation/.test(n)), "the note carries the one-line fix");
+	assert.ok(!hib.problems.some(p => /hibernation/.test(p)), "off is a note, not a problem");
 	assert.equal(s.data.server.running, false);
 	assert.equal(typeof s.data.omp.readiness, "string", "AO's readiness of the omp agent (unknown until AO probed it)");
 	assert.equal(json("server", "status", "--json").data.running, false, "status started no planner");

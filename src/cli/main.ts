@@ -1424,6 +1424,7 @@ async function cmdStatus(args: Args): Promise<number> {
 	let omp: Readiness | undefined;
 	let sessions: Session[] = [];
 	let remote: MobileStatus | undefined;
+	let hibernation: boolean | undefined;
 	if (client) {
 		const [ready, list, mob] = await Promise.all([
 			unwrap<AoSchemas["AgentReadinessResponse"]>(client.api.GET("/api/v1/agents/readiness")).catch(() => undefined),
@@ -1433,6 +1434,7 @@ async function cmdStatus(args: Args): Promise<number> {
 		omp = ready?.agents.find(a => a.id === "omp");
 		sessions = list;
 		remote = mob;
+		hibernation = await client.chatHibernation().catch(() => undefined);
 		if (!omp) problems.push("AO does not know the omp agent");
 		else if (omp.installation.state !== "installed") problems.push(`omp: ${omp.installation.reason || omp.installation.state} (install omp, then: ao doctor)`);
 		else if (omp.authentication.state === "unauthorized") problems.push(`omp: ${omp.authentication.reason || "log in to a provider in omp"}`);
@@ -1453,12 +1455,16 @@ async function cmdStatus(args: Args): Promise<number> {
 	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror (omp-sessions omp-extension install)");
 	else if (!extReport.current) problems.push("Switchyard's omp extension is older than this build (omp-sessions omp-extension install)");
 	if (extReport.shim.onDaemonPath === false) problems.push(`the AO daemon was not started with ${path.dirname(extReport.shim.path)} first on its PATH: omp flags (config omp.extraArgs, new -- …) are ignored until AO is restarted through Switchyard`);
+	const HIBERNATION_FIX = `curl -X PATCH ${daemon?.baseUrl ?? "http://127.0.0.1:3001"}/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'`;
+	const notes: string[] = [];
+	if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation; AO resets it at every boot: omp-sessions config set hibernation on re-applies it)`);
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
 		problems,
+		notes,
 		home: switchyardHome(),
-		ao: { running: !!client, ...(daemon && { url: daemon.baseUrl, pid: daemon.pid, ...(daemon.executablePath && { executable: daemon.executablePath }) }) },
+		ao: { running: !!client, ...(hibernation !== undefined && { chatHibernation: hibernation }), ...(daemon && { url: daemon.baseUrl, pid: daemon.pid, ...(daemon.executablePath && { executable: daemon.executablePath }) }) },
 		server: { running: !!plannerInfo, ...(plannerInfo && { pid: plannerInfo.pid, version: plannerInfo.version, startedAt: plannerInfo.startedAt }), socket: svc.socket(), log: svc.logPath() },
 		service: svc.serviceState(),
 		omp: {
@@ -1481,6 +1487,8 @@ async function cmdStatus(args: Args): Promise<number> {
 	const row = (label: string, text: string) => `${c.dim(pad(label, 10))}${text}`;
 	const rows = [`${c.bold("omp-sessions")} ${VERSION} ${c.dim(`· home ${status.home}`)}`];
 	rows.push(row("ao", daemon ? `${c.green("running")} ${daemon.baseUrl} pid ${daemon.pid}` : `${c.red("not running")} ${c.dim("(systemctl --user start ao-daemon)")}`));
+	rows.push(row("idle", hibernation === undefined ? c.dim("unknown") : hibernation ? c.green("hibernation on") + c.dim(" (AO stops the omp of a chat nobody views after 90 s)") : `hibernation off ${c.dim("(idle omp hosts stay up; a note, not a problem)")}`));
+	if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · keep it across AO restarts: omp-sessions config set hibernation on`)}`);
 	rows.push(row("planner", plannerInfo ? `${c.green("running")} pid ${plannerInfo.pid} · ${plannerInfo.version} · up ${ago(plannerInfo.startedAt)}` : `${c.red("not running")} ${c.dim("(omp-sessions server start)")}`));
 	const sv = status.service;
 	rows.push(row("service", sv.installed ? `${sv.kind} ${c.green("installed")}${sv.file ? c.dim(` · ${sv.file}`) : ""}` : c.dim(sv.kind ? `not installed (omp-sessions server install sets up a ${sv.kind} service)` : "none on this platform (the planner starts on demand)")));
