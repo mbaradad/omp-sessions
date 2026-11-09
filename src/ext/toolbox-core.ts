@@ -154,6 +154,8 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"switchyard.remote.connectPhone": "Sessions",
 	"switchyard.remote.disable": "Sessions",
 	"switchyard.remote.rotateToken": "Sessions",
+	"switchyard.openAoDashboard": "Sessions",
+	"switchyard.installAoDashboard": "Sessions",
 	"switchyard.installAgentSkill": "Sessions",
 	"switchyard.hermes.install": "Sessions",
 	"switchyard.focus": "Chat",

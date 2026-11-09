@@ -22,6 +22,12 @@ export default {
 			openVscode: async link => {
 				if (!(await ctx.os.openExternal(link.page))) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${link.url}`);
 			},
+			// A frame can't carry Desktop's bearer token, and the SDK's SandboxedFrame has an opaque origin
+			// (no storage or cookies) AO's UI can't run in: the landing page opens it in the browser instead.
+			aoNote: "Hermes Desktop can't show Agent Orchestrator's web UI inside itself (an embedded page can't use Desktop's sign-in), so it opens in your browser, signed in to this Hermes.",
+			openPage: async page => {
+				if (!(await ctx.os.openExternal(page))) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${page}`);
+			},
 		});
 		ctx.registerMany([
 			{ id: "page", area: ROUTES_AREA, data: { path: ROUTE }, render: () => React.createElement(Page, null) },

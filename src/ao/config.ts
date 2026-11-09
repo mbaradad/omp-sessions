@@ -21,6 +21,10 @@ export interface SwitchyardConfig {
 	ompExtension?: "on" | "off";
 	/** The nested key the `omp` shim reads (G34): arguments added to every `omp acp` an AO session starts, e.g. `["--profile", "work"]`. */
 	omp?: { extraArgs?: string[] };
+	/** "off": the planner doesn't serve AO's dashboard (src/ao/dashboard.ts); absent or "on": it serves it on `dashboardPort`. */
+	dashboard?: "on" | "off";
+	/** The loopback port AO's dashboard is served on; absent: 3012. */
+	dashboardPort?: number;
 }
 
 export function switchyardConfigPath(home = switchyardHome()): string {
@@ -44,6 +48,8 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 	if (raw.service === "on" || raw.service === "off") out.service = raw.service;
 	if (raw.hibernation === "on" || raw.hibernation === "off") out.hibernation = raw.hibernation;
 	if (raw.ompExtension === "on" || raw.ompExtension === "off") out.ompExtension = raw.ompExtension;
+	if (raw.dashboard === "on" || raw.dashboard === "off") out.dashboard = raw.dashboard;
+	if (typeof raw.dashboardPort === "number" && Number.isInteger(raw.dashboardPort) && raw.dashboardPort > 0 && raw.dashboardPort < 65536) out.dashboardPort = raw.dashboardPort;
 	const omp = raw.omp;
 	if (omp && typeof omp === "object" && "extraArgs" in omp && Array.isArray(omp.extraArgs)) {
 		const extraArgs = omp.extraArgs.filter((a): a is string => typeof a === "string");

@@ -1921,6 +1921,40 @@ select.omps-input optgroup {
 .omps-bcard-foot:empty {
   display: none;
 }
+.omps-ao {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.omps-ao-bar {
+  margin-bottom: 0;
+}
+.omps-ao-bar a.omps-btn {
+  text-decoration: none;
+}
+.omps-ao .omps-stale {
+  margin: 0;
+}
+.omps-ao-note,
+.omps-ao-foot {
+  justify-content: center;
+  margin: 0;
+}
+.omps-ao-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.omps-ao-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 200px);
+  min-height: 480px;
+  border: 1px solid var(--o-border);
+  border-radius: var(--o-radius);
+  background: var(--o-bg);
+}
 .omps-graph-panel {
   display: flex;
   flex-direction: column;

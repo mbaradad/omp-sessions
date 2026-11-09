@@ -429,6 +429,87 @@ function useDismiss(onClose, root) {
   }, []);
 }
 
+// integrations/hermes/ui/ao.ts
+var STATUS = "/ao/switchyard-ao-dashboard/status";
+var INSTALL = "switchyard dashboard install";
+function AoDashboardPanel(p) {
+  const { host: host2 } = p;
+  const [probe, setProbe] = useState(null);
+  const [opening, setOpening] = useState(false);
+  const [note, setNote] = useState(null);
+  const [frameKey, setFrameKey] = useState(0);
+  const check = async () => {
+    setProbe(null);
+    try {
+      setProbe({ status: await host2.request(STATUS) });
+    } catch (err) {
+      const message = errorMessage(err);
+      setProbe({ error: message, down: /not running on 127\.0\.0\.1/.test(message) });
+    }
+  };
+  useEffect(() => {
+    void check();
+  }, []);
+  const openBrowser = async () => {
+    if (!host2.openPage) return;
+    setNote(null);
+    setOpening(true);
+    try {
+      const { page } = await host2.request("/ao-page");
+      await host2.openPage(page);
+      setNote("Opened in your browser. Sign in to this Hermes there if it asks.");
+    } catch (err) {
+      setNote(errorMessage(err));
+    } finally {
+      setOpening(false);
+    }
+  };
+  const checkAgain = h(Button, { label: "Check again", icon: "refresh", onClick: () => void check() });
+  if (!probe) return h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Checking the AO dashboard…");
+  if ("error" in probe) {
+    return probe.down ? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on omp's machine.`, action: checkAgain }) : h(ErrorBox, { message: probe.error, onRetry: () => void check() });
+  }
+  const { status } = probe;
+  if (!status.installed) {
+    return h(Empty, {
+      icon: "terminal",
+      title: "AO dashboard not installed",
+      body: h("span", null, "Run ", h("code", null, INSTALL), " on omp's machine: it fetches Agent Orchestrator's web UI from AO's release."),
+      action: checkAgain
+    });
+  }
+  const daemon = status.daemon ? null : h("span", { className: "omps-stale omps-ao-warn" }, icon("alert", 12), "AO's daemon is not answering: the dashboard shows no live data until it is back.");
+  const version = h("span", { className: "omps-muted omps-total" }, `AO dashboard${status.version ? ` ${status.version}` : ""} · port ${status.port}`);
+  if (!host2.aoFrame) {
+    return h(
+      "div",
+      { className: "omps-ao" },
+      h(Empty, {
+        icon: "external",
+        title: "AO dashboard",
+        body: host2.aoNote,
+        action: host2.openPage ? h(Button, { kind: "brand", icon: "external", label: "Open in browser", busy: opening, onClick: () => void openBrowser() }) : checkAgain
+      }),
+      note ? h("div", { className: "omps-notice omps-ao-note" }, icon("external", 12), note) : null,
+      h("div", { className: "omps-ao-foot" }, version, daemon)
+    );
+  }
+  return h(
+    "div",
+    { className: "omps-ao" },
+    h(
+      "div",
+      { className: "omps-filters omps-ao-bar" },
+      version,
+      daemon,
+      h("span", { className: "omps-grow" }),
+      h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Reload", onClick: () => setFrameKey(frameKey + 1) }),
+      h("a", { className: "omps-btn omps-btn-sm omps-btn-default", href: host2.aoFrame, target: "_blank", rel: "noopener" }, icon("external", 13), h("span", null, "Open in new window"))
+    ),
+    h("iframe", { key: frameKey, className: "omps-ao-frame", src: host2.aoFrame, title: "AO dashboard", allow: "clipboard-read; clipboard-write" })
+  );
+}
+
 // integrations/hermes/ui/queue.ts
 var AT_PRESETS = [
   { label: "+30m", at: () => "+30m" },
@@ -2628,6 +2709,8 @@ function createPage(host2) {
       main = h(BoardsPanel, { host: host2, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
     } else if (view === "graph") {
       main = h(GraphPanel, { host: host2, onOpenSession: setSelected });
+    } else if (view === "ao") {
+      main = h(AoDashboardPanel, { host: host2 });
     } else if (notInstalled) {
       main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
     } else if (!sessions) {
@@ -2668,7 +2751,7 @@ function createPage(host2) {
     }
     return h(
       "div",
-      { className: cx("omps", `omps-host-${host2.kind}`, selected && view !== "boards" && "has-drawer") },
+      { className: cx("omps", `omps-host-${host2.kind}`, selected && view !== "boards" && view !== "ao" && "has-drawer") },
       host2.css ? h("style", null, host2.css) : null,
       h(
         "header",
@@ -2682,7 +2765,8 @@ function createPage(host2) {
           options: [
             { value: "sessions", label: "Sessions" },
             { value: "boards", label: "Boards" },
-            { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" }
+            { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
+            { value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on omp's machine" }
           ]
         }),
         h("span", { className: "omps-grow" }),
@@ -2708,7 +2792,7 @@ function createPage(host2) {
         ]
       }) : null,
       h("div", { className: "omps-body" }, main),
-      selected && view !== "boards" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
+      selected && view !== "boards" && view !== "ao" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
       creating ? h(NewSessionDialog, { host: host2, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null
     );
   };
@@ -3166,6 +3250,16 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- AO dashboard ---------- */
+.omps-ao { display: flex; flex-direction: column; gap: 10px; }
+.omps-ao-bar { margin-bottom: 0; }
+.omps-ao-bar a.omps-btn { text-decoration: none; }
+.omps-ao .omps-stale { margin: 0; }
+.omps-ao-note, .omps-ao-foot { justify-content: center; margin: 0; }
+.omps-ao-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* The dashboard's page scrolls; the frame takes the window's height below the header and strip. */
+.omps-ao-frame { display: block; width: 100%; height: calc(100vh - 200px); min-height: 480px; border: 1px solid var(--o-border); border-radius: var(--o-radius); background: var(--o-bg); }
+
 /* ---------- graph view ---------- */
 .omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
 .omps-graph-panel .omps-filters { margin-bottom: 0; }
@@ -3241,6 +3335,12 @@ var desktop_default = {
       // Desktop opens only web links (no vscode://), so the dashboard's redirect page, in the browser.
       openVscode: async (link) => {
         if (!await ctx2.os.openExternal(link.page)) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${link.url}`);
+      },
+      // A frame can't carry Desktop's bearer token, and the SDK's SandboxedFrame has an opaque origin
+      // (no storage or cookies) AO's UI can't run in: the landing page opens it in the browser instead.
+      aoNote: "Hermes Desktop can't show Agent Orchestrator's web UI inside itself (an embedded page can't use Desktop's sign-in), so it opens in your browser, signed in to this Hermes.",
+      openPage: async (page) => {
+        if (!await ctx2.os.openExternal(page)) throw new Error(`Hermes Desktop did not open the browser. Open this link on this computer: ${page}`);
       }
     });
     ctx2.registerMany([

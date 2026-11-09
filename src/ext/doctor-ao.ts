@@ -1,5 +1,6 @@
 // omp Doctor's machine sections on AO: the Agent Orchestrator daemon (reachable, how it is supervised, whether
-// it can run omp: `GET /api/v1/agents/readiness`) and the planner. Pure: doctor.ts gathers the facts.
+// it can run omp: `GET /api/v1/agents/readiness`), AO's dashboard (served by the planner) and the planner.
+// Pure: doctor.ts gathers the facts.
 import type { Check, Fix } from "./doctor-report";
 
 export interface AoFacts {
@@ -23,6 +24,19 @@ export interface PlannerFacts {
 	pid?: number;
 	/** Why the planner could not be reached (it's down, or never started). */
 	error?: string;
+}
+
+/** AO's dashboard (src/ao/dashboard.ts): what is installed on disk and what answers on its port. */
+export interface DashboardFacts {
+	/** False when config.json says `"dashboard": "off"`. */
+	enabled: boolean;
+	url: string;
+	/** The installed renderer; absent when not installed. */
+	install?: { version: string | null; source: string };
+	/** `GET /switchyard-ao-dashboard/status`; absent when nothing answers on the port. */
+	serving?: { daemon: boolean };
+	/** The command that installs it (`switchyard dashboard install`). */
+	installCommand: string;
 }
 
 /** What the permission gate and the `omp` shim need (src/ao/gate.ts `gateStatus`). */
@@ -77,4 +91,17 @@ export function gateChecks(f: GateFacts): Check[] {
 export function plannerChecks(f: PlannerFacts): Check[] {
 	if (!f.version) return [{ level: "warn", title: "The planner is not running", detail: `${f.error ?? "No planner answered."}\nQueued tasks, dependencies and scheduled starts wait until it runs.`, fixes: [START, LOG] }];
 	return [{ level: "ok", title: `Planner ${f.version} running`, detail: f.pid ? `pid ${f.pid}` : undefined }];
+}
+
+/** Notes and warnings only: the dashboard is optional, nothing else depends on it. */
+export function dashboardChecks(f: DashboardFacts): Check[] {
+	if (!f.enabled) return [{ level: "info", title: "AO dashboard is off", detail: 'config.json has "dashboard": "off": the planner does not serve it.' }];
+	const checks: Check[] = [
+		f.install
+			? { level: "ok", title: `AO dashboard ${f.install.version ?? "(unknown version)"} installed`, detail: `From ${f.install.source}` }
+			: { level: "warn", title: "AO dashboard is not installed", detail: `Open AO Dashboard shows AO's web UI once it is: run \`${f.installCommand}\`.`, fixes: [{ label: "Install", command: "switchyard.installAoDashboard" }] },
+	];
+	if (!f.serving) checks.push({ level: "warn", title: `Nothing serves the AO dashboard at ${f.url}`, detail: "The planner serves it (an older planner doesn't: restart it).", fixes: [START, LOG] });
+	else checks.push({ level: f.serving.daemon ? "ok" : "info", title: `AO dashboard served at ${f.url}`, detail: f.serving.daemon ? undefined : "The AO daemon isn't answering: the dashboard shows no data until it runs.", fixes: [{ label: "Open", command: "switchyard.openAoDashboard" }] });
+	return checks;
 }

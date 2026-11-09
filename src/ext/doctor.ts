@@ -7,13 +7,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, findDaemon } from "../ao/client";
+import { readSwitchyardConfig } from "../ao/config";
+import { INSTALL_COMMAND, dashboardEnabled, dashboardPort, dashboardUrl, probeDashboard, readDashboardInstall } from "../ao/dashboard";
 import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
 import { aoCheckpointDir } from "../shared/checkpoints";
 import { PLUGIN_BUNDLE, findHermes, findSwitchyard, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { type SessionMeta, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
-import type { AoFacts, PlannerFacts } from "./doctor-ao";
+import type { AoFacts, DashboardFacts, PlannerFacts } from "./doctor-ao";
 import type { HermesFacts } from "./doctor-hermes";
 import { type DoctorFacts, type Report, type SessionFacts, buildReport, cleanupCandidates, formatBytes, installCommand, issueUrl, reportCommands, reportToHtml, reportToMarkdown } from "./doctor-report";
 import { plain } from "./plain";
@@ -150,6 +152,22 @@ async function gatherPlanner(): Promise<PlannerFacts> {
 	} finally {
 		planner.close();
 	}
+}
+
+/** AO's dashboard: the installed renderer and whether the planner serves it (never starts anything). */
+async function gatherDashboard(): Promise<DashboardFacts> {
+	const config = readSwitchyardConfig();
+	const port = dashboardPort(config);
+	const install = readDashboardInstall();
+	const enabled = dashboardEnabled(config);
+	const status = enabled ? await probeDashboard(port) : undefined;
+	return {
+		enabled,
+		url: dashboardUrl(port),
+		...(install && { install: { version: install.version, source: install.source } }),
+		...(status && { serving: { daemon: status.daemon } }),
+		installCommand: INSTALL_COMMAND,
+	};
 }
 
 /** `hermes -p <profile> omp status --json`, parsed; `error` when it fails. */
@@ -291,7 +309,7 @@ export function registerDoctor(api: OmpApi): void {
 			writable = false;
 			writeError = (err as Error).message;
 		}
-		const [snapshots, aoFacts, planner, hermes] = await Promise.all([gatherSnapshots(id => sessions.get(id)), gatherAo(api), gatherPlanner(), gatherHermes(context.extensionPath)]);
+		const [snapshots, aoFacts, planner, dashboard, hermes] = await Promise.all([gatherSnapshots(id => sessions.get(id)), gatherAo(api), gatherPlanner(), gatherDashboard(), gatherHermes(context.extensionPath)]);
 		const now = Date.now();
 		return {
 			now,
@@ -309,6 +327,7 @@ export function registerDoctor(api: OmpApi): void {
 			writeError,
 			ao: aoFacts,
 			planner,
+			dashboard,
 			gate: gateStatus(),
 			sessions: sessions.all(),
 			snapshots,

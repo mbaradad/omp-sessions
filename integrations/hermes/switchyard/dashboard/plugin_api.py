@@ -7,7 +7,8 @@ Settings are the requesting profile's (config.yaml `plugins.entries.switchyard.s
 lane's card links are machine-wide like the kanban boards.
 
 Every handler is async and moves its blocking work (switchyard subprocesses, sqlite) to a thread.
-Errors come back as JSON {"error": message} with a 4xx/5xx status.
+Errors come back as JSON {"error": message} with a 4xx/5xx status. /ao/… is a streaming proxy to
+AO's web UI (the Switchyard server's AO dashboard), not JSON.
 """
 
 from __future__ import annotations
@@ -15,19 +16,24 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import os
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote
 
+import anyio
+import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 INSTALL_HINT = (
     "switchyard is not installed. Install it with the Switchyard extension (command “Switchyard: Install switchyard Command”), "
@@ -536,17 +542,22 @@ def archive_done(body: dict) -> dict:
     return {"archived": archived, "failed": failed}
 
 
+def plugin_page(file: str, base_url: str) -> str:
+    """URL of `file`, a public page of this plugin's dashboard folder (served without sign-in), at the
+    address the caller reached this dashboard at (`base_url`). The profile segment serves the
+    requesting profile's copy (the page's own `?profile=`)."""
+    profile = profile_name()
+    scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
+    return f"{base_url.rstrip('/')}/dashboard-plugins/{scope}switchyard/{file}"
+
+
 def with_page(out: dict, base_url: str) -> dict:
     """`out` ({url, …} from `switchyard vscode`) plus `page`: a page of this dashboard that opens the
-    link, for hosts that only open web links (Hermes Desktop). It is served without sign-in and holds
-    nothing but a redirect, so `base_url` is the address the caller reached this dashboard at."""
+    link, for hosts that only open web links (Hermes Desktop). It holds nothing but a redirect."""
     url = out.get("url")
     if not isinstance(url, str) or not url:
         raise ApiError(502, "switchyard vscode printed no link")
-    # The profile segment serves the requesting profile's copy (the page's own `?profile=`).
-    profile = profile_name()
-    scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
-    page = f"{base_url.rstrip('/')}/dashboard-plugins/{scope}switchyard/open-vscode.html#{quote(url, safe='')}"
+    page = f"{plugin_page('open-vscode.html', base_url)}#{quote(url, safe='')}"
     return {"url": url, "page": page, "folder": out.get("folder"), "authority": out.get("authority"), "windowAt": out.get("windowAt")}
 
 
@@ -860,6 +871,169 @@ def archive_done_cards(slug: str) -> dict:
     return {**lane().archive_done(slug), "view": boards_view()}
 
 
+# ---------- AO dashboard: AO's web UI, served by the Switchyard server on omp's machine ----------
+# /ao/… proxies to http://127.0.0.1:<dashboardPort>/…, behind Hermes's own sign-in (the browser
+# dashboard's session cookie reaches a same-origin iframe). Every URL of AO's UI is relative, so it
+# works under /api/plugins/switchyard/ao/. HTTP only: no WebSocket (AO's terminal panes), since
+# Hermes's auth gate is HTTP middleware and a socket here would go unauthenticated.
+
+AO_DEFAULT_PORT = 3012
+AO_INSTALL = "switchyard dashboard install"
+# Hop-by-hop headers (RFC 9110 §7.6.1) never cross a proxy, nor do the headers that carry the
+# browser's origin or its Hermes credentials: the AO server's request policy wants a loopback Host
+# and no foreign Origin/Sec-Fetch-*, and Hermes's cookies/tokens are none of its business.
+_HOP_BY_HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"})
+_NOT_FORWARDED = frozenset({"host", "origin", "referer", "cookie", "authorization", "content-length", "forwarded", "x-real-ip"})
+_NOT_FORWARDED_PREFIXES = ("sec-fetch-", "x-forwarded-", "x-hermes-")
+# Responses land on Hermes's origin: a cookie AO set would be a cookie of the Hermes dashboard. The
+# server in front (uvicorn) dates the response itself.
+_NOT_RETURNED = frozenset({"set-cookie", "set-cookie2", "date"})
+_OTHER_PAGE = frozenset({"cross-site", "same-site"})
+# One client per event loop (pooled connections belong to the loop that opened them).
+_AO_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
+
+
+def switchyard_home() -> Path:
+    return Path(os.environ.get("SWITCHYARD_HOME") or Path.home() / ".switchyard")
+
+
+def ao_dashboard_port() -> Optional[int]:
+    """The AO dashboard server's port: `dashboardPort` of <SWITCHYARD_HOME or ~/.switchyard>/config.json
+    (default 3012), or None when `"dashboard": "off"` (the keys src/ao/config.ts reads)."""
+    try:
+        raw = json.loads((switchyard_home() / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    if raw.get("dashboard") == "off":
+        return None
+    port = raw.get("dashboardPort")
+    return port if isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536 else AO_DEFAULT_PORT
+
+
+def _connection_listed(headers: list[tuple[str, str]]) -> set[str]:
+    """Header names a Connection header declares hop-by-hop."""
+    return {t.strip().lower() for k, v in headers if k.lower() == "connection" for t in v.split(",") if t.strip()}
+
+
+def ao_request_headers(raw: list[tuple[bytes, bytes]]) -> list[tuple[str, str]]:
+    """The browser's request headers the AO server gets (httpx sets Host to 127.0.0.1:<port>)."""
+    headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw]
+    listed = _connection_listed(headers)
+    out = []
+    for k, v in headers:
+        name = k.lower()
+        if name in _HOP_BY_HOP or name in listed or name in _NOT_FORWARDED or name.startswith(_NOT_FORWARDED_PREFIXES):
+            continue
+        out.append((k, v))
+    return out
+
+
+def ao_response_headers(raw: list[tuple[bytes, bytes]], port: int, mount: str) -> list[tuple[bytes, bytes]]:
+    """The AO server's response headers the browser gets; a redirect into the server stays under `mount`
+    (the public path of /ao/, ending in /)."""
+    headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw]
+    listed = _connection_listed(headers)
+    origin = f"http://127.0.0.1:{port}"
+    out = []
+    for k, v in headers:
+        name = k.lower()
+        if name in _HOP_BY_HOP or name in listed or name in _NOT_RETURNED:
+            continue
+        if name == "location":
+            if v == origin or v.startswith(origin + "/"):
+                v = v[len(origin):] or "/"
+            if v.startswith("/") and not v.startswith("//"):
+                v = mount + v[1:]
+        out.append((name, v))
+    return [(k.encode("latin-1"), v.encode("latin-1")) for k, v in out]
+
+
+def ao_other_page_write(request: Request) -> bool:
+    """A write another page made, by the browser's own Sec-Fetch-Site verdict (pages can't forge it)."""
+    if request.method in ("GET", "HEAD"):
+        return False
+    return any(v.strip().lower() in _OTHER_PAGE for v in request.headers.getlist("sec-fetch-site"))
+
+
+def ao_split_path(request: Request, path: str) -> tuple[str, str]:
+    """(mount, upstream path): the public path of /ao/ (with Hermes's X-Forwarded-Prefix) and the rest
+    of the request path as the browser sent it (still percent-encoded)."""
+    raw = request.scope.get("raw_path")
+    text = raw.decode("latin-1") if isinstance(raw, bytes) else request.url.path
+    i = text.find("/ao/")
+    if i < 0:
+        return "/api/plugins/switchyard/ao/", quote(path)
+    return f"{_forwarded_prefix(request)}{text[: i + 4]}", text[i + 4 :]
+
+
+def _forwarded_prefix(request: Request) -> str:
+    try:
+        from hermes_cli.dashboard_auth.prefix import prefix_from_request
+    except ImportError:
+        return ""
+    return prefix_from_request(request)
+
+
+def public_base(request: Request) -> str:
+    """The address the caller reached this dashboard at, with its reverse-proxy path prefix."""
+    return str(request.base_url).rstrip("/") + _forwarded_prefix(request)
+
+
+def ao_page(base_url: str) -> dict:
+    """The public page that opens the AO dashboard in a browser (Hermes Desktop can't embed it: its
+    bearer token stays in its main process). The page signs in if needed, then goes to /ao/."""
+    return {"page": plugin_page("ao-dashboard.html", base_url), "port": ao_dashboard_port()}
+
+
+def _ao_client() -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    client = _AO_CLIENTS.get(loop)
+    if client is None:
+        # No read timeout: SSE streams stay open for as long as the page does.
+        client = httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=httpx.Timeout(None, connect=5.0, write=30.0, pool=5.0))
+        _AO_CLIENTS[loop] = client
+    return client
+
+
+async def ao_proxy(request: Request, path: str) -> Response:
+    if ao_other_page_write(request):
+        return JSONResponse({"error": "AO dashboard writes must come from this dashboard's own page"}, status_code=403)
+    port = await asyncio.to_thread(ao_dashboard_port)
+    if port is None:
+        hint = f'The AO dashboard is off ("dashboard": "off" in {switchyard_home() / "config.json"}): remove that key and run switchyard server restart.'
+        return JSONResponse({"error": hint}, status_code=404)
+    mount, upstream_path = ao_split_path(request, path)
+    url = f"http://127.0.0.1:{port}/{upstream_path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+    client = _ao_client()
+    body = None if request.method in ("GET", "HEAD") else await request.body()
+    try:
+        upstream = await client.send(client.build_request(request.method, url, headers=ao_request_headers(request.headers.raw), content=body), stream=True)
+    except httpx.TransportError:
+        return JSONResponse({"error": f"AO dashboard server not running on 127.0.0.1:{port} (switchyard server start)"}, status_code=502)
+
+    async def close() -> None:
+        # Shielded: a client that went away cancels the response, and the upstream stream must still close.
+        with anyio.CancelScope(shield=True):
+            await upstream.aclose()
+
+    async def chunks() -> Any:
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        except httpx.TransportError:
+            return  # the AO server went away mid-stream: end the response
+        finally:
+            await close()
+
+    response = StreamingResponse(chunks(), status_code=upstream.status_code, background=BackgroundTask(close))
+    response.raw_headers = ao_response_headers(upstream.headers.raw, port, mount)
+    return response
+
+
 # ---------- routes ----------
 
 router = APIRouter()
@@ -962,3 +1136,19 @@ async def post_lane(request: Request) -> Any:
 @router.post("/boards/{slug}")
 async def post_board(slug: str, request: Request) -> Any:
     return await _run(update_board, slug, await _body(request), write=True)
+
+
+@router.get("/ao-page")
+async def get_ao_page(request: Request) -> Any:
+    return await _run(ao_page, public_base(request))
+
+
+@router.api_route("/ao", methods=["GET", "HEAD"])
+async def ao_root(request: Request) -> Response:
+    # Relative, so it lands under whatever prefix the browser used; AO's relative URLs need the slash.
+    return RedirectResponse(f"ao/?{request.url.query}" if request.url.query else "ao/", status_code=307)
+
+
+@router.api_route("/ao/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+async def ao_route(path: str, request: Request) -> Response:
+    return await ao_proxy(request, path)

@@ -5,6 +5,7 @@ import { OrganizeStore, organizeFile } from "../shared/organize";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { registerAgentSkill } from "./agent-skill";
+import { registerAoDashboard } from "./ao-dashboard";
 import { type PermissionMode, readMode } from "../shared/session-mode";
 import { setSessionMode } from "../shared/session-mode-ops";
 import { Checkpoints } from "./checkpoints";
@@ -533,6 +534,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerHermesPlugin(api);
 	registerVscodeOpen(api);
 	registerRemote(api, server);
+	registerAoDashboard(api, server);
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
