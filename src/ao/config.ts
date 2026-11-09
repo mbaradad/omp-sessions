@@ -51,10 +51,13 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 
 /**
  * Merges `patch` into config.json (a key given as undefined is removed); atomic. Keys this module
- * doesn't know are kept: other Switchyard parts (the shim, the planner) read the same file.
+ * doesn't know are kept: other Switchyard parts (the shim, the planner) read the same file. `omp` is
+ * merged key by key, so other `omp.*` keys survive a change to `omp.extraArgs`.
  */
 export function writeSwitchyardConfig(patch: SwitchyardConfig, file = switchyardConfigPath()): SwitchyardConfig {
-	const next: Record<string, unknown> = { ...readRaw(file), ...patch };
+	const raw = readRaw(file);
+	const next: Record<string, unknown> = { ...raw, ...patch };
+	if (patch.omp && typeof raw.omp === "object" && raw.omp !== null && !Array.isArray(raw.omp)) next.omp = { ...raw.omp, ...patch.omp };
 	for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
 	fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 	const tmp = `${file}.${process.pid}.tmp`;

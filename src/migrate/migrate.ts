@@ -17,7 +17,7 @@ import { switchyardHome } from "../ao/client";
 import type { PlannerOpName, PlannerOps } from "../planner/types";
 import { emptyOrgData, type OrgData } from "../shared/organize";
 import { permissionModeOf } from "../shared/permissions";
-import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../ao/config";
 import { isRecord } from "../shared/transcript-files";
 import { type LegacyState, legacyHome, readLegacyState } from "./legacy";
 
