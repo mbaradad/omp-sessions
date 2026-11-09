@@ -39,6 +39,8 @@ export function scratchRepo(t: TestContext): string {
 	const repo = path.join(dir, "repo");
 	fs.mkdirSync(repo);
 	execFileSync("git", ["init", "-q", "-b", "main", repo]);
+	// Files keep the LF they are written with in every worktree (Git for Windows defaults to core.autocrlf=true).
+	git(repo, "config", "core.autocrlf", "false");
 	fs.writeFileSync(path.join(repo, "x.txt"), "base\n");
 	git(repo, "add", "-A");
 	git(repo, "commit", "-qm", "init");
