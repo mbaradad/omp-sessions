@@ -71,7 +71,8 @@ export interface AoPort {
 	/** Undefined when AO doesn't know the session (deleted). */
 	session(id: string): Promise<AoSessionInfo | undefined>;
 	activeSessions(): Promise<AoSessionInfo[]>;
-	interrupt(session: string): Promise<void>;
+	/** Interrupts the running turn and waits until AO has settled it; `discarded`: prompts queued behind it that AO threw away with it (G41). */
+	interrupt(session: string): Promise<{ discarded: number }>;
 	/** Brings back the agent of an `exited` session (host died or stopped); the transcript continues. */
 	resumeAgent(session: string): Promise<void>;
 	/** Applies the opt-in `hibernation` setting of config.json (G28); AO forgets it on every daemon boot. Returns what it did, undefined when the user set nothing. */
@@ -194,10 +195,13 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async interrupt(session) {
 			try {
-				await ao.interrupt(session);
+				// AO answers the interrupt before it settles the turns: wait for them, and learn what was queued behind.
+				const { discarded } = await ao.interruptWithQueue(session);
+				return { discarded: discarded.length };
 			} catch (err) {
 				// Nothing running any more: the turn ended on its own meanwhile.
 				if (!(err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN")) throw err;
+				return { discarded: 0 };
 			}
 		},
 		async restore(session) {

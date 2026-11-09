@@ -303,6 +303,13 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Known limit: a lost prompt can answer late
+
+After a host crash and `resume-agent`, omp may answer the lost prompt together with the next one (validate saw
+`DONE\n\nRETRY-OK`). The task dispatched next into that session can then carry the earlier task's answer in its
+`summary` (its result for the children). The planner does not filter it; an interrupted task is re-run only by a
+person, who can read the summary.
+
 ## "What this task changed", and branch cleanup
 
 AO's diff for a child is against the default branch, so it lists the parents' commits too. `Task.git.base` is the
@@ -348,6 +355,11 @@ the planner follows the turn as for any other.
 - The two hooks are supplied by the process: `main.ts` passes `...checkpointHooks()` (`src/planner/checkpoint-hooks.ts`,
   from ao/checkpoints: `turnStatuses` for `undone`, `planUndo` + `runCheckpointCommand` for `rewind`; an undo that
   would overwrite changes is refused, never forced).
+- Deployment: the hooks read the checkpoint store under `<SWITCHYARD_HOME>/sessions/<id>/checkpoints`, which the omp
+  extension writes from the omp process's environment. The planner service and the AO daemon (hence omp) must
+  resolve the same `SWITCHYARD_HOME` (set in both or neither); otherwise `undone` reports false and a clean
+  requeue fails with "the session has no checkpoints". `planner install` pins `SWITCHYARD_HOME` (and `AO_PORT`,
+  `AO_RUN_FILE`) of the installing environment into the unit.
 - The permission mode of a session the planner starts is set through checkpoints' `setSessionMode` (G40), never by
   writing the mode file.
 
@@ -377,6 +389,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: a turn failed with ACP `-32800` / "Request cancelled" (a person's Stop) is `interrupted`, not a failed attempt.
 - 2026-11-09: `Task.git.base`; removed tasks delete their reachable `switchyard/*` branches.
 - 2026-11-09: no planner-side model pre-check (the spawn helper checks the session's own choices).
 - 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.

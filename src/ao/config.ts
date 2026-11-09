@@ -6,7 +6,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type PermissionMode, isPermissionMode } from "../shared/permissions";
-import { switchyardHome } from "./native";
+import { refuseRealStateInTests, switchyardHome } from "./native";
 
 export interface SwitchyardConfig {
 	/** `provider/id` of new sessions that pick no model; absent: omp's own default. */
@@ -54,6 +54,7 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
  * doesn't know are kept: other Switchyard parts (the shim, the planner) read the same file.
  */
 export function writeSwitchyardConfig(patch: SwitchyardConfig, file = switchyardConfigPath()): SwitchyardConfig {
+	refuseRealStateInTests(path.dirname(file));
 	const next: Record<string, unknown> = { ...readRaw(file), ...patch };
 	for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
 	fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

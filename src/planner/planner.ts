@@ -826,7 +826,9 @@ export class Planner {
 			const live = this.task(id);
 			if ((live?.run?.timedOut || live?.run?.aborted) && !this.interruptSent.has(id)) {
 				this.interruptSent.add(id);
-				await ao.interrupt(session);
+				const { discarded } = await ao.interrupt(session);
+				// AO throws away what a person queued behind the turn; the planner never queues, so it is not ours to re-send.
+				if (discarded) this.log("interrupt discarded", discarded, "queued prompt(s) in", session);
 			}
 			// Look again before the deadline (the periodic poll and AO's events cover the rest).
 			if (timeout) this.follow(id, Math.max(500, Math.min(30_000, (t.startedAt ?? this.now()) + timeout * 60_000 - this.now())));
@@ -868,9 +870,14 @@ export class Planner {
 				return;
 			}
 			case "failed": {
-				// resume-agent on a dead host turns its stuck turn into a failed one (G39): the host died, the model did not fail.
+				// resume-agent on a dead host turns its stuck turn into a failed one (G39): the agent stopped (a person's Stop, or a crash that was resumed), the model did not fail.
 				if (/controller ended before the turn completed/i.test(turn.errorMessage ?? "")) {
-					this.finish(id, { kind: "lost", reason: "the agent's host died while the turn ran (AO ended the turn when it was resumed)." });
+					this.finish(id, { kind: "lost", reason: "the agent stopped before the turn completed (AO ended the turn: a person's Stop, or the agent crashed and was resumed)." });
+					return;
+				}
+				// A person's Stop (exit-agent) cancels the running turn at the ACP level (-32800): it is a stop, not a failure to retry.
+				if (/\b-32800\b|request cancell?ed/i.test(turn.errorMessage ?? "")) {
+					this.finish(id, { kind: "interrupted", reason: run.aborted || run.timedOut ? undefined : "the turn was stopped in AO", ...costPart });
 					return;
 				}
 				const reset = turn.usageLimitResetsAt ? ` Usage limit reached; resets at ${new Date(turn.usageLimitResetsAt).toISOString()}.` : "";

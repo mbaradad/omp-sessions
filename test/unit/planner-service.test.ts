@@ -284,7 +284,25 @@ test("someone resumes a dead host: AO fails the stuck turn with 'controller ende
 	ao.poke(s, "idle");
 	await until("interrupted", () => byTitle(p, "long").interrupted);
 	assert.equal(byTitle(p, "long").attempts, undefined, "no attempt used, nothing retried");
-	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+	assert.match(byTitle(p, "long").summary ?? "", /the agent stopped before the turn completed/);
+});
+
+test("a person's Stop cancels the running turn at the ACP level (-32800 'Request cancelled'): the task is interrupted and the lane paused, not failed and retried", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "lane.add", id: "l_00000000e5" }, { op: "add", task: { title: "stopped", lane: "l_00000000e5", options: { retries: 3 } } }, { op: "add", task: { title: "next", lane: "l_00000000e5" } }]);
+	const s = await until("sent", () => byTitle(p, "stopped").run?.phase === "sent" && byTitle(p, "stopped").run?.session);
+	const turn = ao.sessions.get(s)?.conv.turns.find(x => x.state === "running");
+	assert.ok(turn);
+	turn.state = "failed";
+	turn.errorMessage = 'ACP session/prompt: {"code":-32800,"message":"Request cancelled"}';
+	ao.poke(s, "idle");
+	await until("interrupted", () => byTitle(p, "stopped").interrupted);
+	assert.equal(byTitle(p, "stopped").attempts, undefined, "no attempt used, nothing retried");
+	assert.equal(p.state.lanes[0].autoRun, false, "the lane is paused");
+	await sleep(300);
+	assert.equal(byTitle(p, "next").status, "pending", "the next task is not started unattended");
 });
 
 test("a task with a timeout still notices its turn ending within a moment (a slow re-check must not hold off events and polls)", async t => {

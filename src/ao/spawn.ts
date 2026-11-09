@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
-import { sessionStateFile, switchyardHome } from "./native";
+import { refuseRealStateInTests, sessionStateFile, switchyardHome } from "./native";
 import { writeMode } from "../shared/session-mode";
 import type { AoPermissionMode } from "./report";
 
@@ -94,6 +94,7 @@ function writeFileAtomic(file: string, content: string): void {
 /** Starts a Switchyard session (see the file header). Rejects before creating anything for an unknown model. */
 export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwitchyardOptions = {}): Promise<SpawnedSwitchyardSession> {
 	const home = options.home ?? switchyardHome();
+	refuseRealStateInTests(home);
 	const mode = options.mode ?? "auto";
 	const ompArgs = options.ompArgs ?? [];
 	if (ompArgs.includes("")) throw new Error("an omp argument is empty");
