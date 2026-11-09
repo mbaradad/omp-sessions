@@ -277,6 +277,18 @@
 				"icon": "$(diff-multiple)"
 			},
 			{
+				"command": "switchyard.undo",
+				"title": "Undo Last Prompt (Conversation and Files)",
+				"category": "Switchyard",
+				"icon": "$(discard)"
+			},
+			{
+				"command": "switchyard.redo",
+				"title": "Redo (Conversation and Files)",
+				"category": "Switchyard",
+				"icon": "$(redo)"
+			},
+			{
 				"command": "omp.openSession",
 				"title": "Open Session…",
 				"category": "omp",
@@ -1580,6 +1592,16 @@
 					"group": "1_session@0"
 				},
 				{
+					"command": "switchyard.undo",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@1"
+				},
+				{
+					"command": "switchyard.redo",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@2"
+				},
+				{
 					"command": "omp.sessionSettings",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@9"
@@ -2323,6 +2345,7 @@
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",
+		"test:integration": "node test/run.mjs integration",
 		"test:hermes": "node integrations/hermes/tests/run.mjs",
 		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs",
 		"ao:schema": "node scripts/ao-schema.mjs",
