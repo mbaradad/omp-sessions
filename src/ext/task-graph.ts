@@ -63,7 +63,7 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 			refresh();
 			return;
 		}
-		panel = vscode.window.createWebviewPanel("switchyard.taskGraph", "Switchyard: Task Graph", vscode.ViewColumn.Beside, {
+		panel = vscode.window.createWebviewPanel("switchyard.taskGraph", "Switchyard: Task Graph", vscode.ViewColumn.Active, {
 			enableScripts: true,
 			retainContextWhenHidden: true,
 			localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "out")],
