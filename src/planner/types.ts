@@ -288,6 +288,8 @@ export interface KeptBranch {
 	/** Title and id of the removed task. */
 	task: string;
 	taskId: string;
+	/** The removed task's AO session (removed together with the branch once the branch can go). */
+	session?: string;
 	/** The branch tip when it was kept. */
 	tip?: string;
 	why: string;
