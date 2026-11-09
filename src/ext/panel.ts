@@ -959,8 +959,7 @@ export class ChatPanel implements vscode.Disposable {
 					return;
 				}
 			{
-				const queued = this.feed.queued();
-				const again = await interruptKeepingQueue(await this.client(), this.sessionId, queued);
+				const again = await interruptKeepingQueue(await this.client(), this.sessionId);
 				if (again) this.post({ type: "notice", level: "info", text: `Interrupted. AO drops the messages queued behind a turn, so your ${again} queued message${again === 1 ? " was" : "s were"} sent again.` });
 				this.schedule();
 				return;

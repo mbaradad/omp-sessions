@@ -259,7 +259,7 @@ test("interrupt keeps the follow-ups AO would discard: they are sent again in or
 		await client.sendMessage(id, { text: "echo queued one" });
 		await client.sendMessage(id, { text: "echo queued two" });
 		await chat.until("two queued prompts", () => chat.feed.queued().length === 2);
-		assert.equal(await interruptKeepingQueue(client, id, chat.feed.queued()), 2);
+		assert.equal(await interruptKeepingQueue(client, id), 2);
 		await chat.until("both follow-ups answered", () => !chat.feed.isBusy() && texts(chat.feed.transcript()).includes("queued two"));
 		const said = texts(chat.feed.transcript());
 		assert.deepEqual(said.filter(t => t.startsWith("echo queued")), ["echo queued one", "echo queued two"], `each follow-up once in ${JSON.stringify(said)}`);

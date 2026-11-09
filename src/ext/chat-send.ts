@@ -22,18 +22,20 @@ export async function sendResuming(ao: AoClient, sessionId: string, attempt: () 
 
 /**
  * Stops the running turn. AO also discards every follow-up queued behind it (they end `interrupted` and
- * never run, GAPS G41), so the queued messages the person typed are sent again, in order, as soon as the
- * interrupt is done. Returns how many were sent again. Attachments of a queued message are not kept: AO
- * returns its text only.
+ * never run, GAPS G41), so those prompts are sent again, in order, once AO has settled the interrupt:
+ * the 204 comes back before the turns settle, so `interruptWithQueue` waits for it (a prompt sent earlier
+ * would queue behind a turn that is about to be discarded). Returns how many were sent again. Attachments
+ * of a queued message are not kept: AO returns its text only.
  */
-export async function interruptKeepingQueue(ao: AoClient, sessionId: string, queued: ReadonlyArray<{ text: string }>): Promise<number> {
+export async function interruptKeepingQueue(ao: AoClient, sessionId: string): Promise<number> {
+	let discarded: Array<{ text: string }>;
 	try {
-		await ao.interrupt(sessionId);
+		({ discarded } = await ao.interruptWithQueue(sessionId));
 	} catch (err) {
 		// The turn ended between the keypress and the call: nothing was discarded, nothing to send again.
 		if (err instanceof AoError && err.code === "CHAT_NO_ACTIVE_TURN") return 0;
 		throw err;
 	}
-	for (const { text } of queued) await ao.sendMessage(sessionId, { text });
-	return queued.length;
+	for (const { text } of discarded) await ao.sendMessage(sessionId, { text });
+	return discarded.length;
 }
