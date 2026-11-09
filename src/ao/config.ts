@@ -17,6 +17,8 @@ export interface SwitchyardConfig {
 	service?: "on" | "off";
 	/** G28: "on" / "off" makes Switchyard set AO's chat hibernation after it starts a daemon and on every planner reconnect; absent: leave AO alone. (`ensureDaemon` reads this key through native.ts's `readHibernationSetting`; the values agree.) */
 	hibernation?: "on" | "off";
+	/** G38: "off" stops the CLI from installing or refreshing Switchyard's omp extension and shim by itself (`omp-extension install` still works). */
+	ompExtension?: "on" | "off";
 	/** The nested key the `omp` shim reads (G34): arguments added to every `omp acp` an AO session starts, e.g. `["--profile", "work"]`. */
 	omp?: { extraArgs?: string[] };
 }
@@ -41,6 +43,7 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 	if (isPermissionMode(raw.mode)) out.mode = raw.mode;
 	if (raw.service === "on" || raw.service === "off") out.service = raw.service;
 	if (raw.hibernation === "on" || raw.hibernation === "off") out.hibernation = raw.hibernation;
+	if (raw.ompExtension === "on" || raw.ompExtension === "off") out.ompExtension = raw.ompExtension;
 	const omp = raw.omp;
 	if (omp && typeof omp === "object" && "extraArgs" in omp && Array.isArray(omp.extraArgs)) {
 		const extraArgs = omp.extraArgs.filter((a): a is string => typeof a === "string");
@@ -51,11 +54,20 @@ export function readSwitchyardConfig(file = switchyardConfigPath()): SwitchyardC
 
 /**
  * Merges `patch` into config.json (a key given as undefined is removed); atomic. Keys this module
- * doesn't know are kept: other Switchyard parts (the shim, the planner) read the same file.
+ * doesn't know are kept: other Switchyard parts (the shim, the planner) read the same file. The nested
+ * `omp` object merges key by key (`{omp: {extraArgs: undefined}}` removes only extraArgs and leaves the
+ * other omp keys); `omp: undefined` removes the whole object.
  */
 export function writeSwitchyardConfig(patch: SwitchyardConfig, file = switchyardConfigPath()): SwitchyardConfig {
 	refuseRealStateInTests(path.dirname(file));
-	const next: Record<string, unknown> = { ...readRaw(file), ...patch };
+	const raw = readRaw(file);
+	const next: Record<string, unknown> = { ...raw, ...patch };
+	if (patch.omp) {
+		const current = raw.omp && typeof raw.omp === "object" && !Array.isArray(raw.omp) ? raw.omp : {};
+		const omp: Record<string, unknown> = { ...current, ...patch.omp };
+		for (const key of Object.keys(omp)) if (omp[key] === undefined) delete omp[key];
+		next.omp = Object.keys(omp).length ? omp : undefined;
+	}
 	for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
 	fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 	const tmp = `${file}.${process.pid}.tmp`;
