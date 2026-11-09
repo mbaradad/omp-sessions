@@ -2,6 +2,16 @@
 // and the socket protocol. Clients import types from here and PlannerClient from ./client; nothing else.
 // Pure types; no Node APIs.
 
+/** What the planner's start-up `ensureOmpIntegration()` reported (the shape of `OmpIntegrationResult`). */
+export interface OmpIntegrationStatus {
+	/** What this start wrote: the permission gate (`gate`) and the `omp` shim (`shim`). */
+	installed: string[];
+	upToDate: boolean;
+	skipped?: string;
+	error?: string;
+	code?: string;
+}
+
 export const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
@@ -461,7 +471,11 @@ export type QueueOp =
 // ---------- wire ----------
 
 export interface PlannerOps {
-	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1 } };
+	/**
+	 * `omp`: what the start-up `ensureOmpIntegration()` did (G46): the gate and the `omp` shim installed, `error`
+	 * when one is missing (a mode other than `auto` is then refused at spawn), `skipped` for a development host.
+	 */
+	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1; omp?: OmpIntegrationStatus } };
 	plan: { args: { lane?: string; all?: boolean }; result: PlanView };
 	edit: { args: { ops: PlanOp[]; rev?: number }; result: { rev: number; refs: Record<string, string> } };
 	getQueue: { args: { id: string }; result: QueueView };
