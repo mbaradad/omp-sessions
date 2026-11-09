@@ -120,7 +120,7 @@ test("AoSessionWatcher: the changed files read as a turn settles can be stale; a
  * read when none is cached or the cached one is older than the TTL, and is otherwise returned as it was,
  * flagged fresh (`stale: false`) unless a filesystem watcher marked it, and nobody holds that stream here.
  */
-function cachingDaemon(ttlMs: number) {
+function cachingDaemon(ttlMs: number, now: () => number = Date.now) {
 	const state = { turn: "running" as "running" | "completed", seq: 3, disk: [] as string[] };
 	let cached: { at: number; files: string[] } | undefined;
 	let computes = 0;
@@ -134,7 +134,7 @@ function cachingDaemon(ttlMs: number) {
 		workspacePath: async () => "/wt/repo-1",
 		workspaceManifest: async () => {
 			reads++;
-			if (!cached || Date.now() - cached.at > ttlMs) (computes++, (cached = { at: Date.now(), files: [...state.disk] }));
+			if (!cached || now() - cached.at > ttlMs) (computes++, (cached = { at: now(), files: [...state.disk] }));
 			return manifest(cached.files);
 		},
 	};
@@ -142,10 +142,10 @@ function cachingDaemon(ttlMs: number) {
 }
 
 test("AoSessionWatcher: AO serves a manifest computed while the turn ran, unflagged, for its whole 3 s cache; only a read after that is fresh", async () => {
-	// Scaled down: AO's cache lives 200 ms here. The turn writes hello.txt and settles at about 100 ms, while the
+	// Scaled down: AO's cache lives 500 ms here. The turn writes hello.txt and settles at about 100 ms, while the
 	// manifest was computed at 0. A re-read at settleMs (60) still gets that cache; the one after the cache expired does not.
-	const daemon = cachingDaemon(200);
-	const watcher = new AoSessionWatcher(daemon.ao, { debounceMs: 1, settleMs: 60, manifestCacheMs: 260 });
+	const daemon = cachingDaemon(500);
+	const watcher = new AoSessionWatcher(daemon.ao, { debounceMs: 1, settleMs: 60, manifestCacheMs: 560 });
 	await watcher.start();
 	try {
 		assert.equal(daemon.computes(), 1, "computed once, before the file existed");
@@ -172,28 +172,32 @@ test("AoSessionWatcher: AO serves a manifest computed while the turn ran, unflag
 	}
 });
 
-/** The e2e's shape: the agent writes hello.txt, then appends to README.md, with events in between; AO's cache lives 200 ms here. */
+/**
+ * The e2e's shape: the agent writes hello.txt, then appends to README.md, with events in between. AO's cache lives 200
+ * "ms" of a clock the test moves by hand (not the real one), so the outcome cannot depend on how loaded the machine is;
+ * each step waits until the watcher has handled the event instead of sleeping.
+ */
 async function twoWrites(options: { liveFiles?: boolean }) {
-	const daemon = cachingDaemon(200);
+	const clock = { t: 0 };
+	const daemon = cachingDaemon(200, () => clock.t);
 	const watcher = new AoSessionWatcher(daemon.ao, { debounceMs: 1, settleMs: 500, manifestCacheMs: 700, ...options });
 	await watcher.start();
-	await new Promise(r => setTimeout(r, 250));
+	clock.t = 250; // the manifest read at the start has expired in AO by now
 	const readsBefore = daemon.reads();
 	daemon.state.disk = ["hello.txt"];
 	daemon.state.seq = 4;
 	daemon.emit();
-	await new Promise(r => setTimeout(r, 30));
+	await next(watcher, m => m.conversation?.latestSequence === 4);
 	daemon.state.disk = ["README.md", "hello.txt"];
 	daemon.state.seq = 5;
 	daemon.emit();
-	await new Promise(r => setTimeout(r, 30));
+	await next(watcher, m => m.conversation?.latestSequence === 5);
 	const midTurnReads = daemon.reads() - readsBefore;
 	daemon.state.turn = "completed";
 	daemon.state.seq = 6;
-	const settledAt = Date.now();
 	daemon.emit();
 	const settled = await next(watcher, m => m.conversation?.turns[0].state === "completed");
-	return { watcher, settled, midTurnReads, afterSettleMs: Date.now() - settledAt };
+	return { watcher, settled, midTurnReads, clock };
 }
 
 test("AoSessionWatcher: no manifest reads while a turn runs, so the read at the settle is fresh at once", async () => {
@@ -210,12 +214,13 @@ test("AoSessionWatcher: no manifest reads while a turn runs, so the read at the 
 });
 
 test("AoSessionWatcher: liveFiles reads mid-turn, and AO then serves a half-done manifest to the settle read (the e2e's partial list)", async () => {
-	const { watcher, settled, midTurnReads } = await twoWrites({ liveFiles: true });
+	const { watcher, settled, midTurnReads, clock } = await twoWrites({ liveFiles: true });
 	try {
 		assert.ok(midTurnReads >= 1);
 		// The cache from the read between the two writes: hello.txt is there, the appended README.md is not.
 		assert.deepEqual(settled.changedFiles.map(f => f.path), ["hello.txt"]);
-		// The safety reads still correct it, after AO's cache expired.
+		// AO's cache expires (the fake's clock moves on); the safety reads then correct it.
+		clock.t += 300;
 		const fresh = await next(watcher, m => m.changedFiles.length === 2);
 		assert.deepEqual(fresh.changedFiles.map(f => f.path).sort(), ["README.md", "hello.txt"]);
 	} finally {
