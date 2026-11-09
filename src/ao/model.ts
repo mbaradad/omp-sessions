@@ -3,12 +3,12 @@
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
 // keeps those models current from the daemon's change stream; the report (`show --json` shape) and the
 // conversation follower (attach, tail) live in ./report and ./follow and are exported from here.
-import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
+import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn, AoWorkspaceManifest } from "./client";
 
 export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
 export { deltaCursor, followConversation, mergeConversation } from "./follow";
 export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
-export { permissionModeOf, reportQuestion, sessionReport } from "./report";
+export { approvalModeFor, permissionModeOf, planModeOf, reportQuestion, sessionReport } from "./report";
 
 /**
  * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
@@ -62,6 +62,8 @@ export interface AoQuestion {
 	schema?: unknown;
 	/** input in URL mode: the page that answers it. */
 	url?: string;
+	/** approval that arrived as a `user_input` form (omp's write/edit prompts): the form field the chosen decision's id goes into, resolved through the inputs route. */
+	inputField?: string;
 	turnId?: string;
 	createdAt: number;
 }
@@ -131,9 +133,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
-/** Approvals and questions still waiting for an answer, oldest first. */
+const OPEN_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { queued: true, running: true };
+
+/**
+ * Approvals and questions still waiting for an answer, oldest first. A request belongs to a turn that
+ * waits on it: when that turn has ended (a person's Stop leaves the approval row `pending` although the
+ * turn is `interrupted` and the agent ready, checked live) nobody can answer it any more.
+ */
 export function pendingActivities(conversation: AoConversation): AoActivity[] {
-	return conversation.activities.filter(a => a.status === "pending" && a.requestId && (a.activityKind === "approval" || a.activityKind === "user_input"));
+	const turns = new Map(conversation.turns.map(t => [t.id, t]));
+	return conversation.activities.filter(a => {
+		if (a.status !== "pending" || !a.requestId || (a.activityKind !== "approval" && a.activityKind !== "user_input")) return false;
+		const turn = a.turnId ? turns.get(a.turnId) : undefined;
+		return !turn || OPEN_TURNS[turn.state] === true;
+	});
 }
 
 /** Labels for ACP's permission option kinds, for decisions that come without one. */
@@ -179,6 +192,13 @@ export function questionOf(activity: AoActivity): AoQuestion {
 	}
 	const fields = schemaFields(detail.schema);
 	const message = str(detail.message);
+	const permission = permissionPrompt(fields);
+	if (permission) {
+		// omp's write/edit permission prompts arrive as a `user_input` form (VALIDATION.md §3, G12): one
+		// field offering Approve / Approve … for this session / Deny. Same concept as bash's approval.
+		const decisions = permission.options.map((label, i): AoDecision => ({ id: String(permission.values[i]), label, kind: permissionKind(label) }));
+		return { ...base, kind: "approval", decisions, options: permission.options, inputField: permission.key, ...(message && message !== activity.summary && { message }) };
+	}
 	return {
 		...base,
 		kind: "input",
@@ -188,6 +208,19 @@ export function questionOf(activity: AoActivity): AoQuestion {
 		...(detail.schema !== undefined && { schema: detail.schema }),
 		...(str(detail.url) && { url: str(detail.url) }),
 	};
+}
+
+/** ACP option kind of a permission choice: `Approve` once, `Approve … for this session` always, `Deny` rejects. */
+function permissionKind(label: string): string {
+	if (/^deny\b|^reject\b/i.test(label)) return "reject_once";
+	return /session|always/i.test(label) ? "allow_always" : "allow_once";
+}
+
+/** The single field of a form that is a tool-permission prompt: choices include an approval and a denial. */
+function permissionPrompt(fields: AoQuestionField[]): AoQuestionField | undefined {
+	const [field] = fields;
+	if (fields.length !== 1 || field.multi || field.options.length < 2) return undefined;
+	return field.options.some(o => /^approve\b|^allow\b/i.test(o)) && field.options.some(o => /^deny\b|^reject\b/i.test(o)) ? field : undefined;
 }
 
 export function questionsOf(conversation: AoConversation): AoQuestion[] {
@@ -205,12 +238,26 @@ export function lastReply(conversation: AoConversation, max = REPLY_MAX): string
 
 const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
+/** providerTurnId of a turn AO imported from omp's recorded history after exit-agent + resume-agent (G33). */
+const HISTORY_TURN_PREFIX = "acp-history-turn:";
+
+/**
+ * The turns that ran in this conversation: those AO replays from omp's history on resume (prompts
+ * already recorded, steered or with images, come back as `recovered` turns whose providerTurnId starts
+ * with `acp-history-turn:`) are not new work. They are not counted in the queue, and are never "the
+ * last turn" that decides interrupted or the exit reason.
+ */
+export function realTurns(conversation: AoConversation): AoTurn[] {
+	return conversation.turns.filter(t => !t.providerTurnId?.startsWith(HISTORY_TURN_PREFIX));
+}
+
 export function queueOf(conversation: AoConversation): AoQueue {
 	const textOf = new Map<string, string>();
 	for (const m of conversation.messages) if (m.role === "user" && m.turnId && !textOf.has(m.turnId)) textOf.set(m.turnId, m.text);
-	const queued = conversation.turns.filter(t => t.state === "queued");
-	const running = conversation.turns.filter(t => t.state === "running").length;
-	const done = conversation.turns.filter(t => DONE_TURNS[t.state]).length;
+	const turns = realTurns(conversation);
+	const queued = turns.filter(t => t.state === "queued");
+	const running = turns.filter(t => t.state === "running").length;
+	const done = turns.filter(t => DONE_TURNS[t.state]).length;
 	return {
 		pending: queued.length,
 		running,
@@ -220,27 +267,15 @@ export function queueOf(conversation: AoConversation): AoQueue {
 	};
 }
 
-/** Files the agent's turns changed (rolled-back turns and files excluded), with their line counts summed across turns. */
-export function changedFiles(conversation: AoConversation): AoChangedFile[] {
-	const files = new Map<string, AoChangedFile>();
-	for (const turn of conversation.turns) {
-		if (turn.rolledBack || !turn.diff) continue;
-		for (const f of turn.diff.files) {
-			if (f.rolledBack) continue;
-			const prev = files.get(f.path) ?? (f.oldPath ? files.get(f.oldPath) : undefined);
-			if (prev && f.oldPath && prev.path === f.oldPath) files.delete(f.oldPath);
-			// A file this session created stays "added" until it is deleted again.
-			const status = prev?.status === "added" && f.status !== "deleted" ? "added" : f.status;
-			files.set(f.path, {
-				path: f.path,
-				...((f.oldPath ?? prev?.oldPath) && status === "renamed" && { oldPath: f.oldPath ?? prev?.oldPath }),
-				status,
-				additions: (prev?.additions ?? 0) + f.additions,
-				deletions: (prev?.deletions ?? 0) + f.deletions,
-			});
-		}
-	}
-	return [...files.values()];
+/**
+ * The files the session changed: its workspace against the base it started from (AO's workspace
+ * manifest). omp chat turns carry no `diff` (checked live), so the turns cannot tell; the manifest also
+ * reflects whatever omp's /undo put back, since it reads the files themselves.
+ */
+export function changedFiles(manifest: AoWorkspaceManifest): AoChangedFile[] {
+	return manifest.files.flatMap((f): AoChangedFile[] =>
+		f.status === "unmodified" ? [] : [{ path: f.path, ...(f.status === "renamed" && f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }],
+	);
 }
 
 /**
@@ -272,7 +307,7 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
 		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
 		const down = conversation.controller === "stopped" || view.activity.state === "exited";
-		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (down && (running || pending || lostTurn(realTurns(conversation).at(-1)))) return "interrupted";
 		if (pending) return "needs_input";
 		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
@@ -312,11 +347,12 @@ function lostTurn(turn: AoTurn | undefined): boolean {
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
-	const last = conversation?.turns.at(-1);
+	const last = conversation && realTurns(conversation).at(-1);
 	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
-export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {
+/** `files`: the session's changed files (changedFiles of its workspace manifest), when read. */
+export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState, files: AoChangedFile[] = []): AoSessionModel {
 	const question = conversation ? questionsOf(conversation)[0] : undefined;
 	const reply = conversation ? lastReply(conversation) : undefined;
 	const exitReason = exitReasonOf(view, conversation);
@@ -336,7 +372,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation,
 		createdAt: ms(view.createdAt),
 		updatedAt: Math.max(ms(view.updatedAt), ms(view.lastEventAt)),
 		...(typeof usage?.cost === "number" && { cost: usage.cost, currency: usage.currency || "USD" }),
-		changedFiles: conversation ? changedFiles(conversation) : [],
+		changedFiles: files,
 		queue: conversation ? queueOf(conversation) : { pending: 0, running: 0, done: 0, total: 0, items: [] },
 		...(question && { question }),
 		...(reply && { reply }),
@@ -403,11 +439,12 @@ export function answerFor(question: AoQuestion, answer: string): AoAnswer {
 		const decisions = question.decisions ?? [];
 		if (decisions.length === 0) return { error: "This approval offers no decisions." };
 		const i = pick(decisions.map(d => d.label), text) ?? pick(decisions.map(d => d.id), text);
-		if (i !== undefined) return { kind: "approval", decisionId: decisions[i].id };
 		const kindMatch = YES.test(text) ? ["allow_once", "allow_always"] : NO.test(text) ? ["reject_once", "reject_always"] : undefined;
-		const byKind = kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
-		if (byKind) return { kind: "approval", decisionId: byKind.id };
-		return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		const chosen = i !== undefined ? decisions[i] : kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
+		if (!chosen) return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		// A permission prompt that arrived as a question is answered through the inputs route, the choice as the field's value.
+		if (question.inputField) return { kind: "input", body: { action: "accept", content: { [question.inputField]: chosen.id } } };
+		return { kind: "approval", decisionId: chosen.id };
 	}
 	if (question.url && !question.questions) return { error: `This question is answered in a browser: ${question.url}` };
 	const fields = question.questions ?? [];
@@ -445,6 +482,8 @@ export interface AoWatcherOptions {
 	conversations?: boolean;
 	/** Messages per conversation read (`limit`). Default 50. */
 	conversationLimit?: number;
+	/** Read each session's workspace manifest for its changed files (again only when its conversation moved). Default true. */
+	changedFiles?: boolean;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
 }
@@ -460,6 +499,7 @@ export class AoSessionWatcher {
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly cwds = new Map<string, string>();
+	private readonly files = new Map<string, { key: string; files: AoChangedFile[] }>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -567,14 +607,28 @@ export class AoSessionWatcher {
 
 	private async build(view: AoSessionView): Promise<AoSessionModel> {
 		const cwd = await this.cwdOf(view.id);
-		const withCwd = (m: AoSessionModel): AoSessionModel => (cwd ? { ...m, cwd } : m);
-		if (this.options.conversations === false || view.mode !== "chat") return withCwd(sessionModel(view));
+		// Not ready yet (409 while the controller starts), or gone with a terminated session: the view alone.
+		const conversation = this.options.conversations === false || view.mode !== "chat" ? undefined : await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 }).catch(() => undefined);
+		const files = this.options.changedFiles === false ? [] : await this.filesOf(view, conversation);
+		const model = sessionModel(view, conversation, undefined, files);
+		return cwd ? { ...model, cwd } : model;
+	}
+
+	/**
+	 * Files change only while the agent works, which adds conversation items or settles turns: the
+	 * manifest (a git diff on the daemon) is read again only when those moved.
+	 */
+	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
+		const key = conversation ? `${conversation.latestSequence}|${conversation.turns.map(t => `${t.id}:${t.state}`).join(",")}` : view.updatedAt;
+		const known = this.files.get(view.id);
+		if (known?.key === key) return known.files;
 		try {
-			const conversation = await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 });
-			return withCwd(sessionModel(view, conversation));
+			const files = changedFiles(await this.client.workspaceManifest(view.id));
+			this.files.set(view.id, { key, files });
+			return files;
 		} catch {
-			// Not ready yet (409 while the controller starts), or gone with a terminated session.
-			return withCwd(sessionModel(view));
+			// No workspace any more (terminated and released), or a transient failure: keep what was known.
+			return known?.files ?? [];
 		}
 	}
 

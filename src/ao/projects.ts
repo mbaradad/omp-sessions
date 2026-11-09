@@ -22,10 +22,22 @@ function realpath(p: string): string {
 	}
 }
 
-/** The git work tree root containing `dir`, or undefined outside git. */
+/**
+ * The repository's main checkout containing `dir`, or undefined outside git. A linked worktree
+ * (`git worktree add`) counts for its main checkout (MAPPING.md): AO gives every session its own
+ * worktree, so one project per repo is what the user means, not one per worktree they happen to have.
+ * A submodule or a bare main repository keeps its own root.
+ */
 export function gitRoot(dir: string): string | undefined {
-	const root = git(dir, "rev-parse", "--show-toplevel");
-	return root ? realpath(root) : undefined;
+	const top = git(dir, "rev-parse", "--show-toplevel");
+	if (!top) return undefined;
+	const root = realpath(top);
+	// The shared git dir: `<main>/.git` for the main checkout and every linked worktree (relative to `dir` when relative).
+	const common = git(dir, "rev-parse", "--git-common-dir");
+	if (!common) return root;
+	const commonDir = realpath(path.resolve(dir, common));
+	const main = path.dirname(commonDir);
+	return path.basename(commonDir) === ".git" && main !== root ? main : root;
 }
 
 /**
