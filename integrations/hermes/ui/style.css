@@ -477,3 +477,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 @media (prefers-reduced-motion: reduce) {
 	.omps *, .omps *::before, .omps *::after { animation: none !important; transition: none !important; }
 }
+.omps-upstream { display: flex; flex-direction: column; gap: 6px; }
+.omps-upstream-edge { font-size: 12px; color: var(--o-fg2); }
+.omps-sync-conflict { color: var(--o-red); }
+.omps-sync-upstream-changed, .omps-sync-pending { color: var(--o-yellow); }
+.omps-upstream-files { font-size: 11px; color: var(--o-muted); word-break: break-all; }

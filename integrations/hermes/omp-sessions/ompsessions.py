@@ -21,6 +21,8 @@ WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 5: "scheduled", 124: "ti
 # `omp-sessions` exits 2 on a usage error, e.g. an answer that doesn't fit the question.
 USAGE_EXIT = 2
 PRIORITIES = ("urgent", "high", "normal", "low")
+# Sync state of a graph edge (GRAPH-PROPAGATION.md): how far a parent's changes reached its child.
+SYNC_STATES = ("in-sync", "pending", "merged", "conflict", "upstream-changed")
 # Question kinds answered with text; select/confirm dialogs grant something (tool approvals, plan
 # approval) and are left to the user.
 TEXT_QUESTION_KINDS = ("ask", "input", "editor")
@@ -241,6 +243,20 @@ class OmpSessions:
         the queue. Refused for the session itself, unknown sessions and cycles."""
         refs = [free_text_ok(s) for s in after] or ["off"]
         return self.json(["queue", free_text_ok(session), "after", "--json", "--", *refs])
+
+    def plan_status(self, ref: Optional[str] = None) -> list[dict]:
+        """`plan status --json`: the graph edges and how far each parent's changes reached its child
+        ({parent, parentSession, child, childSession, state, files?, parentHead?, childHead?, at?};
+        state is one of SYNC_STATES), for one task or session, else for every plan."""
+        out = self.json(["plan", "status", "--json", *(["--", free_text_ok(ref)] if ref else [])])
+        edges = out.get("edges") if isinstance(out, dict) else None
+        return [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
+
+    def plan_sync(self, ref: str, *, rerun: bool = False) -> dict:
+        """`plan sync <task|session> --json`: brings the parents' changes into its worktree now;
+        `rerun` also runs its task again with them (for a done task marked upstream-changed)."""
+        out = self.json(["plan", "sync", "--json", *(["--rerun"] if rerun else []), "--", free_text_ok(ref)], timeout=120)
+        return out if isinstance(out, dict) else {}
 
     def priority(self, session: str, priority: str) -> str:
         if priority not in PRIORITIES:

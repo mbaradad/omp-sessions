@@ -1,6 +1,6 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
 // the permission mode and model switches, Stop, and Open in VS Code (the chat, or the project folder).
-import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session } from "./api";
+import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type SyncState, type UpstreamEdge } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
 import { ModelPicker, ModelsError, useModels } from "./models";
 import { type Child, h, type ReactElement, useEffect, useRef, useState } from "./react";
@@ -8,6 +8,38 @@ import { ago, clock, cx, icon, markdown, money, plain, STATE_LABEL, shortId, sta
 import { openInVscode } from "./vscode";
 
 const POLL_MS = 3000;
+
+const SYNC_LABEL: Record<SyncState, string> = {
+	"in-sync": "in sync",
+	pending: "changes wait for this turn to end",
+	merged: "changes merged",
+	conflict: "merge conflict",
+	"upstream-changed": "changed after this one finished",
+};
+
+/** The parent tasks' sync states (GRAPH-PROPAGATION.md), with Sync now and Re-run with parent changes. */
+function Upstream(p: { edges: UpstreamEdge[]; busy: string | null; onSync: (rerun: boolean) => void }): ReactElement {
+	const changed = p.edges.some(e => e.state === "upstream-changed");
+	return h(
+		"section",
+		{ className: "omps-upstream", "aria-label": "Parent tasks" },
+		h("div", { className: "omps-section-label" }, "Parent tasks"),
+		...p.edges.map((e, i) =>
+			h(
+				"div",
+				{ key: i, className: cx("omps-upstream-edge", `omps-sync-${e.state}`) },
+				`${e.parent ? shortId(e.parent) : "parent"} · ${SYNC_LABEL[e.state] ?? e.state}`,
+				e.files.length ? h("div", { className: "omps-upstream-files" }, `${e.files.slice(0, 8).join(", ")}${e.files.length > 8 ? ` … ${e.files.length - 8} more` : ""}`) : null,
+			),
+		),
+		h(
+			"div",
+			{ className: "omps-followup-row" },
+			h(Button, { small: true, kind: "ghost", label: "Sync now", title: "Merge the parents' changes into this session's worktree", busy: p.busy === "sync", onClick: () => p.onSync(false) }),
+			changed ? h(Button, { small: true, kind: "primary", label: "Re-run with parent changes", busy: p.busy === "rerun", onClick: () => p.onSync(true) }) : null,
+		),
+	);
+}
 
 /** omp-sessions answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts). */
 function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) => void }): ReactElement {
@@ -256,6 +288,7 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 					)
 				: null,
 			view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
+			view?.upstream?.length ? h(Upstream, { edges: view.upstream, busy, onSync: rerun => void act(rerun ? "rerun" : "sync", "sync", { rerun }) }) : null,
 			h(
 				"section",
 				{ className: "omps-reply", "aria-label": "Last reply" },

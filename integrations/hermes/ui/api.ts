@@ -110,9 +110,21 @@ export interface Session {
 	exitReason?: string | null;
 	authProblem?: string | null;
 	question?: Question | null;
+	/** Parent edges of the session's task (GRAPH-PROPAGATION.md): how far each parent's changes reached it. */
+	upstream?: UpstreamEdge[];
 	card?: CardRef | null;
 	/** Detail only: the full last reply. */
 	reply?: string | null;
+}
+
+export type SyncState = "in-sync" | "pending" | "merged" | "conflict" | "upstream-changed";
+
+export interface UpstreamEdge {
+	/** The parent's omp session. */
+	parent?: string | null;
+	state: SyncState;
+	/** Conflicting files (state conflict). */
+	files: string[];
 }
 
 export interface Scheduler {

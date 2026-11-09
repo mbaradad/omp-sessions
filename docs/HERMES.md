@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to omp. The `omp-sessions` Hermes plugin gives it:
 
-- **Tools** (toolset `omp_sessions`, 14 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
+- **Tools** (toolset `omp_sessions`, 15 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the omp Sessions setup (the Agent Orchestrator daemon and omp).
 - **Notifications.** When an omp session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
 - **A kanban lane.** Kanban cards assigned to `omp` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`omp-sessions` skill**, plus `/omp` in chats and `hermes omp …` in a terminal.
@@ -75,18 +75,19 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | --- | --- |
 | `omp_sessions_list` | Lists sessions: running and with work ahead (queued, scheduled, interrupted), or all with `all: true`. |
 | `omp_projects_list` | Lists where sessions can run: recent omp folders, kanban boards with their configured folders and groups, and Hermes projects. |
-| `omp_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder and group). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority` and `model`. |
-| `omp_session_status` | Returns a session's state, pending question, last reply, queue, cost and changed files. |
+| `omp_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time); `after` (with `task`) names sessions whose work must finish first: the task branches from their work and later gets their changes (see [Parent changes](#parent-changes)). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder and group). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority` and `model`. |
+| `omp_session_status` | Returns a session's state, pending question, last reply, queue, cost, changed files, and `upstream`: the sync state of each parent. |
 | `omp_session_wait` | Blocks until the session is idle, needs input, stopped or interrupted, or scheduled. The default timeout is 300 s, at most 600 s. |
 | `omp_session_send` | Sends a prompt (resuming a stopped session). While the session works, the prompt runs after the current turn; `steer: true` redirects the turn instead. |
 | `omp_session_answer` | Answers the waiting question with an option number or text, yes/no, or free text. Refused for approval dialogs unless `agent_approvals` is on. |
 | `omp_session_mode` | Switches the permission mode live. Unless `agent_approvals` is on, it refuses while an approval waits (the switch would answer it) and refuses switching to a less restrictive mode (plan < ask < edits < auto; a session without a mode counts as ask). |
 | `omp_session_model` | Shows the session's model, or switches it (live while it runs, else from its next resume). |
 | `omp_session_stop` | Stops the session, or cancels a scheduled start. Its history stays, and `omp_session_send` resumes it. |
-| `omp_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on. |
+| `omp_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on; `after` sets the sessions the queue waits for. |
 | `omp_queue_schedule` | Sets or changes when a session's queue starts (`at`), cancels it (`at: "off"`), and/or sets its `priority`. |
 | `omp_models_list` | Lists the models omp can use (`provider/id`), with the omp Sessions default and omp's own. |
 | `omp_server_status` | The `omp-sessions status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. |
+| `switchyard_plan_sync` | Brings a session's parents' changes into its worktree now and returns each edge's sync state; `rerun: true` also runs its task again with them. |
 
 States: `queued` (waiting for a slot), `scheduled` (waiting for its start time), `starting`, `working`, `needs_input`, `idle` (done for now), `interrupted` (a crash or reboot cut a queued task short; it waits for a person), `stopped`.
 
@@ -132,11 +133,20 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
 | task done (idle, or stopped afterwards) | `complete`. The result is the session's last reply, and so is the run summary that child cards read. The metadata holds the omp session id, folder, cost (including subagents) and changed-file count. |
 | interrupted (crash or reboot during the task) | Blocked with the reason and "Unblock the card to continue it in the same session". Unblocking starts the queue again. |
 | task failed, session stopped early, or session removed | `block --kind transient` with the reason. |
-| card done, archived, deleted or reassigned | The lane stops tracking it and leaves the session alone. |
+| a parent's changes don't merge into its worktree (`conflict`) | `block --kind needs_input` with the files. Resolve the merge in the session (a card comment reaches it); the card is unblocked once the edge is merged. |
+| card done, archived, deleted or reassigned | The lane stops tracking it and leaves the session alone. A done card whose parent changes later gets one comment saying how to re-run it (below). |
 
 Unblocking a card that failed (in Hermes: `hermes kanban unblock <id>`) retries it in the same omp session, or in a new one if the session was removed.
 
 The card↔session links and the lane's lock live beside the kanban boards, which every profile shares: `~/.hermes/plugin-data/omp-sessions-lane/` (`state.json`, `lane.lock`). Before it creates a session, the lane also looks for an omp session tagged `card:<id>`. A card never gets two sessions, even across restarts or crashes.
+
+### Parent changes
+
+A card whose Hermes parents ran in the lane is queued with those parents' sessions as `after`, so its omp session branches from their work instead of the repository base. When a parent changes later (a follow-up, a re-run), the planner merges the change into each child's worktree: a child that is working gets it after its turn, an idle one gets it with a note, a done one is marked **upstream changed** and is not run again. Each edge has a sync state: `in-sync`, `pending`, `merged`, `conflict` or `upstream-changed`.
+
+- A `conflict` blocks the child's card (see the table above).
+- An `upstream-changed` card gets one comment. Re-run it with `switchyard plan sync <session> --rerun`, **Re-run with parent changes** on the omp Sessions page, or `switchyard_plan_sync` with `rerun: true`.
+- `switchyard plan status` lists every edge; the omp Sessions page shows a **merge conflict** or **parent changed** chip on the card and the parents' states in the detail panel, with **Sync now**.
 
 ### Several profiles
 

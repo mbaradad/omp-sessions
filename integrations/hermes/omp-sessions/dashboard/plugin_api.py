@@ -306,12 +306,26 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "exitReason": meta.get("exitReason") if meta.get("status") == "stopped" else None,
         "authProblem": meta.get("authProblem"),
         "question": question,
+        "upstream": upstream_view(info.get("upstream")),
         "card": None,
     }
     if ref:
         c = card or {}
         view["card"] = {"board": ref[0], "id": ref[1], "title": c.get("title"), "status": c.get("status"), "parents": c.get("parents") or [], "children": c.get("children") or []}
     return view
+
+
+def upstream_view(edges: Any) -> list[dict]:
+    """The session's parent edges (GRAPH-PROPAGATION.md), for the page: which parent, its sync state, the
+    conflicting files."""
+    if not isinstance(edges, list):
+        return []
+    out = []
+    for e in edges:
+        if isinstance(e, dict) and e.get("state") in ompsessions.SYNC_STATES:
+            files = [f for f in e.get("files") or [] if isinstance(f, str)]
+            out.append({"parent": e.get("parentSession") or e.get("parent"), "state": e["state"], "files": files[:50]})
+    return out
 
 
 def list_sessions() -> dict:
@@ -344,7 +358,7 @@ def session_detail(sid: str) -> dict:
     card = card_lookup({ref}).get(ref) if ref else None
     question = report.get("question") if isinstance(report.get("question"), dict) else None
     view = session_view(info, card, ref, question)
-    view.update(reply=report.get("reply"), model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"])
+    view.update(reply=report.get("reply"), model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"], upstream=upstream_view(report.get("upstream")))
     return view
 
 
@@ -415,6 +429,9 @@ def session_action(sid: str, action: str, body: dict) -> dict:
         if not model:
             raise ApiError(400, "pick a model")
         return {"ok": True, **o.model(sid, model)}
+    if action == "sync":
+        # Bring the parents' changes in now; rerun: also run its task again with them (upstream-changed).
+        return {"ok": True, **o.plan_sync(sid, rerun=body.get("rerun") is True)}
     raise ApiError(404, f"unknown action {action}")
 
 

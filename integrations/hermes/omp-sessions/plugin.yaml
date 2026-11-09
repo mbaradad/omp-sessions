@@ -22,5 +22,6 @@ provides_tools:
   - omp_server_status
   - omp_models_list
   - omp_session_model
+  - switchyard_plan_sync
 provides_hooks:
   - on_kanban_dispatch_tick

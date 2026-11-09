@@ -672,6 +672,21 @@ class PureTest(unittest.TestCase):
         self.assertEqual(d(Card("ready", "omp"), gone, rep("idle"), "omp"), [("claim",), ("retry",)])
         self.assertEqual(d(Card("blocked", "omp"), gone, rep("idle"), "omp"), [])
 
+    def test_decide_merge_conflict_blocks_once_per_parent_head(self) -> None:
+        d, Card = self.lane.decide, self.lane.Card
+        link = {"session": "s1", "state": "active", "asked": []}
+        edge = {"parentSession": "p1", "childSession": "s1", "state": "conflict", "files": ["x.txt"], "parentHead": "abc"}
+        rep = {"state": "idle", "queue": {"pending": 1, "running": 0, "done": 0, "total": 1}, "upstream": [edge]}
+        [(kind, text, mark)] = d(Card("running", "omp"), link, rep, "omp")
+        self.assertEqual(kind, "block_conflict")
+        self.assertIn("x.txt", text)
+        blocked = {**link, "input_blocked": True, "asked": [mark]}
+        self.assertEqual(d(Card("blocked", "omp"), blocked, rep, "omp"), [], "the same conflict blocks once")
+        newer = {**rep, "upstream": [{**edge, "parentHead": "def"}]}
+        self.assertEqual(d(Card("running", "omp"), blocked, newer, "omp")[0][0], "block_conflict", "a new parent head is a new conflict")
+        merged = {**rep, "state": "working", "queue": {"pending": 0, "running": 1, "done": 0, "total": 1}, "upstream": [{**edge, "state": "merged"}]}
+        self.assertEqual(d(Card("blocked", "omp"), blocked, merged, "omp"), [("unblock",), ("claim",)], "resolved: back to running")
+
     def test_capacity_follows_the_omp_scheduler(self) -> None:
         c = self.lane.capacity
         self.assertEqual(c({"maxConcurrent": 0}), self.lane.MAX_NEW_PER_TICK)

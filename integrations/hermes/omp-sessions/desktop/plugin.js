@@ -490,7 +490,8 @@ function SessionCard(p) {
         },
         icon("external", 11)
       ),
-      s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null
+      s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
+      s.upstream?.some((e) => e.state === "conflict") ? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict") : s.upstream?.some((e) => e.state === "upstream-changed") ? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed") : null
     ),
     s.state === "needs_input" ? h(
       "div",
@@ -866,6 +867,35 @@ function BoardsPanel(p) {
 
 // integrations/hermes/ui/detail.ts
 var POLL_MS = 3e3;
+var SYNC_LABEL = {
+  "in-sync": "in sync",
+  pending: "changes wait for this turn to end",
+  merged: "changes merged",
+  conflict: "merge conflict",
+  "upstream-changed": "changed after this one finished"
+};
+function Upstream(p) {
+  const changed = p.edges.some((e) => e.state === "upstream-changed");
+  return h(
+    "section",
+    { className: "omps-upstream", "aria-label": "Parent tasks" },
+    h("div", { className: "omps-section-label" }, "Parent tasks"),
+    ...p.edges.map(
+      (e, i) => h(
+        "div",
+        { key: i, className: cx("omps-upstream-edge", `omps-sync-${e.state}`) },
+        `${e.parent ? shortId(e.parent) : "parent"} · ${SYNC_LABEL[e.state] ?? e.state}`,
+        e.files.length ? h("div", { className: "omps-upstream-files" }, `${e.files.slice(0, 8).join(", ")}${e.files.length > 8 ? ` … ${e.files.length - 8} more` : ""}`) : null
+      )
+    ),
+    h(
+      "div",
+      { className: "omps-followup-row" },
+      h(Button, { small: true, kind: "ghost", label: "Sync now", title: "Merge the parents' changes into this session's worktree", busy: p.busy === "sync", onClick: () => p.onSync(false) }),
+      changed ? h(Button, { small: true, kind: "primary", label: "Re-run with parent changes", busy: p.busy === "rerun", onClick: () => p.onSync(true) }) : null
+    )
+  );
+}
 function AnswerBox(p) {
   const { q } = p;
   const [text, setText] = useState("");
@@ -1094,6 +1124,7 @@ function DetailPanel(p) {
         h(Button, { type: "submit", small: true, label: "Switch", title: "A running session switches now; otherwise from its next start", busy: busy === "model", disabled: !model.trim() || model.trim() === view.model })
       ) : null,
       view && models.error ? h(ModelsError, { error: models.error, loading: models.loading, onRetry: models.reload }) : null,
+      view?.upstream?.length ? h(Upstream, { edges: view.upstream, busy, onSync: (rerun) => void act(rerun ? "rerun" : "sync", "sync", { rerun }) }) : null,
       h(
         "section",
         { className: "omps-reply", "aria-label": "Last reply" },
@@ -2462,6 +2493,11 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 @media (prefers-reduced-motion: reduce) {
 	.omps *, .omps *::before, .omps *::after { animation: none !important; transition: none !important; }
 }
+.omps-upstream { display: flex; flex-direction: column; gap: 6px; }
+.omps-upstream-edge { font-size: 12px; color: var(--o-fg2); }
+.omps-sync-conflict { color: var(--o-red); }
+.omps-sync-upstream-changed, .omps-sync-pending { color: var(--o-yellow); }
+.omps-upstream-files { font-size: 11px; color: var(--o-muted); word-break: break-all; }
 `;
 
 // integrations/hermes/ui/desktop.ts

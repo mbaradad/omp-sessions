@@ -91,6 +91,11 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 				icon("external", 11),
 			),
 			s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
+			s.upstream?.some(e => e.state === "conflict")
+				? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict")
+				: s.upstream?.some(e => e.state === "upstream-changed")
+					? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed")
+					: null,
 		),
 		s.state === "needs_input"
 			? h(

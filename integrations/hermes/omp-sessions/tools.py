@@ -160,6 +160,16 @@ SCHEMAS: dict[str, dict] = {
         "description": "Show an omp session's model, or switch it (live while it runs, else from its next resume).",
         "parameters": {"type": "object", "properties": {"id": SESSION_ID, "model": {"type": "string", "description": "provider/id from omp_models_list; omit to show the current one."}}, "required": ["id"]},
     },
+    "switchyard_plan_sync": {
+        "name": "switchyard_plan_sync",
+        "description": (
+            "Bring the changes of a session's parent tasks (the sessions it was started after) into its worktree now, and show each "
+            "graph edge's sync state: in-sync, pending (waits for its turn to end), merged, conflict (the merge needs a person or the "
+            "agent; the files are listed) or upstream-changed (it was done before its parent changed). rerun: true also runs its task "
+            "again with the parent changes; use it for upstream-changed. omp_session_status shows the same states as `upstream`."
+        ),
+        "parameters": {"type": "object", "properties": {"id": SESSION_ID, "rerun": {"type": "boolean", "description": "Also re-run its task with the parent changes."}}, "required": ["id"]},
+    },
 }
 
 
@@ -271,6 +281,7 @@ class Tools:
             "omp_server_status": self.server_status,
             "omp_models_list": self.models_list,
             "omp_session_model": self.session_model,
+            "switchyard_plan_sync": self.plan_sync,
         }
 
     def _run(self, fn: Callable[[], Any]) -> str:
@@ -500,3 +511,13 @@ class Tools:
 
     def session_model(self, args: dict, **_: Any) -> str:
         return self._run(lambda: self.omp().model(self._id(args), _str(args, "model")))
+
+    def plan_sync(self, args: dict, **_: Any) -> str:
+        def go() -> dict:
+            sid = self._id(args)
+            out = self.omp().plan_sync(sid, rerun=args.get("rerun") is True)
+            if args.get("rerun") is True:
+                self._rearm(sid)
+            return out
+
+        return self._run(go)

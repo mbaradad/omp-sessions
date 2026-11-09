@@ -197,7 +197,8 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
     ("block_input", text, question_id, approval), ("comment_input", text, question_id, approval),
-    ("unblock",), ("complete",), ("block_transient", reason), ("retry",), ("recreate",)."""
+    ("block_conflict", text, mark), ("unblock",), ("complete",), ("block_transient", reason), ("retry",),
+    ("recreate",)."""
     if card.status is None:
         return [("drop", "the card was deleted")]
     if card.status in ("done", "archived"):
@@ -220,6 +221,16 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
         return [("complete",)]
     if link.get("state") == "failed":
         return [("claim",), ("retry",)] if card.status == "ready" else []
+    # A parent's changes that don't merge (GRAPH-PROPAGATION.md) need a person, like a question.
+    conflict = next((e for e in upstream_edges(report) if e.get("state") == "conflict"), None)
+    if conflict is not None:
+        mark = f"conflict:{conflict.get('parentSession') or conflict.get('parent')}:{conflict.get('parentHead') or ''}"
+        if mark in (link.get("asked") or []):
+            return [("claim",)] if card.status == "ready" else []
+        acts = [("claim",)] if card.status == "ready" else []
+        if card.status in ("running", "ready") and card.block_kind != "needs_input":
+            acts.append(("block_conflict", conflict_text(conflict), mark))
+        return acts
     if state == "needs_input":
         acts = [("claim",)] if card.status == "ready" else []
         question = report.get("question") if isinstance(report.get("question"), dict) else {}
@@ -252,6 +263,23 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     if card.status == "running":
         return [("heartbeat",)]
     return []
+
+
+def upstream_edges(report: Optional[dict]) -> list[dict]:
+    """The report's parent edges (`upstream` in `show --json`; GRAPH-PROPAGATION.md)."""
+    edges = (report or {}).get("upstream")
+    return [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
+
+
+def conflict_text(edge: dict) -> str:
+    files = [f for f in edge.get("files") or [] if isinstance(f, str)]
+    parent = short(str(edge.get("parentSession") or edge.get("parent") or "?"))
+    listed = ", ".join(files[:20]) + (f" … {len(files) - 20} more" if len(files) > 20 else "")
+    return (
+        f"The changes of parent omp session {parent} don't merge cleanly into this card's worktree"
+        + (f" ({listed})" if listed else "")
+        + ". Resolve the merge in the omp session (a comment on this card reaches it), then the lane picks the card up again."
+    )
 
 
 def capacity(sched: dict) -> int:
@@ -375,7 +403,54 @@ class Lane:
                         log.warning("omp lane: %s: %s", key, exc, exc_info=True)
                         errors.append(f"{key}: {exc}")
                     self._save(links)
+                try:
+                    self._upstream_notes(conn, slug, omp)
+                except OmpSessionsError as exc:  # e.g. a CLI without `plan status`
+                    log.debug("omp lane: plan status on %s: %s", slug, exc)
         self._status(slug, started=started, error="; ".join(errors) or None)
+
+    def _upstream_notes(self, conn: Any, slug: str, omp: OmpSessions) -> None:
+        """A done card whose parent card changed afterwards (edge state upstream-changed,
+        GRAPH-PROPAGATION.md): the planner merged the change into its worktree but doesn't re-run it, so
+        say so once on the card, with how to re-run it."""
+        from hermes_cli import kanban_db as kb
+
+        edges = [e for e in omp.plan_status() if e.get("state") == "upstream-changed"]
+        if not edges:
+            return
+        cards = {sid: card for card, sid in self._card_sessions(omp, slug).items()}
+        noted = self.store.get("upstream_noted", [])
+        noted = noted if isinstance(noted, list) else []
+        for e in edges:
+            child = str(e.get("childSession") or "")
+            card = cards.get(child)
+            mark = f"{child}:{e.get('parentHead') or e.get('at') or ''}"
+            if not card or mark in noted:
+                continue
+            parent = str(e.get("parentSession") or "")
+            what = f"card {cards[parent]}" if parent in cards else f"omp session {short(parent)}"
+            kb.add_comment(
+                conn,
+                card,
+                AUTHOR,
+                f"Parent {what} changed after this card was done. Its changes are merged into omp session {short(child)}'s worktree, "
+                f"but this card's task was not run again. To re-run it with them: `switchyard plan sync {short(child)} --rerun`, "
+                f"the omp Sessions page (Re-run with parent changes), or ask Hermes (switchyard_plan_sync with rerun).",
+            )
+            noted.append(mark)
+        self.store.set("upstream_noted", noted[-500:])
+
+    def _card_sessions(self, omp: OmpSessions, slug: str) -> dict[str, str]:
+        """{card id: omp session id} of the board's cards, from the sessions' `hermes:<board>` + `card:<id>` tags."""
+        out: dict[str, str] = {}
+        for s in omp.sessions(all=True):
+            tags = s.get("tags") if isinstance(s.get("tags"), list) else []
+            meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+            if f"hermes:{slug}" in tags and meta.get("id"):
+                for t in tags:
+                    if isinstance(t, str) and t.startswith("card:"):
+                        out[t[5:]] = str(meta["id"])
+        return out
 
     # -- new cards --
 
@@ -446,6 +521,14 @@ class Lane:
         roots = skill_roots(Path(get_hermes_home()))
         skills = [(name, find_skill(name, roots)) for name in (task.skills or [])]
         notes = compose_notes(board=slug, card_id=task.id, cwd=link["cwd"], branch=link.get("branch"), context=context, skills=skills)
+        # Parent cards that ran in the lane become the session's `after`, so the planner starts this
+        # card's worktree from their branches and later propagates their changes (GRAPH-PROPAGATION.md).
+        try:
+            parents = kb.parent_ids(conn, task.id)
+        except Exception:
+            parents = []
+        by_card = self._card_sessions(omp, slug) if parents else {}
+        after = [by_card[p] for p in parents if p in by_card]
         try:
             res = omp.new(
                 link["cwd"],
@@ -456,6 +539,7 @@ class Lane:
                 tags=["hermes", f"hermes:{slug}", f"card:{task.id}"],
                 group=cfg.group if cfg else None,
                 model=card_model(task) or (cfg.model if cfg else None),
+                after=after,
             )
         except OmpSessionsError as exc:
             link["state"] = "failed"
@@ -709,6 +793,10 @@ class Lane:
             if kind == "comment_input":
                 kb.add_comment(conn, card_id, AUTHOR, f"{what} again ({how}):\n{act[1]}")
             elif kb.block_task(conn, card_id, reason=f"{what} ({how}):\n{act[1]}", kind="needs_input"):
+                link["input_blocked"] = True
+            link["asked"] = [*(link.get("asked") or []), act[2]]
+        elif kind == "block_conflict":
+            if kb.block_task(conn, card_id, reason=act[1], kind="needs_input"):
                 link["input_blocked"] = True
             link["asked"] = [*(link.get("asked") or []), act[2]]
         elif kind == "unblock":
