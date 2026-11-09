@@ -365,11 +365,19 @@ export async function startAoFixture(opts = {}) {
 			if (!res.ok) throw new Error(`${method} ${urlPath} → ${res.status}: ${text}`);
 			return text ? JSON.parse(text) : undefined;
 		},
-		/** A fresh git repo (one commit on main) under the fixture root. */
-		scratchRepo(name = "repo") {
+		/**
+		 * A fresh git repo (one commit on main) under the fixture root. `extensions` ({ "name.ts": "/path/to/source" })
+		 * are copied into the repo's `.omp/extensions/` and committed, so every AO worktree of it has them: how a smoke
+		 * with real omp loads Switchyard's omp extensions (CONTRACT.md: nothing installs into the shared ~/.omp/agent).
+		 */
+		scratchRepo(name = "repo", { extensions = {} } = {}) {
 			const dir = path.join(root, "repos", name);
 			fs.mkdirSync(dir, { recursive: true });
 			fs.writeFileSync(path.join(dir, "README.md"), `# ${name}\n`);
+			for (const [file, source] of Object.entries(extensions)) {
+				fs.mkdirSync(path.join(dir, ".omp", "extensions"), { recursive: true });
+				fs.copyFileSync(source, path.join(dir, ".omp", "extensions", file));
+			}
 			gitIn(dir, "init", "-q", "-b", "main");
 			gitIn(dir, "add", "-A");
 			gitIn(dir, "commit", "-q", "-m", "init");

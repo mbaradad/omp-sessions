@@ -60,8 +60,11 @@ export interface AoFixture {
 	setFakeRules(rules: { match: string; flags?: string; script: string }[]): void;
 	/** JSON request against the daemon; throws on non-2xx with the body. */
 	api(method: string, path: string, body?: unknown): Promise<any>;
-	/** A fresh git repo (one commit on main) under the fixture root. */
-	scratchRepo(name?: string): string;
+	/**
+	 * A fresh git repo (one commit on main) under the fixture root. `extensions` ({ "name.ts": "/path/to/source" }) are
+	 * committed into its `.omp/extensions/`: how a real-omp smoke loads Switchyard's omp extensions (nothing installs into ~/.omp/agent).
+	 */
+	scratchRepo(name?: string, opts?: { extensions?: Record<string, string> }): string;
 	/** Registers `dir` as an AO project whose workers default to omp; returns its id. */
 	createProject(dir: string, projectId?: string): Promise<string>;
 	/** Frames of the fake omp processes; AO's background chats (title generation) only with includeBackground. */

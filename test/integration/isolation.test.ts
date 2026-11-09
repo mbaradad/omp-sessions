@@ -1,6 +1,7 @@
 // CONTRACT.md "Isolated HOME": the AO fixture never runs against the user's real HOME. These tests pin the
 // enforcement itself: the daemon's real environment, the refusal of an override, and real omp's shared login.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -53,7 +54,22 @@ test("overriding HOME (or a state dir) to a real location is refused, and nothin
 	assert.deepEqual(after.filter(n => !before.includes(n)), [], "no temp dir leaked by a refused start");
 });
 
-test("real omp stays isolated: the fixture HOME links only the shared agent dir", { skip: skip || !fs.existsSync(path.join(realHome, ".omp", "agent")) || process.env.PI_CODING_AGENT_DIR !== undefined }, async () => {
+/** What is in a real shared path, for before/after comparison (names and mtimes of its entries; "absent" when missing). */
+function listing(p: string): string {
+	try {
+		return fs
+			.readdirSync(p)
+			.sort()
+			.map(n => `${n}:${fs.lstatSync(path.join(p, n)).mtimeMs}`)
+			.join(",");
+	} catch {
+		return "absent";
+	}
+}
+
+test("real omp stays isolated: only the agent dir is shared, extensions come from the scratch repo, ~/.switchyard and ~/.omp/agent/extensions stay as they were", { skip: skip || !fs.existsSync(path.join(realHome, ".omp", "agent")) || process.env.PI_CODING_AGENT_DIR !== undefined }, async () => {
+	const watched = [path.join(realHome, ".switchyard"), path.join(realHome, ".omp", "agent", "extensions")];
+	const before = watched.map(listing);
 	const ao = await startAoFixture({ realOmp: true });
 	try {
 		assert.ok(under(ao.home, ao.root));
@@ -61,9 +77,15 @@ test("real omp stays isolated: the fixture HOME links only the shared agent dir"
 		assert.equal(fs.realpathSync(link), fs.realpathSync(path.join(realHome, ".omp", "agent")), "the login lives in the shared agent dir");
 		assert.deepEqual(fs.readdirSync(path.join(ao.home, ".omp")), ["agent"], "nothing else of ~/.omp is shared");
 		assert.ok(!fs.existsSync(path.join(ao.home, ".local", "bin")), "no launcher in the isolated home");
+		// A project-level omp extension is committed into the scratch repo, so the session worktree has it.
+		const ext = path.join(ao.root, "probe-extension.ts");
+		fs.writeFileSync(ext, "export default function probe() {}\n");
+		const repo = ao.scratchRepo("ext", { extensions: { "probe.ts": ext } });
+		assert.equal(spawnSync("git", ["ls-files", ".omp/extensions/probe.ts"], { cwd: repo, encoding: "utf8" }).stdout.trim(), ".omp/extensions/probe.ts");
 	} finally {
 		await ao.stop();
 	}
+	assert.deepEqual(watched.map(listing), before, "the real ~/.switchyard and ~/.omp/agent/extensions are untouched");
 });
 
 test("a busy port never makes the fixture adopt another daemon: it fails instead", { skip }, async () => {
