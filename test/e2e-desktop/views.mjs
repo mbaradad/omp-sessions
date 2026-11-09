@@ -189,6 +189,8 @@ try {
 				OMP_E2E_REPO: dirs.repo,
 				OMP_E2E_SHOTS: dirs.shots,
 				OMP_E2E_AO: baseUrl,
+				// The daemon runs omp with the real HOME: read its transcripts (usage dashboard) from there, read-only.
+				PI_CODING_AGENT_DIR: path.join(os.homedir(), ".omp", "agent"),
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),

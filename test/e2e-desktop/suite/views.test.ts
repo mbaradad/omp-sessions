@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 import type { AoClient } from "../../../src/ao/client";
 import type { OmpApi } from "../../../src/ext/api";
 import type { Node } from "../../../src/ext/tree";
+import { writeLauncherSettings } from "../../../src/shared/launch";
 import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairing";
 import type { SessionMeta } from "../../../src/shared/protocol";
 
@@ -134,10 +135,13 @@ describe("AO views", () => {
 	});
 
 	it("the Sessions Board opens with the session's card", async () => {
+		await vscode.commands.executeCommand("workbench.action.closeAuxiliaryBar");
 		await vscode.commands.executeCommand("omp.board");
+		await vscode.commands.executeCommand("workbench.action.maximizeEditorHideSidebar");
 		await settle(4000);
 		shot("4-board");
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+		await vscode.commands.executeCommand("omp.sessions.focus");
 	});
 
 	it("stop (exit-agent) and resume (resume-agent) keep the session", async () => {
@@ -152,11 +156,49 @@ describe("AO views", () => {
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 	});
 
-	it("Set Permission Mode: Auto restarts the idle agent with AO bypass-permissions; Plan is live", async () => {
+	it("Set Permission Mode: Auto restarts the idle agent with AO bypass-permissions; Plan is omp's live mode option", async () => {
 		await vscode.commands.executeCommand("omp.setPermissionMode", id, "auto");
 		const conv = await ao.getConversation(id, { limit: 1 });
 		assert.equal(conv.settings.approvalMode, "bypass-permissions");
 		await waitFor("auto mode", () => meta()?.permissionMode === "auto", 60_000);
+		await vscode.commands.executeCommand("omp.setPermissionMode", id, "plan");
+		const { data } = await ao.api.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId: id } } });
+		const mode = (data as { options?: Array<{ id: string; currentValue?: string }> } | undefined)?.options?.find(o => o.id === "mode");
+		assert.equal(mode?.currentValue, "plan", JSON.stringify(data));
+	});
+
+	it("the default permission mode applies to new sessions (AO approvalMode at spawn)", async () => {
+		writeLauncherSettings({ mode: "edits" });
+		const before = new Set(api.sessions.all().map(m => m.id));
+		await vscode.commands.executeCommand("omp.newSession", REPO);
+		const other = await waitFor("second session", () => api.sessions.all().find(m => !before.has(m.id)));
+		await waitFor("second session idle", () => api.sessions.get(other.id)?.status === "idle");
+		assert.equal((await ao.getConversation(other.id, { limit: 1 })).settings.approvalMode, "accept-edits");
+		assert.equal(api.sessions.get(other.id)?.permissionMode, "edits");
+		writeLauncherSettings({ mode: undefined });
+		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+		await api.sessions.remove(other.id);
+		await waitFor("second session removed", () => !api.sessions.get(other.id), 30_000);
+	});
+
+	it("Doctor reports the AO daemon, AO's readiness of omp, the planner and the sessions", async () => {
+		await vscode.commands.executeCommand("omp.copyDiagnostics");
+		const report = await vscode.env.clipboard.readText();
+		assert.match(report, new RegExp(`AO daemon running at ${(process.env.OMP_E2E_AO ?? "").replace(/[.]/g, "\\.")}`));
+		assert.match(report, /AO can run omp/);
+		assert.match(report, /## Planner/);
+		assert.match(report, /views smoke \(repo-1\)/);
+		await vscode.commands.executeCommand("omp.doctor");
+		await settle(3000);
+		shot("8-doctor");
+		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+	});
+
+	it("the usage dashboard opens (cost from AO conversations, transcripts by workspace)", async () => {
+		await vscode.commands.executeCommand("omp.dashboard");
+		await settle(5000);
+		shot("9-dashboard");
+		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 	});
 
 	it("Connect Phone: AO pairing code (aomobile://pair, offer v2) and turning it off", async () => {
