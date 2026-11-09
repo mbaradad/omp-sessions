@@ -123,7 +123,8 @@ class FakeAo implements AoPort {
 	}
 }
 
-async function until<T>(what: string, fn: () => T | undefined | false, timeoutMs = 5000): Promise<T> {
+/** Polls `fn`; the bound only stops a hang (generous: the suite may share a loaded machine). */
+async function until<T>(what: string, fn: () => T | undefined | false, timeoutMs = 20_000): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		const v = fn();
@@ -240,7 +241,7 @@ test("abort and timeout interrupt the AO turn; abort pauses, a timeout fails", a
 	p.edit([{ op: "abort", id: byTitle(p, "long").id }]);
 	await until("aborted", () => byTitle(p, "long").status === "pending");
 	assert.equal(byTitle(p, "long").paused, true);
-	await until("timed out", () => byTitle(p, "slow").status === "failed", 8000);
+	await until("timed out", () => byTitle(p, "slow").status === "failed");
 	assert.match(byTitle(p, "slow").summary ?? "", /Timed out/);
 	p.stop();
 });

@@ -175,8 +175,13 @@ export class Planner {
 
 	// ---------- state changes ----------
 
-	/** Applies `mutate` to the plan, persists it and tells listeners (task transitions included). */
+	/**
+	 * Applies `mutate` to the plan, persists it and tells listeners (task transitions included). A
+	 * stopped planner changes nothing: AO calls still in flight when it stopped must not write over a
+	 * successor's plan.
+	 */
 	private commit(mutate: (s: PlanState) => void): void {
+		if (this.stopped) return;
 		const before = new Map(this.state.tasks.map(t => [t.id, t.status]));
 		mutate(this.state);
 		this.state.rev++;
@@ -336,6 +341,8 @@ export class Planner {
 				let projectId: string | undefined = opts.project;
 				if (!projectId && opts.cwd) projectId = await ao.projectFor(opts.cwd);
 				if (opts.worktree === "always" && !projectId) throw new PlanError(`worktree "always" needs a git folder; ${opts.cwd ?? "no cwd"} is not in git`);
+				// AO runs every project session in its own worktree (ao/<session>/root); there is no way to run in the checkout itself.
+				if (opts.worktree === "never" && projectId) throw new PlanError(`worktree "never" can't be honored: AO runs every session of a git project in its own worktree (drop the option, or use a folder outside git)`);
 				sendAfterSpawn = !!opts.thinking;
 				spawn = {
 					harness: "omp",
