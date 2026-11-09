@@ -709,6 +709,18 @@ class PluginTest(unittest.TestCase):
         self.assertIn("error", self.tool("switchyard_session_start", {"prompt": "echo hi"}))
         self.assertIn("error", self.tool("switchyard_session_start", {"prompt": "echo hi", "board": "other"}))
 
+    def test_server_status_carries_the_planners_limits_and_budget(self) -> None:
+        self.assertEqual(json.loads(switchyard("sched", "budget", "week", "42", "--json").stdout)["budget"]["week"], 42)
+        try:
+            sched = self.tool("switchyard_server_status", {})["scheduler"]
+            self.assertEqual(sched["budget"], {"week": 42})
+            self.assertEqual(sched["spend"][0]["window"], "week")
+            self.assertEqual(sched["limits"], [])
+            self.assertIn("usageWindows", sched)
+            self.assertIn("held", sched)
+        finally:
+            switchyard("sched", "budget", "week", "off", "--json")
+
     def test_start_and_queue_add_take_dependencies(self) -> None:
         first = self.tool("switchyard_session_start", {"task": "echo first", "cwd": str(WORK), "at": "+2h"})
         self.assertNotIn("error", first, first)
@@ -874,18 +886,6 @@ class PureTest(unittest.TestCase):
         quiet = status_text({**base, "scheduler": {"server": True, "running": 1, "waiting": 0, "held": 0, "limits": [], "budget": {}, "spend": []}})
         self.assertNotIn("held:", quiet)
         self.assertNotIn("budget:", quiet)
-
-    def test_server_status_carries_the_planners_limits_and_budget(self) -> None:
-        self.assertEqual(json.loads(switchyard("sched", "budget", "week", "42", "--json").stdout)["budget"]["week"], 42)
-        try:
-            sched = self.tool("switchyard_server_status", {})["scheduler"]
-            self.assertEqual(sched["budget"], {"week": 42})
-            self.assertEqual(sched["spend"][0]["window"], "week")
-            self.assertEqual(sched["limits"], [])
-            self.assertIn("usageWindows", sched)
-            self.assertIn("held", sched)
-        finally:
-            switchyard("sched", "budget", "week", "off", "--json")
 
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
