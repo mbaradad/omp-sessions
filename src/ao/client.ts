@@ -44,7 +44,7 @@ export type AoConversationQuery = NonNullable<paths["/api/v1/sessions/{sessionId
 
 export type { AoDaemon, AoStartOptions } from "./daemon";
 export { defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "./daemon";
-export type { AoEvent, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
+export type { AoEvent, AoEventStreamOptions, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";

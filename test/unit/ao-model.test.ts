@@ -231,7 +231,7 @@ test("lastReply and sessionModel", () => {
 		activities: [ask],
 	});
 	assert.equal(lastReply(c), "PONG");
-	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc…");
+	assert.equal(lastReply(conversation({ messages: [message(1, "assistant", "abcdef")] }), 3), "abc\n… (clipped)");
 	const m = sessionModel(view({ displayName: "my task", model: "other" }), c);
 	assert.equal(m.title, "my task");
 	assert.equal(m.state, "needs_input");

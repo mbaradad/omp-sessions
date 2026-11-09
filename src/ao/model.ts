@@ -1,8 +1,14 @@
 // Switchyard's view of AO sessions: one agent state, the pending question with its choices, the
 // last reply, cost, the turn queue and the files the agent changed, derived from an AO session view
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
-// keeps those models current from the daemon's change stream.
+// keeps those models current from the daemon's change stream; the report (`show --json` shape) and the
+// conversation follower (attach, tail) live in ./report and ./follow and are exported from here.
 import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
+
+export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
+export { deltaCursor, followConversation, mergeConversation } from "./follow";
+export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
+export { permissionModeOf, reportQuestion, sessionReport } from "./report";
 
 /**
  * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
@@ -186,7 +192,7 @@ export function questionsOf(conversation: AoConversation): AoQuestion[] {
 export function lastReply(conversation: AoConversation, max = REPLY_MAX): string | undefined {
 	for (let i = conversation.messages.length - 1; i >= 0; i--) {
 		const m = conversation.messages[i];
-		if (m.role === "assistant" && m.text.trim()) return m.text.length > max ? `${m.text.slice(0, max)}…` : m.text;
+		if (m.role === "assistant" && m.text.trim()) return m.text.length > max ? `${m.text.slice(0, max)}\n… (clipped)` : m.text;
 	}
 	return undefined;
 }
