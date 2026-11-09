@@ -312,6 +312,11 @@ export class SessionManager implements vscode.Disposable {
 		await source.edit(completeOps(source.plan, ids, completed));
 	}
 
+	/** Where a graph child's own work starts (the planner's `Task.git.base`), when it has one: `git diff <it>` in the worktree is what the task changed. */
+	taskBase(id: string): string | undefined {
+		return taskBaseOf(this.planSource?.plan, id);
+	}
+
 	/** The branches this session's tasks build on (their parents'), for "Compare Branch with Base". */
 	parentBranches(id: string): Array<{ title: string; branch: string }> {
 		return parentBranches(this.planSource?.plan, id);

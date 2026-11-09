@@ -282,15 +282,22 @@ async function compareWithBase(api: OmpApi, arg: unknown): Promise<void> {
 	let files: ChangedFile[];
 	try {
 		wt = await withBase(picked.wt);
-		// A graph child starts from its parents' work: offer their branches as the base to see only what the child itself did.
+		// A graph child starts from its parents' work. The planner recorded where the task's own work starts (`Task.git.base`):
+		// comparing with that shows exactly what the task changed (first choice); the default branch also shows its parents' work.
+		const own = api.sessions.taskBase(picked.meta.id);
 		const parents = api.sessions.parentBranches(picked.meta.id);
-		if (parents.length) {
+		if (own || parents.length) {
+			const defaultBase = wt.base;
 			const base = await vscode.window.showQuickPick(
-				[{ label: wt.base || "default branch", description: "the branch the project started from", branch: wt.base }, ...parents.map(p => ({ label: p.branch, description: `parent task “${p.title}”`, branch: p.branch }))],
+				[
+					...(own ? [{ label: "What this task changed", description: `since ${own.slice(0, 8)}, where its own work started (after its parents were merged in)`, branch: own }] : []),
+					{ label: defaultBase || "default branch", description: "the branch the project started from (includes its parents' work)", branch: defaultBase },
+					...parents.map(p => ({ label: p.branch, description: `parent task “${p.title}”`, branch: p.branch })),
+				],
 				{ title: "Compare with which base?", placeHolder: "A task that builds on others includes their work when compared with the default branch" },
 			);
 			if (!base) return;
-			if (base.branch !== wt.base) wt = { ...wt, base: base.branch, baseCommit: "" };
+			if (base.branch !== defaultBase) wt = { ...wt, base: base.branch, baseCommit: "" };
 		}
 		rev = await diffBase(wt.worktree, wt);
 		files = await changedSince(wt.worktree, rev);
