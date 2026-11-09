@@ -571,14 +571,21 @@ export class ChatPanel implements vscode.Disposable {
 		if (queue) this.post({ type: "queue", queue });
 	}
 
-	private async editQueue(ops: QueueOp[]): Promise<void> {
-		if (!this.tasks) {
-			await this.sessions.editQueue(this.sessionId, ops);
-			if (this.meta?.status === "stopped") await this.postQueue();
-			return;
+	/** Applies queue ops; false (with a notice carrying the planner's reason) when the edit was refused. */
+	private async editQueue(ops: QueueOp[]): Promise<boolean> {
+		try {
+			if (!this.tasks) {
+				await this.sessions.editQueue(this.sessionId, ops);
+				if (this.meta?.status === "stopped") await this.postQueue();
+				return true;
+			}
+			const queue = await this.tasks.edit(this.sessionId, ops);
+			if (queue) this.post({ type: "queue", queue });
+			return true;
+		} catch (err) {
+			this.post({ type: "notice", level: "warning", text: `Queue change refused: ${errorText(err)}` });
+			return false;
 		}
-		const queue = await this.tasks.edit(this.sessionId, ops);
-		if (queue) this.post({ type: "queue", queue });
 	}
 
 	/** `/btw`: asks in a forked side chat; the webview draws the card as it fills. */
@@ -868,8 +875,7 @@ export class ChatPanel implements vscode.Disposable {
 				if (queued) {
 					const [first, ...rest] = queued[2].trim().split("\n");
 					const { title, subtasks } = parseTaskInput(first);
-					await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }]);
-					this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
+					if (await this.editQueue([{ op: "add", title, subtasks, notes: rest.join("\n").trim() || undefined }])) this.post({ type: "notice", level: "info", text: `Queued task: ${title}` });
 					return;
 				}
 				if (/^\/tasks\s*$/.test(m.text.trim())) {
