@@ -4,7 +4,7 @@
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
-import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, planModeOf, sessionModel, sessionReport } from "../ao/model";
+import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
 import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
@@ -119,9 +119,11 @@ function inside(child: string, parent: string): boolean {
 export async function buildSession(client: AoClient, view: AoSessionView, projects: ReadonlyMap<string, AoProject>, opts: LoadOptions, conversation?: AoConversation): Promise<Session> {
 	// A terminated session's workspace is gone: its project folder stands in.
 	const workspace = view.isTerminated ? undefined : client.workspacePath(view.id).catch(() => undefined);
-	const [conv, cwd] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace]);
+	// The files a session changed come from its workspace (omp's turns carry no diff, G31); a failed read counts as none.
+	const files = view.isTerminated ? undefined : client.workspaceManifest(view.id).then(changedFiles, () => []);
+	const [conv, cwd, changed] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace, files]);
 	const lane = opts.lanes?.get(view.id);
-	const model = sessionModel(view, conv, plannedState(lane));
+	const model = sessionModel(view, conv, plannedState(lane), changed);
 	const project = view.projectId ? projects.get(view.projectId) : undefined;
 	const org = opts.org ?? readOrgFile();
 	const e = org.sessions[view.id];
@@ -324,7 +326,7 @@ export async function changedFileCount(client: AoClient, sessionId: string, expe
 	for (let attempt = 0; attempt < (expectFiles ? 5 : 1); attempt++) {
 		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 400));
 		try {
-			last = (await client.workspaceManifest(sessionId)).files.length;
+			last = changedFiles(await client.workspaceManifest(sessionId)).length;
 			if (last > 0 || !expectFiles) return last;
 		} catch {
 			last = undefined;
