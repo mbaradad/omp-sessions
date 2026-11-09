@@ -276,9 +276,19 @@ export function turnReply(conversation: AoConversation, turnId: string, max = RE
 	return { ...(text !== undefined && { text: text.length > max ? `${text.slice(0, max)}\n… (clipped)` : text }), final };
 }
 
-/** The conversation's last turn completed but its reply is not final yet (see turnReply): `reply` may still be the previous turn's. */
+/**
+ * The last real turn that carries a prompt or a reply. `POST /compact` adds a `completed` turn with no
+ * messages at all (live, G33 repro): nothing was asked, so no reply is owed, and it must not stand for
+ * "the last turn" when judging whether a reply is final.
+ */
+function lastPromptTurn(conversation: AoConversation): AoTurn | undefined {
+	const withMessages = new Set(conversation.messages.map(m => m.turnId));
+	return realTurns(conversation).findLast(t => withMessages.has(t.id));
+}
+
+/** The last prompted turn completed but its reply is not final yet (see turnReply): `reply` may still be the previous turn's. */
 export function replyPending(conversation: AoConversation): boolean {
-	const last = realTurns(conversation).at(-1);
+	const last = lastPromptTurn(conversation);
 	return last?.state === "completed" && !turnReply(conversation, last.id).final;
 }
 
@@ -673,7 +683,7 @@ export class AoSessionWatcher {
 			this.replyTries.delete(sessionId);
 			return;
 		}
-		const turnId = realTurns(conversation).at(-1)?.id ?? "";
+		const turnId = lastPromptTurn(conversation)?.id ?? "";
 		const seen = this.replyTries.get(sessionId);
 		const tries = seen?.turnId === turnId ? seen.tries : 0;
 		if (tries >= 4) return;
