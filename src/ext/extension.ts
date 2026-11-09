@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { AoClient } from "../ao/client";
 import { type LaunchOptions, sendToHost } from "../shared/launch";
 import { OrganizeStore, organizeFile } from "../shared/organize";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
@@ -67,10 +68,19 @@ export function activate(context: vscode.ExtensionContext): void {
 	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(sessions, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
+	// ---------- AO (the chat reads and drives sessions through it) ----------
+	let ao: Promise<AoClient> | undefined;
+	const connectAo = (): Promise<AoClient> =>
+		(ao ??= AoClient.connect().catch((err: unknown) => {
+			// Retried on the next ask: the daemon may start later.
+			ao = undefined;
+			throw err;
+		}));
+
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo);
 		panels.set(id, panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
@@ -105,7 +115,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;

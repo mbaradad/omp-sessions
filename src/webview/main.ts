@@ -121,8 +121,6 @@ const popup = h("div", { class: "popup hidden" });
 const input = h("textarea", { class: "input", rows: "1", "aria-label": "Message omp", placeholder: "Ask omp…   / commands · @ files & context · ! shell · paste images or files" });
 const mentionChips = h("div", { class: "mention-chips hidden", "aria-label": "Context attached when sending" });
 const attachBtn = h("button", { class: "icon-btn attach", title: "Attach images or files" }, icon("clip"));
-const voiceBtn = h("button", { class: "icon-btn voice-btn", title: "Voice mode: talk with omp (omp's realtime voice, on the machine omp runs on)", "aria-label": "Start voice mode", onclick: () => post({ type: "command", name: "voiceStart" }) }, icon("mic"));
-const voiceBar = h("div", { class: "voicebar hidden", role: "status", "aria-live": "polite" });
 const sendBtn = h("button", { class: "send", title: "Send (Enter)" }, icon("send"));
 const stopBtn = h("button", { class: "stop hidden", title: "Interrupt (Esc)" }, icon("stop"));
 const footer = h("div", { class: "footer" });
@@ -130,8 +128,8 @@ const tray = new AttachmentTray(
 	() => updateSendState(),
 	msg => appendNotice(msg, "warning"),
 );
-const inputBox = h("div", { class: "input-box" }, tray.el, mentionChips, input, h("div", { class: "input-actions" }, attachBtn, voiceBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
-const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, voiceBar, inputBox, footer);
+const inputBox = h("div", { class: "input-box" }, tray.el, mentionChips, input, h("div", { class: "input-actions" }, attachBtn, h("span", { class: "spacer" }), stopBtn, sendBtn));
+const composer = h("div", { class: "composer" }, popup, taskBar, queueBox, inputBox, footer);
 const findBar = new FindBar(transcript, {
 	hiddenMatches: query => countMatches(hiddenMessages, query),
 	loadAll: () => {
@@ -654,7 +652,6 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 			{ class: "msg-actions" },
 			userAuthored ? h("button", { class: "icon-btn", title: "Restore checkpoint: revert the file edits made since this prompt and rewind the conversation to before it (/redo brings them back)", onclick: () => post({ type: "restoreCheckpoint", text: full }) }, icon("undo")) : "",
 			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text: full }) }, icon("edit")) : "",
-			userAuthored ? h("button", { class: "icon-btn", title: "Fork: continue from this message in a new transcript", onclick: () => post({ type: "forkFrom", text: full }) }, icon("fork")) : "",
 			copyButton(() => text, "Copy message"),
 			shortTime(m) ? h("span", { class: "msg-meta" }, shortTime(m)) : "",
 		),
@@ -1042,27 +1039,17 @@ function renderHeader(): void {
 			["Review changes", cmd("reviewChanges"), "/changes"],
 			["Undo last turn (files + conversation)", cmd("undoTurn"), "/undo"],
 			...(redoCount ? [["Redo", cmd("redoTurn"), "/redo"] satisfies MenuItem] : []),
-			["Rewind to a message…", cmd("rewind"), "/tree"],
-			["Fork conversation", cmd("fork"), "/fork"],
-			["New conversation (same session)", cmd("newInPlace"), "/new"],
-			["Switch to earlier transcript…", cmd("resumeTranscript"), "/resume"],
+			["New session in this project", cmd("newSession"), "/new"],
 			null,
 			["Compact context", cmd("compact"), "/compact"],
 			["Collapse / expand all tool cards", toggleAllCards, "Alt+T"],
 			["Find in conversation", () => findBar.open(), "Ctrl/⌘+F"],
-			["Goal…", cmd("goal"), "/goal"],
-			["Subagents…", cmd("agents"), "/agents"],
 			["Permission mode…", () => showModeMenu(menuBtn), "Shift+Tab"],
-			["Voice mode", cmd("voiceStart"), "/voice"],
-			["Continue in omp's terminal UI", cmd("openTui"), "/tui"],
-			[`Fast mode: ${state?.fastModeEnabled ? "on" : "off"}`, cmd("toggleFast"), "/fast"],
-			[`Auto-compaction: ${state?.autoCompactionEnabled === false ? "off" : "on"}`, cmd("toggleAutoCompact")],
 			null,
 			["Copy last response", cmd("copyLast"), "/copy"],
 			["Session stats", cmd("stats"), "/cost"],
 			["Copy as Markdown", cmd("exportMarkdownCopy"), "/export copy"],
 			["Save as Markdown…", cmd("exportMarkdownSave"), "/export md"],
-			["Export HTML", cmd("export"), "/export html"],
 			["Rename…", cmd("rename")],
 			null,
 			["Log in to provider…", cmd("login"), "/login"],
@@ -1070,9 +1057,7 @@ function renderHeader(): void {
 			["omp settings", cmd("settings"), "/settings"],
 			["Help", cmd("help"), "/help"],
 			null,
-			["New background session here", cmd("newSession")],
 			stopped ? ["Resume session", cmd("resumeSession")] : ["Stop session", cmd("stopSession"), "/exit"],
-			["Open host log", cmd("openLog")],
 			...(hermes?.card
 				? [null, ["Open Hermes card", cmd("openHermesCard")] satisfies MenuItem, ["Show Hermes card in terminal", cmd("showHermesCard")] satisfies MenuItem]
 				: []),
@@ -1091,7 +1076,6 @@ function renderHeader(): void {
 			: "",
 		files > 0 ? h("button", { class: "chip-btn", title: "Review every change in a multi-file diff", onclick: cmd("reviewChanges") }, icon("diff"), `${files} file${files === 1 ? "" : "s"} changed`) : "",
 		redoCount ? h("button", { class: "chip-btn", title: "Bring back what the last checkpoint restore removed (files + conversation)", onclick: cmd("redoTurn") }, icon("redo"), "Redo") : "",
-		stopped ? "" : h("button", { class: "icon-btn", title: "Continue in omp's terminal UI (beside this chat); the session returns to the background when you exit omp", "aria-label": "Continue in omp's terminal UI", onclick: cmd("openTui") }, icon("terminal")),
 		menuBtn,
 	);
 	if (stopped) {
@@ -1102,7 +1086,7 @@ function renderHeader(): void {
 		);
 	} else if (!connected) {
 		banner.className = "banner warn";
-		banner.replaceChildren(h("span", { class: "spinner" }), h("span", {}, "Connecting to the session host…"));
+		banner.replaceChildren(h("span", { class: "spinner" }), h("span", {}, "Connecting to the AO daemon…"));
 	} else banner.className = "banner hidden";
 	input.disabled = stopped;
 	starters.classList.toggle("hidden", stopped);
@@ -1127,17 +1111,14 @@ function renderFooter(): void {
 	const ctx = state?.contextUsage;
 	const pct = ctx ? Math.round(ctx.percent) : null;
 	const busy = agentBusy || !!state?.isStreaming;
-	const goal = rec(state?.goal);
+	const cost = typeof state?.cost === "number" ? state.cost : totalCost;
 	footer.replaceChildren(
 		modelBtn,
 		thinkingBtn ?? "",
 		modeButton(),
 		pct !== null ? h("span", { class: `pill${pct > 80 ? " warn" : ""}`, title: `${ctx?.tokens?.toLocaleString()} / ${ctx?.contextWindow?.toLocaleString()} tokens` }, h("span", { class: "meter" }, h("span", { style: `width:${Math.min(100, pct)}%` })), `${pct}%`) : "",
-		totalCost > 0 ? h("span", { class: "pill", title: "Cost of the messages shown" }, `$${totalCost.toFixed(2)}`) : "",
-		typeof state?.tokensPerSecond === "number" && state.tokensPerSecond > 0 ? h("span", { class: "pill", title: "Output speed of the last response" }, `${Math.round(state.tokensPerSecond)} tok/s`) : "",
+		cost > 0 ? h("span", { class: "pill", title: typeof state?.cost === "number" ? "Session cost (AO)" : "Cost of the messages shown" }, `$${cost.toFixed(2)}`) : "",
 		usageLimitPill(rec(state?.usageLimit)),
-		state?.fastModeEnabled ? h("span", { class: "pill accent" }, "fast") : "",
-		goal ? h("span", { class: "pill accent", title: str(goal.objective) }, `goal: ${str(goal.status) || "active"}`) : "",
 		...[...statuses.values()].filter(Boolean).map(s => h("span", { class: "pill dim" }, s)),
 		h("span", { class: "spacer" }),
 		busy
@@ -1149,15 +1130,11 @@ function renderFooter(): void {
 	sendBtn.title = busy ? "Steer the running agent (Enter)" : "Send (Enter)";
 }
 
-/** The account is past its usage limit: requests run on a slow lane or a short wrap-up allowance. */
+/** A turn AO paused at the account's usage limit: it waits for the reset (and continues then when auto-resume is on). */
 function usageLimitPill(limit: Record<string, unknown> | undefined): HTMLElement | "" {
 	if (!limit) return "";
 	const resets = typeof limit.resetsAtSec === "number" ? ` · resets ${new Date(limit.resetsAtSec * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "";
-	if (limit.stage === "low_priority") {
-		const left = typeof limit.allowanceLeftPercent === "number" ? ` · ${limit.allowanceLeftPercent}% left` : "";
-		return h("span", { class: "pill warn", title: `Usage limit reached: requests run on the provider's low-priority lane${left}${resets}` }, "low priority");
-	}
-	return h("span", { class: "pill warn", title: `Usage limit reached: running on a short wrap-up allowance${limit.extraUsage ? " (paid extra usage continues after it)" : ""}${resets}` }, "wrap-up");
+	return h("span", { class: "pill warn", title: `Usage limit reached: the turn waits for the limit to reset${limit.autoResume ? " and then continues on its own" : ""}${resets}` }, "usage limit");
 }
 
 /** Footer chip with the session's permission mode (hosts that predate modes have none). */
@@ -1205,7 +1182,6 @@ function showModeMenu(anchor: HTMLElement): void {
 function updateSendState(): void {
 	const stopped = meta?.status === "stopped";
 	sendBtn.disabled = stopped || (!input.value.trim() && tray.count === 0);
-	voiceBtn.disabled = stopped;
 	attachBtn.disabled = stopped;
 }
 
@@ -1627,16 +1603,6 @@ setInterval(() => {
 	for (const card of cards.values()) if (card.status === "running" && card.startedAt) card.durEl.textContent = fmtDuration(Date.now() - card.startedAt);
 }, 1000);
 
-function onSubagentFrame(payload: Record<string, unknown>, lifecycle: boolean): void {
-	const parent = str(payload.parentToolCallId);
-	const card = parent ? cards.get(parent) : undefined;
-	if (!card) return;
-	const key = `${str(payload.agent)}#${String(payload.index)}`;
-	const prev = card.subagents.get(key) ?? {};
-	card.subagents.set(key, lifecycle ? { ...prev, ...payload } : { ...prev, ...payload, progress: payload.progress });
-	scheduleCard(card);
-}
-
 function handleEvent(ev: OmpFrame): void {
 	switch (ev.type) {
 		case "message_start":
@@ -1679,10 +1645,6 @@ function handleEvent(ev: OmpFrame): void {
 			scheduleCard(card);
 			return;
 		}
-		case "subagent_lifecycle":
-		case "subagent_progress":
-			onSubagentFrame(rec(ev.payload) ?? {}, ev.type === "subagent_lifecycle");
-			return;
 		case "btw_record":
 			onBtwRecord(rec(ev.record) ?? {});
 			return;
@@ -1739,60 +1701,7 @@ function handleEvent(ev: OmpFrame): void {
 		case "extension_ui_request":
 			handleUiRequest(ev as unknown as UiRequest);
 			return;
-		case "live_phase":
-			voice ??= { phase: "connecting", input: 0, lines: [] };
-			voice.phase = str(ev.phase) || "listening";
-			renderVoice();
-			return;
-		case "live_levels":
-			if (!voice) return;
-			voice.input = typeof ev.input === "number" ? ev.input : 0;
-			voiceBar.querySelector<HTMLElement>(".vb-level > span")?.style.setProperty("width", `${Math.round(Math.min(1, voice.input * 4) * 100)}%`);
-			return;
-		case "live_transcript": {
-			if (!voice) return;
-			const role = ev.role === "assistant" ? "assistant" : "user";
-			const turn = typeof ev.turn === "number" ? ev.turn : 0;
-			const line = voice.lines.find(l => l.role === role && l.turn === turn);
-			if (line) line.text = str(ev.text);
-			else voice.lines.push({ role, turn, text: str(ev.text) });
-			renderVoice();
-			return;
-		}
-		case "live_end": {
-			const ended = voice;
-			voice = null;
-			renderVoice();
-			if (ev.error) appendNotice(`Voice ended: ${str(ev.error)}`, "error");
-			const said = ended?.lines.filter(l => l.text.trim()) ?? [];
-			if (said.length) appendNotice(["**Voice conversation**", "", ...said.map(l => `> **${l.role === "user" ? "You" : "omp"}:** ${l.text.trim()}`)].join("\n"), "info", true);
-			return;
-		}
 	}
-}
-
-// ---------- voice (omp's realtime voice; frames come from the omp the session runs) ----------
-let voice: { phase: string; input: number; lines: Array<{ role: "user" | "assistant"; turn: number; text: string }> } | null = null;
-const VOICE_PHASES: Record<string, string> = { connecting: "Connecting…", listening: "Listening", working: "omp is working", speaking: "Speaking", muted: "Muted", error: "Error" };
-
-function renderVoice(): void {
-	voiceBtn.classList.toggle("active", !!voice);
-	if (!voice) {
-		voiceBar.classList.add("hidden");
-		voiceBar.replaceChildren();
-		return;
-	}
-	const last = voice.lines.slice(-2);
-	voiceBar.classList.remove("hidden");
-	voiceBar.replaceChildren(
-		h("span", { class: `vb-dot ${voice.phase}` }),
-		h("span", { class: "vb-phase" }, VOICE_PHASES[voice.phase] ?? voice.phase),
-		h("span", { class: "vb-level", "aria-hidden": "true" }, h("span", { style: `width:${Math.round(Math.min(1, voice.input * 4) * 100)}%` })),
-		h("span", { class: "vb-text" }, ...last.map(l => h("span", { class: `vb-line ${l.role}` }, h("b", {}, l.role === "user" ? "You " : "omp "), l.text))),
-		h("span", { class: "spacer" }),
-		h("button", { class: "mini ghost", title: "Mute or unmute the microphone", onclick: () => post({ type: "command", name: "voiceMute" }) }, voice.phase === "muted" ? "Unmute" : "Mute"),
-		h("button", { class: "mini", title: "End voice mode", onclick: () => post({ type: "command", name: "voiceStop" }) }, "End"),
-	);
 }
 
 function handleUiRequest(req: UiRequest): void {
@@ -1901,8 +1810,6 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 			if (meta.status === "stopped") {
 				pendingUi.clear();
 				renderDialogs();
-				voice = null;
-				renderVoice();
 			}
 			renderHeader();
 			renderFooter();
