@@ -11,7 +11,7 @@ import { FakeAo, tempPlan } from "./planner-fake-ao";
 
 test("the plan event of an edit arrives before the edit's response (rev included), for every quick edit in a row", async t => {
 	const ao = new FakeAo();
-	const planner = new Planner({ connect: async () => ao, file: tempPlan(t) });
+	const planner = new Planner({ connect: async () => ao, file: tempPlan(t), userDefaults: () => ({}) });
 	const sock = path.join(path.dirname(tempPlan(t)), "api.sock");
 	const server = createApiServer({ planner, info: () => ({ pid: 0, version: "t", root: "", startedAt: 0, api: 1 }), shutdown: () => {} });
 	await new Promise<void>(resolve => server.listen(sock, resolve));
