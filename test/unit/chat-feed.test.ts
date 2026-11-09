@@ -284,3 +284,34 @@ test("omp's write/edit permission prompt (a form with Approve/Deny) is a select 
 	assert.deepEqual(replyFor(req, { value: "Approve" }), { kind: "input", action: "accept", content: { value: "Approve" } });
 	assert.deepEqual(replyFor(req, { cancelled: true }), { kind: "input", action: "accept", content: { value: "Deny" } });
 });
+
+test("turns AO replays from omp's history after a restart (acp-history-turn) are hidden when their prompt is already there", () => {
+	const hist = (id: string) => turn(id, "recovered", { providerTurnId: `acp-history-turn:41:abc:root36:${id}` });
+	const base = conv({
+		turns: [turn("t1", "completed"), turn("t2", "completed")],
+		messages: [msg(1, "user", "write a story", "t1"), msg(2, "assistant", "once…", "t1"), msg(3, "user", "What color is it?", "t2", { content: [{ type: "image", mimeType: "image/png" }] }), msg(4, "assistant", "Green", "t2")],
+		activities: [act(5, { activityKind: "system", status: "completed", turnId: "t1", summary: "Steered", detail: { event: "steer", text: "make it shorter", origin: "human" } })],
+	});
+	const feed = new ChatFeed();
+	feed.reset(base);
+	// The restart replays the steered prompt and the image prompt (AO writes "[Image]" after its text), plus one prompt AO never held.
+	const replayed = conv({
+		turns: [...base.turns, hist("h1"), hist("h2"), hist("h3")],
+		messages: [...base.messages, msg(6, "user", "make it shorter", "h1"), msg(7, "assistant", "shorter", "h1"), msg(8, "user", "What color is it?\n[Image]", "h2"), msg(9, "assistant", "Green", "h2"), msg(10, "user", "an older prompt", "h3")],
+		activities: base.activities,
+	});
+	// Only the prompt AO never held is announced; the copies stay out.
+	const posts = feed.apply(replayed);
+	assert.deepEqual(texts(posts.flatMap(p => (p.type === "event" && p.ev.message ? [p.ev.message] : []))), ["an older prompt"]);
+	assert.deepEqual(
+		texts(new ChatFeed().reset(replayed).messages).filter(Boolean),
+		["write a story", "once…", "What color is it?", "Green", "make it shorter", "an older prompt"],
+	);
+	// A copy the webview already showed asks for a rebuild.
+	const shown = new ChatFeed();
+	shown.reset(conv({ turns: [turn("t1", "completed"), hist("h1")], messages: [msg(1, "user", "hello", "h1"), msg(2, "assistant", "hi", "h1")] }));
+	assert.equal(shown.takeStale(), false);
+	shown.apply(conv({ turns: [turn("t1", "completed"), hist("h1")], messages: [msg(3, "user", "hello", "t1"), msg(4, "assistant", "hi", "t1")] }));
+	assert.equal(shown.takeStale(), true);
+	assert.equal(shown.takeStale(), false);
+});

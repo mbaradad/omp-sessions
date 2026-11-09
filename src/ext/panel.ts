@@ -134,10 +134,6 @@ const SYNC_DEBOUNCE_MS = 60;
 const MAX_SHELL_CONTEXT = 20_000;
 
 type ConfigOption = AoSchemas["ConversationConfigOptionResponse"];
-type ApprovalMode = NonNullable<AoSchemas["ConversationTurnSettingsPayload"]["approvalMode"]>;
-
-/** AO's approval mode for each permission mode but plan, which is omp's `mode` config option. */
-const APPROVAL_OF: Record<Exclude<PermissionMode, "plan">, ApprovalMode> = { ask: "default", edits: "accept-edits", auto: "bypass-permissions" };
 
 function mergeCommands(server: SlashCommand[], snippets: PromptSnippet[]): SlashCommand[] {
 	const names = new Set(server.map(c => c.name));
@@ -226,7 +222,6 @@ export class ChatPanel implements vscode.Disposable {
 	/** `!command` output waiting to go into the next prompt's context. */
 	private shellContext: string[] = [];
 	private shell: ChildProcess | undefined;
-	private switchingMode = false;
 	/** Identifies this chat's keep-awake lease on the AO chat. */
 	private readonly viewId = crypto.randomUUID();
 	private outbox: ToWebview[] = [];
@@ -489,7 +484,9 @@ export class ChatPanel implements vscode.Disposable {
 		// omp undid or redid a prompt (or ran /undo, /redo): the turns to hide changed, so show the new conversation.
 		const cp = this.checkpoints;
 		const full = this.feed.full();
-		if (cp && full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full))) this.schedule(true);
+		const statusChanged = !!cp && !!full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full));
+		// A replayed copy of a turn already on screen (GAPS G33) turned up: rebuild without it.
+		if (this.feed.takeStale() || statusChanged) this.schedule(true);
 		this.postState();
 	}
 
@@ -659,59 +656,17 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	/**
-	 * Plan is omp's `mode` option and switches live. The others are the approval mode AO launches omp
-	 * with (GAPS G7): AO stores the new one, then omp restarts on the same transcript to pick it up.
+	 * Permission modes are live through the Switchyard omp extension (MAPPING Q4/D11): its gate reads the
+	 * session's mode file on every tool call, so a switch applies at once, mid-turn, with no client open.
+	 * A session without a mode file (started from AO's own UI) runs in AO's mode; the chat can't change it.
 	 */
-	private async setMode(mode: PermissionMode): Promise<void> {
-		const conv = this.feed.conversation;
-		if (!conv || this.switchingMode) return;
+	private setMode(mode: PermissionMode): void {
 		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
-			// A Switchyard session: the omp extension's gate reads the mode file on every tool call, so this is live.
 			this.modes.write(this.sessionId, mode);
 			this.postState();
 			return;
 		}
-		if (mode === "plan") {
-			await this.setOption("mode", "plan");
-			return;
-		}
-		// AO's `default` runs omp with omp's own tools.approvalMode (GAPS G12): that is Ask only if omp's config says so.
-		if (mode === "ask" && (await ompDefaultPermissionMode()) !== "ask") {
-			this.post({
-				type: "notice",
-				level: "warning",
-				markdown: true,
-				text: `AO can't start omp in Ask mode: AO's default approval mode runs omp with your \`tools.approvalMode\` (${this.defaultMode ? PERMISSION_MODE_INFO[this.defaultMode].label : "unknown"} here). Set \`tools.approvalMode: always-ask\` in omp's config.yml (/settings) for Ask, or use Edits (asks before commands).`,
-			});
-			return;
-		}
-		if (this.option("mode")?.currentValue === "plan") await this.setOption("mode", "default");
-		const approval = APPROVAL_OF[mode];
-		const current = conv.settings.approvalMode ?? "default";
-		if (current === approval) {
-			this.postState();
-			return;
-		}
-		const ao = await this.client();
-		// Ask AO, not the feed: a turn that just started may not have reached this chat yet.
-		const now = await ao.getConversation(this.sessionId, { limit: 1 });
-		if (now.controller === "busy" || now.turns.some(t => t.state === "running" || t.state === "queued")) {
-			this.post({ type: "notice", level: "warning", text: `Switching to ${PERMISSION_MODE_INFO[mode].label} restarts omp: wait for this turn to end, or interrupt it (Esc), then switch again.` });
-			return;
-		}
-		this.switchingMode = true;
-		try {
-			this.post({ type: "notice", level: "info", text: `Restarting omp in ${PERMISSION_MODE_INFO[mode].label} mode (same conversation)…` });
-			await ao.setTurnSettings(this.sessionId, { approvalMode: approval });
-			await ao.exitAgent(this.sessionId);
-			await ao.resumeAgent(this.sessionId);
-			this.post({ type: "notice", level: "info", text: `${PERMISSION_MODE_INFO[mode].label} mode: ${PERMISSION_MODE_INFO[mode].detail}.` });
-		} finally {
-			this.switchingMode = false;
-			await this.refreshOptions(ao);
-			this.postState();
-			this.schedule();
-		}
+		this.post({ type: "notice", level: "warning", text: "This session was not started by Switchyard, so its permission mode is AO's and cannot be switched here. Sessions started from Switchyard switch modes live." });
 	}
 
 	// ---------- session chrome ----------
@@ -1027,7 +982,7 @@ export class ChatPanel implements vscode.Disposable {
 				await this.runCommand(m.name);
 				return;
 			case "setMode":
-				await this.setMode(m.mode);
+				this.setMode(m.mode);
 				return;
 			case "starModel": {
 				const key = `${m.provider}/${m.id}`;

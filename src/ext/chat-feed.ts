@@ -254,6 +254,9 @@ export class ChatFeed {
 	private pending = new Map<string, PendingRequest>();
 	private noticedTurns = new Set<string>();
 	private hidden = new Set<string>();
+	/** Replayed copies of turns AO already holds (GAPS G33): hidden like `hidden`, found by comparing prompt texts. */
+	private dupes = new Set<string>();
+	private stale = false;
 	private busy = false;
 	private conv: AoConversation | undefined;
 
@@ -269,6 +272,8 @@ export class ChatFeed {
 		this.shown.clear();
 		this.pending.clear();
 		this.noticedTurns.clear();
+		this.dupes.clear();
+		this.stale = false;
 		this.merge(conv);
 		const messages: unknown[] = [];
 		const diffs: Record<string, DiffsByPath> = {};
@@ -284,7 +289,7 @@ export class ChatFeed {
 			}
 		}
 		for (const t of this.turns.values()) {
-			if (this.hidden.has(t.id)) continue;
+			if (this.hidden.has(t.id) || this.dupes.has(t.id)) continue;
 			const n = this.turnNotice(t);
 			if (n) {
 				messages.push({ role: "notice", level: n.level, message: n.text });
@@ -435,6 +440,40 @@ export class ChatFeed {
 			const prev = this.rows.get(r.id);
 			if (!prev || prev.revision <= r.revision) this.rows.set(r.id, r);
 		}
+		this.updateDupes();
+	}
+
+	/**
+	 * After `exit-agent` + `resume-agent` AO replays omp's history and files prompts it already holds (steered
+	 * ones, ones with images) as extra `recovered` turns (`acp-history-turn:`). A replayed turn whose prompt
+	 * text matches a prompt or steer of another turn is a copy: leave it out.
+	 */
+	private updateDupes(): void {
+		const replayed = new Set([...this.turns.values()].filter(t => t.providerTurnId?.startsWith("acp-history-turn:")).map(t => t.id));
+		if (!replayed.size && !this.dupes.size) return;
+		const norm = (text: string) => text.replace(/\s*\[Image\]\s*$/i, "").trim();
+		const known = new Set<string>();
+		const promptOf = new Map<string, string>();
+		for (const r of this.rows.values()) {
+			if (r.kind === "message" && r.role === "user" && r.turnId) {
+				if (replayed.has(r.turnId)) promptOf.set(r.turnId, norm(r.text));
+				else known.add(norm(r.text));
+			} else if (r.kind === "activity" && r.activityKind === "system" && rec(r.detail)?.event === "steer") known.add(norm(str(rec(r.detail)?.text)));
+		}
+		const next = new Set([...promptOf].filter(([, text]) => text && known.has(text)).map(([id]) => id));
+		for (const id of next) {
+			if (this.dupes.has(id)) continue;
+			// Rows of this copy were already sent to the webview: it must be rebuilt.
+			if ([...this.rows.values()].some(r => r.turnId === id && this.shown.has(r.id))) this.stale = true;
+		}
+		this.dupes = next;
+	}
+
+	/** Whether a replayed copy that the webview already shows was found since the last call (the caller re-reads everything). */
+	takeStale(): boolean {
+		const stale = this.stale;
+		this.stale = false;
+		return stale;
 	}
 
 	/**
@@ -451,7 +490,7 @@ export class ChatFeed {
 
 	/** A queued prompt shows as a queue chip, and one withdrawn before it ran not at all. */
 	private visible(r: Row): boolean {
-		if (r.turnId && this.hidden.has(r.turnId)) return false;
+		if (r.turnId && (this.hidden.has(r.turnId) || this.dupes.has(r.turnId))) return false;
 		if (r.kind !== "message" || r.role !== "user" || !r.turnId) return true;
 		const t = this.turns.get(r.turnId);
 		return !(t && (t.state === "queued" || (t.state === "cancelled" && !t.startedAt)));
