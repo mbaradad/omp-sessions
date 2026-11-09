@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import type { AoClient, AoConfigOptions } from "../../src/ao/client";
 import { daemonEnv } from "../../src/ao/daemon";
 import { spawnSwitchyardSession } from "../../src/ao/spawn";
+import { ompExtensionDir } from "../../src/shared/omp-extension-install";
 
 const choices = (...values: string[]) => values.map(value => ({ value, name: value }));
 /** The levels depend on the model, as in omp: haiku has no `low`. */
@@ -19,13 +20,18 @@ const configOptions = (current: { model?: string; thinking?: string; mode?: stri
 });
 
 /** Records every call the helper makes on the client; what AO answers is fixed, so only the helper's behaviour is under test. */
-function fakeAo(opts: { catalog?: string[]; ready?: boolean; turns?: number } = {}) {
+function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; refreshState?: "idle" | "queued" | "refreshing" | "error" }[]; ready?: boolean; turns?: number } = {}) {
+	let catalogCalls = 0;
 	const calls: string[] = [];
 	const state = { model: "anthropic/opus", thinking: "high", mode: "default" };
 	const sent: unknown[] = [];
 	const spawns: Record<string, unknown>[] = [];
 	const fake = {
-		agentModels: async () => (calls.push("agentModels"), { models: (opts.catalog ?? ["anthropic/opus", "anthropic/haiku", "zai/glm-4.5"]).map(id => ({ id })) }),
+		agentModels: async () => {
+			calls.push("agentModels");
+			const step = opts.catalogSteps?.[Math.min(catalogCalls++, opts.catalogSteps.length - 1)];
+			return { models: (step?.models ?? opts.catalog ?? ["anthropic/opus", "anthropic/haiku", "zai/glm-4.5"]).map(id => ({ id })), ...(step?.refreshState && { refreshState: step.refreshState }) };
+		},
 		projectForFolder: async (dir: string) => (calls.push(`projectForFolder ${dir}`), dir.includes("outside") ? undefined : { id: "repo", path: dir, name: "repo", kind: "single_repo", sessionPrefix: "repo", folderMissing: false }),
 		spawnSession: async (body: Record<string, unknown>) => (calls.push("spawnSession"), spawns.push(body), { session: { id: "repo-1" }, promptBytes: 0, systemPromptBytes: 0 }),
 		configOptions: async () => (calls.push("configOptions"), configOptions(state)),
@@ -44,11 +50,61 @@ function fakeAo(opts: { catalog?: string[]; ready?: boolean; turns?: number } = 
 const tmpHome = () => fs.mkdtempSync(path.join(os.tmpdir(), "ao-spawn-test-"));
 const sessionFile = (home: string, name: string) => path.join(home, "sessions", "repo-1", name);
 
+const strays: string[] = [];
+after(() => {
+	for (const dir of strays) fs.rmSync(dir, { recursive: true, force: true });
+});
+/** omp's agent folder of a temp "user home", with or without the Switchyard gate package installed in it (G46). */
+function ompHome(installed: boolean): { omp: { home: string; env: NodeJS.ProcessEnv } } {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "ao-spawn-omp-"));
+	strays.push(home);
+	const omp = { home, env: {} as NodeJS.ProcessEnv };
+	if (installed) {
+		const dir = ompExtensionDir(omp);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } }));
+		fs.writeFileSync(path.join(dir, "mode.js"), "export default () => {};\n");
+	}
+	return { omp };
+}
+/** The gate is installed: what the mode tests assume. */
+const gate = ompHome(true);
+
+test("spawnSwitchyardSession fails closed: a mode other than auto is refused, before anything exists in AO, when the gate is not installed", async () => {
+	const home = tmpHome();
+	try {
+		const missing = ompHome(false);
+		for (const mode of ["ask", "edits", "plan"] as const) {
+			const { ao, calls } = fakeAo();
+			await assert.rejects(spawnSwitchyardSession(ao, { mode, prompt: "go", home, gate: missing }), /Permission mode "(ask|edits|plan)" needs the Switchyard permission gate.*switchyard omp-extension install/s);
+			assert.deepEqual(calls, [], `${mode}: no AO call was made, no session created`);
+		}
+		assert.equal(fs.existsSync(path.join(home, "sessions")), false, "no mode file or omp-args written");
+		// A package that lists the gate but does not ship it is not a gate either.
+		const hollow = ompHome(false);
+		const dir = ompExtensionDir(hollow.omp);
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ omp: { extensions: ["./mode.js"] } }));
+		await assert.rejects(spawnSwitchyardSession(fakeAo().ao, { mode: "ask", home, gate: hollow }), /needs the Switchyard permission gate/);
+		// `auto` (the default) never needs it: AO's bypass is what the person asked for.
+		const auto = fakeAo();
+		await spawnSwitchyardSession(auto.ao, { prompt: "go", home, gate: missing });
+		assert.ok(auto.calls.includes("sendMessage"));
+		assert.equal(fs.readFileSync(path.join(home, "sessions", "repo-1", "mode"), "utf8"), "auto\n");
+		// With the gate installed every mode goes through.
+		const { ao } = fakeAo();
+		await spawnSwitchyardSession(ao, { mode: "ask", home, gate });
+		assert.equal(fs.readFileSync(path.join(home, "sessions", "repo-1", "mode"), "utf8"), "ask\n");
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
 test("spawnSwitchyardSession: bypass launch with no prompt or model, then the mode file, options, and the prompt last", async () => {
 	const home = tmpHome();
 	try {
 		const { ao, calls, sent, spawns } = fakeAo();
-		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", branch: "feature/fix-it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home });
+		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", branch: "feature/fix-it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home, gate });
 		// AO gets the bypass launch (the extension's gate is the only one), no prompt, no model; the ids and the branch are the caller's.
 		assert.deepEqual(spawns, [{ harness: "omp", mode: "chat", kind: "worker", approvalMode: "bypass-permissions", clientRequestId: "rq-1", projectId: "repo", displayName: "fix it", branch: "feature/fix-it" }]);
 		assert.deepEqual(calls, ["agentModels", "projectForFolder /work/repo", "spawnSession", "configOptions", "setConfigOption model=anthropic/haiku", "configOptions", "setConfigOption thinking=off", "sendMessage"]);
@@ -89,7 +145,7 @@ test("spawnSwitchyardSession: plan mode sets omp's own plan option; options alre
 	const home = tmpHome();
 	try {
 		const { ao, calls } = fakeAo();
-		await spawnSwitchyardSession(ao, { mode: "plan", model: "anthropic/opus", thinking: "high", home });
+		await spawnSwitchyardSession(ao, { mode: "plan", model: "anthropic/opus", thinking: "high", home, gate });
 		// The fake session already runs opus at high thinking: only plan is a change.
 		assert.deepEqual(calls.filter(c => c.startsWith("setConfigOption")), ["setConfigOption mode=plan"]);
 		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "plan\n");
@@ -164,6 +220,7 @@ test("spawnSwitchyardSession: the caller's setMode runs after the restart and th
 			mode: "plan",
 			prompt: "go",
 			home,
+			gate,
 			// checkpoints' setSessionMode: writes the file and sets omp's plan option itself.
 			setMode: async (id, mode) => void (asked.push(`${id}=${mode}`), calls.push(`setMode ${mode}`)),
 		});
@@ -176,7 +233,7 @@ test("spawnSwitchyardSession: the caller's setMode runs after the restart and th
 
 		// Without a hook, plan is applied after the restart too, not before it.
 		const plain = fakeAo();
-		await spawnSwitchyardSession(plain.ao, { ompArgs: ["--advisor"], mode: "plan", home });
+		await spawnSwitchyardSession(plain.ao, { ompArgs: ["--advisor"], mode: "plan", home, gate });
 		assert.deepEqual(plain.calls.slice(plain.calls.indexOf("exitAgent")), ["exitAgent", "resumeAgent", "getConversation", "configOptions", "setConfigOption mode=plan"]);
 		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "plan\n");
 
@@ -204,6 +261,51 @@ test("daemonEnv: the Switchyard omp shim's folder goes first on the PATH of a da
 		assert.equal(withShim.PATH, `${path.join(home, "bin")}${path.delimiter}/usr/bin:/bin`);
 		// Not added twice when it is already there.
 		assert.equal(daemonEnv({ ...env, PATH: withShim.PATH }, "/r/running.json").PATH, withShim.PATH);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: a fresh daemon's empty, still-refreshing model catalog is waited out, not read as 'unknown model'", async () => {
+	const home = tmpHome();
+	try {
+		// What a daemon that just started answers: no models while omp lists them in the background, then the catalog.
+		const fresh = fakeAo({ catalogSteps: [{ models: [], refreshState: "refreshing" }, { models: [], refreshState: "refreshing" }, { models: ["anthropic/opus", "anthropic/haiku"], refreshState: "idle" }] });
+		await spawnSwitchyardSession(fresh.ao, { model: "anthropic/haiku", home, catalogWaitMs: 400 });
+		assert.equal(fresh.calls.filter(c => c === "agentModels").length, 3, "asked until it settled");
+		assert.ok(fresh.calls.includes("spawnSession"));
+		// A catalog that is already partly filled but still refreshing, and lacks the model for now.
+		const partial = fakeAo({ catalogSteps: [{ models: ["anthropic/opus"], refreshState: "refreshing" }, { models: ["anthropic/opus", "anthropic/haiku"], refreshState: "idle" }] });
+		await spawnSwitchyardSession(partial.ao, { model: "anthropic/haiku", home, catalogWaitMs: 400 });
+		assert.equal(partial.calls.filter(c => c === "agentModels").length, 2);
+		// Settled WITHOUT the model: refused at once, no waiting, nothing created.
+		const settled = fakeAo({ catalogSteps: [{ models: ["anthropic/opus"], refreshState: "idle" }] });
+		await assert.rejects(spawnSwitchyardSession(settled.ao, { model: "nope/model", home, catalogWaitMs: 400 }), /Unknown omp model "nope\/model"/);
+		assert.equal(settled.calls.filter(c => c === "agentModels").length, 1);
+		assert.equal(settled.calls.includes("spawnSession"), false);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: a catalog that never settles skips the pre-check; the session's own options still reject a bad model", async () => {
+	const home = tmpHome();
+	try {
+		const stuck = { models: [], refreshState: "refreshing" as const };
+		// A valid model: let AO and the session's options decide.
+		const ok = fakeAo({ catalogSteps: [stuck] });
+		await spawnSwitchyardSession(ok.ao, { model: "anthropic/haiku", home, catalogWaitMs: 40 });
+		assert.ok(ok.calls.includes("spawnSession"), "not rejected for an empty catalog");
+		// A bad one: it is the session's config options (step 4) that refuse it, and the session made for the check is removed.
+		const bad = fakeAo({ catalogSteps: [stuck] });
+		await assert.rejects(spawnSwitchyardSession(bad.ao, { model: "nope/model", prompt: "hi", home, catalogWaitMs: 40 }), /this session offers: anthropic\/opus/);
+		assert.deepEqual(bad.calls.slice(-3), ["getConversation", "killSession", "deleteSession"]);
+		assert.equal(bad.calls.includes("sendMessage"), false);
+		// An unreadable catalog is skipped too (as before).
+		const gone = fakeAo({ catalogSteps: [stuck] });
+		(gone.ao as unknown as { agentModels: () => Promise<never> }).agentModels = () => Promise.reject(new Error("offline"));
+		await spawnSwitchyardSession(gone.ao, { model: "anthropic/haiku", home, catalogWaitMs: 40 });
+		assert.ok(gone.calls.includes("spawnSession"));
 	} finally {
 		fs.rmSync(home, { recursive: true, force: true });
 	}
