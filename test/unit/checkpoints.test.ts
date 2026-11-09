@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import switchyardCheckpoints from "../../src/omp-extension/checkpoints";
+import { turnSummary } from "../../src/shared/checkpoint-ops";
 import { type CheckpointPrompt, type FileChange, type SessionEntryLike, aoCheckpointDir, isPromptEntry, messageText, ompToolCallId, planRestore, readChanges, readState, redoStack, turnStatuses } from "../../src/shared/checkpoints";
 
 // ---------- a fake omp: a session tree with omp's navigation rules, and the extension hooks ----------
@@ -321,4 +322,27 @@ test("an AO tool activity's providerItemId yields omp's tool call id", () => {
 	assert.equal(ompToolCallId("acp:6:a:b:é5:x:y:z"), "x:y:z", "lengths are UTF-8 bytes; parts may hold colons");
 	assert.equal(ompToolCallId("ao-plan-1"), "ao-plan-1");
 	assert.equal(ompToolCallId("acp:99:short"), "acp:99:short", "malformed stays as is");
+});
+
+test("turnSummary: a turn's files, whether it was undone, and whether it is the last active prompt", async () => {
+	const { omp } = setup();
+	await omp.start();
+	await omp.turn("first", [["a.txt", "a"]]);
+	await omp.turn("second", [["b.txt", "b"], ["c.txt", "c"]]);
+	const now = new Date().toISOString();
+	const conversation = {
+		turns: ["t1", "t2"].map(id => ({ id, requestedAt: now })),
+		messages: [
+			{ kind: "message", role: "user", turnId: "t1", text: "first" },
+			{ kind: "message", role: "user", turnId: "t2", text: "second" },
+		],
+	} as never;
+	const names = (files: string[]) => files.map(f => path.basename(f)).sort();
+	const one = turnSummary("proj-1", conversation, "t1");
+	const two = turnSummary("proj-1", conversation, "t2");
+	assert.deepEqual([names(one.files), one.undone, one.last], [["a.txt"], false, false], "an earlier turn can't be undone alone");
+	assert.deepEqual([names(two.files), two.undone, two.last], [["b.txt", "c.txt"], false, true]);
+	await omp.command("/undo");
+	assert.deepEqual([turnSummary("proj-1", conversation, "t2").undone, turnSummary("proj-1", conversation, "t1").last], [true, true]);
+	assert.equal(turnSummary("proj-1", conversation, "nope").known, false);
 });

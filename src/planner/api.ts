@@ -55,15 +55,23 @@ export function createApiServer(opts: ApiOptions): net.Server {
 	const handlers: { [K in PlannerOpName]: (args: Record<string, unknown>) => PlannerOps[K]["result"] | Promise<PlannerOps[K]["result"]> } = {
 		ping: () => opts.info(),
 		plan: a => planner.view(typeof a.lane === "string" ? a.lane : undefined, a.all === true),
+		sync: a => planner.syncTask(str(a.id, "id"), a.rerun === true),
 		edit: a => planner.edit(Array.isArray(a.ops) ? (a.ops as PlanOp[]) : [], typeof a.rev === "number" ? a.rev : undefined),
 		getQueue: a => planner.getQueue(str(a.id, "id")),
 		queue: a => planner.queue(str(a.id, "id"), Array.isArray(a.ops) ? (a.ops as QueueOp[]) : []),
-		scheduler: a => planner.setConfig(rec(a.set) as Partial<PlannerConfig>),
+		scheduler: a => planner.setConfig(rec(a.set) as Partial<PlannerConfig>, a.clearLimits === true || (Array.isArray(a.clearLimits) && a.clearLimits.every(x => typeof x === "string")) ? (a.clearLimits as true | string[]) : undefined),
 		status: () => planner.status(),
 		shutdown: () => {
 			setTimeout(() => opts.shutdown("shutdown request"), 50);
 			return {};
 		},
+	};
+
+	/** The plan event of this request's change goes out before its response, so a client's cache is never older than the answer. */
+	const flushPlan = () => {
+		if (!planTimer) return;
+		clearTimeout(planTimer);
+		publishPlan();
 	};
 
 	const onRequest = async (c: Client, req: PlannerRequest) => {
@@ -78,7 +86,9 @@ export function createApiServer(opts: ApiOptions): net.Server {
 			}
 			if (!Object.hasOwn(handlers, op)) throw new Error(`unknown operation ${String(op)}`);
 			const handler = handlers[op] as (args: Record<string, unknown>) => unknown;
-			send(c, { id, ok: true, result: await handler(rec(req.args)) });
+			const result = await handler(rec(req.args));
+			flushPlan();
+			send(c, { id, ok: true, result });
 		} catch (err) {
 			send(c, { id, ok: false, error: err instanceof Error ? err.message : String(err) });
 		}

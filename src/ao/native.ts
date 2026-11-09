@@ -38,6 +38,21 @@ export function shimDir(home = switchyardHome()): string {
 	return path.join(home, "bin");
 }
 
+/**
+ * The opt-in `hibernation` key of `<home>/config.json` (G28): `"on"` / `"off"` -> true / false, anything else
+ * or no file -> undefined, which means "leave AO alone". AO keeps the setting in memory and starts every
+ * boot with it off, so Switchyard applies it after it starts a daemon and when the planner reconnects.
+ */
+export function readHibernationSetting(home = switchyardHome()): boolean | undefined {
+	try {
+		const value: unknown = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+		const key = typeof value === "object" && value !== null && "hibernation" in value ? value.hibernation : undefined;
+		return key === "on" ? true : key === "off" ? false : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** What the extension recorded for this AO session, or undefined before it ran (or for a non-omp session). */
 export function readNativeSession(aoSessionId: string, home = switchyardHome()): AoNativeSession | undefined {
 	let raw: unknown;

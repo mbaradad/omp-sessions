@@ -7,7 +7,7 @@
 // when the file changes. No mode file (a session started from AO's own UI): does nothing.
 // Active only with AO_SESSION_ID (MAPPING.md D6).
 import * as fs from "node:fs";
-import { APPROVE, APPROVE_SESSION, DENY, REFUSED_IN_PLAN, type PermissionMode, describeCall, gateDecision, modeFile, readMode } from "../shared/session-mode";
+import { APPROVE, APPROVE_SESSION, DENY, REFUSED_IN_PLAN, type PermissionMode, describeCall, gateDecision, modeFile, readMode, targetsOnlyInternal } from "../shared/session-mode";
 
 /** The slice of omp's extension API this module uses (types only; omp passes the real objects). */
 interface ContextLike {
@@ -68,7 +68,7 @@ export default function switchyardMode(pi: ExtensionApiLike): void {
 				approved = new Set();
 				approvedIn = mode;
 			}
-			const decision = gateDecision(mode, event.toolName, sub);
+			const decision = gateDecision(mode, event.toolName, sub, targetsOnlyInternal(event.input));
 			if (decision === "allow" || approved.has(event.toolName)) return undefined;
 			if (decision === "block") return { block: true, reason: REFUSED_IN_PLAN };
 			if (!ctx.hasUI) return { block: true, reason: `${mode} mode asks before ${event.toolName}, and no one can be asked here.` };

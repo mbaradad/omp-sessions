@@ -56,6 +56,15 @@ export async function revParse(cwd: string, ref: string): Promise<string | undef
 	}
 }
 
+/** The branch checked out in `worktree` right now (AO renames session branches early on, so a cached name can go stale). */
+export async function currentBranch(worktree: string): Promise<string | undefined> {
+	try {
+		return (await git(worktree, ["symbolic-ref", "--short", "-q", "HEAD"])) || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Worktree path that has `branch` checked out, undefined when none has. */
 export async function worktreeOf(repo: string, branch: string): Promise<string | undefined> {
 	const out = await git(repo, ["worktree", "list", "--porcelain"]);
