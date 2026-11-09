@@ -33,6 +33,12 @@ export interface AoFixture {
 	credentials: { token: null; headers: Record<string, string> };
 	/** AO_PORT, AO_DATA_DIR, AO_RUN_FILE: makes `ao` and src/ao discovery find this daemon. */
 	clientEnv: { AO_PORT: string; AO_DATA_DIR: string; AO_RUN_FILE: string };
+	/** The omp AO runs: the fake's wrapper script (or "omp" with realOmp). */
+	ompBin: string;
+	/** Env to run that omp as AO does: PATH (fake first), PI_CODING_AGENT_DIR, FAKE_OMP_LOG, FAKE_OMP_USAGE. Empty with realOmp. */
+	ompEnv: Record<string, string>;
+	/** clientEnv + ompEnv: for a planner, CLI or Hermes process that should use this stack. */
+	stackEnv: Record<string, string>;
 	root: string;
 	dataDir: string;
 	runFile: string;
@@ -42,7 +48,12 @@ export interface AoFixture {
 	/** PI_CODING_AGENT_DIR of the fake (its session store); undefined with realOmp. */
 	agentDir?: string;
 	fakeOmpLog?: string;
-	pid: number;
+	/** FAKE_OMP_USAGE: the file the fake's `omp usage --json` reads (see setUsage). */
+	usageFile?: string;
+	/** The daemon's pid (changes on restart). */
+	readonly pid: number;
+	/** What the fake's `omp usage --json` reports from now on. */
+	setUsage(windows: { provider: string; id: string; label?: string; usedPercent: number; resetsAt?: number }[]): void;
 	/** JSON request against the daemon; throws on non-2xx with the body. */
 	api(method: string, path: string, body?: unknown): Promise<any>;
 	/** A fresh git repo (one commit on main) under the fixture root. */
@@ -54,6 +65,8 @@ export interface AoFixture {
 	/** SIGKILLs the chat host(s) of one AO session and the omp they run (as a crash would); returns how many. */
 	killChatHosts(sessionId: string): number;
 	killNow(): void;
+	/** Restarts the daemon on the same port and data dir (chat hosts survive); `kill` SIGKILLs it first instead of a clean stop. */
+	restart(opts?: { kill?: boolean }): Promise<void>;
 	/** Stops the daemon, its detached chat hosts and their omp; removes the temp dir. */
 	stop(): Promise<void>;
 }
