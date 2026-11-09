@@ -1,18 +1,20 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AoError, type AoSpawnResponse, readNativeSession } from "../ao/client";
+import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
+import { readMode } from "../shared/session-mode";
+import { setSessionMode } from "../shared/session-mode-ops";
 import { type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
 import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpoints";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
+import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
@@ -187,7 +189,7 @@ export class SessionManager implements vscode.Disposable {
 			this.models.delete(id);
 		}
 		changed.forEach(model => {
-			const meta = metaOf(model, model.cwd ?? "", readNativeSession(model.id));
+			const meta = metaOf(model, model.cwd ?? "", readNativeSession(model.id), readMode(model.id));
 			const queue = laneQueue(this.planSource?.plan, model.id);
 			const prev = next.get(model.id);
 			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
@@ -307,44 +309,35 @@ export class SessionManager implements vscode.Disposable {
 			return opts.id;
 		}
 		const flags = launchFlags(opts.ompArgs ?? []);
-		if (flags.ignored.length) this.ao.log.warn(`omp flags omp acp can't take, ignored: ${flags.ignored.join(" ")}`);
+		if (flags.ignored.length) this.ao.log.warn(`omp flags AO owns, ignored: ${flags.ignored.join(" ")}`);
 		// Precedence: this launch, then the defaults (launcher.json: Set Default Model / Mode).
 		const defaults = readLauncherSettings();
-		const mode = opts.mode ?? flags.mode ?? defaults.mode;
-		const approval = mode ? approvalModeFor(mode) : undefined;
-		const aoProject = await client.projectForFolder(opts.cwd);
 		const prompt = (opts.prompt ?? opts.goal)?.trim();
 		const model = opts.model ?? flags.model ?? defaults.model;
-		const effort = opts.effort ?? flags.effort;
 		const title = opts.title?.trim().slice(0, 100);
-		let response: AoSpawnResponse;
+		const mode = opts.mode ?? flags.mode ?? defaults.mode;
+		let id: string;
 		try {
-			response = await client.spawnSession({
-				harness: "omp",
-				mode: "chat",
-				kind: "worker",
-				...(aoProject && { projectId: aoProject.id }),
+			// The Switchyard spawn sequence (MAPPING D11): bypass-permissions in AO and the mode in the omp gate,
+			// extra omp arguments (G34) applied by a restart before the first message, then the message.
+			const spawned = await client.spawnSwitchyard({
+				dir: opts.cwd,
+				setMode: (sessionId, m) => setSessionMode(client, sessionId, m),
 				...(title && { displayName: title }),
-				...(opts.branch && aoProject && { branch: opts.branch }),
+				...(opts.branch && { branch: opts.branch }),
 				...(prompt && { prompt }),
 				...(model && { model }),
-				...(effort && { effort }),
-				...(approval && { approvalMode: approval.approvalMode }),
+				...((opts.effort ?? flags.effort) && { thinking: opts.effort ?? flags.effort }),
+				...(mode && { mode }),
+				...(flags.rest.length && { ompArgs: flags.rest }),
 			});
+			id = spawned.session.id;
 		} catch (err) {
 			if (err instanceof Error && /omp.*(not (installed|found)|missing)|harness.*(not installed|unavailable)/i.test(err.message)) this.missingEmitter.fire();
 			throw err;
 		}
-		const id = response.session.id;
-		if (approval?.plan) await this.setPlanMode(id, true).catch(err => this.ao.log.warn(`plan mode for ${id}: ${String(err)}`));
 		await this.refreshSession(id);
 		return id;
-	}
-
-	/** omp's plan mode (its `mode` config option): live, no restart. */
-	async setPlanMode(id: string, plan: boolean): Promise<void> {
-		const client = await this.ao.client();
-		await client.setConfigOption(id, "mode", { value: plan ? "plan" : "default" });
 	}
 
 	/** Stops the session's agent; the session and its transcript stay (MAPPING D4: AO `exit-agent`). */
@@ -403,29 +396,11 @@ export class SessionManager implements vscode.Disposable {
 		await this.refreshSession(id);
 	}
 
-	/**
-	 * Switches the permission mode. Plan is omp's live `mode` option; the approval level is fixed when AO
-	 * launches omp (GAPS G7), so changing it restarts the idle agent (exit-agent, resume-agent: same transcript).
-	 * Resolves with how it applied; throws while the agent is busy or stopped.
-	 */
-	async setMode(id: string, mode: PermissionMode): Promise<"live" | "restarted"> {
-		const meta = this.get(id);
-		if (!meta) throw new Error("that session no longer exists");
-		if (meta.status === "stopped") throw new Error("the session is stopped: resume it first");
-		const client = await this.ao.client();
-		const want = approvalModeFor(mode);
-		const current = this.models.get(id)?.conversation?.settings.approvalMode ?? "default";
-		let how: "live" | "restarted" = "live";
-		if (want.approvalMode !== current) {
-			if (meta.status !== "idle") throw new Error(`AO restarts omp to change how approvals are answered, which only happens while the session is idle (it is ${meta.status})`);
-			await client.setTurnSettings(id, { approvalMode: want.approvalMode });
-			await client.exitAgent(id);
-			await client.resumeAgent(id);
-			how = "restarted";
-		}
-		await this.setPlanMode(id, want.plan);
+	/** Switches the permission mode: the omp extension's gate reads the session's mode file on every tool call, so it is live in any state (checkpoints' `setSessionMode`). */
+	async setMode(id: string, mode: PermissionMode): Promise<void> {
+		if (!this.get(id)) throw new Error("that session no longer exists");
+		await setSessionMode(await this.ao.client(), id, mode);
 		await this.refreshSession(id);
-		return how;
 	}
 
 	queue(id: string): TaskQueue {

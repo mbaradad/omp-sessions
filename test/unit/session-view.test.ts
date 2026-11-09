@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
+import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { PERMISSION_MODES } from "../../src/shared/permissions";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
 const T = "2026-11-09T15:00:00Z";
@@ -45,25 +44,22 @@ test("statusOf: the five view statuses; queued/scheduled/interrupted read as idl
 	for (const s of ["idle", "queued", "scheduled", "interrupted"] as const) assert.equal(statusOf(s), "idle");
 });
 
-test("permission modes survive the trip to AO settings and back", () => {
-	for (const mode of PERMISSION_MODES) {
-		const { approvalMode, plan } = approvalModeFor(mode);
-		assert.equal(permissionModeOf({ approvalMode, planMode: plan }), mode, mode);
-	}
-	// AO's own `auto` launches omp like accept-edits (`--approval-mode write`).
-	assert.equal(permissionModeOf({ approvalMode: "auto" }), "edits");
-	assert.equal(permissionModeOf({}), undefined);
-});
-
-test("launchFlags: model, thinking and mode from old omp arguments; everything else is reported as ignored", () => {
-	assert.deepEqual(launchFlags(["--model", "anthropic/sonnet", "--thinking=high", "--approval-mode", "plan", "--no-lsp", "--max-time", "1h"]), {
+test("launchFlags: model, thinking and mode are session settings; every other flag is an extra omp argument", () => {
+	assert.deepEqual(launchFlags(["--model", "anthropic/sonnet", "--thinking=high", "--approval-mode", "plan", "--advisor", "--profile", "work"]), {
 		model: "anthropic/sonnet",
 		effort: "high",
 		mode: "plan",
-		ignored: ["--no-lsp", "--max-time", "1h"],
+		rest: ["--advisor", "--profile", "work"],
+		ignored: [],
 	});
-	assert.deepEqual(launchFlags(["--approval-mode=yolo"]).ignored, ["--approval-mode yolo"]);
-	assert.deepEqual(launchFlags([]), { ignored: [] });
+	assert.deepEqual(launchFlags(["--approval-mode=yolo"]), { rest: [], ignored: ["--approval-mode yolo"] });
+	assert.deepEqual(launchFlags([]), { rest: [], ignored: [] });
+});
+
+test("metaOf: the mode file wins over AO's approval setting (every session is bypass-permissions in AO)", () => {
+	const bypass = model({ conversation: { settings: { approvalMode: "bypass-permissions" } } as AoSessionModel["conversation"] });
+	assert.equal(metaOf(bypass, "").permissionMode, "auto");
+	assert.equal(metaOf(bypass, "", undefined, "ask").permissionMode, "ask");
 });
 
 test("metaOf: the record the tree and board read", () => {

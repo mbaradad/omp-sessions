@@ -1,5 +1,3 @@
-// Permission modes in VS Code: the picker and the "omp: Set Permission Mode…" command (AO: plan is live;
-// another approval level restarts the idle omp agent, see SessionManager.setMode and GAPS G7).
 import * as vscode from "vscode";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode } from "../shared/permissions";
 import type { OmpApi } from "./api";
@@ -29,8 +27,7 @@ export function registerPermissions(api: OmpApi): void {
 			const mode = isPermissionMode(modeArg) ? modeArg : await pickPermissionMode(meta.permissionMode, `Permission mode · ${meta.title}`);
 			if (!mode) return;
 			try {
-				const how = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: ${PERMISSION_MODE_INFO[mode].label} mode for "${meta.title}"` }, () => api.sessions.setMode(meta.id, mode));
-				if (how === "restarted") vscode.window.setStatusBarMessage(`$(sync) "${meta.title}" restarted in ${PERMISSION_MODE_INFO[mode].label} mode`, 5000);
+				await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: ${PERMISSION_MODE_INFO[mode].label} mode for "${meta.title}"` }, () => api.sessions.setMode(meta.id, mode));
 			} catch (err) {
 				void vscode.window.showWarningMessage(plain(`Could not switch "${meta.title}" to ${PERMISSION_MODE_INFO[mode].label}: ${err instanceof Error ? err.message : String(err)}.`));
 			}

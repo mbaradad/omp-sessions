@@ -8,20 +8,6 @@ import type { Priority } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
 import type { SessionMeta, SessionStatus, SyncState } from "../shared/protocol";
 
-/** AO launch settings for a permission mode. omp maps AO `default` to its own asking mode and `bypass-permissions` to yolo; plan is omp's `mode` config option. */
-export function approvalModeFor(mode: PermissionMode): { approvalMode: NonNullable<AoTurnSettings["approvalMode"]>; plan: boolean } {
-	switch (mode) {
-		case "ask":
-			return { approvalMode: "default", plan: false };
-		case "edits":
-			return { approvalMode: "accept-edits", plan: false };
-		case "auto":
-			return { approvalMode: "bypass-permissions", plan: false };
-		case "plan":
-			return { approvalMode: "default", plan: true };
-	}
-}
-
 /** The permission mode a conversation runs in; undefined when AO doesn't say. */
 export function permissionModeOf(settings: AoTurnSettings | undefined): PermissionMode | undefined {
 	if (settings?.planMode) return "plan";
@@ -58,11 +44,12 @@ const LAST_TEXT_MAX = 600;
 
 /**
  * The views' session record for an AO session model (`cwd`: its workspace folder; `native`: the omp session
- * the Switchyard omp extension recorded, for the transcript). Host-only fields stay empty: AO runs the agent.
+ * the Switchyard omp extension recorded, for the transcript; `mode`: the session's mode file, which the omp
+ * extension's gate reads: AO itself runs every session as bypass-permissions). Host-only fields stay empty.
  */
-export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSession): SessionMeta {
+export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSession, mode?: PermissionMode): SessionMeta {
 	const state = model.state;
-	const permissionMode = permissionModeOf(model.conversation?.settings);
+	const permissionMode = mode ?? permissionModeOf(model.conversation?.settings);
 	const stoppedWithError = state === "stopped" && !!model.exitReason;
 	const account = model.conversation?.account;
 	const authProblem = account?.authenticationState === "required" ? account.reauthReason || account.lastAuthFailureReason || "the provider needs a login" : undefined;
@@ -88,9 +75,13 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 	};
 }
 
-/** Parses the omp flags `omp acp` can still honor out of old-style launch arguments; returns the others. */
-export function launchFlags(args: readonly string[]): { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } {
-	const out: { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } = { ignored: [] };
+/**
+ * Splits old-style launch arguments: model, thinking level and mode are session settings (the spawn helper
+ * applies them); every other flag is an extra `omp acp` argument for the session (G34, the omp shim). A
+ * `--approval-mode` value that is not a Switchyard mode goes to `ignored`: AO owns the approval level.
+ */
+export function launchFlags(args: readonly string[]): { model?: string; effort?: string; mode?: PermissionMode; rest: string[]; ignored: string[] } {
+	const out: { model?: string; effort?: string; mode?: PermissionMode; rest: string[]; ignored: string[] } = { rest: [], ignored: [] };
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		const [flag, inline] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
@@ -101,11 +92,10 @@ export function launchFlags(args: readonly string[]): { model?: string; effort?:
 			const v = value();
 			if (v === "ask" || v === "edits" || v === "plan" || v === "auto") out.mode = v;
 			else out.ignored.push(`${flag} ${v}`);
-		} else out.ignored.push(a);
+		} else out.rest.push(a);
 	}
 	return out;
 }
-
 
 /** Worst first: what the user must look at before what merely happened (the board's `worstSync` orders the same). */
 const SYNC_SEVERITY: Record<SyncState, number> = { conflict: 5, "upstream-changed": 4, resolving: 3, pending: 2, merged: 1, "in-sync": 0 };
