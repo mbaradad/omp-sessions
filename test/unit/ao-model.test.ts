@@ -230,6 +230,11 @@ test("changedFiles: per-turn diffs merged; rolled back turns and files left out"
 		{ path: "a.ts", status: "added", additions: 12, deletions: 1 },
 		{ path: "e.ts", oldPath: "b.ts", status: "renamed", additions: 1, deletions: 1 },
 	]);
+	// Turns omp's /undo rewound (AO still has their diffs) drop out with their files.
+	assert.deepEqual(changedFiles(c, new Set(["t3", "t4"])), [
+		{ path: "a.ts", status: "added", additions: 10, deletions: 0 },
+		{ path: "b.ts", status: "modified", additions: 1, deletions: 1 },
+	]);
 });
 
 test("lastReply and sessionModel", () => {
