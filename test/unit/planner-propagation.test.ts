@@ -196,3 +196,18 @@ test("a planner restart with a merge pending applies it exactly once", async t =
 	const states = (x: Task) => Object.values(x.sync ?? {}).map(e => e.state);
 	assert.deepEqual(states(byTitle(p2, "B")), ["merged"]);
 });
+
+test("two tasks starting in the same new folder register its project once", async t => {
+	const repo = scratchRepo(t);
+	const ao = new FakeAo(repo);
+	ao.registerDelayMs = 200;
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([
+		{ op: "add", task: { title: "one", options: { cwd: repo } } },
+		{ op: "add", task: { title: "two", options: { cwd: repo } } },
+	]);
+	await until("both sent", () => sent(p, "one") && sent(p, "two"));
+	assert.equal(ao.created, 2);
+});

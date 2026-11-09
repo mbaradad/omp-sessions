@@ -288,6 +288,7 @@ export class Propagation {
 /** Back to pending for one more run in its own session (the follow-up or the merge resolution). */
 function requeueForFollowUp(t: Task): void {
 	t.status = "pending";
+	t.followUpOnly = true;
 	for (const k of ["startedAt", "finishedAt", "attempts", "interrupted", "holdUntil", "paused"] as const) delete t[k];
 }
 

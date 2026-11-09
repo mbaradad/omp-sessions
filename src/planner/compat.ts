@@ -103,5 +103,7 @@ export function queueView(state: PlanState, views: readonly TaskView[], lane: st
 	};
 	if (l?.startAt) out.startAt = l.startAt;
 	if (l?.session) out.session = l.session;
+	const head = views.find(t => t.lane === lane && (t.status === "pending" || t.status === "running"));
+	if (head) Object.assign(out, { state: head.state, ...(head.waitReason ? { waitReason: head.waitReason } : {}), ...(head.waitUntil ? { waitUntil: head.waitUntil } : {}) });
 	return out;
 }

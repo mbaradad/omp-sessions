@@ -91,7 +91,9 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	const out: TaskOptions = {};
 	const model = typeof r.model === "string" ? r.model.trim() : "";
 	if (/^[^/\s]+\/\S+$/.test(model)) out.model = model;
-	if (typeof r.thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(r.thinking)) out.thinking = r.thinking;
+	// Old queues and clients say `minimal`; omp's lowest named level above off is `low`.
+	const thinking = r.thinking === "minimal" ? "low" : r.thinking;
+	if (typeof thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(thinking)) out.thinking = thinking;
 	if (r.freshContext === true) out.freshContext = true;
 	const retries = finite(r.retries);
 	if (retries !== undefined && retries >= 1) out.retries = Math.min(MAX_RETRIES, Math.trunc(retries));
@@ -163,7 +165,6 @@ function normalizeRun(raw: unknown): TaskRun | undefined {
 	if (typeof r.provider === "string") run.provider = r.provider;
 	const spawn = rec(r.spawn);
 	if (spawn) run.spawn = spawn;
-	if (r.sendAfterSpawn === true) run.sendAfterSpawn = true;
 	if (typeof r.repo === "string") run.repo = r.repo;
 	for (const k of ["settings", "restore"] as const) {
 		const v = rec(r[k]);
@@ -236,6 +237,7 @@ export function normalizeState(raw: unknown): PlanState {
 		if (typeof tr.recur === "string" && tr.recur) task.recur = tr.recur;
 		if (typeof tr.turn === "string" && tr.turn) task.turn = tr.turn;
 		if (typeof tr.followUp === "string" && tr.followUp) task.followUp = tr.followUp.slice(0, MAX_NOTES);
+		if (tr.followUpOnly === true && task.followUp) task.followUpOnly = true;
 		const git = rec(tr.git);
 		if (git && typeof git.repo === "string" && typeof git.branch === "string") {
 			task.git = { repo: git.repo, branch: git.branch };
@@ -362,6 +364,7 @@ function resetRun(t: Task): void {
 	delete t.interrupted;
 	delete t.holdUntil;
 	delete t.run;
+	delete t.followUpOnly;
 }
 
 /** Positions of `lane`'s tasks (or of free tasks) in the plan array. */
@@ -1006,18 +1009,32 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 	return { views: s.tasks.map(t => views.get(t.id) as TaskView), dispatch, holdUntil };
 }
 
-export function laneViews(s: PlanState): LaneView[] {
+export function laneViews(s: PlanState, views: readonly TaskView[] = []): LaneView[] {
 	return s.lanes.map(l => {
 		const tasks = s.tasks.filter(t => t.lane === l.id);
 		const count = (st: TaskStatus) => tasks.filter(t => t.status === st).length;
-		return { ...l, pending: count("pending"), running: count("running"), done: count("done"), failed: count("failed"), total: tasks.length };
+		const head = views.find(v => v.lane === l.id && (v.status === "pending" || v.status === "running"));
+		return {
+			...l,
+			...(head ? { state: head.state, ...(head.waitReason ? { waitReason: head.waitReason } : {}), ...(head.waitUntil ? { waitUntil: head.waitUntil } : {}) } : {}),
+			pending: count("pending"),
+			running: count("running"),
+			done: count("done"),
+			failed: count("failed"),
+			total: tasks.length,
+		};
 	});
 }
 
 // ---------- prompts ----------
 
-/** The prompt AO gets for a task: title, notes, subtasks and (by default) the parents' results. */
+/**
+ * The prompt AO gets for a task: title, notes, subtasks and (by default) the parents' results. A
+ * follow-up run (a finished task that must react to an upstream change) gets only the change, in the
+ * session that already holds the work.
+ */
 export function taskPrompt(s: PlanState, task: Task): string {
+	if (task.followUpOnly && task.followUp) return [`[Follow-up on your task] ${task.title}`, "", task.followUp, "", "Take this into account, fix whatever it breaks, and finish with a short summary of what you did."].join("\n");
 	const lane = task.lane ? s.tasks.filter(t => t.lane === task.lane) : undefined;
 	const lines = [lane ? `[Task ${lane.indexOf(task) + 1}/${lane.length} from the queue] ${task.title}` : `[Task from the plan] ${task.title}`];
 	if (task.followUp) lines.push("", task.followUp);
@@ -1113,6 +1130,7 @@ export function finishRun(s: PlanState, id: string, outcome: Outcome, now: numbe
 			if (outcome.summary) t.summary = outcome.summary.slice(0, MAX_SUMMARY);
 			if (run?.provider) delete s.limits[run.provider];
 			delete t.followUp;
+			delete t.followUpOnly;
 			return t;
 		case "interrupted":
 		case "lost": {
