@@ -116,6 +116,8 @@ export interface AoSessionModel {
 	question?: AoQuestion;
 	/** The last assistant text in full (clipped at REPLY_MAX characters). */
 	reply?: string;
+	/** The last turn completed but its reply is not final yet: `reply` may be the previous turn's, and a refresh is on its way. */
+	replyPending?: boolean;
 	/** Why it stopped, when it did: a provisioning error or the failed turn's message. */
 	exitReason?: string;
 	/** The AO view and conversation this model came from. */
@@ -256,6 +258,30 @@ export function lastReply(conversation: AoConversation, max = REPLY_MAX): string
 	return undefined;
 }
 
+/**
+ * One turn's reply: the last non-empty assistant text of that turn, and whether it is final. AO can mark a
+ * turn `completed` a moment before it flags its last assistant message `streaming: false` (seen by test-infra,
+ * about 2 reads in 40), and the message may not be there yet at all. `final` is true once the turn has ended
+ * and it has an assistant message and none of its assistant messages is still streaming. A turn that ended
+ * with no assistant text (a tool-only turn, a failed one) never becomes final: callers wait a short grace
+ * period (`awaitTurnReply`) and then take what there is.
+ */
+export function turnReply(conversation: AoConversation, turnId: string, max = REPLY_MAX): { text?: string; final: boolean } {
+	const turn = conversation.turns.find(t => t.id === turnId);
+	const messages = conversation.messages.filter(m => m.turnId === turnId && m.role === "assistant");
+	let text: string | undefined;
+	for (let i = messages.length - 1; i >= 0 && text === undefined; i--) if (messages[i].text.trim()) text = messages[i].text;
+	const ended = turn !== undefined && turn.state !== "queued" && turn.state !== "running";
+	const final = ended && messages.length > 0 && !messages.some(m => m.streaming);
+	return { ...(text !== undefined && { text: text.length > max ? `${text.slice(0, max)}\n… (clipped)` : text }), final };
+}
+
+/** The conversation's last turn completed but its reply is not final yet (see turnReply): `reply` may still be the previous turn's. */
+export function replyPending(conversation: AoConversation): boolean {
+	const last = realTurns(conversation).at(-1);
+	return last?.state === "completed" && !turnReply(conversation, last.id).final;
+}
+
 const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
 export function queueOf(conversation: AoConversation): AoQueue {
@@ -389,6 +415,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation,
 		queue: conversation ? queueOf(conversation) : { pending: 0, running: 0, done: 0, total: 0, items: [] },
 		...(question && { question }),
 		...(reply && { reply }),
+		...(conversation && replyPending(conversation) && { replyPending: true }),
 		...(exitReason && { exitReason }),
 		view,
 		...(conversation && { conversation }),
@@ -516,6 +543,7 @@ export class AoSessionWatcher {
 	private readonly cwds = new Map<string, string>();
 	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean }>();
 	private readonly confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly replyTries = new Map<string, { turnId: string; tries: number }>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -628,8 +656,27 @@ export class AoSessionWatcher {
 		// Not ready yet (409 while the controller starts), or gone with a terminated session: the view alone.
 		const conversation = this.options.conversations === false || view.mode !== "chat" ? undefined : await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 }).catch(() => undefined);
 		const files = this.options.changedFiles === false ? [] : await this.filesOf(view, conversation);
+		if (conversation) this.watchReply(view.id, conversation);
 		const model = sessionModel(view, conversation, undefined, files);
 		return cwd ? { ...model, cwd } : model;
+	}
+
+	/**
+	 * AO can mark a turn completed a moment before its last assistant message stops streaming (turnReply), and
+	 * no event follows: so while the last turn is completed but its reply is not final, read the session again
+	 * shortly, a few times (a turn that ended without any assistant text never becomes final).
+	 */
+	private watchReply(sessionId: string, conversation: AoConversation): void {
+		if (!replyPending(conversation)) {
+			this.replyTries.delete(sessionId);
+			return;
+		}
+		const turnId = realTurns(conversation).at(-1)?.id ?? "";
+		const seen = this.replyTries.get(sessionId);
+		const tries = seen?.turnId === turnId ? seen.tries : 0;
+		if (tries >= 4) return;
+		this.replyTries.set(sessionId, { turnId, tries: tries + 1 });
+		this.confirmLater(sessionId, this.options.settleMs ?? 1_500);
 	}
 
 	/**
