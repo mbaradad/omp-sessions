@@ -769,6 +769,11 @@ export class Planner {
 				return;
 			}
 			case "failed": {
+				// resume-agent on a dead host turns its stuck turn into a failed one (G39): the host died, the model did not fail.
+				if (/controller ended before the turn completed/i.test(turn.errorMessage ?? "")) {
+					this.finish(id, { kind: "lost", reason: "the agent's host died while the turn ran (AO ended the turn when it was resumed)." });
+					return;
+				}
 				const reset = turn.usageLimitResetsAt ? ` Usage limit reached; resets at ${new Date(turn.usageLimitResetsAt).toISOString()}.` : "";
 				this.finish(id, { kind: "error", error: { message: `${turn.errorMessage ?? "The turn failed."}${reset}`, ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
 				return;

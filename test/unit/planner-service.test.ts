@@ -265,3 +265,22 @@ test("requeue {clean} without the checkpoints hook fails the dispatch with a cle
 	p.edit([{ op: "requeue", id: byTitle(p, "only").id, clean: true }]);
 	await until("failed again", () => byTitle(p, "only").status === "failed" && (byTitle(p, "only").summary ?? "").includes("clean retry"));
 });
+
+test("someone resumes a dead host: AO fails the stuck turn with 'controller ended before the turn completed'; the task is interrupted, not failed or retried (G39)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "long", options: { retries: 3 } } }]);
+	const s = await until("sent", () => byTitle(p, "long").run?.phase === "sent" && byTitle(p, "long").run?.session);
+	const session = ao.sessions.get(s);
+	assert.ok(session);
+	// A person (or the CLI) resumed the dead agent first; AO ended the turn as failed.
+	const turn = session.conv.turns.find(x => x.state === "running");
+	assert.ok(turn);
+	turn.state = "failed";
+	turn.errorMessage = "controller ended before the turn completed";
+	ao.poke(s, "idle");
+	await until("interrupted", () => byTitle(p, "long").interrupted);
+	assert.equal(byTitle(p, "long").attempts, undefined, "no attempt used, nothing retried");
+	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+});
