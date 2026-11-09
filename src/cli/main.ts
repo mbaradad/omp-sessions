@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type AoClient, AoError, type AoSchemas, findDaemon, switchyardHome, unwrap } from "../ao/client";
 import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } from "../ao/config";
+import { INSTALL_COMMAND, dashboardDir, dashboardEnabled, dashboardPort, dashboardUrl, probeDashboard, readDashboardInstall } from "../ao/dashboard";
+import { installDashboard, uninstallDashboard } from "../ao/dashboard-install";
 import { pairingLink } from "../ao/mobile";
 // Two `permissionModeOf`s: src/ao's reads AO turn settings; src/shared/permissions' parses a typed word.
 import { SETTLED_STATES, answerFor, approvalModeFor, permissionModeOf as aoPermissionMode } from "../ao/model";
@@ -1296,6 +1298,61 @@ async function cmdServer(args: Args): Promise<number> {
 	}
 }
 
+// ---------- AO's dashboard: AO's own web UI, served by the planner (src/ao/dashboard.ts) ----------
+
+/** What `dashboard status` and `status` report: config, the installed UI, and whether the server answers. */
+async function dashboardState(startPlanner: boolean) {
+	const config = readSwitchyardConfig();
+	const enabled = dashboardEnabled(config);
+	const port = dashboardPort(config);
+	const install = readDashboardInstall();
+	if (enabled && startPlanner) await plannerService().start();
+	const served = enabled ? await probeDashboard(port) : undefined;
+	return { enabled, installed: !!install, version: install?.version ?? null, source: install?.source ?? null, port, url: dashboardUrl(port), serving: !!served, ...(served && { daemon: served.daemon }) };
+}
+
+async function cmdDashboard(args: Args): Promise<number> {
+	const sub = args._[0] ?? "status";
+	const json = flag(args, "json");
+	switch (sub) {
+		case "install": {
+			const from = value(args, "from");
+			const release = value(args, "release");
+			if (from && release) throw new UsageError("dashboard install takes --from or --release, not both");
+			const install = await installDashboard({ ...(from && { from }), ...(release && { release }), log: line => json || process.stderr.write(c.dim(`${line}\n`)) });
+			const state = await dashboardState(true);
+			if (json) process.stdout.write(`${JSON.stringify({ ...state, installedAt: install.installedAt })}\n`);
+			else process.stdout.write(`${c.green("installed")} AO ${install.version ?? "(unknown version)"} ${c.dim(`from ${install.source}`)}\n${state.serving ? `${c.green("serving")} ${state.url}` : !state.enabled ? c.yellow(`not served: dashboard is off (switchyard config set dashboard on)`) : c.yellow(`not served yet on port ${state.port}: a planner started before this version doesn't serve it (switchyard server restart); else see switchyard server log`)}\n`);
+			return 0;
+		}
+		case "uninstall":
+			process.stdout.write(json ? `${JSON.stringify({ removed: uninstallDashboard() })}\n` : uninstallDashboard() ? `${c.green("removed")} ${c.dim(dashboardDir())}\n` : c.dim("not installed\n"));
+			return 0;
+		case "url": {
+			const state = await dashboardState(true);
+			process.stdout.write(json ? `${JSON.stringify(state.url)}\n` : `${state.url}\n`);
+			return state.serving && state.installed ? 0 : 1;
+		}
+		case "status": {
+			const state = await dashboardState(true);
+			if (json) {
+				process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
+				return 0;
+			}
+			const row = (label: string, text: string) => `${c.dim(pad(label, 10))}${text}`;
+			process.stdout.write(
+				[
+					row("installed", state.installed ? `AO ${state.version ?? "(unknown version)"} ${c.dim(`from ${state.source}`)}` : `${c.yellow("no")} ${c.dim(`(${INSTALL_COMMAND})`)}`),
+					row("server", !state.enabled ? c.dim("off (switchyard config set dashboard on)") : state.serving ? `${c.green("serving")} ${state.url}${state.daemon === false ? c.yellow(" · AO's daemon is not running") : ""}` : c.red(`nothing answers on port ${state.port} (switchyard server log; another program may hold the port: switchyard config set dashboard.port <n>)`)),
+				].join("\n") + "\n",
+			);
+			return 0;
+		}
+		default:
+			throw new UsageError(`unknown dashboard command "${sub}" (status, url, install [--release <tag>|--from <path>], uninstall)`);
+	}
+}
+
 // ---------- remote access: AO's mobile pairing (MAPPING "Phone and remote access") ----------
 
 type MobileStatus = AoSchemas["MobileStatusResponse"];
@@ -1479,6 +1536,7 @@ async function cmdStatus(args: Args): Promise<number> {
 		runningTasks += s.lane?.running ?? 0;
 	}
 	const config = readSwitchyardConfig();
+	const dashboard = await dashboardState(false);
 	// Mode gating depends on the omp extension (G38): without it nothing asks in ask, edits or plan.
 	const extReport = extensionReport(daemon?.pid);
 	const extensionInstalled = extReport.installed;
@@ -1511,6 +1569,7 @@ async function cmdStatus(args: Args): Promise<number> {
 		tasks: { pending, running: runningTasks },
 		scheduler: plannerStatus ? { ...plannerStatus, server: true } : { server: false },
 		remote: remote ? remoteJson(remote) : { enabled: false },
+		dashboard,
 	};
 	if (flag(args, "json")) {
 		process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
@@ -1536,6 +1595,7 @@ async function cmdStatus(args: Args): Promise<number> {
 	rows.push(row("tasks", `${pending} pending · ${runningTasks} running`));
 	if (plannerStatus) rows.push(row("scheduler", `${plannerStatus.maxConcurrent ? `limit ${plannerStatus.maxConcurrent}` : "no limit"}${plannerStatus.paused ? c.yellow(" · paused") : ""} · ${plannerStatus.running} running · ${plannerStatus.waiting} waiting · ${plannerStatus.scheduled} scheduled`));
 	rows.push(row("remote", !remote ? c.dim("unknown") : !remote.enabled ? c.dim("off") : remote.endpoints.length ? `${c.green("on")} ${remote.endpoints.map(e => `${e.kind} ${e.host}:${e.port}`).join(", ")}` : c.yellow("on, preparing")));
+	rows.push(row("dashboard", !dashboard.enabled ? c.dim("off") : !dashboard.installed ? c.dim(`AO's UI not installed (${INSTALL_COMMAND})`) : dashboard.serving ? `${c.green("serving")} ${dashboard.url} ${c.dim(`AO ${dashboard.version ?? "?"}`)}` : c.yellow(`installed, nothing answers on port ${dashboard.port} (switchyard dashboard status)`)));
 	for (const problem of problems) rows.push(`${c.red("✗")} ${problem}`);
 	process.stdout.write(`${rows.join("\n")}\n`);
 	return status.ok ? 0 : 1;
@@ -1543,9 +1603,9 @@ async function cmdStatus(args: Args): Promise<number> {
 
 // ---------- config (~/.switchyard/config.json: the model and mode of new sessions, the planner service) ----------
 
-const CONFIG_KEYS = ["model", "mode", "service", "omp-extension", "hibernation", "omp.path", "omp.extraArgs"];
+const CONFIG_KEYS = ["model", "mode", "service", "omp-extension", "hibernation", "dashboard", "dashboard.port", "omp.path", "omp.extraArgs"];
 /** The on/off settings and the config.json key each is stored under. */
-const ON_OFF_KEYS: Record<string, "service" | "ompExtension" | "hibernation"> = { service: "service", "omp-extension": "ompExtension", hibernation: "hibernation" };
+const ON_OFF_KEYS: Record<string, "service" | "ompExtension" | "hibernation" | "dashboard"> = { service: "service", "omp-extension": "ompExtension", hibernation: "hibernation", dashboard: "dashboard" };
 /** AO resolves omp itself (the daemon's PATH): there is no path to set (MAPPING Q3). */
 const NO_OMP_PATH = "omp.path is gone: AO finds omp on the daemon's PATH (set PATH in its unit); omp.extraArgs still works (config set omp.extraArgs -- --profile work)";
 
@@ -1556,6 +1616,8 @@ function configValue(key: string): unknown {
 	if (key === "service") return s.service ?? "on";
 	if (key === "omp-extension") return s.ompExtension ?? "on";
 	if (key === "hibernation") return s.hibernation ?? null;
+	if (key === "dashboard") return s.dashboard ?? "on";
+	if (key === "dashboard.port") return dashboardPort(s);
 	if (key === "omp.extraArgs") return s.omp?.extraArgs ?? [];
 	return null;
 }
@@ -1585,6 +1647,8 @@ async function cmdConfig(args: Args): Promise<number> {
 					`service        ${s.service ?? "on"} ${c.dim("(off: the planner isn't installed as a login service by itself)")}`,
 					`omp-extension  ${s.ompExtension ?? "on"} ${c.dim("(off: the CLI doesn't install or refresh Switchyard's omp extension and shim by itself)")}`,
 					`hibernation    ${s.hibernation ?? c.dim("(not set: AO's own setting)")} ${c.dim("(on: AO stops the omp of a chat nobody views after 90 s)")}`,
+					`dashboard      ${s.dashboard ?? "on"} ${c.dim("(off: the planner doesn't serve AO's own UI)")}`,
+					`dashboard.port ${dashboardPort(s)} ${c.dim("(the loopback port AO's UI is served on)")}`,
 					`omp.extraArgs  ${s.omp?.extraArgs?.length ? s.omp.extraArgs.join(" ") : c.dim("(none)")} ${c.dim("(added to every omp acp an AO session starts; needs the Switchyard omp shim)")}`,
 				].join("\n") + "\n",
 			);
@@ -1599,7 +1663,7 @@ async function cmdConfig(args: Args): Promise<number> {
 				writeSwitchyardConfig({ omp: { extraArgs: clear ? undefined : rest } });
 				break;
 			}
-			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : `config set ${key} <on|off>`);
+			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : key === "dashboard.port" ? "config set dashboard.port <1-65535>" : `config set ${key} <on|off>`);
 			const v = rest[0].trim();
 			if (key === "model") {
 				if (v !== "none" && !/^[^/\s]+\/\S+$/.test(v)) throw new UsageError(`a model is provider/id (switchyard models lists them), not "${v}"`);
@@ -1614,6 +1678,10 @@ async function cmdConfig(args: Args): Promise<number> {
 					if (!known) throw new Error(`omp has no model ${v} in its catalog (switchyard models lists what a running session offers); --force saves it anyway`);
 				}
 				writeSwitchyardConfig({ model: v === "none" ? undefined : v });
+			} else if (key === "dashboard.port") {
+				const port = Number(v);
+				if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("config set dashboard.port <1-65535>");
+				writeSwitchyardConfig({ dashboardPort: port });
 			} else if (key === "mode") {
 				if (v !== "none" && !isPermissionMode(v)) throw new UsageError("config set mode <auto|edits|ask|plan|none> (auto approves every tool call; edits asks before commands; ask asks for edits and commands; plan is read-only)");
 				writeSwitchyardConfig({ mode: isPermissionMode(v) ? v : undefined });
@@ -1629,6 +1697,7 @@ async function cmdConfig(args: Args): Promise<number> {
 			if (key === "omp.extraArgs") writeSwitchyardConfig({ omp: { extraArgs: undefined } });
 			else if (key === "model") writeSwitchyardConfig({ model: undefined });
 			else if (key === "mode") writeSwitchyardConfig({ mode: undefined });
+			else if (key === "dashboard.port") writeSwitchyardConfig({ dashboardPort: undefined });
 			else writeSwitchyardConfig({ [ON_OFF_KEYS[key]]: undefined });
 			break;
 		default:
@@ -1647,6 +1716,10 @@ async function cmdConfig(args: Args): Promise<number> {
 	}
 	if (key === "hibernation") {
 		process.stdout.write(`${c.green("saved")} hibernation ${configValue("hibernation") ?? c.dim("(unset)")} ${c.dim(applied ? `· applied to the running AO now (${applied.enabled ? "on" : "off"}${applied.changed ? "" : ", it already was"})` : aoNow ? "· AO left as it is" : "· applied when Switchyard next starts AO or the planner reconnects")}\n`);
+		return 0;
+	}
+	if (key === "dashboard" || key === "dashboard.port") {
+		process.stdout.write(`${c.green("saved")} ${key} ${String(configValue(key))} ${c.dim("· the planner reads it when it starts: switchyard server restart")}\n`);
 		return 0;
 	}
 	process.stdout.write(`${c.green("saved")} ${c.dim(switchyardConfigPath())} · applies to sessions started from now on\n`);
@@ -1830,6 +1903,13 @@ ${c.bold("Scheduler")}  ${c.dim("(the planner's global limit on queued tasks run
 ${c.bold("Server")}  ${c.dim("(the planner service: starts queued and scheduled tasks; started on demand)")}
   server status [--json] | start | stop | restart | log [-f] | install | uninstall
 
+${c.bold("Dashboard")}  ${c.dim("(AO's own web UI, served by the planner on 127.0.0.1:3012 with the daemon behind it)")}
+  dashboard install [--release <tag>|--from <file.deb|app.asar|folder>]
+                                  install or update AO's UI: from AO's official release (default latest),
+                                  or a local AO package, app.asar or built renderer
+  dashboard status [--json] | url | uninstall
+                                  installed version and whether it is served · its URL · remove it
+
 ${c.bold("Remote")}  ${c.dim("(AO's mobile app pairing; the phone talks to the AO daemon)")}
   remote on [--bind tailscale|lan|tunnel|all] [--json]
                                   turn on phone access: tailscale (default) pairs securely over Tailscale,
@@ -1926,6 +2006,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	sched: { flags: ["json"], run: async args => (await cmdSched(args), 0) },
 	server: { flags: ["follow", "json"], run: cmdServer },
 	remote: { flags: ["bind", "port", "url", "json"], run: cmdRemote },
+	dashboard: { flags: ["from", "release", "json"], run: cmdDashboard },
 	show: { flags: ["json"], run: cmdShow },
 	wait: { flags: ["timeout", "json"], run: cmdWait },
 	answer: { flags: ["question", "json"], run: cmdAnswer },

@@ -54,6 +54,8 @@ const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--te
 		// CONTRACT.md "Isolated HOME": nothing in a test run may reach the real ~/.switchyard (locked). Every suite
 		// gets a throwaway one; the AO fixture points its own, per fixture, at <fixture root>/switchyard.
 		SWITCHYARD_HOME: switchyardHome,
+		// Planners the tests start (through the CLI too) leave the machine's AO dashboard port alone (src/ao/dashboard.ts).
+		SWITCHYARD_PLANNER_DASHBOARD: "off",
 	},
 });
 fs.rmSync(switchyardHome, { recursive: true, force: true });

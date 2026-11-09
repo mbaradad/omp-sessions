@@ -8,6 +8,7 @@ import { connectAo } from "./ao-port";
 import { checkpointHooks } from "./checkpoint-hooks";
 import { createApiServer } from "./api";
 import { forgetPipe, listenPath, logPath, pidPath, planPath, plannerDir, recordPipe, socketPath } from "./paths";
+import { type DashboardHandle, dashboardEnabled, startDashboard } from "../ao/dashboard";
 import { switchyardHome } from "../ao/native";
 import { Planner } from "./planner";
 import { installService, uninstallService } from "./service";
@@ -119,17 +120,33 @@ async function run(): Promise<void> {
 		process.exit(1);
 	}
 	let finished = false;
+	/** AO's dashboard (src/ao/dashboard.ts), served while the planner runs; `dashboard: "off"` in config.json or SWITCHYARD_PLANNER_DASHBOARD=off (test planners) turns it off. */
+	let dashboard: DashboardHandle | undefined;
 	const shutdown = (reason: string) => {
 		if (finished) return;
 		finished = true;
 		log("planner stopping:", reason);
 		planner.stop();
+		dashboard?.close();
 		server.close();
 		if (IS_WINDOWS) forgetPipe(target);
 		releaseLock(pidPath());
 		process.exit(0);
 	};
-	const server = createApiServer({ planner, info: () => ({ pid: process.pid, version: VERSION, root: switchyardHome(), startedAt: planner.startedAt, api: 1, omp }), shutdown, log });
+	const server = createApiServer({
+		planner,
+		info: () => ({
+			pid: process.pid,
+			version: VERSION,
+			root: switchyardHome(),
+			startedAt: planner.startedAt,
+			api: 1,
+			omp,
+			...(dashboard && { dashboard: { port: dashboard.port, listening: dashboard.listening(), ...(dashboard.error() && { error: dashboard.error() }) } }),
+		}),
+		shutdown,
+		log,
+	});
 	server.on("error", err => {
 		const inUse = "code" in err && err.code === "EADDRINUSE";
 		log(inUse ? "another planner took the socket; exiting" : "socket error", String(err));
@@ -146,6 +163,7 @@ async function run(): Promise<void> {
 		const running = planner.state.tasks.filter(t => t.status === "running").length;
 		log("planner started", { pid: process.pid, version: VERSION, root: switchyardHome(), node: process.version, tasks: planner.state.tasks.length, running });
 		planner.start();
+		if (process.env.SWITCHYARD_PLANNER_DASHBOARD !== "off" && dashboardEnabled()) dashboard = startDashboard({ log });
 	});
 	process.on("SIGTERM", () => shutdown("SIGTERM"));
 	process.on("SIGINT", () => shutdown("SIGINT"));

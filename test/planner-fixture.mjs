@@ -107,6 +107,8 @@ export async function startPlannerFixture(opts) {
 		...clientEnv,
 		SWITCHYARD_PLANNER_STDERR: "1",
 		SWITCHYARD_PLANNER_CLOCK_FILE: clockFile,
+		// AO's dashboard server would take the machine's port 3012 (src/ao/dashboard.ts); test planners don't serve it.
+		SWITCHYARD_PLANNER_DASHBOARD: "off",
 		...(opts.usage === false ? { SWITCHYARD_PLANNER_USAGE: "off" } : { SWITCHYARD_PLANNER_OMP: ao.ompBin }),
 		...(opts.retryBaseMs ? { SWITCHYARD_PLANNER_RETRY_BASE_MS: String(opts.retryBaseMs) } : {}),
 		...(opts.pollMs ? { SWITCHYARD_PLANNER_POLL_MS: String(opts.pollMs) } : {}),

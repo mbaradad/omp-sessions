@@ -496,7 +496,7 @@ export interface PlannerOps {
 	 * `omp`: what the start-up `ensureOmpIntegration()` did (G46): the gate and the `omp` shim installed, `error`
 	 * when one is missing (a mode other than `auto` is then refused at spawn), `skipped` for a development host.
 	 */
-	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1; omp?: OmpIntegrationStatus } };
+	ping: { args: Record<string, never>; result: { pid: number; version: string; root: string; startedAt: number; api: 1; omp?: OmpIntegrationStatus; dashboard?: { port: number; listening: boolean; error?: string } } };
 	plan: { args: { lane?: string; all?: boolean }; result: PlanView };
 	edit: { args: { ops: PlanOp[]; rev?: number }; result: { rev: number; refs: Record<string, string> } };
 	getQueue: { args: { id: string }; result: QueueView };
