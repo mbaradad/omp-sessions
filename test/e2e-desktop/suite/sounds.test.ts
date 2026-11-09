@@ -45,13 +45,20 @@ describe("Session sounds", () => {
 	const acks: SoundPlayedMessage[] = [];
 	const status = () => api.sessions.get(id)?.status;
 
-	/** A prompt for the scripted omp (test/fake-omp-acp.mjs): the session goes working, then idle. Returns when idle again. */
+	/** A prompt for the scripted omp (test/fake-omp-acp.mjs; `slow` keeps the turn open long enough to be seen): returns once the session went working → idle. */
 	async function turn(script: string): Promise<void> {
 		await waitFor("idle before the turn", () => status() === "idle");
 		const ao = await api.ao.client(false);
-		await ao.sendMessage(id, { text: script });
-		await waitFor("working", () => status() === "working", 30_000);
-		await waitFor("idle after the turn", () => status() === "idle", 60_000);
+		let finished = false;
+		const sub = api.sessions.onDidTransition(({ meta, from }) => {
+			if (meta.id === id && from === "working" && meta.status === "idle") finished = true;
+		});
+		try {
+			await ao.sendMessage(id, { text: `slow 700\n${script}` });
+			await waitFor("working → idle", () => finished, 60_000);
+		} finally {
+			sub.dispose();
+		}
 	}
 
 	/** The acknowledgements that arrive in the next `ms` (cues are posted right when the transition lands). */

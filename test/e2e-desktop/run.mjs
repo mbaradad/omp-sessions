@@ -225,6 +225,8 @@ try {
 					`--extensions-dir=${extensions}`,
 					"--disable-extensions",
 					"--disable-gpu",
+					// Webview audio is held until a person has interacted with the window; nothing here can click, so the policy is lifted (the cue's acknowledgement then reports a running context).
+					"--autoplay-policy=no-user-gesture-required",
 					"--new-window",
 					...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 				],

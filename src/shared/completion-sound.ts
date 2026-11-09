@@ -138,6 +138,9 @@ let unlockInstalled = false;
 export function unlockAudioOnGesture(): void {
 	if (unlockInstalled || typeof window === "undefined") return;
 	unlockInstalled = true;
+	// Created now, not at the first cue: a context made at page load is running by the time a cue arrives, where one made in the cue's
+	// own call is not running yet.
+	audioContext();
 	const events = ["pointerdown", "keydown", "touchend"] as const;
 	const unlock = (): void => {
 		const ac = audioContext();
@@ -421,6 +424,9 @@ export function playSound(variant: SoundVariant, volume = 1): boolean {
 	if (variant === "None" || volume <= 0) return false;
 	const ac = audioContext();
 	if (!ac) return false;
+	// A context the browser still holds (no gesture yet) would queue the cue at time 0 and burst it out at the first click:
+	// drop the cue, and let the resume that audioContext() asked for take effect.
+	if (ac.state !== "running") return false;
 	// Voices → master → low-pass → dry + reverb send → out.
 	const now = ac.currentTime;
 	const master = ac.createGain();

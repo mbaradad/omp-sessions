@@ -21,9 +21,16 @@ const playedEmitter = new vscode.EventEmitter<SoundPlayedMessage>();
 /** A webview played (or could not play) a cue: what it reports back. The desktop e2e reads these through `OmpApi.onDidPlaySound`. */
 export const onDidPlaySound = playedEmitter.event;
 
+let toldAboutAutoplay = false;
+
 /** Called with a webview's acknowledgement of a cue. */
 export function reportSoundPlayed(msg: SoundPlayedMessage): void {
 	playedEmitter.fire(msg);
+	// The browser engine holds a page's audio until the person has interacted with the window (autoplay policy): say so once.
+	if (!msg.played && msg.state === "suspended" && !toldAboutAutoplay) {
+		toldAboutAutoplay = true;
+		void vscode.window.showInformationMessage("Switchyard's sound could not play yet: VS Code's webviews stay silent until you have clicked or pressed a key in the window once. It works from then on.");
+	}
 }
 
 /** Offers a webview for playing cues until the returned disposable runs (with the webview). */
