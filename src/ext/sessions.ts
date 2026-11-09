@@ -5,7 +5,7 @@ import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView, TaskState } from "../planner/types";
 import { findOmp } from "../shared/launch";
-import { readSwitchyardConfig } from "../shared/switchyard-config";
+import { readSwitchyardConfig } from "../ao/config";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
 import { readMode } from "../shared/session-mode";

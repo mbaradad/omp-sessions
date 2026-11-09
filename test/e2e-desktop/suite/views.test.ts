@@ -13,7 +13,7 @@ import { ensurePlanner, stopPlanner } from "../../../src/planner/client";
 import type { PlanOp, PlanView } from "../../../src/planner/types";
 import type { Node } from "../../../src/ext/tree";
 import { readMode } from "../../../src/shared/session-mode";
-import { writeSwitchyardConfig } from "../../../src/shared/switchyard-config";
+import { writeSwitchyardConfig } from "../../../src/ao/config";
 import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairing";
 import type { SessionMeta } from "../../../src/shared/protocol";
 

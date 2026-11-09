@@ -13,7 +13,7 @@ import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import { migrationPending } from "./migration-offer";
-import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
+import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../ao/config";
 import { switchyardHome } from "../ao/native";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
