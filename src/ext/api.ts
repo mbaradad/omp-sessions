@@ -19,6 +19,8 @@ export interface OmpApi {
 	openPanel(id: string, where?: "editor" | "sidebar"): ChatPanel | undefined;
 	/** Start a session in AO (or resume `opts.id`), open its chat. Shows errors itself. */
 	launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined>;
+	/** The harness a new session in `cwd` runs (SessionManager.chooseHarness: asks when several are logged in to AO and nobody chose); undefined when cancelled or it failed (shown). */
+	chooseHarness(cwd: string): Promise<string | undefined>;
 	/** Quick pick over sessions; undefined if cancelled or none match. */
 	pickSession(placeHolder: string, filter?: (m: SessionMeta) => boolean): Promise<string | undefined>;
 	/** Folder for a new session from a command argument (Uri, project node, path) or by asking. */

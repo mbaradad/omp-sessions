@@ -53,7 +53,7 @@ export function registerEditorPlus(api: OmpApi): void {
 
 	async function panelFor(cwdHint: string | undefined): Promise<ChatPanel | undefined> {
 		const panel = await api.targetPanel(cwdHint);
-		if (!panel) void vscode.window.showInformationMessage("Open or start an omp session first.");
+		if (!panel) void vscode.window.showInformationMessage("Open or start a session first.");
 		return panel;
 	}
 

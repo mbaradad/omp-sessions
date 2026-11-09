@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AoError, readNativeSession } from "../ao/client";
-import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
+import { AoError, type AoHarnessInfo, type HarnessChoice, availableHarnesses, isOmpHarness, projectWorkerHarness, readNativeSession, resolveHarness } from "../ao/client";
+import { type AoChangedFile, type AoSessionModel, AoSessionWatcher, approvalModeFor } from "../ao/model";
+import { harnessPickItems, shouldAskHarness } from "./harness-choice";
 import type { PlanOp, PlanView, TaskState } from "../planner/types";
 import { readSwitchyardConfig } from "../ao/config";
 import { type OmpPaths, findOmp, ompPathsForArgs } from "../shared/omp-paths";
@@ -62,6 +63,15 @@ export class OmpMissingError extends Error {
 	}
 }
 
+/** Asks which of AO's authorized chat harnesses a new session runs, AO's default first; undefined when cancelled. */
+async function pickHarness(harnesses: readonly AoHarnessInfo[], choice: HarnessChoice): Promise<string | undefined> {
+	const pick = await vscode.window.showQuickPick(
+		harnessPickItems(harnesses, choice).map(i => ({ label: i.label, description: i.description, harness: i.harness })),
+		{ title: "Harness for the new session", placeHolder: "Several agent harnesses are logged in to AO (set switchyard.defaultHarness to stop asking)", ignoreFocusOut: true },
+	);
+	return pick?.harness;
+}
+
 /** What a new session starts with. AO runs it: in a worktree of the folder's git repository, else in a scratch folder. */
 export interface NewSessionOptions {
 	cwd: string;
@@ -72,11 +82,14 @@ export interface NewSessionOptions {
 	prompt?: string;
 	/** Old name of the first prompt (New Session with Options' goal). */
 	goal?: string;
+	/** The AO harness (claude-code, codex, omp, …): `chooseHarness`'s answer. Absent: resolved at spawn (Switchyard default, project worker harness, AO default). */
+	harness?: string;
+	/** Explicitly picked: applies to any harness. The Switchyard default model (config.json) applies to omp sessions only. */
 	model?: string;
 	/** Thinking level (AO `effort`). */
 	effort?: string;
 	mode?: PermissionMode;
-	/** omp CLI flags: `--model`, `--thinking` and `--approval-mode` apply; `omp acp` takes no others (GAPS G10). */
+	/** omp CLI flags: `--model`, `--thinking` and `--approval-mode` apply; `omp acp` takes no others (GAPS G10). omp only. */
 	ompArgs?: string[];
 	/** Branch for the session's worktree: an existing one is checked out when free, else a new one is made from the default branch. */
 	branch?: string;
@@ -326,15 +339,20 @@ export class SessionManager implements vscode.Disposable {
 	}
 
 	/**
-	 * The models a live session of this machine offers (its config options: the only exact list; AO's agent catalog
-	 * has thousands of ids and drops models that run). Asks the most recently active sessions in turn; undefined when
-	 * none is running (a new session has no list yet: callers accept a typed id, the spawn helper checks it).
+	 * The models to offer for a new session of `harness`. omp: a live omp session of this machine's own choices (its
+	 * config options: the only exact list; AO's omp catalog has thousands of ids and drops models that run), asking the
+	 * most recently active omp sessions in turn; undefined when none is running (callers accept a typed id, the spawn
+	 * helper checks it). Another harness: AO's model catalog of it.
 	 */
-	async modelChoices(): Promise<Array<{ value: string; name: string }> | undefined> {
+	async modelChoices(harness?: string): Promise<Array<{ value: string; name: string }> | undefined> {
 		const client = await this.ao.client(false).catch(() => undefined);
 		if (!client) return undefined;
+		if (!isOmpHarness(harness)) {
+			const catalog = await client.agentModels(harness).catch(() => undefined);
+			return catalog?.models.length ? catalog.models.map(m => ({ value: m.id, name: m.label || m.id })) : undefined;
+		}
 		const live = this.all()
-			.filter(m => m.status !== "stopped")
+			.filter(m => m.status !== "stopped" && isOmpHarness(m.harness))
 			.sort((a, b) => b.updatedAt - a.updatedAt)
 			.slice(0, 3);
 		for (const m of live) {
@@ -412,6 +430,23 @@ export class SessionManager implements vscode.Disposable {
 	}
 
 	/**
+	 * The harness a new session in `cwd` runs (src/ao/harness.ts's order: `switchyard.defaultHarness` / config.json
+	 * `harness`, the AO project's worker harness, AO's default). When nobody chose and several chat harnesses are
+	 * authorized, asks with a quick pick (AO's default first). Resolves with undefined when the pick is cancelled.
+	 * Throws HarnessError for a default AO can't chat with.
+	 */
+	async chooseHarness(cwd: string): Promise<string | undefined> {
+		const client = await this.ao.client();
+		const config = vscode.workspace.getConfiguration("switchyard").get<string>("defaultHarness")?.trim() || readSwitchyardConfig().harness?.trim() || undefined;
+		const harnesses = await availableHarnesses(client);
+		// The project only matters when there is no Switchyard default; a folder AO has no project for yet has no worker harness.
+		const projectId = config ? undefined : (await client.projectForFolder(cwd, { create: false }).catch(() => undefined))?.id;
+		const project = projectId ? await projectWorkerHarness(client, projectId) : undefined;
+		const choice = resolveHarness({ config, project, harnesses });
+		return shouldAskHarness(choice, harnesses) ? pickHarness(harnesses, choice) : choice.harness;
+	}
+
+	/**
 	 * Starts a session in AO (in a worktree of `cwd`'s git repository, else in a scratch folder), or with
 	 * `id` reopens that one (resuming it when stopped). Resolves with its id once AO has it.
 	 */
@@ -423,12 +458,18 @@ export class SessionManager implements vscode.Disposable {
 		}
 		const flags = launchFlags(opts.ompArgs ?? []);
 		if (flags.ignored.length) this.ao.log.warn(`omp flags AO owns, ignored: ${flags.ignored.join(" ")}`);
-		// Precedence: this launch, then the defaults (config.json: Set Default Model / Mode).
+		// Precedence: this launch, then the defaults (config.json: Set Default Model / Mode). The default model is an
+		// omp model: the spawn applies it to omp sessions only (`defaultModel`).
 		const defaults = readSwitchyardConfig();
 		const prompt = (opts.prompt ?? opts.goal)?.trim();
-		const model = opts.model ?? flags.model ?? defaults.model;
+		const model = opts.model ?? flags.model;
 		const title = opts.title?.trim().slice(0, 100);
-		const mode = opts.mode ?? flags.mode ?? defaults.mode;
+		// Asked for: refused by the spawn when the harness can't run it. The default (config.json) gives way to the nearest mode AO offers.
+		const mode = opts.mode ?? flags.mode;
+		if (opts.harness && !isOmpHarness(opts.harness)) {
+			if (flags.rest.length) throw new Error(`extra omp flags (${flags.rest.join(" ")}) are omp-only (Switchyard's omp extension); this session would run ${opts.harness}`);
+			if (mode === "plan") throw new Error(`plan mode is omp-only (Switchyard's omp extension); this session would run ${opts.harness}: pick Ask, Edits or Auto`);
+		}
 		let id: string;
 		try {
 			// The Switchyard spawn sequence (MAPPING D11): bypass-permissions in AO and the mode in the omp gate,
@@ -436,6 +477,9 @@ export class SessionManager implements vscode.Disposable {
 			const spawned = await client.spawnSwitchyard({
 				dir: opts.cwd,
 				setMode: (sessionId, m) => setSessionMode(client, sessionId, m),
+				defaultModel: defaults.model ?? null,
+				defaultMode: defaults.mode ?? null,
+				...(opts.harness && { harness: opts.harness }),
 				...(title && { displayName: title }),
 				...(opts.branch && { branch: opts.branch }),
 				...(prompt && { prompt }),
@@ -509,11 +553,35 @@ export class SessionManager implements vscode.Disposable {
 		await this.refreshSession(id);
 	}
 
-	/** Switches the permission mode: the omp extension's gate reads the session's mode file on every tool call, so it is live in any state (checkpoints' `setSessionMode`). */
+	/**
+	 * Switches the permission mode. omp: the omp extension's gate reads the session's mode file on every tool call, so
+	 * it is live in any state (checkpoints' `setSessionMode`). Another harness: AO's approval mode (ask → default,
+	 * edits → accept-edits, auto → bypass-permissions), which AO applies when it starts the agent: a live, idle
+	 * session's agent is restarted on the same transcript. Plan is omp-only.
+	 */
 	async setMode(id: string, mode: PermissionMode): Promise<void> {
-		if (!this.get(id)) throw new Error("that session no longer exists");
-		await setSessionMode(await this.ao.client(), id, mode);
+		const meta = this.get(id);
+		if (!meta) throw new Error("that session no longer exists");
+		if (isOmpHarness(meta.harness)) await setSessionMode(await this.ao.client(), id, mode);
+		else await this.setApprovalMode(id, meta.harness ?? "", mode);
 		await this.refreshSession(id);
+	}
+
+	/** The non-omp half of `setMode`, as the CLI's `switchyard mode` does it. */
+	private async setApprovalMode(id: string, harness: string, mode: PermissionMode): Promise<void> {
+		if (mode === "plan") throw new Error(`plan mode is omp-only (Switchyard's omp extension); this session runs ${harness}: use Ask, Edits or Auto`);
+		const client = await this.ao.client();
+		const model = this.models.get(id);
+		const view = model?.view ?? (await client.getSession(id));
+		const conversation = model?.conversation ?? (await client.getConversation(id).catch(() => undefined));
+		const approval = approvalModeFor(mode);
+		if (conversation?.settings.approvalMode === approval) return;
+		const live = !view.isTerminated && view.activity.state !== "exited";
+		if (live && conversation?.turns.some(t => t.state === "running" || t.state === "queued")) throw new Error(`${harness} changes its approval level only when AO restarts it, and the session is working: switch when it is idle, or stop it first`);
+		await client.setTurnSettings(id, { approvalMode: approval });
+		if (!live) return;
+		await client.exitAgent(id);
+		await client.resumeAgent(id);
 	}
 
 	/** Where the session task queues live: the planner's lanes (ext-tasks' SessionQueues over the window's PlannerStore). */

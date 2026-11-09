@@ -687,7 +687,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (working || metas.length > 1) {
 			const ok = await vscode.window.showWarningMessage(
 				`Stop ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} sessions`}?`,
-				{ modal: true, detail: `${working ? `${working} ${working === 1 ? "is" : "are"} working. ` : ""}The omp agents exit; the sessions and transcripts stay and can be resumed.` },
+				{ modal: true, detail: `${working ? `${working} ${working === 1 ? "is" : "are"} working. ` : ""}The agents exit; the sessions and transcripts stay and can be resumed.` },
 				"Stop",
 			);
 			if (ok !== "Stop") return;

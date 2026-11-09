@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, type AoStreamStatus, AoError, unwrap } from "../ao/client";
+import { type AoClient, type AoConversation, type AoEventSubscription, type AoSchemas, type AoStreamStatus, AoError, isOmpHarness, unwrap } from "../ao/client";
 import { hermesOrigin } from "../shared/hermes-origin";
 import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
@@ -313,13 +313,14 @@ export class ChatPanel implements vscode.Disposable {
 		return meta && mode ? { ...meta, permissionMode: mode } : meta;
 	}
 
-	/** omp's permission mode: plan is omp's `mode` option; the others follow the approval mode AO launched omp with. */
+	/** The permission mode. omp: plan is omp's `mode` option; the others follow the approval mode AO launched omp with. Another harness: AO's approval mode. */
 	private get mode(): PermissionMode | undefined {
 		const conv = this.feed.conversation;
 		const gated = this.modes?.read(this.sessionId);
 		if (gated) return gated;
 		if (!conv) return undefined;
-		if (this.option("mode")?.currentValue === "plan") return "plan";
+		const omp = isOmpHarness(this.sessions.get(this.sessionId)?.harness);
+		if (omp && this.option("mode")?.currentValue === "plan") return "plan";
 		switch (conv.settings.approvalMode) {
 			case "accept-edits":
 			case "auto":
@@ -327,7 +328,8 @@ export class ChatPanel implements vscode.Disposable {
 			case "bypass-permissions":
 				return "auto";
 			default:
-				return this.defaultMode;
+				// AO's default: omp's own tools.approvalMode; another harness asks through AO's approvals.
+				return omp ? this.defaultMode : "ask";
 		}
 	}
 
@@ -635,6 +637,8 @@ export class ChatPanel implements vscode.Disposable {
 		const native = readNativeSession(this.sessionId);
 		const omp = resolveOmpPath();
 		const warn = (text: string) => this.post({ type: "notice", level: "warning", text });
+		const harness = this.sessions.get(this.sessionId)?.harness;
+		if (!isOmpHarness(harness)) return warn(`omp's terminal UI is for omp sessions; this session runs ${harness}.`);
 		if (!native?.ompSessionId) return warn("omp's session id is not known yet: the Switchyard omp extension records it when the session starts. Send a message first, or check that the extension is installed.");
 		if (!omp) return warn("Could not find the `omp` executable.");
 		if (this.feed.isBusy()) return warn("omp is working: interrupt it (Esc), or wait for it to finish, before continuing in the terminal.");
@@ -768,11 +772,24 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	/**
-	 * Permission modes are live through the Switchyard omp extension (MAPPING Q4/D11): its gate reads the
-	 * session's mode file on every tool call, so a switch applies at once, mid-turn, with no client open.
-	 * A session without a mode file (started from AO's own UI) runs in AO's mode; the chat can't change it.
+	 * omp: permission modes are live through the Switchyard omp extension (MAPPING Q4/D11): its gate reads the
+	 * session's mode file on every tool call, so a switch applies at once, mid-turn, with no client open. A session
+	 * without a mode file (started from AO's own UI) runs in AO's mode; the chat can't change it. Another harness:
+	 * AO's approval mode (SessionManager.setMode restarts an idle agent to apply it); Plan is omp-only.
 	 */
 	private async setMode(mode: PermissionMode): Promise<void> {
+		const harness = this.sessions.get(this.sessionId)?.harness;
+		if (!isOmpHarness(harness)) {
+			try {
+				await this.sessions.setMode(this.sessionId, mode);
+			} catch (err) {
+				this.post({ type: "notice", level: "warning", text: `Could not switch to ${PERMISSION_MODE_INFO[mode].label}: ${err instanceof Error ? err.message : String(err)}` });
+				return;
+			}
+			this.postState();
+			this.schedule();
+			return;
+		}
 		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
 			await this.modes.set(this.sessionId, mode);
 			this.postState();

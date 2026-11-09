@@ -65,11 +65,11 @@ export function hermesChecks(f: HermesFacts): Check[] {
 
 	// Notifications.
 	for (const r of installed.filter(p => p.status === "enabled" && p.injection === false))
-		out.push({ level: "warn", title: `Notifications off in ${r.label}`, detail: "allow_gateway_injection is false: Hermes sessions there aren't told when their omp sessions finish or need input.", fixes: [{ label: "Allow", command: "switchyard.hermes.enable", args: [r.label] }] });
+		out.push({ level: "warn", title: `Notifications off in ${r.label}`, detail: "allow_gateway_injection is false: Hermes sessions there aren't told when their agent sessions finish or need input.", fixes: [{ label: "Allow", command: "switchyard.hermes.enable", args: [r.label] }] });
 	const note = f.lane?.status?.lastNotification;
 	if (note && !note.ok) {
 		const consent = installed.find(r => r.label === f.lane?.profile)?.injection;
-		const when = `${ago(f.now / 1000 - note.at)}${note.session ? `, omp session ${note.session.slice(0, 8)}` : ""}`;
+		const when = `${ago(f.now / 1000 - note.at)}${note.session ? `, session ${note.session.slice(0, 8)}` : ""}`;
 		out.push(
 			consent === true
 				? { level: "info", title: `Hermes didn't deliver the last notification (${f.lane?.profile})`, detail: `${when}. Notifications are allowed there, so the chat that started the session had ended (a one-shot \`hermes chat -Q\` or a closed CLI chat). Chats in the gateway, the dashboard and Desktop get them.` }
@@ -114,7 +114,7 @@ export function hermesChecks(f: HermesFacts): Check[] {
 		});
 	else if (lanes.some(r => r.label !== "default"))
 		out.push({ level: "info", title: `Kanban lane on in ${names(lanes)}`, detail: "Where the dispatcher runs is unknown. With the default multiplexed gateway it ticks in the default profile; turn the lane on there." });
-	if (!lanes.length && installed.some(r => r.status === "enabled")) out.push({ level: "info", title: "Kanban lane off", detail: "Cards assigned to switchyard run as omp sessions once it is on in the dispatcher's profile.", ...(where ? { fixes: [laneFix(where, true)] } : {}) });
+	if (!lanes.length && installed.some(r => r.status === "enabled")) out.push({ level: "info", title: "Kanban lane off", detail: "Cards assigned to switchyard run as agent sessions once it is on in the dispatcher's profile.", ...(where ? { fixes: [laneFix(where, true)] } : {}) });
 
 	// The switchyard command for the plugin.
 	if (installed.some(r => r.status === "enabled")) {

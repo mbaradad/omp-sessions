@@ -4,6 +4,7 @@
 // checkboxes to complete, inline run/pause. Being a regular view, it can be moved to the panel or
 // the secondary side bar.
 import * as vscode from "vscode";
+import { isOmpHarness } from "../ao/harness";
 import type { KeptBranch, LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
 import { failureHint, keptBranchText, laneSummary, spareNote, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
@@ -80,9 +81,10 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		return id ? this.deps.aoSessions.get(id)?.title : undefined;
 	}
 
-	/** omp's plan for an AO session, when it has one with tasks. */
+	/** omp's plan for an AO session, when it has one with tasks (omp sessions only: the mirror is the omp extension's). */
 	private phases(sessionId: string | undefined): TodoPhase[] | undefined {
-		const phases = sessionId ? this.deps.plans.get(sessionId) : undefined;
+		if (!sessionId || !isOmpHarness(this.deps.aoSessions.get(sessionId)?.harness)) return undefined;
+		const phases = this.deps.plans.get(sessionId);
 		return phases?.some(p => p.tasks.length) ? phases : undefined;
 	}
 

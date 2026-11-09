@@ -72,7 +72,7 @@ ${code}
 <ol>
 <li>Install the Orchestrator app (<a href="${IOS_APP_URL}">App Store</a> · <a href="${ANDROID_APP_URL}">Google Play</a>).</li>
 <li>Scan the code with the phone's camera or in the app${(status.endpoints ?? []).some(e => e.kind === "tailscale") ? " (away from this network, Tailscale must be on there too)" : ""}.</li>
-<li>Your omp sessions show up in the app; the phone keeps the pairing.</li>
+<li>Your sessions show up in the app; the phone keeps the pairing.</li>
 </ol>
 <p class="dim">The code carries this machine's AO password: anyone with it can see and control your sessions. Rotate it to unpair every phone.</p>
 ${warning}

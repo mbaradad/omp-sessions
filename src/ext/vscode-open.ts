@@ -84,7 +84,7 @@ export function registerVscodeOpen(api: OmpApi): void {
 				const meta = all.find(m => m.id === query) ?? (prefixed.length === 1 ? prefixed[0] : undefined);
 				if (!meta) {
 					const here = vscode.env.remoteName ? "the machine this window is connected to" : "this computer";
-					void vscode.window.showWarningMessage(`No omp session ${query} on ${here}: it runs on another machine. Open it from a VS Code window connected there.`);
+					void vscode.window.showWarningMessage(`No session ${query} on ${here}: it runs on another machine. Open it from a VS Code window connected there.`);
 					return;
 				}
 				clearOpenRequest(meta.id);

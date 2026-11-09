@@ -67,6 +67,7 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 		...(turnIdOf(model) && { turnId: turnIdOf(model) }),
 		changedFiles: model.changedFiles.length,
 		...(model.model && { model: model.model }),
+		...(model.harness && { harness: model.harness }),
 		...(model.cost !== undefined && { cost: model.cost }),
 		...(model.reply && { lastText: model.reply.length > LAST_TEXT_MAX ? `${model.reply.slice(0, LAST_TEXT_MAX)}…` : model.reply }),
 		...(model.exitReason && { exitReason: model.exitReason }),

@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { OMP_HARNESS } from "../ao/harness";
 import { prepareResume } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
@@ -380,7 +381,8 @@ export function registerToolbox(api: OmpApi): void {
 				label: "$(add) New Session with This Model",
 				run: async () => {
 					const cwd = await api.pickFolder();
-					if (cwd) await api.launchAndOpen({ cwd, model: selector });
+					// An omp model (omp's own listing): the session runs omp whatever the default harness.
+					if (cwd) await api.launchAndOpen({ cwd, harness: OMP_HARNESS, model: selector });
 				},
 			},
 			{

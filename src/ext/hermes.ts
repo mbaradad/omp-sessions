@@ -184,7 +184,7 @@ export function registerHermesPlugin(api: OmpApi): void {
 					{ label: "Show status", action: "status" as const },
 					{ label: "Uninstall", action: "uninstall" as const },
 				],
-				{ title: "switchyard plugin for Hermes Agent", placeHolder: "omp tools, notifications and a kanban lane (cards assigned to switchyard run as omp sessions)" },
+				{ title: "switchyard plugin for Hermes Agent", placeHolder: "Switchyard tools, notifications and a kanban lane (cards assigned to switchyard run as agent sessions)" },
 			);
 			if (!pick) return;
 			const targets = await pickTargets(pick.action, source);
