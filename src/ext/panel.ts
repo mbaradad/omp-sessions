@@ -201,7 +201,7 @@ export interface ChatCheckpoints {
 export interface ChatModeGate {
 	read(sessionId: string): PermissionMode | undefined;
 	/** Resolves once the switch is done (the gate's waiting question, if any, is settled). */
-	set(sessionId: string, mode: PermissionMode): Promise<void>;
+	set(sessionId: string, mode: PermissionMode): Promise<unknown>;
 }
 
 export class ChatPanel implements vscode.Disposable {
