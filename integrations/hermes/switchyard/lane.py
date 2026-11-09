@@ -211,7 +211,7 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
         acts: list[tuple] = [("unblock",)] if our_block else []
         if card.status in ("running", "ready") or our_block:
             sid = str(link.get("session", ""))
-            # An old Switchyard id (no `-`, 14 characters) belongs to a session that was never migrated to AO.
+            # An old omp Sessions id (no `-`, 14 characters) belongs to a session that was never migrated to AO.
             what = f"The omp session {sid} predates the move to Switchyard and was not migrated" if "-" not in sid and len(sid) > 12 else f"The omp session {short(sid)} was removed"
             acts.append(("block_transient", f"{what}. Unblock the card to start a new session."))
         return acts

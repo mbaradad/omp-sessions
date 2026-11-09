@@ -1854,7 +1854,7 @@ ${c.bold("Omp extension")}  ${c.dim("(permission modes, /undo and the todo mirro
   omp-extension install|uninstall copy them into omp's agent folder and ~/.switchyard/bin (new and status do it
                                   by themselves unless: config set omp-extension off)
 
-${c.bold("Migration")}  ${c.dim("(from Switchyard to Switchyard on AO)")}
+${c.bold("Migration")}  ${c.dim("(from omp Sessions to Switchyard)")}
 ${MIGRATE_HELP}
 
   --no-color, NO_COLOR=1          plain output
