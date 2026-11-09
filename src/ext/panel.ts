@@ -451,8 +451,7 @@ export class ChatPanel implements vscode.Disposable {
 		} catch {
 			// Not connected yet: the footer shows no model until the next turn ends.
 		}
-		const approval = this.feed.conversation?.settings.approvalMode;
-		if (!approval || approval === "default") this.defaultMode = await ompDefaultPermissionMode();
+		this.defaultMode = await ompDefaultPermissionMode();
 	}
 
 	/** omp's slash commands, as AO lists them (skills). */
@@ -528,17 +527,19 @@ export class ChatPanel implements vscode.Disposable {
 			await this.setOption("mode", "plan");
 			return;
 		}
-		if (this.option("mode")?.currentValue === "plan") await this.setOption("mode", "default");
-		const approval = APPROVAL_OF[mode];
-		const current = conv.settings.approvalMode ?? "default";
-		if (mode === "ask" && this.defaultMode !== "ask") {
+		// AO's `default` runs omp with omp's own tools.approvalMode (GAPS G12): that is Ask only if omp's config says so.
+		if (mode === "ask" && (await ompDefaultPermissionMode()) !== "ask") {
 			this.post({
 				type: "notice",
 				level: "warning",
 				markdown: true,
-				text: `AO can't launch omp in Ask mode: its default approval mode runs omp with your \`tools.approvalMode\` (${this.defaultMode ? PERMISSION_MODE_INFO[this.defaultMode].label : "unknown"}). Set \`tools.approvalMode: always-ask\` in omp's config.yml (/settings) to make it ask.`,
+				text: `AO can't start omp in Ask mode: AO's default approval mode runs omp with your \`tools.approvalMode\` (${this.defaultMode ? PERMISSION_MODE_INFO[this.defaultMode].label : "unknown"} here). Set \`tools.approvalMode: always-ask\` in omp's config.yml (/settings) for Ask, or use Edits (asks before commands).`,
 			});
+			return;
 		}
+		if (this.option("mode")?.currentValue === "plan") await this.setOption("mode", "default");
+		const approval = APPROVAL_OF[mode];
+		const current = conv.settings.approvalMode ?? "default";
 		if (current === approval) {
 			this.postState();
 			return;

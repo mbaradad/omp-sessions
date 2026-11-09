@@ -396,7 +396,8 @@ export class ChatFeed {
 
 	private turnNotice(t: AoTurn): { level: "error" | "warning"; text: string } | undefined {
 		if (t.state === "failed") return { level: "error", text: `⚠ ${t.errorMessage || "The turn failed."}` };
-		if (t.state === "recovered") return { level: "warning", text: t.errorMessage || "The daemon lost this turn while it ran." };
+		// AO files turns it imports from omp's own history on a reload as recovered: nothing was lost.
+		if (t.state === "recovered") return t.providerTurnId?.startsWith("acp-history-turn:") ? undefined : { level: "warning", text: t.errorMessage || "The daemon lost this turn while it ran." };
 		if (t.state === "interrupted" || t.state === "cancelled") return t.hasHumanPrompt && t.startedAt ? { level: "warning", text: "Interrupted" } : undefined;
 		return undefined;
 	}

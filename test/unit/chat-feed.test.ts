@@ -202,7 +202,7 @@ test("steers show as the user's words; failures and interrupts as notices", () =
 	const feed = new ChatFeed();
 	const snap = feed.reset(
 		conv({
-			turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "failed", { errorMessage: "model overloaded" })],
+			turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "failed", { errorMessage: "model overloaded" }), turn("t3", "recovered", { providerTurnId: "acp-history-turn:41:abc" })],
 			messages: [msg(1, "user", "go", "t1")],
 			activities: [act(2, { activityKind: "system", status: "completed", turnId: "t1", summary: "Steered", detail: { event: "steer", text: "use tabs", origin: "human" } })],
 		}),
