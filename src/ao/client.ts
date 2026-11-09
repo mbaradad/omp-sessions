@@ -30,7 +30,7 @@ export type AoMessage = AoSchemas["ConversationMessageResponse"];
 export type AoActivity = AoSchemas["ConversationActivityResponse"];
 export type AoUsage = AoSchemas["ConversationUsagePayload"];
 export type AoTurnSettings = AoSchemas["ConversationTurnSettingsPayload"];
-export type AoDiffFile = AoSchemas["ConversationDiffFileResponse"];
+export type AoWorkspaceManifest = AoSchemas["WorkspaceManifestResponse"];
 export type AoProject = AoSchemas["ProjectSummary"];
 export type AoSpawnRequest = AoSchemas["SpawnSessionRequest"];
 export type AoSpawnResponse = AoSchemas["SpawnSessionResponse"];
@@ -297,12 +297,19 @@ export class AoClient {
 		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId, configId } }, body }));
 	}
 
-	// ---- projects ----
+	// ---- workspace ----
 
 	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
 	async workspacePath(sessionId: string): Promise<string> {
 		return (await unwrap(this.client.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId } } }))).workspacePath;
 	}
+
+	/** The workspace against the base it started from: every changed file with its line counts (empty outside git). */
+	workspaceManifest(sessionId: string): Promise<AoWorkspaceManifest> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/workspace/manifest", { params: { path: { sessionId } } }));
+	}
+
+	// ---- projects ----
 
 	async listProjects(): Promise<AoProject[]> {
 		return (await unwrap(this.client.GET("/api/v1/projects"))).projects;
