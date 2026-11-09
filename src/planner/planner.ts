@@ -537,8 +537,8 @@ export class Planner {
 			}
 			// A typo'd model would leave a terminated session behind in AO (G36): check before anything is created.
 			if (opts.model) await this.checkModel(ao, opts.model);
-			// A session that exists already (a client spawned it): the parents' work is merged into its worktree.
-			if (session && this.propagation.gitParents(task).length) {
+			// A session that exists already (a client spawned it): the task is tracked in git, and its parents' work is merged into the worktree.
+			if (session) {
 				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string; workspace?: string });
 				const sessionRepo = info.repo ? await gitRoot(info.repo) : undefined;
 				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch, info.workspace);

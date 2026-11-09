@@ -302,6 +302,15 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Graphs through sessions a client spawned first (the CLI's `new --task`)
+
+A task dispatched into an **existing** session (its lane is the session) is tracked in git like a planner-spawned
+one: the planner records the session's repo, branch and worktree before the first run, merges the parents' committed
+heads into that worktree first (edges `merged`/`conflict`), and after the turn commits the work and records the head,
+so its own children merge it in turn. `after` may name session ids, so a graph made only of `queue {id: <session>}`
+calls (`queue {add, after [<session>], autoRun}`) propagates exactly like one the planner spawned. Sessions outside a
+git repository are not tracked.
+
 ## Chat hibernation (G28)
 
 AO keeps `chatHibernationEnabled` in memory only (false after every daemon boot). When `<switchyard home>/config.json`
