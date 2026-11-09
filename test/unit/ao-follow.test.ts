@@ -87,7 +87,7 @@ function fakeClient(reads: AoConversation[]) {
 	let stream: Pick<AoEventStreamOptions, "onEvent" | "onStatus"> | undefined;
 	return {
 		queries,
-		emit: (sessionId: string) => stream?.onEvent({ seq: 1, projectId: "repo", sessionId, type: "session_updated", payload: {}, createdAt: T }),
+		emit: (sessionId: string) => stream?.onEvent({ seq: 1, projectId: "repo", sessionId, type: "session_updated", payload: {}, createdAt: T }, 1),
 		open: () => stream?.onStatus?.({ state: "open", cursor: 0, resumed: true, reset: false }),
 		client: {
 			getConversation: async (_id: string, query: AoConversationQuery = {}) => {
