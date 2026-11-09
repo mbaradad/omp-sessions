@@ -116,6 +116,8 @@ export interface AoSessionModel {
 	question?: AoQuestion;
 	/** The last assistant text in full (clipped at REPLY_MAX characters). */
 	reply?: string;
+	/** The last turn completed but its reply is not final yet: `reply` may be the previous turn's, and a refresh is on its way. */
+	replyPending?: boolean;
 	/** Why it stopped, when it did: a provisioning error or the failed turn's message. */
 	exitReason?: string;
 	/** The AO view and conversation this model came from. */
@@ -256,6 +258,40 @@ export function lastReply(conversation: AoConversation, max = REPLY_MAX): string
 	return undefined;
 }
 
+/**
+ * One turn's reply: the last non-empty assistant text of that turn, and whether it is final. AO can mark a
+ * turn `completed` a moment before it flags its last assistant message `streaming: false` (seen by test-infra,
+ * about 2 reads in 40), and the message may not be there yet at all. `final` is true once the turn has ended
+ * and it has an assistant message and none of its assistant messages is still streaming. A turn that ended
+ * with no assistant text (a tool-only turn, a failed one) never becomes final: callers wait a short grace
+ * period (`awaitTurnReply`) and then take what there is.
+ */
+export function turnReply(conversation: AoConversation, turnId: string, max = REPLY_MAX): { text?: string; final: boolean } {
+	const turn = conversation.turns.find(t => t.id === turnId);
+	const messages = conversation.messages.filter(m => m.turnId === turnId && m.role === "assistant");
+	let text: string | undefined;
+	for (let i = messages.length - 1; i >= 0 && text === undefined; i--) if (messages[i].text.trim()) text = messages[i].text;
+	const ended = turn !== undefined && turn.state !== "queued" && turn.state !== "running";
+	const final = ended && messages.length > 0 && !messages.some(m => m.streaming);
+	return { ...(text !== undefined && { text: text.length > max ? `${text.slice(0, max)}\n… (clipped)` : text }), final };
+}
+
+/**
+ * The last real turn that carries a prompt or a reply. `POST /compact` adds a `completed` turn with no
+ * messages at all (live, G33 repro): nothing was asked, so no reply is owed, and it must not stand for
+ * "the last turn" when judging whether a reply is final.
+ */
+function lastPromptTurn(conversation: AoConversation): AoTurn | undefined {
+	const withMessages = new Set(conversation.messages.map(m => m.turnId));
+	return realTurns(conversation).findLast(t => withMessages.has(t.id));
+}
+
+/** The last prompted turn completed but its reply is not final yet (see turnReply): `reply` may still be the previous turn's. */
+export function replyPending(conversation: AoConversation): boolean {
+	const last = lastPromptTurn(conversation);
+	return last?.state === "completed" && !turnReply(conversation, last.id).final;
+}
+
 const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
 export function queueOf(conversation: AoConversation): AoQueue {
@@ -389,6 +425,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation,
 		queue: conversation ? queueOf(conversation) : { pending: 0, running: 0, done: 0, total: 0, items: [] },
 		...(question && { question }),
 		...(reply && { reply }),
+		...(conversation && replyPending(conversation) && { replyPending: true }),
 		...(exitReason && { exitReason }),
 		view,
 		...(conversation && { conversation }),
@@ -499,8 +536,12 @@ export interface AoWatcherOptions {
 	changedFiles?: boolean;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
-	/** How long after a session settles its changed files are read once more (the first read can be stale). Default 1500 ms. */
+	/** After a session settles, its changed files are read again this long after (a quick second look; the first read can be stale). Default 1500 ms. */
 	settleMs?: number;
+	/** The read that makes them final, this long after the session settled: AO caches a manifest for 3 s without saying so, so this must exceed that. Default 3400 ms. */
+	manifestCacheMs?: number;
+	/** Also read the changed files while a turn runs (on every event). Off by default: those reads make AO cache a half-done manifest that the settle read then gets back. */
+	liveFiles?: boolean;
 }
 
 /**
@@ -514,8 +555,9 @@ export class AoSessionWatcher {
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly cwds = new Map<string, string>();
-	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean }>();
-	private readonly confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean; settledAt?: number }>();
+	private readonly confirmTimers = new Map<string, { due: number; timer: ReturnType<typeof setTimeout> }>();
+	private readonly replyTries = new Map<string, { turnId: string; tries: number }>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -605,7 +647,7 @@ export class AoSessionWatcher {
 		this.closed = true;
 		this.subscription?.close();
 		for (const t of this.timers.values()) clearTimeout(t);
-		for (const t of this.confirmTimers.values()) clearTimeout(t);
+		for (const t of this.confirmTimers.values()) clearTimeout(t.timer);
 		this.confirmTimers.clear();
 		this.timers.clear();
 		this.listeners.clear();
@@ -628,25 +670,62 @@ export class AoSessionWatcher {
 		// Not ready yet (409 while the controller starts), or gone with a terminated session: the view alone.
 		const conversation = this.options.conversations === false || view.mode !== "chat" ? undefined : await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 }).catch(() => undefined);
 		const files = this.options.changedFiles === false ? [] : await this.filesOf(view, conversation);
+		if (conversation) this.watchReply(view.id, conversation);
 		const model = sessionModel(view, conversation, undefined, files);
 		return cwd ? { ...model, cwd } : model;
 	}
 
 	/**
-	 * Files change only while the agent works, which adds conversation items or settles turns: the
-	 * manifest (a git diff on the daemon) is read again only when those moved. The read made at the instant
-	 * a turn settles can be stale (AO answered without the file the turn had just written, and no event
-	 * follows to correct it: seen live), so a session that just settled is read once more `settleMs`
-	 * later, and a read AO flags `stale` or `refreshing` is not trusted either, up to a few tries.
+	 * AO can mark a turn completed a moment before its last assistant message stops streaming (turnReply), and
+	 * no event follows: so while the last turn is completed but its reply is not final, read the session again
+	 * shortly, a few times (a turn that ended without any assistant text never becomes final).
+	 */
+	private watchReply(sessionId: string, conversation: AoConversation): void {
+		if (!replyPending(conversation)) {
+			this.replyTries.delete(sessionId);
+			return;
+		}
+		const turnId = lastPromptTurn(conversation)?.id ?? "";
+		const seen = this.replyTries.get(sessionId);
+		const tries = seen?.turnId === turnId ? seen.tries : 0;
+		if (tries >= 4) return;
+		this.replyTries.set(sessionId, { turnId, tries: tries + 1 });
+		this.confirmLater(sessionId, this.options.settleMs ?? 1_500);
+	}
+
+	/**
+	 * Files change only while the agent works, which adds conversation items or settles turns: the manifest (a
+	 * git diff on the daemon) is read when a turn settles, not while it runs. AO does not tell a stale
+	 * manifest from a fresh one: it returns its last computed manifest for 3 s (`workspaceCacheTTL`) as fresh
+	 * (`stale: false`), and only a filesystem watcher, which exists while a client holds the workspace events
+	 * stream (nobody here does), marks it stale earlier. So a manifest computed while the turn ran, between
+	 * the agent's writes, is served unflagged for up to 3 s after the turn settles and no event follows to
+	 * correct it (seen live: the file count stuck for 30 s in an e2e run). Not reading while the turn runs
+	 * (`liveFiles` opts back in) removes our own source of that; the settle read is then fresh. Another client
+	 * (AO's UI) can still cache a mid-turn manifest, so a session that just settled is also read after
+	 * `settleMs` and finally at `manifestCacheMs`: any read made more than 3 s after AO's last computation
+	 * recomputes, so that one is fresh whatever the earlier ones returned. Only then is it final.
 	 */
 	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
 		const key = conversation ? `${conversation.latestSequence}|${conversation.turns.map(t => `${t.id}:${t.state}`).join(",")}` : view.updatedAt;
 		const open = conversation?.turns.some(t => t.state === "running" || t.state === "queued") === true;
 		const settleMs = this.options.settleMs ?? 1_500;
+		const cacheMs = this.options.manifestCacheMs ?? 3_400;
 		const known = this.files.get(view.id);
-		if (known?.key === key) {
-			if (known.confirmed) return known.files;
-			const wait = known.readAt + settleMs - Date.now();
+		// While a turn runs, leave the manifest alone: each read computes it at that moment and AO then serves it
+		// for 3 s, so one made between the agent's two writes is what the settle read gets back (seen live: a list
+		// with the new file but not the appended-to one, 1 session in 6; with these reads off it was complete 6 in 6).
+		// A session seen for the first time is still read once.
+		if (open && known && !this.options.liveFiles) return known.files;
+		const sameKey = known?.key === key;
+		if (sameKey && known.confirmed) return known.files;
+		// When this state was first seen settled after a change: the clock the final read counts from. A session
+		// seen for the first time, or one still running (every event reads it), has none.
+		const settledAt = sameKey ? known.settledAt : !open && known !== undefined ? Date.now() : undefined;
+		if (sameKey && settledAt !== undefined) {
+			// The next read is due at settleMs (the quick one), and when that one is done, at cacheMs (the final one).
+			const due = settledAt + (known.readAt < settledAt + settleMs ? settleMs : cacheMs);
+			const wait = due - Date.now();
 			if (wait > 0) {
 				this.confirmLater(view.id, wait);
 				return known.files;
@@ -655,13 +734,16 @@ export class AoSessionWatcher {
 		try {
 			const manifest = await this.client.workspaceManifest(view.id);
 			const files = changedFiles(manifest);
-			const tries = known?.key === key ? known.tries + 1 : 1;
+			const readAt = Date.now();
+			const tries = sameKey ? known.tries + 1 : 1;
 			const unsure = manifest.stale || manifest.refreshing;
-			// A session that just changed into a settled state is read once more; an open one is read on every event anyway.
-			const settling = !open && known !== undefined && known.key !== key;
-			const confirmed = tries >= 4 || (known?.key === key ? !unsure : !settling && !unsure);
-			this.files.set(view.id, { key, files, readAt: Date.now(), tries, confirmed });
-			if (!confirmed) this.confirmLater(view.id, settleMs);
+			// Settled: final once a read has been made after AO's cache expired. Otherwise: final unless AO says it is stale (a few tries).
+			const confirmed = settledAt !== undefined ? readAt >= settledAt + cacheMs : !unsure || tries >= 4;
+			this.files.set(view.id, { key, files, readAt, tries, confirmed, settledAt });
+			if (!confirmed) {
+				if (settledAt === undefined) this.confirmLater(view.id, settleMs);
+				else this.confirmLater(view.id, Math.max(0, settledAt + (readAt < settledAt + settleMs ? settleMs : cacheMs) - readAt));
+			}
 			return files;
 		} catch {
 			// No workspace any more (terminated and released), or a transient failure: keep what was known.
@@ -669,16 +751,24 @@ export class AoSessionWatcher {
 		}
 	}
 
-	/** Refreshes the session after `ms`, once: the delayed second read of its changed files. */
+	/**
+	 * Refreshes the session after `ms`: the delayed re-reads of its changed files and of a reply that was not
+	 * final. One timer per session, kept at the earliest deadline asked for, so a long wait (the final files
+	 * read) never holds back a short one (the reply); the refresh that fires asks again for whatever is left.
+	 */
 	private confirmLater(sessionId: string, ms: number): void {
-		if (this.closed || this.confirmTimers.has(sessionId)) return;
-		this.confirmTimers.set(
-			sessionId,
-			setTimeout(() => {
+		if (this.closed) return;
+		const due = Date.now() + ms;
+		const pending = this.confirmTimers.get(sessionId);
+		if (pending && pending.due <= due) return;
+		if (pending) clearTimeout(pending.timer);
+		this.confirmTimers.set(sessionId, {
+			due,
+			timer: setTimeout(() => {
 				this.confirmTimers.delete(sessionId);
 				void this.refresh(sessionId).catch(() => undefined);
 			}, ms),
-		);
+		});
 	}
 
 	/** A session's workspace never moves: read it once (a failed read is retried on the next build). */

@@ -17,7 +17,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
-import { sessionStateFile, switchyardHome } from "./native";
+import { refuseRealStateInTests, sessionStateFile, switchyardHome } from "./native";
+import { writeMode } from "../shared/session-mode";
 import type { AoPermissionMode } from "./report";
 
 /** The permission modes; the gate in the omp extension reads one of these from the mode file. */
@@ -29,6 +30,8 @@ export interface SpawnSwitchyardOptions {
 	/** An AO project id; wins over `dir`. */
 	projectId?: string;
 	displayName?: string;
+	/** The branch the session's worktree is created on (AO default: `ao/<slug>/root`). Needs a project (`dir` in a git repo, or `projectId`). */
+	branch?: string;
 	/** An omp model id (`provider/model`), checked against the session's own choices. */
 	model?: string;
 	/** omp's thinking level (`off`, `low`, `medium`, `high`, …), checked against its choices. */
@@ -91,6 +94,7 @@ function writeFileAtomic(file: string, content: string): void {
 /** Starts a Switchyard session (see the file header). Rejects before creating anything for an unknown model. */
 export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwitchyardOptions = {}): Promise<SpawnedSwitchyardSession> {
 	const home = options.home ?? switchyardHome();
+	refuseRealStateInTests(home);
 	const mode = options.mode ?? "auto";
 	const ompArgs = options.ompArgs ?? [];
 	if (ompArgs.includes("")) throw new Error("an omp argument is empty");
@@ -114,6 +118,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		clientRequestId,
 		...(projectId && { projectId }),
 		...(options.displayName && { displayName: options.displayName }),
+		...(options.branch && { branch: options.branch }),
 	});
 	const id = spawned.session.id;
 	try {
@@ -152,11 +157,12 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		}
 
 		// 6. The permission mode, last for the same reason (omp's `plan` option is one of the live ones).
-		// The caller's setMode writes the mode file and handles plan (MAPPING D11: never write the file
-		// by hand); without one this does both itself, which is all a session with no turns needs.
+		// A caller's setMode (e.g. setSessionMode, which also declines gate questions left open) takes
+		// over; without one this writes the mode file and handles plan, which is all a session with no
+		// turns needs.
 		if (options.setMode) await options.setMode(id, mode);
 		else {
-			writeFileAtomic(sessionStateFile(id, "mode", home), `${mode}\n`);
+			writeMode(id, mode, home);
 			if (mode === "plan" && current("mode") !== "plan") await client.setConfigOption(id, "mode", { value: "plan" });
 		}
 	} catch (error) {
