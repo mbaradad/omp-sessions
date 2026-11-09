@@ -7,7 +7,7 @@ written with update_setting).
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions
       assignee: omp
-      mode: ask                    # starting permission mode of card sessions (default: omp's)
+      mode: ask                    # starting permission mode of card sessions (unset: auto; ask/edits/plan need Switchyard's omp extension)
       comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@omp` assigns cards ("*": anyone)
       archive_completed: false     # archive a card (and its omp session) once the lane completes it
       boards:                      # empty: every board, with the defaults above

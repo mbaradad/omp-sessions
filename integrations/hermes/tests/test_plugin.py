@@ -789,6 +789,20 @@ class PureTest(unittest.TestCase):
         self.assertEqual(by["c-1"][0]["files"], ["x.txt"])
         self.assertEqual(Old().upstream_by_session(), {}, "a CLI without plan status: propagation is not shown, nothing breaks")
 
+    def test_status_says_when_switchyards_omp_extension_is_missing(self) -> None:
+        from hermes_plugins.omp_sessions.commands import status_text
+
+        base = {
+            "omp_sessions": "switchyard", "scheduler": None, "notify": True, "last_notification": None, "watches": 0, "profile": "default",
+            "dispatcher": None, "dispatcher_notes": [], "agent_approvals": False, "projects": {}, "linked": [],
+            "lane": {"enabled": True, "assignee": "omp", "mode": "ask", "comment_authors": [], "boards": "all", "ticks": {}, "state": "/x"},
+        }
+        missing = status_text({**base, "omp": {"extension": {"installed": False}}})
+        self.assertIn("omp extension: NOT INSTALLED", missing)
+        self.assertIn("ask, edits or plan", missing, "the modes a card can't start in")
+        self.assertNotIn("omp extension", status_text({**base, "omp": {"extension": {"installed": True}}}))
+        self.assertNotIn("omp extension", status_text({**base, "omp": None}), "an older CLI without the field: nothing to say")
+
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
         link = {"session": "s1", "state": "active", "asked": []}

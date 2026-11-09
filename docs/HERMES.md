@@ -215,7 +215,7 @@ plugins:
         lane:
           enabled: true
           assignee: omp
-          mode: auto                   # unset: the omp Sessions default (omp-sessions config set mode), else omp's; edits/ask make cards wait for a person at the first command
+          mode: auto                   # unset: the Switchyard default (omp-sessions config set mode), else auto (nothing asks); ask/edits/plan need Switchyard's omp extension (omp-sessions status shows it) and make cards wait for a person at the first command
           comment_authors: [dashboard] # whose comments reach omp and whose @omp assigns cards ("*": anyone)
           archive_completed: false     # true: archive a card on the board, and its omp session, as soon as the lane completes it
           boards:                      # empty: every board

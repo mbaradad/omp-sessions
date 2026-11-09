@@ -86,8 +86,14 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
             }
         )
     last_inject = store.get("last_inject")
+    try:
+        omp_info = omp.status().get("omp")
+    except OmpSessionsError:
+        omp_info = None
     return {
         "omp_sessions": " ".join(cmd) if cmd else None,
+        # `status --json` `omp`: installed/authenticated, Switchyard's omp extension (needed for ask/edits/plan), shim.
+        "omp": omp_info if isinstance(omp_info, dict) else None,
         "scheduler": sched,
         "notify": settings.notify,
         "last_notification": last_inject if isinstance(last_inject, dict) else None,
@@ -118,6 +124,9 @@ def status_text(d: dict) -> str:
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
         lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once omp-sessions starts it)'}")
+    ext = (d.get("omp") or {}).get("extension")
+    if isinstance(ext, dict) and ext.get("installed") is False:
+        lines.append("omp extension: NOT INSTALLED: cards in mode ask, edits or plan can't be started (auto works); install Switchyard's omp extension (open VS Code with Switchyard)")
     last = d.get("last_notification") or {}
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
