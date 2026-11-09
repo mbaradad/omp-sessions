@@ -54,7 +54,7 @@ if (build.status !== 0) {
 // scripted fake omp (test/ao-fixture.mjs), never the dev daemon or the real ~/.omp.
 const { aoAvailable, startAoFixture } = await import(path.join(root, "test/ao-fixture.mjs"));
 if (!aoAvailable()) {
-	console.log("test:hermes skipped: ao is not installed (set OMP_TEST_AO_BIN)");
+	console.log("test:hermes skipped: ao is not installed (set SWITCHYARD_TEST_AO_BIN)");
 	process.exit(0);
 }
 const ao = await startAoFixture();
