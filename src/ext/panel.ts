@@ -174,7 +174,8 @@ function ompDefaultPermissionMode(): Promise<PermissionMode | undefined> {
 /**
  * Where the chat's task strip, `/queue` and Alt+Enter go when the planner holds the queues: a lane whose
  * id is an AO session id continues that session (PLANNER-API.md). The extension adapts its planner
- * store (ext-tasks' `PlannerStore.queue(id, ops)`: `get` = no ops) to this.
+ * store to this with ext-tasks' `SessionQueues` (`get` reads the live plan and never calls the planner; `PlannerStore.queue(id, [])`
+ * is NOT a read: it creates an empty paused lane for a session that has none).
  */
 export interface ChatQueueSource {
 	get(sessionId: string): Promise<TaskQueue | null>;
