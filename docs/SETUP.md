@@ -136,7 +136,7 @@ Voice isn't available in this version.
 3. **Answer questions anywhere.** A session that needs you shows up on the Switchyard page in Hermes, on the phone, in VS Code, in `switchyard ls`, and as a message in the chat that started it. Answering in one place answers it everywhere. Approvals are yours: comments and the Hermes agent can't answer them (unless you turn on `agent_approvals`).
 4. **Review in VS Code.** *Open project in VS Code* on the Hermes page (or `switchyard vscode <session>`) opens the worktree; diffs, checkpoints and undo per turn. Merge the branch when you are happy. The card gets the session's final reply, and dependent cards start.
 
-If the machine reboots overnight, AO's sessions come back as AO restores them, the planner starts with the login, and it continues the plan: a task that was running is marked *interrupted* and waits for you (its card is blocked until you unblock it); nothing runs twice.
+If the machine reboots overnight, the omp processes are gone: a turn that was running is lost, and AO shows the session as exited until it is resumed (sending to it fails until then). The AO daemon and the planner start with the login (where they are services), and the planner continues the plan: a task that was running is marked *interrupted* and waits for you (its card is blocked until you unblock it), work that hadn't started is dispatched, and nothing runs twice. A restart of the AO daemon alone, with the machine up, does not stop sessions: their hosts keep omp and the running turn alive.
 
 ## Check that it all works
 
