@@ -108,7 +108,10 @@ describe("AO views", () => {
 		await ao.sendMessage(id, { text: "Create a file named hello.txt in the current directory containing the single line: hi. Then append the line 'bye' to README.md. Then reply DONE." });
 		await waitFor("working", () => meta()?.status === "working", 60_000);
 		await waitFor("idle", () => meta()?.status === "idle", 180_000);
-		await waitFor("changed-file count", () => (meta()?.changedFiles ?? 0) >= 2, 30_000);
+		await waitFor("changed-file count", () => (meta()?.changedFiles ?? 0) >= 2, 30_000).catch(async err => {
+			const manifest = await ao.workspaceManifest(id).catch(e => String(e));
+			throw new Error(`${String(err)}; meta.changedFiles=${meta()?.changedFiles}, model files=${JSON.stringify(api.sessions.model(id)?.changedFiles)}, manifest=${JSON.stringify(typeof manifest === "string" ? manifest : { stale: manifest.stale, refreshing: manifest.refreshing, degraded: manifest.degraded, files: manifest.files.map(f => `${f.path}:${f.status}`) })}`);
+		});
 		const node = api.sessionTree.findSession(id);
 		assert.ok(node, "session node");
 		const files = await api.sessionTree.getChildren(node);
@@ -208,6 +211,25 @@ describe("AO views", () => {
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 		await api.sessions.remove(other.id);
 		await waitFor("second session removed", () => !api.sessions.get(other.id), 30_000);
+	});
+
+	it("New Session on Branch: an existing free branch is checked out, a new name is made from the default branch", async () => {
+		const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+		git(REPO, "branch", "side");
+		const made: string[] = [];
+		try {
+			for (const branch of ["side", "brand-new"]) {
+				const newId = await api.sessions.launch({ cwd: REPO, title: `on ${branch}`, branch });
+				made.push(newId);
+				const wt = await waitFor(`${branch} session folder`, () => api.sessions.get(newId)?.cwd || undefined, 30_000);
+				assert.equal(git(wt, "rev-parse", "--abbrev-ref", "HEAD"), branch);
+			}
+		} finally {
+			for (const m of made) {
+				await api.sessions.stop(m).catch(() => undefined);
+				await api.sessions.remove(m).catch(() => undefined);
+			}
+		}
 	});
 
 	it("Doctor reports the AO daemon, AO's readiness of omp, the planner and the sessions", async () => {

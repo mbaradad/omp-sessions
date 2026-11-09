@@ -74,8 +74,8 @@ export interface NewSessionOptions {
 	mode?: PermissionMode;
 	/** omp CLI flags: `--model`, `--thinking` and `--approval-mode` apply; `omp acp` takes no others (GAPS G10). */
 	ompArgs?: string[];
-	/** An omp transcript to continue: AO cannot adopt one yet (GAPS G8). */
-	resumeFile?: string;
+	/** Branch for the session's worktree: an existing one is checked out when free, else a new one is made from the default branch. */
+	branch?: string;
 }
 
 /** The planner's latest plan and its change event (the Tasks view's PlannerStore has this shape). */
@@ -319,7 +319,6 @@ export class SessionManager implements vscode.Disposable {
 			await this.resume(opts.id);
 			return opts.id;
 		}
-		if (opts.resumeFile) throw new Error("AO cannot continue an existing omp transcript yet (GAPS G8): start a new session instead.");
 		const flags = launchFlags(opts.ompArgs ?? []);
 		if (flags.ignored.length) this.ao.log.warn(`omp flags omp acp can't take, ignored: ${flags.ignored.join(" ")}`);
 		// Precedence: this launch, then the defaults (launcher.json: Set Default Model / Mode).
@@ -339,6 +338,7 @@ export class SessionManager implements vscode.Disposable {
 				kind: "worker",
 				...(aoProject && { projectId: aoProject.id }),
 				...(title && { displayName: title }),
+				...(opts.branch && aoProject && { branch: opts.branch }),
 				...(prompt && { prompt }),
 				...(model && { model }),
 				...(effort && { effort }),

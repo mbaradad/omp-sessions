@@ -20,7 +20,7 @@ import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { plain } from "./plain";
 import { AoConnection } from "./ao-connection";
 import { inCheckout } from "./checkout";
-import { type NewSessionOptions, SessionManager, listOmpHistory, projectRoot } from "./sessions";
+import { type NewSessionOptions, SessionManager, projectRoot } from "./sessions";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
@@ -387,21 +387,6 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			return [vscode.Uri.file(file), left, right];
 		});
 		await vscode.commands.executeCommand("vscode.changes", `omp: ${meta.title} — ${resources.length} file${resources.length === 1 ? "" : "s"} changed`, resources);
-	});
-
-	reg("omp.resumeFromHistory", async (arg?: unknown) => {
-		const cwd = await pickFolder(arg);
-		if (!cwd) return;
-		const history = await listOmpHistory(cwd);
-		if (history.length === 0) {
-			void vscode.window.showInformationMessage(plain(`No omp transcripts recorded for ${cwd}.`));
-			return;
-		}
-		const pick = await vscode.window.showQuickPick(
-			history.slice(0, 200).map(h => ({ label: h.title, description: `${new Date(h.mtime).toLocaleString()}${h.archived ? " · archived by omp gc (restored on resume)" : ""}`, detail: path.basename(h.file), entry: h })),
-			{ placeHolder: "Resume an omp transcript in the background", matchOnDetail: true },
-		);
-		if (pick) await launchAndOpen({ cwd, resumeFile: pick.entry.file, title: pick.entry.title.slice(0, 80) });
 	});
 
 	reg("omp.sendSelection", async () => {

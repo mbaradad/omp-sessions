@@ -109,7 +109,7 @@
 		"viewsWelcome": [
 			{
 				"view": "omp.sessions",
-				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\n[Resume an omp transcript](command:omp.resumeFromHistory)\nSessions keep running on this machine when VS Code disconnects."
+				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\nSessions keep running on this machine when VS Code disconnects."
 			},
 			{
 				"view": "omp.tasks",
@@ -171,7 +171,7 @@
 			},
 			{
 				"command": "omp.newWorktreeSession",
-				"title": "New Session in Git Worktree…",
+				"title": "New Session on Branch…",
 				"category": "omp",
 				"icon": "$(git-branch)"
 			},
@@ -298,12 +298,6 @@
 				"command": "omp.openSessionFileDiff",
 				"title": "Open Session Diff",
 				"category": "omp"
-			},
-			{
-				"command": "omp.resumeFromHistory",
-				"title": "Resume omp Transcript in Background…",
-				"category": "omp",
-				"icon": "$(history)"
 			},
 			{
 				"command": "omp.sendSelection",
@@ -1069,11 +1063,6 @@
 					"command": "omp.newSession",
 					"when": "view == omp.sessions",
 					"group": "navigation@1"
-				},
-				{
-					"command": "omp.resumeFromHistory",
-					"when": "view == omp.sessions",
-					"group": "navigation@2"
 				},
 				{
 					"command": "omp.refresh",

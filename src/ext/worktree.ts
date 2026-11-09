@@ -23,6 +23,7 @@ import {
 	gitOk,
 	headOf,
 	isDirty,
+	localBranches,
 	mainRepoRoot,
 	readWorktreeInfo,
 	resolveBase,
@@ -167,21 +168,48 @@ async function repoFolder(api: OmpApi, arg: unknown): Promise<string | undefined
 
 // ---------- commands ----------
 
+type BranchItem = vscode.QuickPickItem & { name: string };
+
+/** Branch for the session's worktree: another local branch (checked out when free), or any new name (made from the default branch). */
+async function askBranch(cwd: string, title: string): Promise<string | undefined> {
+	const current = await currentBranch(cwd);
+	const fixed: BranchItem[] = (await localBranches(cwd)).filter(b => b !== current).map(b => ({ label: `$(git-branch) ${b}`, description: "existing branch", name: b }));
+	const qp = vscode.window.createQuickPick<BranchItem>();
+	qp.title = title;
+	qp.placeholder = `Branch of the new worktree: pick one, or type a new name (the main checkout stays on ${current ?? "its commit"}; empty = AO's own ao/<session>/root)`;
+	qp.items = fixed;
+	qp.ignoreFocusOut = true;
+	qp.onDidChangeValue(v => {
+		const typed = v.trim();
+		qp.items = typed && !fixed.some(i => i.name === typed) ? [{ label: `$(add) ${typed}`, description: "new branch from the default branch", name: typed, alwaysShow: true }, ...fixed] : fixed;
+	});
+	const done = Promise.withResolvers<string | undefined>();
+	qp.onDidAccept(() => done.resolve(qp.selectedItems[0]?.name ?? ""));
+	qp.onDidHide(() => done.resolve(undefined));
+	qp.show();
+	const name = await done.promise;
+	qp.dispose();
+	return name;
+}
+
+/** `omp.newWorktreeSession` (titled "New Session on Branch…"): every AO session has its own worktree; this one picks its branch. */
 async function newWorktreeSession(api: OmpApi, arg: unknown): Promise<void> {
 	const folder = await repoFolder(api, arg);
 	if (!folder) return;
-	const step = (n: number) => `New session in a git worktree (${n}/2)`;
+	const step = (n: number) => `New session on a branch (${n}/3)`;
 	const task = await askTask(step(1));
 	if (!task) return;
+	const branch = await askBranch(folder, step(2));
+	if (branch === undefined) return;
 	const start = await vscode.window.showQuickPick(
 		[
 			{ label: "$(play) Start working on it", description: "send the task as the first prompt", start: true },
 			{ label: "$(comment-discussion) Just open the chat", description: "the task only names the session", start: false },
 		],
-		{ title: step(2), ignoreFocusOut: true },
+		{ title: step(3), ignoreFocusOut: true },
 	);
 	if (!start) return;
-	const panel = await api.launchAndOpen({ cwd: folder, title: taskTitle(task), prompt: start.start ? task : undefined });
+	const panel = await api.launchAndOpen({ cwd: folder, title: taskTitle(task), prompt: start.start ? task : undefined, ...(branch && { branch }) });
 	panel?.focusComposer();
 }
 

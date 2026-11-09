@@ -166,7 +166,6 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.setPermissionMode": "Sessions",
 	"omp.importClaude": "Sessions",
 	"omp.importCodex": "Sessions",
-	"omp.resumeFromHistory": "Sessions",
 	"omp.remote.connectPhone": "Sessions",
 	"omp.remote.disable": "Sessions",
 	"omp.remote.rotateToken": "Sessions",

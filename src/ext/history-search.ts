@@ -9,7 +9,6 @@ import { isArchivedTranscript, locateTranscript } from "../shared/omp-paths";
 import type { SessionMeta } from "../shared/protocol";
 import { type TranscriptHead, TranscriptCache, listTranscripts, readTranscriptHead } from "../shared/transcript-files";
 import type { OmpApi } from "./api";
-import { plain } from "./plain";
 import { configuredOmpPaths } from "./sessions";
 import { type MessageText, type TranscriptHit, parseQuery, parseTextLine, searchMessages } from "./transcripts";
 
@@ -194,14 +193,7 @@ async function openCandidate(api: OmpApi, c: Candidate): Promise<void> {
 	const choice = await vscode.window.showInformationMessage(
 		`"${titleOf(c)}" was not started by omp Sessions.`,
 		{ modal: true, detail: cwd ? `Folder: ${cwd}` : "The transcript does not record its folder." },
-		...(cwd ? ["Resume in Background"] : []),
 		...(isArchivedTranscript(c.file) ? [] : ["Open Transcript File"]),
 	);
-	if (choice === "Resume in Background" && cwd) {
-		if (!fs.existsSync(cwd)) {
-			void vscode.window.showErrorMessage(plain(`The folder of this session no longer exists: ${cwd}`));
-			return;
-		}
-		await api.launchAndOpen({ cwd, resumeFile: c.file, title: titleOf(c).slice(0, 80) });
-	} else if (choice === "Open Transcript File") await vscode.window.showTextDocument(vscode.Uri.file(c.file), { preview: true });
+	if (choice === "Open Transcript File") await vscode.window.showTextDocument(vscode.Uri.file(c.file), { preview: true });
 }

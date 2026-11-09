@@ -180,7 +180,6 @@ export function registerDashboard(api: OmpApi): void {
 		if (msg.type === "open" && meta) return vscode.commands.executeCommand("omp.openSession", meta.id);
 		if (msg.type === "resume") {
 			if (meta) return vscode.commands.executeCommand(meta.status === "stopped" ? "omp.resumeSession" : "omp.openSession", meta.id);
-			if (!row.meta && row.file && row.cwd) return api.launchAndOpen({ cwd: row.cwd, resumeFile: row.file, title: row.title.slice(0, 80) });
 		}
 	};
 

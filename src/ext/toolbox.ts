@@ -514,12 +514,7 @@ export function registerToolbox(api: OmpApi): void {
 		const cwd = workspaceCwd();
 		const terminal = runInTerminal(`import ${source}`, [`--from-${source}`], cwd);
 		if (!terminal) return;
-		void vscode.window.showInformationMessage(`Pick a ${name} session in the terminal; omp imports it and continues it there. Exit omp to resume the imported transcript in the background.`);
-		onTerminalClosed(terminal, () => {
-			void vscode.window.showInformationMessage(`Resume an imported ${name} session in the background?`, "Resume omp Transcript…").then(a => {
-				if (a) void vscode.commands.executeCommand("omp.resumeFromHistory", cwd);
-			});
-		});
+		void vscode.window.showInformationMessage(`Pick a ${name} session in the terminal; omp imports it and continues it there.`);
 	};
 	reg("omp.importClaude", importFrom("claude", "Claude Code"));
 	reg("omp.importCodex", importFrom("codex", "Codex"));
