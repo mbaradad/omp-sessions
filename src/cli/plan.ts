@@ -9,6 +9,7 @@ import { SYSTEMD_UNIT, type ServiceKind, installService, serviceKind, serviceUni
 import type { PlanView, PlannerOpName, PlannerOps, QueueOp as PlannerQueueOp, QueueView } from "../planner/types";
 import type { Priority } from "../shared/organize";
 import { readSwitchyardConfig } from "../ao/config";
+import { taskSessionOf } from "../ext/session-view";
 
 export type QueueOp = PlannerQueueOp;
 export type PlannerQueue = QueueView;
@@ -78,6 +79,9 @@ export interface LaneSummary {
 	waitUntil?: number;
 	/** Marked completed (epoch ms of the mark; the marker lives on the lane, PARKED §5). */
 	completed?: number;
+	/** Sessions its queued tasks wait for (`new --after`, `queue after`), and of those the ones not finished yet. A task's own queue is left out. */
+	after?: string[];
+	blockedBy?: string[];
 	/** The worst state of its incoming graph edges, and each edge (a task in a git project that waits for other tasks). */
 	upstream?: { state: string; edges: GraphEdge[] };
 }
@@ -92,6 +96,9 @@ export function worstEdgeState(edges: readonly { state: string }[]): string {
 /** Every lane that continues an AO session, by session id. */
 export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 	const out = new Map<string, LaneSummary>();
+	const sessionOf = taskSessionOf(plan);
+	/** Task ids as the sessions that hold them, without the lane's own session and repeats. */
+	const sessionsOf = (ids: Iterable<string>, own: string) => [...new Set([...ids].flatMap(id => sessionOf(id) ?? []))].filter(x => x !== own);
 	for (const lane of plan.lanes) {
 		const session = lane.session ?? lane.id;
 		const tasks = plan.tasks.filter(t => t.lane === lane.id);
@@ -107,6 +114,10 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		if (next?.state === "held" && next.waitReason) summary.waitReason = next.waitReason;
 		if (next?.waitUntil !== undefined) summary.waitUntil = next.waitUntil;
 		if (lane.completed) summary.completed = lane.completedAt ?? 0;
+		const after = sessionsOf(tasks.flatMap(t => t.after ?? []), session);
+		const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []), session);
+		if (after.length) summary.after = after;
+		if (blockedBy.length) summary.blockedBy = blockedBy;
 		out.set(session, summary);
 	}
 	// How far the parents' changes reached each session (graph propagation); a free task's session has no lane.

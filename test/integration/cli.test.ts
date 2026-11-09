@@ -236,7 +236,14 @@ test("cli: new --task --after waits for the other session; queue after refuses i
 	assert.equal(a.status, 0, a.stderr);
 	const b = json("new", repo, "--task", "echo B ran", "--after", a.data.id, "--mode", "auto", "--json");
 	assert.equal(b.status, 0, b.stderr);
-	assert.equal(json("show", b.data.id, "--json").data.state, "queued", "blocked behind A");
+	assert.deepEqual((b.data as unknown as { after?: string[] }).after, [a.data.id], "new --json names what it waits for");
+	const shown = json<Printed & { after?: string[]; blockedBy?: string[] }>("show", b.data.id, "--json").data;
+	assert.equal(shown.state, "queued", "blocked behind A");
+	assert.deepEqual([shown.after, shown.blockedBy], [[a.data.id], [a.data.id]], "show --json carries the sessions it waits for");
+	assert.equal(json<Array<{ meta: { id: string }; blockedBy?: string[] }>>("ls", "--json").data.find(i => i.meta.id === b.data.id)?.blockedBy?.[0], a.data.id, "ls --json too");
+	assert.equal(json<Printed & { blockedBy?: string[] }>("show", a.data.id, "--json").data.blockedBy, undefined, "a session that waits for nothing has no blockedBy");
+	assert.match(cli("show", b.data.id).stdout, new RegExp(`waits for: ${a.data.id}`));
+	assert.match(cli("ls").stdout, /blocked/);
 	assert.equal(cli("queue", b.data.id, "after", b.data.id).status, 1, "a queue can't wait for itself");
 	// Hermes reads the dependency from `queue <s> --json`: tasks[].after and blockedBy are task ids (not session ids).
 	type Q = { tasks: Array<{ id: string; after?: string[]; blockedBy?: string[] }> };

@@ -176,7 +176,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 }
 
 /** The session (or lane id, before the task has one) a task of the plan runs in. */
-function taskSessionOf(plan: PlanView): (taskId: string) => string | undefined {
+export function taskSessionOf(plan: PlanView): (taskId: string) => string | undefined {
 	const laneOf = new Map(plan.lanes.map(l => [l.id, l]));
 	return taskId => {
 		const t = plan.tasks.find(x => x.id === taskId);

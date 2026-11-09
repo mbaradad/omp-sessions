@@ -249,7 +249,7 @@ export function queueSummary(s: Session): AoReportQueue {
  * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
  * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNullable<AoSessionReport["question"]> & { approval: boolean }; replyPending?: true; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: GraphEdge[]; upstreamState?: string; changedFilesIncludeUpstream?: true };
+export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNullable<AoSessionReport["question"]> & { approval: boolean }; replyPending?: true; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; after?: string[]; blockedBy?: string[]; upstream?: GraphEdge[]; upstreamState?: string; changedFilesIncludeUpstream?: true };
 
 /**
  * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
@@ -273,6 +273,8 @@ export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFil
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
+	if (s.lane?.after) report.after = s.lane.after;
+	if (s.lane?.blockedBy) report.blockedBy = s.lane.blockedBy;
 	if (s.lane?.upstream) {
 		// The edges where this session is the child (full objects, as `plan status` prints them) and the worst of their states.
 		report.upstream = s.lane.upstream.edges;
@@ -322,6 +324,8 @@ export function infoJson(s: Session, order: number) {
 		...(report.completedAt && { completedAt: report.completedAt }),
 		...(report.waitReason && { waitReason: report.waitReason }),
 		...(report.waitUntil !== undefined && { waitUntil: report.waitUntil }),
+		...(report.after && { after: report.after }),
+		...(report.blockedBy && { blockedBy: report.blockedBy }),
 		...(report.upstream && { upstream: report.upstream, upstreamState: report.upstreamState }),
 		...(report.changedFilesIncludeUpstream && { changedFilesIncludeUpstream: true }),
 	};
