@@ -48,9 +48,9 @@ test("spawnSwitchyardSession: bypass launch with no prompt or model, then the mo
 	const home = tmpHome();
 	try {
 		const { ao, calls, sent, spawns } = fakeAo();
-		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home });
-		// AO gets the bypass launch (the extension's gate is the only one), no prompt, no model; the ids are the caller's.
-		assert.deepEqual(spawns, [{ harness: "omp", mode: "chat", kind: "worker", approvalMode: "bypass-permissions", clientRequestId: "rq-1", projectId: "repo", displayName: "fix it" }]);
+		const out = await spawnSwitchyardSession(ao, { dir: "/work/repo", displayName: "fix it", branch: "feature/fix-it", model: "anthropic/haiku", thinking: "off", mode: "edits", prompt: "do it", clientRequestId: "rq-1", clientMessageId: "m-1", home });
+		// AO gets the bypass launch (the extension's gate is the only one), no prompt, no model; the ids and the branch are the caller's.
+		assert.deepEqual(spawns, [{ harness: "omp", mode: "chat", kind: "worker", approvalMode: "bypass-permissions", clientRequestId: "rq-1", projectId: "repo", displayName: "fix it", branch: "feature/fix-it" }]);
 		assert.deepEqual(calls, ["agentModels", "projectForFolder /work/repo", "spawnSession", "configOptions", "setConfigOption model=anthropic/haiku", "configOptions", "setConfigOption thinking=off", "sendMessage"]);
 		assert.deepEqual(sent, [{ text: "do it", clientMessageId: "m-1" }]);
 		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "edits\n");
