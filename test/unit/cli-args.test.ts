@@ -6,6 +6,8 @@ import { UsageError, checkFlags, parseArgs, parseWhen } from "../../src/cli/args
 test("parseArgs: value flags, repeated --sub, short aliases, --x=y, -- passthrough", () => {
 	const a = parseArgs(["new", "dir", "--task", "Do it", "--sub", "one", "--sub", "two", "-p", "hi", "--all", "--priority=high", "--", "--literal"]);
 	assert.deepEqual(a._, ["new", "dir", "--literal"]);
+	assert.deepEqual(a.dashes, ["--literal"], "what followed -- stays identifiable (new passes it to omp)");
+	assert.deepEqual(parseArgs(["new", "dir", "--json"]).dashes, []);
 	assert.equal(a.flags.get("task"), "Do it");
 	assert.deepEqual(a.multi.get("sub"), ["one", "two"]);
 	assert.equal(a.flags.get("prompt"), "hi");

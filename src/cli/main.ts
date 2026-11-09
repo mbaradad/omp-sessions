@@ -17,6 +17,7 @@ import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } fro
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
+import { applySessionMode, gateInstalled, gateModulePath, modeProblem, shimPath } from "./gate";
 import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
@@ -258,16 +259,22 @@ async function cmdNew(args: Args): Promise<number> {
 	if (usage === "spare" && !task) throw new UsageError("--usage spare holds a queued task until provider usage leaves room: add --task");
 	if (task && prompt) throw new UsageError("--prompt starts the session now, --task queues it: pick one");
 	const json = flag(args, "json");
-	const dir = path.resolve(args._[0] ?? process.cwd());
+	const dir = path.resolve(args._.slice(0, args._.length - args.dashes.length)[0] ?? process.cwd());
 	const worktreeArg = value(args, "worktree");
 	if (worktreeArg !== undefined && worktreeArg !== "auto" && worktreeArg !== "always" && worktreeArg !== "never") throw new UsageError("--worktree must be auto, always or never");
 	if (worktreeArg !== undefined && flag(args, "no-worktree")) throw new UsageError("--worktree and --no-worktree contradict each other");
 	const worktree = flag(args, "no-worktree") ? "never" : worktreeArg;
 	if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`not a folder: ${dir}`);
 	const defaults = readSwitchyardConfig();
+	// Explicit flag, then the config file; none: the spawn helper's default (`auto`: AO's bypass, the gate lets everything through).
 	const effectiveMode = mode ?? defaults.mode;
-	// No mode anywhere: omp's own `tools.approvalMode` (AO's `default`; leaving it out would launch omp in `write`).
-	const approvalMode = effectiveMode ? approvalModeFor(effectiveMode) : "default";
+	if (effectiveMode) {
+		const problem = modeProblem(effectiveMode);
+		if (problem) throw new Error(problem);
+	}
+	// Words after `--` are omp's own flags for this session (G34): the `omp` shim appends them to `omp acp`.
+	const ompArgs = args.dashes;
+	if (ompArgs.length && !fs.existsSync(shimPath())) throw new Error(`omp flags after -- need Switchyard's omp shim (${shimPath()}), which is not installed: it appends them to omp acp`);
 	const model = value(args, "model") ?? defaults.model;
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
@@ -284,21 +291,20 @@ async function cmdNew(args: Args): Promise<number> {
 	// Sessions this one waits for, checked before anything is created.
 	const after: string[] = [];
 	for (const ref of args.multi.get("after") ?? []) after.push((await findSession(ref)).id);
-	const res = await client.spawnSession({
-		harness: "omp",
-		mode: "chat",
-		kind: "worker",
+	// D11: AO's bypass, no prompt, model and omp flags checked, then the mode file the gate reads, then the first message.
+	const res = await client.spawnSwitchyard({
 		displayName: title,
-		...(project && { projectId: project.id }),
+		...(project ? { projectId: project.id } : { dir }),
 		...(prompt && { prompt }),
 		...(model && { model }),
-		approvalMode,
+		...(effectiveMode && { mode: effectiveMode }),
+		...(ompArgs.length && { ompArgs }),
 	});
 	const id = res.session.id;
 	organizeNew(id, { tags: args.multi.get("tag"), group: value(args, "group") });
-	if (effectiveMode === "plan") await setOmpMode(client, id, "plan").catch(() => undefined);
 	if (lane && task) {
-		const add: QueueOp = { op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), options: { ...(model && { model }), approvalMode } };
+		// A continued session keeps the mode it was started with; the planner's options carry the model only.
+		const add: QueueOp = { op: "add", title: task, ...(notes && { notes }), ...(args.multi.get("sub") && { subtasks: args.multi.get("sub") }), ...(model && { options: { model } }) };
 		const arm: QueueOp = startAt ? { op: "schedule", at: startAt } : { op: "autoRun", value: true };
 		if (after.length || usage === "spare") {
 			// Dependencies and the usage class go in before the queue is armed (the task must not start before
@@ -804,13 +810,21 @@ async function cmdMode(args: Args): Promise<void> {
 	const client = await ao();
 	if (!want) {
 		const plan = (await livePlanMode(client, s.id)) === true;
-		const current = aoPermissionMode(s.model.conversation?.settings, plan);
+		const current = s.mode ?? aoPermissionMode(s.model.conversation?.settings, plan);
 		process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("omp's own approval setting (tools.approvalMode)")}\n`);
 		for (const m of PERMISSION_MODES) process.stdout.write(`  ${m === current ? c.green("●") : c.dim("·")} ${pad(m, 6)} ${c.dim(PERMISSION_MODE_INFO[m].detail)}\n`);
 		return;
 	}
 	const mode = permissionModeOf(want.toLowerCase());
 	if (!mode) throw new UsageError(`unknown mode "${want}" (${PERMISSION_MODES.join(", ")})`);
+	// A session started by Switchyard has a mode file: the gate reads it at the next tool call, no restart (D11).
+	if (s.mode !== undefined) {
+		const problem = modeProblem(mode);
+		if (problem) throw new Error(problem.replace(/^--mode /, "mode "));
+		await applySessionMode(client, s.id, mode);
+		process.stdout.write(`${c.green(PERMISSION_MODE_INFO[mode].label)} ${s.id} ${s.title}${c.dim(" (live)")}\n`);
+		return;
+	}
 	const how = await switchMode(client, s, mode);
 	const note = how === "restarted" ? c.dim(" (omp restarted on the same transcript)") : how === "next-resume" ? c.dim(" (applies when resumed)") : "";
 	// AO can't launch omp in always-ask (MAPPING G12): ask leaves the decision to omp's own setting.
@@ -1378,6 +1392,10 @@ async function cmdStatus(args: Args): Promise<number> {
 		runningTasks += s.lane?.running ?? 0;
 	}
 	const config = readSwitchyardConfig();
+	// Mode gating depends on the omp extension (G38): without it nothing asks in ask, edits or plan.
+	const extensionInstalled = gateInstalled();
+	const shimInstalled = fs.existsSync(shimPath());
+	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror");
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
@@ -1388,7 +1406,9 @@ async function cmdStatus(args: Args): Promise<number> {
 		service: svc.serviceState(),
 		omp: {
 			...(omp && { installed: omp.installation.state === "installed", authenticated: omp.authentication.state, readiness: omp.effectiveReadiness }),
-			extraArgs: [],
+			extraArgs: config.omp?.extraArgs ?? [],
+			extension: { installed: extensionInstalled, path: gateModulePath() },
+			shim: { installed: shimInstalled, path: shimPath() },
 			...(config.model && { defaultModel: config.model }),
 			...(config.mode && { defaultMode: config.mode }),
 		},
@@ -1409,7 +1429,9 @@ async function cmdStatus(args: Args): Promise<number> {
 	rows.push(row("service", sv.installed ? `${sv.kind} ${c.green("installed")}${sv.file ? c.dim(` · ${sv.file}`) : ""}` : c.dim(sv.kind ? `not installed (omp-sessions server install sets up a ${sv.kind} service)` : "none on this platform (the planner starts on demand)")));
 	rows.push(row("omp", !omp ? c.dim("unknown (AO not running)") : omp.effectiveReadiness === "ready" ? c.green("ready") : c.yellow(`${omp.effectiveReadiness}: ${omp.installation.reason || omp.authentication.reason || ""}`)));
 	rows.push(row("model", config.model ?? c.dim("omp's default (omp-sessions config set model <provider/id>)")));
-	rows.push(row("mode", config.mode ?? c.dim("AO's default for omp (omp-sessions config set mode <auto|edits|ask|plan>)")));
+	rows.push(row("mode", config.mode ?? c.dim("auto (omp-sessions config set mode <auto|edits|ask|plan>)")));
+	rows.push(row("extension", extensionInstalled ? c.green("installed") : c.red("not installed") + c.dim(" (ask, edits and plan modes need it; auto does not)")));
+	rows.push(row("shim", shimInstalled ? c.green("installed") : c.dim("not installed (omp flags per session or machine are not applied)")));
 	const states = Object.entries(byState).sort(([a], [b]) => (STATE_ORDER.indexOf(a) + 1 || 99) - (STATE_ORDER.indexOf(b) + 1 || 99));
 	rows.push(row("sessions", `${sessions.length}${states.length ? ` · ${states.map(([k, n]) => `${n} ${k.replace("_", " ")}`).join(" · ")}` : ""}${status.sessions.archived ? c.dim(` (${status.sessions.archived} archived)`) : ""}`));
 	rows.push(row("tasks", `${pending} pending · ${runningTasks} running`));
@@ -1591,6 +1613,7 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
                                   interrupted (--all: also stopped)
   new [dir] [-p prompt|-] [--task t [--sub s]… [--notes n|-] [--at when]] [--title t] [--mode m]
       [--tag t]… [--group g] [--model m] [--priority p] [--usage spare] [--worktree auto|always] [--detach] [--json]
+      [-- <omp flags>]
                                   start a session in dir's git project (AO gives it its own worktree; a
                                   folder outside git runs in an AO scratch folder); no prompt: attach to
                                   it; --task queues it, --at schedules it (+30m, 14:30, ISO time)

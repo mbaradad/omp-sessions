@@ -8,12 +8,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
+import { AoClient } from "../../src/ao/client";
 import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
 
 const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
 const CLI_JS = process.env.OMP_TEST_CLI_JS ?? "";
 
 let ao: AoFixture;
+let client: AoClient;
+/** The isolated HOME the CLI runs under (omp's agent folder is in it). */
+let fakeHome: string;
 let repo: string;
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -25,11 +29,12 @@ before(async () => {
 	home = fs.mkdtempSync(path.join(os.tmpdir(), "cli-it-"));
 	// Own planner and Switchyard state, and an isolated HOME with XDG_* under it (CONTRACT.md "Isolated HOME"): the CLI
 	// must never touch the real launcher, skill, Hermes plugin or user services. The fixture's AO is found through discovery.
-	const fakeHome = path.join(home, "home");
+	fakeHome = path.join(home, "home");
 	fs.mkdirSync(fakeHome, { recursive: true });
 	const xdg = { XDG_CONFIG_HOME: path.join(fakeHome, ".config"), XDG_DATA_HOME: path.join(fakeHome, ".local", "share"), XDG_STATE_HOME: path.join(fakeHome, ".local", "state"), XDG_CACHE_HOME: path.join(fakeHome, ".cache") };
 	env = { ...process.env, ...ao.stackEnv, HOME: fakeHome, ...xdg, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
 	assert.equal(cli("config", "set", "service", "off").status, 0);
+	client = await AoClient.connect({ env: { ...process.env, ...ao.clientEnv } });
 });
 
 after(async () => {
@@ -90,6 +95,24 @@ function started(script: string, ...flags: string[]): string {
 	return r.data.id;
 }
 
+/**
+ * A session that asks before bash, started through AO directly: the fake omp asks as omp does for AO's `default` approval.
+ * `new` starts sessions in AO's bypass with the Switchyard extension's gate deciding (D11), and the fake has no gate.
+ */
+async function startedAsking(script: string): Promise<string> {
+	const project = await client.projectForFolder(repo);
+	const res = await client.spawnSession({ harness: "omp", mode: "chat", kind: "worker", approvalMode: "default", projectId: project?.id, prompt: script });
+	return res.session.id;
+}
+
+/** The files Switchyard's omp extension and shim leave on a machine that has them (the gate is what makes ask, edits and plan enforceable). */
+function installGate(): void {
+	// The fixture points omp at its own agent folder (PI_CODING_AGENT_DIR); the CLI looks where omp does.
+	const gate = path.join(env.PI_CODING_AGENT_DIR ?? path.join(fakeHome, ".omp", "agent"), "extensions", "switchyard", "mode.js");
+	fs.mkdirSync(path.dirname(gate), { recursive: true });
+	fs.writeFileSync(gate, "// test gate\n");
+}
+
 test("cli: usage errors exit 2; status says what runs and never starts the planner", { skip }, () => {
 	assert.match(cli("--version").stdout, /^omp-sessions \S+/);
 	assert.equal(cli("ls", "--bogus").status, 2);
@@ -122,9 +145,9 @@ test("cli: new → wait 0 with the reply; show --json; ls finds it by project an
 	assert.ok(!ids("--project", "elsewhere").includes(id));
 });
 
-test("cli: an approval → wait 3 with the question; answer --question refuses another one; answer resumes", { skip }, () => {
-	// AO's default for omp asks before bash.
-	const id = started("bash touch approved.txt\nwrite note.txt hi\necho done after approval");
+test("cli: an approval → wait 3 with the question; answer --question refuses another one; answer resumes", { skip }, async () => {
+	// AO's default approval for omp asks before bash.
+	const id = await startedAsking("bash touch approved.txt\nwrite note.txt hi\necho done after approval");
 	const w = json("wait", id, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3, w.stderr);
 	assert.equal(w.data.state, "needs_input");
@@ -279,7 +302,7 @@ test("cli: plan status lists the graph's edges with their sync state; plan sync 
 	assert.equal(cli("plan", "bogus").status, 2);
 });
 
-test("cli: the error texts and exit codes the Hermes plugin matches; tags are on the entry and in meta", { skip }, () => {
+test("cli: the error texts and exit codes the Hermes plugin matches; tags are on the entry and in meta", { skip }, async () => {
 	const missing = cli("show", "--json", "--", "no-such-session-1");
 	assert.equal(missing.status, 1);
 	assert.match(missing.stderr, /no session matches/);
@@ -294,7 +317,7 @@ test("cli: the error texts and exit codes the Hermes plugin matches; tags are on
 	assert.equal(idle.status, 1);
 	assert.match(idle.stderr, /question changed|not waiting for an answer|no question is waiting/i);
 	// A real question: the wrong id → "question changed" (1); an answer that doesn't fit → 2.
-	const asking = started("bash touch q.txt");
+	const asking = await startedAsking("bash touch q.txt");
 	const w = json("wait", asking, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3);
 	const moved = cli("answer", asking, `--question=nope`, "--", "yes");
@@ -325,4 +348,41 @@ test("cli: new --worktree auto|always reports the worktree; never/--no-worktree 
 	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: true });
 	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: false });
 	assert.deepEqual(json<Archived>("unarchive", id, "--json").data, { id, archived: false, changed: true });
+});
+
+test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what show and ls report; mode switches it live; omp flags after -- need the shim", { skip, timeout: 180_000 }, () => {
+	// No extension on this machine: nothing would ask, so ask, edits and plan are refused before a session exists.
+	const before = json<Listed>("ls", "--all", "--json").data.length;
+	const refused = cli("new", repo, "-p", "echo x", "--mode", "ask");
+	assert.equal(refused.status, 1);
+	assert.match(refused.stderr, /omp extension/);
+	assert.equal(cli("new", repo, "-p", "echo x", "--mode", "auto").status, 0, "auto needs no gate");
+	assert.equal(cli("new", repo, "-p", "echo x", "--", "--advisor", "x").status, 1, "no shim to apply omp flags");
+	assert.equal(json<Listed>("ls", "--all", "--json").data.length, before + 1, "a refused start creates nothing");
+	const status = json<{ omp: { extension: { installed: boolean }; shim: { installed: boolean } } }>("status", "--json").data;
+	assert.equal(status.omp.extension.installed, false);
+	assert.equal(status.omp.shim.installed, false);
+
+	installGate();
+	type Entry = { mode?: string; meta: { id: string; permissionMode?: string } };
+	const id = started("echo hello", "--mode", "ask");
+	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "ask", "the file the gate reads");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(json("show", id, "--json").data.mode, "ask");
+	const listed = json<Entry[]>("ls", "--all", "--json").data.find(e => e.meta.id === id);
+	assert.equal(listed?.meta.permissionMode, "ask", "ask is exact now: it is what the file says");
+	assert.equal(listed?.mode, "ask");
+	assert.equal(cli("mode", id, "edits").status, 0);
+	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "edits", "switched live: the next tool call reads it");
+	assert.equal(json("show", id, "--json").data.mode, "edits");
+
+	// Flags after -- go to the omp shim through the session's omp-args file (omp restarts to read them).
+	fs.mkdirSync(path.join(home, "switchyard", "bin"), { recursive: true });
+	fs.writeFileSync(path.join(home, "switchyard", "bin", "omp"), "#!/bin/sh\n");
+	// Everything after -- is omp's: --json goes before it.
+	const made = json("new", repo, "-p", "echo flagged", "--mode", "auto", "--json", "--", "--advisor", "plan");
+	assert.equal(made.status, 0, made.stderr);
+	const flagged = made.data.id;
+	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", flagged, "omp-args"), "utf8").trim(), "--advisor plan");
+	assert.equal(cli("wait", flagged, "--timeout", "60s").status, 0);
 });

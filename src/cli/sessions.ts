@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
 import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
+import { readSessionMode } from "./gate";
 import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
 
@@ -50,6 +51,8 @@ export interface Session {
 	color?: string;
 	archived?: boolean;
 	tags: string[];
+	/** The permission mode in the session's mode file (the gate reads it); absent for a session started without one. */
+	mode?: AoPermissionMode;
 }
 
 /** What the planner says about a lane when the session runs nothing (MAPPING D3; `agentState` applies it). */
@@ -127,6 +130,7 @@ export async function buildSession(client: AoClient, view: AoSessionView, projec
 	const project = view.projectId ? projects.get(view.projectId) : undefined;
 	const org = opts.org ?? readOrgFile();
 	const e = org.sessions[view.id];
+	const mode = readSessionMode(view.id);
 	const session: Session = {
 		id: view.id,
 		title: model.title,
@@ -137,6 +141,7 @@ export async function buildSession(client: AoClient, view: AoSessionView, projec
 		...(lane && { lane }),
 		priority: lane?.priority ?? e?.priority ?? "normal",
 		tags: e?.tags ? [...e.tags] : [],
+		...(mode && { mode }),
 	};
 	if (e?.groupId) {
 		const g = org.groups.find(x => x.id === e.groupId);
@@ -252,7 +257,9 @@ export type CliReport = AoSessionReport & { completed: boolean; completedAt?: nu
  * GAPS G31, so the workspace manifest counts them).
  */
 export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFiles?: number } = {}): CliReport {
-	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live }), completed: s.lane?.completed !== undefined };
+	// The gate's mode file is the truth for a Switchyard session (ask included); AO's settings only say what omp was launched with.
+	const mode = s.mode ?? live.mode;
+	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live, ...(mode && { mode }) }), completed: s.lane?.completed !== undefined };
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
