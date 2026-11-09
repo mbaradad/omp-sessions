@@ -485,6 +485,13 @@ export class AoClient {
 		return unwrap(this.client.GET("/api/v1/agents"));
 	}
 
+	/** Chat harnesses AO knows it can't start here, with why (`pi-acp is not installed…`). */
+	async unavailableChatHarnesses(harnesses: readonly string[]): Promise<Map<string, string>> {
+		if (!harnesses.length) return new Map();
+		const res = await unwrap(this.client.GET("/api/v1/agents/chat/unavailable", { params: { query: { agents: harnesses.join(",") } } }));
+		return new Map(res.agents.map(a => [a.agent, a.reason]));
+	}
+
 	/** The AO approval modes `harness` can run a chat in, strictest first (Kimi: only `default`); undefined when AO doesn't say. */
 	async chatPermissionModes(harness: string): Promise<string[] | undefined> {
 		const res = await unwrap(this.client.GET("/api/v1/agents/chat/permission-modes", { params: { query: { agents: harness } } }));

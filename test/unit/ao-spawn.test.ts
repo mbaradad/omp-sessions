@@ -40,6 +40,7 @@ function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; r
 			return { supported, installed: supported, authorized: supported.filter(a => a.authStatus === "authorized") };
 		},
 		chatPermissionModes: async () => opts.modes,
+		unavailableChatHarnesses: async () => new Map<string, string>(),
 		getProject: async (id: string) => ({ id, name: id, path: "/repo", kind: "single_repo", folderMissing: false, defaultBranch: "main", repo: "", config: opts.worker ? { worker: { agent: opts.worker } } : {} }),
 		agentModels: async (harness: string) => {
 			calls.push("agentModels");

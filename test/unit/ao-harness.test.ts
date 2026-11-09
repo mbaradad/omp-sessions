@@ -32,6 +32,13 @@ test("resolveHarness: none authorized falls back to the installed ones; none at 
 	assert.throws(() => resolveHarness({ harnesses: [h("claude-code", "unknown", 0, false)] }), (err: unknown) => err instanceof HarnessError && /no authorized or installed chat harness.*claude-code \(unknown\)/.test(err.message));
 });
 
+test("resolveHarness: a harness AO says can't chat here is never the default, and is refused with AO's reason", () => {
+	const pi = { ...h("pi", "authorized", 50), unavailable: "pi-acp is not installed" };
+	assert.equal(resolveHarness({ harnesses: [pi, h("claude-code")] }).harness, "claude-code");
+	assert.equal(resolveHarness({ harnesses: [pi, h("claude-code")] }).source, "only");
+	assert.throws(() => resolveHarness({ explicit: "pi", harnesses: [pi, h("claude-code")] }), /^Error: "pi" can't run a chat on this AO: pi-acp is not installed; available: claude-code$/);
+});
+
 test("resolveHarness refuses what is not one of AO's chat harnesses, naming where it came from and listing the available ones", () => {
 	assert.throws(() => resolveHarness({ explicit: "aider", harnesses: both }), /^Error: "aider" is not one of AO's chat harnesses; available: claude-code, codex \(unknown\), omp$/);
 	assert.throws(() => resolveHarness({ config: "nope", harnesses: both }), /"nope" \(Switchyard's default: switchyard config set harness <id>\|none\) is not one of AO's chat harnesses/);
@@ -41,6 +48,7 @@ test("resolveHarness refuses what is not one of AO's chat harnesses, naming wher
 test("availableHarnesses: AO's chat harnesses in AO's order, with the catalog's auth status, install state and usage", async () => {
 	const client = {
 		settings: async () => ({ chatHarnesses: ["omp", "claude-code", "hermes"] }),
+		unavailableChatHarnesses: async () => new Map([["hermes", "not installed"]]),
 		agents: async () => ({
 			supported: [
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized", usageCount: 4, lastUsedAt: "2026-11-01T00:00:00Z" },
@@ -54,7 +62,7 @@ test("availableHarnesses: AO's chat harnesses in AO's order, with the catalog's 
 	assert.deepEqual(await availableHarnesses(client), [
 		{ id: "omp", label: "OMP", authStatus: "authorized", installed: true, usageCount: 0 },
 		{ id: "claude-code", label: "Claude Code", authStatus: "authorized", installed: false, usageCount: 4, lastUsedAt: "2026-11-01T00:00:00Z" },
-		{ id: "hermes", label: "hermes", authStatus: "unknown", installed: false, usageCount: 0 },
+		{ id: "hermes", label: "hermes", authStatus: "unknown", installed: false, usageCount: 0, unavailable: "not installed" },
 	]);
 });
 

@@ -30,6 +30,8 @@ export interface AoHarnessInfo {
 	/** Retained AO sessions attributed to it. */
 	usageCount: number;
 	lastUsedAt?: string;
+	/** AO knows it can't start a chat with it here (`GET /agents/chat/unavailable`): why. Never AO's default; refused when asked for. */
+	unavailable?: string;
 }
 
 /** Where the resolved harness came from (the resolution order above). */
@@ -58,13 +60,16 @@ export class HarnessError extends Error {}
 /** AO's chat harnesses, in AO's order, with their readiness from the agent catalog. */
 export async function availableHarnesses(client: AoClient): Promise<AoHarnessInfo[]> {
 	const [settings, agents] = await Promise.all([client.settings(), client.agents()]);
+	// Advisory: an AO that can't say leaves every harness available (spawn still checks).
+	const unavailable = await client.unavailableChatHarnesses(settings.chatHarnesses).catch(() => new Map<string, string>());
 	const info = new Map(agents.supported.map(a => [a.id, a]));
 	const installed = new Set(agents.installed.map(a => a.id));
 	const authorized = new Set(agents.authorized.map(a => a.id));
 	return settings.chatHarnesses.map(id => {
 		const a = info.get(id);
 		const authStatus: AoAuthStatus = a?.authStatus ?? (authorized.has(id) ? "authorized" : "unknown");
-		return { id, label: a?.label ?? id, authStatus, installed: installed.has(id), usageCount: a?.usageCount ?? 0, ...(a?.lastUsedAt && { lastUsedAt: a.lastUsedAt }) };
+		const why = unavailable.get(id);
+		return { id, label: a?.label ?? id, authStatus, installed: installed.has(id), usageCount: a?.usageCount ?? 0, ...(a?.lastUsedAt && { lastUsedAt: a.lastUsedAt }), ...(why && { unavailable: why }) };
 	});
 }
 
@@ -74,8 +79,9 @@ function listText(harnesses: readonly AoHarnessInfo[]): string {
 
 /** Step 4 alone: AO's default among its chat harnesses, or undefined when none is authorized or installed. */
 export function defaultHarness(harnesses: readonly AoHarnessInfo[]): HarnessChoice | undefined {
-	const authorized = harnesses.filter(h => h.authStatus === "authorized");
-	const pool = authorized.length ? authorized : harnesses.filter(h => h.installed);
+	const usable = harnesses.filter(h => !h.unavailable);
+	const authorized = usable.filter(h => h.authStatus === "authorized");
+	const pool = authorized.length ? authorized : usable.filter(h => h.installed);
 	const what = authorized.length ? "authorized" : "installed (none is authorized)";
 	if (pool.length === 0) return undefined;
 	if (pool.length === 1) return { harness: pool[0].id, source: "only", reason: `the only chat harness AO reports ${what}` };
@@ -95,10 +101,10 @@ export function resolveHarness(input: ResolveHarnessInput): HarnessChoice {
 	for (const [source, raw, why] of steps) {
 		const id = raw?.trim();
 		if (!id) continue;
-		if (!input.harnesses.some(h => h.id === id)) {
-			const where = source === "config" ? " (Switchyard's default: switchyard config set harness <id>|none)" : source === "project" ? " (the AO project's worker.agent)" : "";
-			throw new HarnessError(`"${id}"${where} is not one of AO's chat harnesses; available: ${listText(input.harnesses)}`);
-		}
+		const where = source === "config" ? " (Switchyard's default: switchyard config set harness <id>|none)" : source === "project" ? " (the AO project's worker.agent)" : "";
+		const found = input.harnesses.find(h => h.id === id);
+		if (!found) throw new HarnessError(`"${id}"${where} is not one of AO's chat harnesses; available: ${listText(input.harnesses)}`);
+		if (found.unavailable) throw new HarnessError(`"${id}"${where} can't run a chat on this AO: ${found.unavailable}; available: ${listText(input.harnesses.filter(h => !h.unavailable))}`);
 		return { harness: id, source, reason: why };
 	}
 	const fallback = defaultHarness(input.harnesses);

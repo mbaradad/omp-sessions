@@ -1768,7 +1768,8 @@ async function cmdHarnesses(args: Args): Promise<number> {
 	const authColor = (h: AoHarnessInfo) => (h.authStatus === "authorized" ? c.green : h.authStatus === "unauthorized" ? c.red : c.dim);
 	for (const h of harnesses) {
 		const used = h.usageCount ? c.dim(` ${h.usageCount} session${h.usageCount === 1 ? "" : "s"}`) : "";
-		process.stdout.write(`${h.id === choice?.harness ? c.green("●") : " "} ${pad(h.id, 18)} ${pad(authColor(h)(h.authStatus), 14)}${c.dim(pad(h.label, 16))}${used}\n`);
+		const off = h.unavailable ? c.yellow(` can't chat here: ${h.unavailable}`) : "";
+		process.stdout.write(`${h.id === choice?.harness ? c.green("●") : " "} ${pad(h.id, 18)} ${pad(authColor(h)(h.authStatus), 14)}${c.dim(pad(h.label, 16))}${used}${off}\n`);
 	}
 	if (choice) process.stdout.write(`${c.dim("default:")} ${c.bold(choice.harness)} ${c.dim(`(${choice.reason})`)}\n`);
 	else process.stderr.write(`switchyard: ${problem}\n`);
