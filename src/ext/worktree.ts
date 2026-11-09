@@ -233,10 +233,11 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	const runs = runsFor(count.n);
 	const batch = crypto.randomBytes(4).toString("hex");
 	const title = taskTitle(task, 50);
+	// An explicit branch per run: AO renames a default `ao/<session>/root` branch from the prompt shortly after the start, which fails an agent's early commit ("cannot lock ref HEAD", test-infra's finding).
 	// One at a time: AO creates each run's worktree, and concurrent `git worktree add` races on the repository's lock files.
 	const started: SessionMeta[] = [];
 	for (const [i, model] of runs.entries()) {
-		const panel = await api.launchAndOpen({ cwd: folder, title: `${title} #${i + 1}${model ? ` · ${model.split("/").pop()}` : ""}`, prompt: task, model });
+		const panel = await api.launchAndOpen({ cwd: folder, title: `${title} #${i + 1}${model ? ` · ${model.split("/").pop()}` : ""}`, prompt: task, model, branch: `best-of-n/${batch}-${i + 1}` });
 		const meta = panel && api.sessions.get(panel.sessionId);
 		const wt = meta && worktreeOf(meta);
 		if (!meta || !wt) continue;
