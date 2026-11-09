@@ -375,7 +375,8 @@ export type PlanOp =
 	| { op: "updateSubtask"; id: string; subtaskId: string; title?: string; done?: boolean }
 	| { op: "removeSubtask"; id: string; subtaskId: string }
 	| { op: "moveSubtask"; id: string; subtaskId: string; index: number }
-	| { op: "lane.add"; id?: string; title?: string; session?: string; priority?: Priority; defaults?: TaskOptions; autoRun?: boolean; ref?: string }
+	/** `ensure`: when the lane exists already, do nothing (its ref still names it) instead of refusing the batch. A new lane is armed unless `autoRun: false`. */
+	| { op: "lane.add"; id?: string; title?: string; session?: string; priority?: Priority; defaults?: TaskOptions; autoRun?: boolean; ensure?: boolean; ref?: string }
 	| { op: "lane.update"; id: string; title?: string; priority?: Priority | null; defaults?: TaskOptions | null }
 	| { op: "lane.remove"; id: string }
 	| { op: "lane.pause"; id: string }

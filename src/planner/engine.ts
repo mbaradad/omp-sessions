@@ -406,11 +406,15 @@ function laneHead(state: PlanState, lane: string): Task | undefined {
 	return state.tasks.find(t => t.lane === lane && (t.status === "pending" || t.status === "running"));
 }
 
-function ensureLane(state: PlanState, id: string, now: number): Lane {
+/**
+ * The lane `id`, created when missing. A lane made implicitly (a task or schedule names it) starts paused, like
+ * an old session queue: nothing runs until somebody starts it. `lane.add` is the explicit way and arms it.
+ */
+function ensureLane(state: PlanState, id: string, now: number, autoRun = false): Lane {
 	let lane = state.lanes.find(l => l.id === id);
 	if (lane) return lane;
 	if (!isPlannerLaneId(id) && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) fail(`not a lane or session id: ${id}`);
-	lane = { id, autoRun: true, createdAt: now };
+	lane = { id, autoRun, createdAt: now };
 	// A lane named after an AO session continues that session.
 	if (!isPlannerLaneId(id)) lane.session = id;
 	state.lanes.push(lane);
@@ -675,9 +679,13 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			}
 			case "lane.add": {
 				const id = typeof o.id === "string" && o.id ? o.id : newId("l_");
-				if (s.lanes.some(l => l.id === id)) fail(`lane ${id} exists`);
-				const l = ensureLane(s, id, now);
-				if (o.autoRun === false) l.autoRun = false;
+				if (s.lanes.some(l => l.id === id)) {
+					// `ensure`: use the lane as it is (no fields are applied); without it the whole batch is refused.
+					if (o.ensure !== true) fail(`lane ${id} exists`);
+					if (typeof o.ref === "string" && o.ref) refs[o.ref] = id;
+					break;
+				}
+				const l = ensureLane(s, id, now, o.autoRun !== false);
 				const title = cleanTitle(o.title);
 				if (title) l.title = title;
 				if (typeof o.session === "string" && o.session) l.session = o.session;

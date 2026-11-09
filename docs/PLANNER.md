@@ -216,7 +216,7 @@ Task ops (`id` = task id):
 | `sync` | `id` | re-check the task's git branch now (commit leftovers) and propagate to its children |
 | `addSubtask` / `updateSubtask` / `removeSubtask` / `moveSubtask` | as `QueueOp` | |
 
-Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults?, autoRun?}`,
+Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults?, autoRun?, ensure?}` (explicit: the lane is armed unless `autoRun:false`; an existing id refuses the whole batch with `lane X exists`, or with `ensure:true` does nothing and the `ref` still names it; a lane made *implicitly*, by a task's or schedule's `lane` naming an unknown id, starts **paused** like an old queue),
 `lane.update {id, title?, priority?|null, defaults?}`, `lane.remove {id}` (removes its non-running
 tasks), `lane.pause {id}`, `lane.resume {id}` (autoRun on), `lane.startAt {id, at: number|null}`,
 `lane.requeue {id}` (old `requeueOps`), `lane.retryFailed {id}`, `lane.clearDone {id}`,
@@ -323,6 +323,8 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 ## Events (`subscribe {topic: "plan"}`)
 
+**Ordering:** the plan event of a change is sent *before* the response of the request that made it (same connection and every subscriber), so a client's cached plan is never older than the answer it just got (`edit` answers `{rev, refs}`; the event's `plan.rev ≥ rev`).
+
 - `{id, event: "plan", plan: PlanView}`: first right after subscribing, then after every change
   (coalesced, ≤ 5/s).
 - `{id, event: "task", task: TaskView, from: TaskStatus}`: each status transition (for sounds/notifications).
@@ -345,6 +347,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.
 - 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
 - 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).
 - 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
