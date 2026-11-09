@@ -356,3 +356,36 @@ test("the `sync` wire op propagates and answers with the edges; the plan view li
 	assert.equal(byTitle(p, "C").status, "pending");
 	assert.equal(byTitle(p, "C").followUpOnly, true);
 });
+
+test("a graph built through pre-spawned sessions (the CLI's `new --task`): both tasks are tracked in git, B gets A's commit before its first run, later changes flow on", async t => {
+	const repo = scratchRepo(t);
+	const ao = new FakeAo(repo);
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	const spawned = async (key: string) => (await ao.spawn({ harness: "omp", projectId: "p", clientRequestId: key })).session;
+	const sA = await spawned("cli-a");
+	const sB = await spawned("cli-b");
+	// `new --task` for A, then for B with --after A: a queue call into each session's lane, all in one call.
+	await p.queue(sA, [{ op: "add", title: "A" }, { op: "autoRun", value: true }]);
+	await p.queue(sB, [{ op: "add", title: "B" }, { op: "after", ids: [sA] }, { op: "autoRun", value: true }]);
+	assert.equal(p.view().tasks.find(x => x.title === "B")?.state, "blocked");
+	await until("A sent", () => sent(p, "A"));
+	const a = byTitle(p, "A");
+	assert.equal(a.git?.branch, ao.sessions.get(sA)?.branch, "A is tracked in git although the planner did not spawn it");
+	write(ao, sA, "x.txt", "A1\n");
+	ao.finishTurn(sA, "completed", "A edited x.txt");
+	await until("B sent", () => sent(p, "B"));
+	assert.equal(read(ao, sB, "x.txt"), "A1\n", "A's commit is in B's worktree before B's first run");
+	assert.equal(p.view().edges.length, 1);
+	assert.equal(p.view().edges[0].state, "merged");
+	assert.equal(p.view().edges[0].parentSession, sA);
+	ao.finishTurn(sB, "completed", "B done");
+	await until("B done", () => byTitle(p, "B").status === "done");
+	// A again: B (finished) gets the change and is marked, as in any graph.
+	p.edit([{ op: "update", id: sA, notes: "again" }, { op: "requeue", id: sA }]);
+	await until("A re-sent", () => sent(p, "A"));
+	write(ao, sA, "x.txt", "A2\n");
+	ao.finishTurn(sA, "completed", "A again");
+	await until("B marked", () => byTitle(p, "B").sync?.[a.id]?.state === "upstream-changed");
+	assert.equal(read(ao, sB, "x.txt"), "A2\n");
+});

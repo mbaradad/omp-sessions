@@ -148,12 +148,13 @@ interface PlannerConfig {
   `switchyard config set` writes), read at every dispatch; else AO's/omp's default model and mode `auto`. A
   continued session keeps its own model and mode.
 - **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
-  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
-  checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
-  `bypass-permissions` with no prompt; the session's own options are checked and set (model, then thinking);
+  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): spawn in AO's
+  `bypass-permissions` with no prompt and no model; the model is checked against the **session's own**
+  config-options choices (the omp catalog is inexact: 3768 ids, 32 for the configured providers, 53 offered,
+  so the planner has no pre-check of its own), then set, then thinking;
   the permission mode is set (`options.mode`, default `auto`; the mode file is written before the first
-  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task and
-  removes the session. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
+  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task without a retry and
+  removes the session before the prompt. On a continued session the model is set directly and AO's error fails the task. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
   the session as needing input until a person answers through AO.
 - **Continued sessions** (lane or re-run): `resume-agent` first when the session reads `exited`; model and
   thinking are set before the prompt and put back after the turn; `mode` applies to new sessions only. A
@@ -216,7 +217,7 @@ Task ops (`id` = task id):
 | `sync` | `id` | re-check the task's git branch now (commit leftovers) and propagate to its children |
 | `addSubtask` / `updateSubtask` / `removeSubtask` / `moveSubtask` | as `QueueOp` | |
 
-Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults?, autoRun?}`,
+Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults?, autoRun?, ensure?}` (explicit: the lane is armed unless `autoRun:false`; an existing id refuses the whole batch with `lane X exists`, or with `ensure:true` does nothing and the `ref` still names it; a lane made *implicitly*, by a task's or schedule's `lane` naming an unknown id, starts **paused** like an old queue),
 `lane.update {id, title?, priority?|null, defaults?}`, `lane.remove {id}` (removes its non-running
 tasks), `lane.pause {id}`, `lane.resume {id}` (autoRun on), `lane.startAt {id, at: number|null}`,
 `lane.requeue {id}` (old `requeueOps`), `lane.retryFailed {id}`, `lane.clearDone {id}`,
@@ -302,6 +303,23 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Graphs through sessions a client spawned first (the CLI's `new --task`)
+
+A task dispatched into an **existing** session (its lane is the session) is tracked in git like a planner-spawned
+one: the planner records the session's repo, branch and worktree before the first run, merges the parents' committed
+heads into that worktree first (edges `merged`/`conflict`), and after the turn commits the work and records the head,
+so its own children merge it in turn. `after` may name session ids, so a graph made only of `queue {id: <session>}`
+calls (`queue {add, after [<session>], autoRun}`) propagates exactly like one the planner spawned. Sessions outside a
+git repository are not tracked.
+
+## Chat hibernation (G28)
+
+AO keeps `chatHibernationEnabled` in memory only (false after every daemon boot). When `<switchyard home>/config.json`
+has `"hibernation": "on"` (or `"off"`), the planner applies it through `AoClient.applyChatHibernation()` on every
+(re)connect to AO's event stream (writing only when AO differs); with the key absent it leaves AO alone. A failure
+is logged and never stops the planner. A send to a hibernated session returns `queued` and runs after the wake:
+the planner follows the turn as for any other.
+
 ## Checkpoints (undo/redo with files)
 
 - `Task.turn`: the AO turn id of the task's latest run, kept after it finishes (key for "this task's changes" and
@@ -322,6 +340,8 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
   writing the mode file.
 
 ## Events (`subscribe {topic: "plan"}`)
+
+**Ordering:** the plan event of a change is sent *before* the response of the request that made it (same connection and every subscriber), so a client's cached plan is never older than the answer it just got (`edit` answers `{rev, refs}`; the event's `plan.rev ≥ rev`).
 
 - `{id, event: "plan", plan: PlanView}`: first right after subscribing, then after every change
   (coalesced, ≤ 5/s).
@@ -345,6 +365,8 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: no planner-side model pre-check (the spawn helper checks the session's own choices).
+- 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.
 - 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
 - 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).
 - 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.

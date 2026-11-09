@@ -141,8 +141,13 @@ export class FakeAo implements AoPort {
 		this.resumed.push(session);
 	}
 
-	async models() {
-		return this.modelIds;
+	/** What the config asks for (set by a test) and how often the planner applied it. */
+	hibernation: { enabled: boolean; changed: boolean } | undefined;
+	hibernationCalls = 0;
+
+	async applyHibernation() {
+		this.hibernationCalls++;
+		return this.hibernation;
 	}
 
 	/** An AO event for the session with the given activity (someone chatted: active, then idle). */
@@ -158,6 +163,11 @@ export class FakeAo implements AoPort {
 		this.event(session, "exited");
 	}
 
+	/** The event stream reopens, as after a daemon restart. */
+	reopen(): void {
+		this.handlers?.onOpen(true);
+	}
+
 	/** The host died and no event told anyone (a missed SSE event). */
 	killHostSilently(session: string): void {
 		const s = this.sessions.get(session);
@@ -170,12 +180,23 @@ export class FakeAo implements AoPort {
 		if (s) s.terminated = false;
 	}
 
-	async setModel() {
-		return undefined;
+	/** Current model and thinking level of each session, and every change made (previous value returned, as AO's port does). */
+	models_ = new Map<string, string>();
+	thinking_ = new Map<string, string>();
+	changes: string[] = [];
+
+	async setModel(session: string, model: string) {
+		const prev = this.models_.get(session) ?? "default/model";
+		this.models_.set(session, model);
+		this.changes.push(`model ${session} ${model}`);
+		return prev;
 	}
 
-	async setThinking() {
-		return undefined;
+	async setThinking(session: string, level: string) {
+		const prev = this.thinking_.get(session) ?? "high";
+		this.thinking_.set(session, level);
+		this.changes.push(`thinking ${session} ${level}`);
+		return prev;
 	}
 
 	/** Folders registered as projects, as AO refuses a second registration of the same path. */

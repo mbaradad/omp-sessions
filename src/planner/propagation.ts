@@ -121,13 +121,16 @@ export class Propagation {
 		return this.serial(async () => {
 			const parents = this.gitParents(t, repo);
 			const live = this.task(t.id);
-			if (!parents.length || !live) return;
+			if (!live) return;
+			// Every task in a git session is tracked, parents or not: its turn's work is committed and its head recorded,
+			// which is what lets its own children branch from (or merge) it.
 			if (!live.git) {
 				this.host.commit(s => {
 					const x = s.tasks.find(y => y.id === t.id);
 					if (x) x.git = { repo, branch, ...(workspace ? { worktree: workspace } : {}) };
 				});
 			} else if (live.git.branch !== branch && !workspace) return;
+			if (!parents.length) return;
 			for (const p of parents) {
 				const head = p.git?.head as string;
 				const edge = this.task(t.id)?.sync?.[p.id];

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Planner } from "../../src/planner/planner";
+import * as fs from "node:fs";
 import { FakeAo, byTitle, running, start, tempPlan, until } from "./planner-fake-ao";
 import { loadPlan } from "../../src/planner/store";
 
@@ -127,14 +128,14 @@ test("a limit omp gave up retrying arrives as a completed turn: the task is held
 	await until("done", () => byTitle(p, "talks about limits").status === "done");
 });
 
-test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in AO bypass with the mode the task names (D11)", async t => {
+test("a model the spawn helper refuses fails the task without retry and leaves no session (G36); sessions start in AO bypass with the mode the task names (D11)", async t => {
 	const ao = new FakeAo();
 	ao.modelIds = ["anthropic/claude-x"];
 	const p = start(tempPlan(t), ao);
 	t.after(() => p.stop());
 	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { mode: "ask", thinking: "low" } } }, { op: "add", task: { title: "plain" } }]);
 	await until("typo failed", () => byTitle(p, "typo").status === "failed");
-	assert.match(byTitle(p, "typo").summary ?? "", /doesn't know the model "anthropic\/claude-xx"/);
+	assert.match(byTitle(p, "typo").summary ?? "", /Unknown omp model "anthropic\/claude-xx"/);
 	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
 	assert.equal(ao.created, 2);
 	const asks = ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody;
@@ -381,4 +382,70 @@ test("a turn AO marks completed while its last reply still streams: the summary 
 	assert.equal(byTitle(p, "races").summary, "Found three bugs in parser.ts");
 	// A reply that never stops streaming does not hold the task forever.
 	await until("stuck done after the grace", () => byTitle(p, "stuck").status === "done", 8000);
+});
+
+test("implicit lanes start paused (like an old queue); lane.add arms its lane; `ensure` makes lane.add idempotent", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "in a new lane", lane: "sess-implicit" } }]);
+	assert.equal(p.state.lanes.find(l => l.id === "sess-implicit")?.autoRun, false);
+	await sleep(300);
+	assert.equal(byTitle(p, "in a new lane").status, "pending", "nothing runs until somebody starts the lane");
+	const { refs } = p.edit([{ op: "lane.add", id: "l_00000000a1", title: "explicit", ref: "l" }, { op: "lane.add", id: "l_00000000a1", ensure: true, title: "ignored", ref: "again" }]);
+	assert.equal(p.state.lanes.find(l => l.id === "l_00000000a1")?.autoRun, true);
+	assert.equal(p.state.lanes.find(l => l.id === "l_00000000a1")?.title, "explicit", "an existing lane is left as it is");
+	assert.equal(refs.again, "l_00000000a1");
+	assert.throws(() => p.edit([{ op: "lane.add", id: "l_00000000a1" }]), /lane l_00000000a1 exists/);
+	// A task added to the implicit lane runs once the lane is resumed.
+	p.edit([{ op: "lane.resume", id: "sess-implicit" }]);
+	await until("runs after resume", () => byTitle(p, "in a new lane").status === "running" || byTitle(p, "in a new lane").status === "failed");
+});
+
+test("a model and thinking level a task asks for on a continued session are put back after its turn", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "lane.add", id: "l_00000000b2" }, { op: "add", task: { title: "first", lane: "l_00000000b2" } }, { op: "add", task: { title: "second", lane: "l_00000000b2", options: { model: "anthropic/other", thinking: "low" } } }]);
+	const s = await until("first sent", () => byTitle(p, "first").run?.phase === "sent" && byTitle(p, "first").run?.session);
+	ao.models_.set(s, "anthropic/claude-x");
+	ao.thinking_.set(s, "high");
+	ao.finishTurn(s, "completed", "one");
+	await until("second sent", () => byTitle(p, "second").run?.phase === "sent");
+	assert.equal(ao.models_.get(s), "anthropic/other");
+	assert.equal(ao.thinking_.get(s), "low");
+	ao.finishTurn(s, "completed", "two");
+	await until("second done", () => byTitle(p, "second").status === "done");
+	await until("restored", () => ao.models_.get(s) === "anthropic/claude-x" && ao.thinking_.get(s) === "high");
+});
+
+test("a scheduled start that passed while the planner was down fires at boot", async t => {
+	const file = tempPlan(t);
+	const ao = new FakeAo();
+	let p = start(file, ao);
+	p.edit([{ op: "lane.add", id: "l_00000000c3" }, { op: "add", task: { title: "due", lane: "l_00000000c3" } }, { op: "lane.startAt", id: "l_00000000c3", at: Date.now() + 3_600_000 }]);
+	await sleep(200);
+	assert.equal(byTitle(p, "due").status, "pending");
+	p.stop();
+	// The planner is down; the start time passes (edit the file, as an hour going by would).
+	const plan = JSON.parse(fs.readFileSync(file, "utf8"));
+	plan.lanes[0].startAt = Date.now() - 1000;
+	fs.writeFileSync(file, JSON.stringify(plan));
+	p = start(file, ao);
+	t.after(() => p.stop());
+	await until("fires at boot", () => byTitle(p, "due").run?.phase === "sent");
+	assert.equal(p.state.lanes[0].startAt, undefined);
+});
+
+test("the hibernation setting is applied on every (re)connect to AO, and an AO that refuses doesn't stop the planner (G28)", async t => {
+	const ao = new FakeAo();
+	ao.hibernation = { enabled: true, changed: true };
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	await until("applied on connect", () => ao.hibernationCalls >= 1);
+	// The stream reopens (the daemon restarted and forgot the flag): applied again.
+	ao.reopen();
+	await until("applied again", () => ao.hibernationCalls >= 2);
+	p.edit([{ op: "add", task: { title: "still works" } }]);
+	await until("dispatches", () => byTitle(p, "still works").run?.phase === "sent");
 });

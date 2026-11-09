@@ -67,6 +67,13 @@ export function createApiServer(opts: ApiOptions): net.Server {
 		},
 	};
 
+	/** The plan event of this request's change goes out before its response, so a client's cache is never older than the answer. */
+	const flushPlan = () => {
+		if (!planTimer) return;
+		clearTimeout(planTimer);
+		publishPlan();
+	};
+
 	const onRequest = async (c: Client, req: PlannerRequest) => {
 		const { id, op } = req;
 		try {
@@ -79,7 +86,9 @@ export function createApiServer(opts: ApiOptions): net.Server {
 			}
 			if (!Object.hasOwn(handlers, op)) throw new Error(`unknown operation ${String(op)}`);
 			const handler = handlers[op] as (args: Record<string, unknown>) => unknown;
-			send(c, { id, ok: true, result: await handler(rec(req.args)) });
+			const result = await handler(rec(req.args));
+			flushPlan();
+			send(c, { id, ok: true, result });
 		} catch (err) {
 			send(c, { id, ok: false, error: err instanceof Error ? err.message : String(err) });
 		}
