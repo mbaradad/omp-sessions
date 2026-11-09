@@ -171,7 +171,7 @@ test("graphEdges: one edge per parent a task has propagation state for; refs nam
 	assert.equal(edgesOfRef(view, "repo-1").length, 1, "as the parent");
 	assert.equal(edgesOfRef(view, "repo-3").length, 0);
 	// The child's session carries its worst incoming edge (a free task's session has no lane of its own).
-	assert.deepEqual(laneSummaries(view).get("repo-2")?.upstream, { state: "conflict", edges: [{ parent: "repo-1", state: "conflict", files: ["x.txt"] }] });
+	assert.deepEqual(laneSummaries(view).get("repo-2")?.upstream, { state: "conflict", edges: graphEdges(view) });
 	assert.equal(laneSummaries(view).get("repo-3")?.upstream, undefined);
 	assert.equal(worstEdgeState([{ state: "merged" }, { state: "upstream-changed" }, { state: "in-sync" }]), "upstream-changed");
 });

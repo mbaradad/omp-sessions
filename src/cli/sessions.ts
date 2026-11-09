@@ -4,9 +4,10 @@
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
-import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, planModeOf, sessionModel, sessionReport } from "../ao/model";
+import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, changedFiles, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
-import type { LaneSummary } from "./plan";
+import { readMode } from "../shared/session-mode";
+import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
 
 /** Board column of a session (`board`, `ls --json`); `interrupted` sessions sit under `stopped` here. */
@@ -50,6 +51,8 @@ export interface Session {
 	color?: string;
 	archived?: boolean;
 	tags: string[];
+	/** The permission mode in the session's mode file (the gate reads it); absent for a session started without one. */
+	mode?: AoPermissionMode;
 }
 
 /** What the planner says about a lane when the session runs nothing (MAPPING D3; `agentState` applies it). */
@@ -119,12 +122,15 @@ function inside(child: string, parent: string): boolean {
 export async function buildSession(client: AoClient, view: AoSessionView, projects: ReadonlyMap<string, AoProject>, opts: LoadOptions, conversation?: AoConversation): Promise<Session> {
 	// A terminated session's workspace is gone: its project folder stands in.
 	const workspace = view.isTerminated ? undefined : client.workspacePath(view.id).catch(() => undefined);
-	const [conv, cwd] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace]);
+	// The files a session changed come from its workspace (omp's turns carry no diff, G31); a failed read counts as none.
+	const files = view.isTerminated ? undefined : client.workspaceManifest(view.id).then(changedFiles, () => []);
+	const [conv, cwd, changed] = await Promise.all([conversation ?? conversationOf(client, view, opts.conversationLimit), workspace, files]);
 	const lane = opts.lanes?.get(view.id);
-	const model = sessionModel(view, conv, plannedState(lane));
+	const model = sessionModel(view, conv, plannedState(lane), changed);
 	const project = view.projectId ? projects.get(view.projectId) : undefined;
 	const org = opts.org ?? readOrgFile();
 	const e = org.sessions[view.id];
+	const mode = readMode(view.id);
 	const session: Session = {
 		id: view.id,
 		title: model.title,
@@ -135,6 +141,7 @@ export async function buildSession(client: AoClient, view: AoSessionView, projec
 		...(lane && { lane }),
 		priority: lane?.priority ?? e?.priority ?? "normal",
 		tags: e?.tags ? [...e.tags] : [],
+		...(mode && { mode }),
 	};
 	if (e?.groupId) {
 		const g = org.groups.find(x => x.id === e.groupId);
@@ -242,7 +249,7 @@ export function queueSummary(s: Session): AoReportQueue {
  * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
  * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: NonNullable<LaneSummary["upstream"]> };
+export type CliReport = Omit<AoSessionReport, "question"> & { question?: NonNullable<AoSessionReport["question"]> & { approval: boolean }; completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: GraphEdge[]; upstreamState?: string };
 
 /**
  * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
@@ -250,11 +257,19 @@ export type CliReport = AoSessionReport & { completed: boolean; completedAt?: nu
  * GAPS G31, so the workspace manifest counts them).
  */
 export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFiles?: number } = {}): CliReport {
-	const report: CliReport = { ...sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live }), completed: s.lane?.completed !== undefined };
+	// The gate's mode file is the truth for a Switchyard session (ask included); AO's settings only say what omp was launched with.
+	const mode = s.mode ?? live.mode;
+	const { question, ...base } = sessionReport({ ...s.model, cwd: s.cwd }, { tags: s.tags, queue: queueSummary(s), ...live, ...(mode && { mode }) });
+	// An omp `ask` with options and a tool approval are both `select`s to a reader: `approval` tells them apart (AO's question kind, the gate's and write prompts included).
+	const report: CliReport = { ...base, ...(question && { question: { ...question, approval: s.model.question?.kind === "approval" } }), completed: s.lane?.completed !== undefined };
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
-	if (s.lane?.upstream) report.upstream = s.lane.upstream;
+	if (s.lane?.upstream) {
+		// The edges where this session is the child (full objects, as `plan status` prints them) and the worst of their states.
+		report.upstream = s.lane.upstream.edges;
+		report.upstreamState = s.lane.upstream.state;
+	}
 	return report;
 }
 
@@ -284,6 +299,7 @@ export function infoJson(s: Session, order: number) {
 		},
 		column: columnOf(s.state),
 		state: s.state,
+		...(report.mode && { mode: report.mode }),
 		queue: report.queue,
 		priority: s.priority,
 		order,
@@ -296,7 +312,7 @@ export function infoJson(s: Session, order: number) {
 		...(report.completedAt && { completedAt: report.completedAt }),
 		...(report.waitReason && { waitReason: report.waitReason }),
 		...(report.waitUntil !== undefined && { waitUntil: report.waitUntil }),
-		...(report.upstream && { upstream: report.upstream }),
+		...(report.upstream && { upstream: report.upstream, upstreamState: report.upstreamState }),
 	};
 }
 
@@ -309,13 +325,27 @@ export async function livePlanMode(client: AoClient, sessionId: string): Promise
 	}
 }
 
-/** Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say. */
-export async function changedFileCount(client: AoClient, sessionId: string): Promise<number | undefined> {
-	try {
-		return (await client.workspaceManifest(sessionId)).files.length;
-	} catch {
-		return undefined;
+/** AO caches a workspace manifest for 3 s (foundation: manifestCacheMs): a read right after a turn may predate the edit. */
+const MANIFEST_CACHE_MS = 3000;
+const MANIFEST_RETRY_MS = 500;
+
+/**
+ * Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say.
+ * `expectFiles`: the conversation shows file edits, so an empty or failed read is a manifest that has not caught up
+ * (a stale cached one, or still being computed): read it again until AO's cache has expired before believing it.
+ */
+export async function changedFileCount(client: AoClient, sessionId: string, expectFiles = false): Promise<number | undefined> {
+	let last: number | undefined;
+	for (let attempt = 0; attempt <= (expectFiles ? Math.ceil(MANIFEST_CACHE_MS / MANIFEST_RETRY_MS) + 1 : 0); attempt++) {
+		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, MANIFEST_RETRY_MS));
+		try {
+			last = changedFiles(await client.workspaceManifest(sessionId)).length;
+			if (last > 0 || !expectFiles) return last;
+		} catch {
+			last = undefined;
+		}
 	}
+	return last;
 }
 
 /** Ranks sessions the way the board and the planner order them (priority, then manual order). */

@@ -8,12 +8,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
+import { AoClient } from "../../src/ao/client";
 import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
 
 const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
 const CLI_JS = process.env.OMP_TEST_CLI_JS ?? "";
 
 let ao: AoFixture;
+let client: AoClient;
+/** The isolated HOME the CLI runs under (omp's agent folder is in it). */
+let fakeHome: string;
 let repo: string;
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -23,14 +27,22 @@ before(async () => {
 	ao = await startAoFixture();
 	repo = ao.scratchRepo("cli-repo");
 	home = fs.mkdtempSync(path.join(os.tmpdir(), "cli-it-"));
-	// Own planner and Switchyard state; never a user service; the fixture's AO through discovery.
-	env = { ...process.env, ...ao.stackEnv, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
+	// Own planner and Switchyard state, and an isolated HOME with XDG_* under it (CONTRACT.md "Isolated HOME"): the CLI
+	// must never touch the real launcher, skill, Hermes plugin or user services. The fixture's AO is found through discovery.
+	fakeHome = path.join(home, "home");
+	fs.mkdirSync(fakeHome, { recursive: true });
+	const xdg = { XDG_CONFIG_HOME: path.join(fakeHome, ".config"), XDG_DATA_HOME: path.join(fakeHome, ".local", "share"), XDG_STATE_HOME: path.join(fakeHome, ".local", "state"), XDG_CACHE_HOME: path.join(fakeHome, ".cache") };
+	env = { ...process.env, ...ao.stackEnv, HOME: fakeHome, ...xdg, OMP_VSCODE_HOME: path.join(home, "state"), SWITCHYARD_HOME: path.join(home, "switchyard"), NO_COLOR: "1" };
 	assert.equal(cli("config", "set", "service", "off").status, 0);
+	client = await AoClient.connect({ env: { ...process.env, ...ao.clientEnv } });
 });
 
 after(async () => {
 	if (skip) return;
 	cli("server", "stop");
+	// Chat hosts and their fake omp outlive the daemon by design: end every session through the API first.
+	const { sessions } = await client.listSessions({}).catch(() => ({ sessions: [] }));
+	await Promise.all(sessions.map(s => client.killSession(s.id).catch(() => undefined)));
 	await ao?.stop();
 	fs.rmSync(home, { recursive: true, force: true });
 });
@@ -52,7 +64,7 @@ interface Printed {
 	tags: string[];
 	changedFiles: number;
 	queue: { pending: number; done: number };
-	question: { id: string; kind: string; options: string[]; questions: Array<{ options: string[] }> };
+	question: { id: string; kind: string; approval: boolean; options: string[]; questions: Array<{ options: string[] }> };
 	answered: boolean;
 	sent: boolean;
 	running: boolean;
@@ -86,6 +98,25 @@ function started(script: string, ...flags: string[]): string {
 	return r.data.id;
 }
 
+/**
+ * A session that asks before bash, started through AO directly: the fake omp asks as omp does for AO's `default` approval.
+ * `new` starts sessions in AO's bypass with the Switchyard extension's gate deciding (D11), and the fake has no gate.
+ */
+async function startedAsking(script: string): Promise<string> {
+	const project = await client.projectForFolder(repo);
+	const res = await client.spawnSession({ harness: "omp", mode: "chat", kind: "worker", approvalMode: "default", projectId: project?.id, prompt: script });
+	return res.session.id;
+}
+
+/** The files Switchyard's omp extension and shim leave on a machine that has them (the gate is what makes ask, edits and plan enforceable). */
+function installGate(): void {
+	// The fixture points omp at its own agent folder (PI_CODING_AGENT_DIR); the CLI looks where omp does.
+	const dir = path.join(env.PI_CODING_AGENT_DIR ?? path.join(fakeHome, ".omp", "agent"), "extensions", "switchyard");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "mode.js"), "// test gate\n");
+	fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } })}\n`);
+}
+
 test("cli: usage errors exit 2; status says what runs and never starts the planner", { skip }, () => {
 	assert.match(cli("--version").stdout, /^omp-sessions \S+/);
 	assert.equal(cli("ls", "--bogus").status, 2);
@@ -96,6 +127,10 @@ test("cli: usage errors exit 2; status says what runs and never starts the plann
 	assert.equal(s.status, 1, "the planner is down");
 	assert.equal(s.data.ao.running, true);
 	assert.equal(s.data.ao.url, ao.baseUrl);
+	const hib = json<{ ao: { chatHibernation?: boolean }; notes: string[]; problems: string[] }>("status", "--json").data;
+	assert.equal(hib.ao.chatHibernation, false, "AO starts with chat hibernation off");
+	assert.ok(hib.notes.some(n => /chat-hibernation/.test(n)), "the note carries the one-line fix");
+	assert.ok(!hib.problems.some(p => /hibernation/.test(p)), "off is a note, not a problem");
 	assert.equal(s.data.server.running, false);
 	assert.equal(typeof s.data.omp.readiness, "string", "AO's readiness of the omp agent (unknown until AO probed it)");
 	assert.equal(json("server", "status", "--json").data.running, false, "status started no planner");
@@ -118,13 +153,14 @@ test("cli: new → wait 0 with the reply; show --json; ls finds it by project an
 	assert.ok(!ids("--project", "elsewhere").includes(id));
 });
 
-test("cli: an approval → wait 3 with the question; answer --question refuses another one; answer resumes", { skip }, () => {
-	// AO's default for omp asks before bash.
-	const id = started("bash touch approved.txt\nwrite note.txt hi\necho done after approval");
+test("cli: an approval → wait 3 with the question; answer --question refuses another one; answer resumes", { skip }, async () => {
+	// AO's default approval for omp asks before bash.
+	const id = await startedAsking("bash touch approved.txt\nwrite note.txt hi\necho done after approval");
 	const w = json("wait", id, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3, w.stderr);
 	assert.equal(w.data.state, "needs_input");
 	assert.equal(w.data.question.kind, "select", "tool approvals are select questions, as before");
+	assert.equal(w.data.question.approval, true, "…and say so: agents never answer an approval");
 	assert.ok(w.data.question.options.includes("Allow once"), JSON.stringify(w.data.question));
 	assert.equal(cli("answer", id, "--question", "not-this-one", "1").status, 1);
 	assert.equal(cli("answer", id, "maybe").status, 2, "not one of the decisions");
@@ -146,6 +182,7 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 	assert.equal(w.status, 3);
 	// One question: its options, as `options` (kind select) or under `questions` (kind ask).
 	assert.deepEqual(w.data.question.options ?? w.data.question.questions?.[0]?.options, ["yes", "no"]);
+	assert.equal(w.data.question.approval, false, "a plain question: an agent may answer it");
 	assert.equal(cli("answer", id, "2").status, 0);
 	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.reply, "chose no");
 	const streamed = cli("send", id, "echo streamed reply", "--wait");
@@ -163,7 +200,12 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 test("cli: wait exits 124 while it works; abort ends the turn", { skip }, () => {
 	const id = started("slow 20000", "--mode", "auto");
 	assert.equal(cli("wait", id, "--timeout", "2s").status, 124);
-	assert.equal(cli("abort", id).status, 0);
+	// A follow-up queued behind the running turn: AO discards it on abort (G41), the CLI hands it back.
+	assert.equal(json("send", id, "echo queued reply", "--json").data.sent, true);
+	const aborted = json<{ aborted: boolean; discarded: Array<{ text: string }> }>("abort", id, "--json");
+	assert.equal(aborted.status, 0, aborted.stderr);
+	assert.equal(aborted.data.aborted, true);
+	assert.deepEqual(aborted.data.discarded.map(d => d.text), ["echo queued reply"]);
 	assert.notEqual(cli("wait", id, "--timeout", "30s").status, 124);
 	assert.equal(cli("abort", id).status, 1, "nothing to abort");
 });
@@ -195,6 +237,12 @@ test("cli: new --task --after waits for the other session; queue after refuses i
 	assert.equal(b.status, 0, b.stderr);
 	assert.equal(json("show", b.data.id, "--json").data.state, "queued", "blocked behind A");
 	assert.equal(cli("queue", b.data.id, "after", b.data.id).status, 1, "a queue can't wait for itself");
+	// Hermes reads the dependency from `queue <s> --json`: tasks[].after and blockedBy are task ids (not session ids).
+	type Q = { tasks: Array<{ id: string; after?: string[]; blockedBy?: string[] }> };
+	const aTask = json<Q>("queue", a.data.id, "--json").data.tasks[0];
+	const bTask = json<Q>("queue", b.data.id, "--json").data.tasks[0];
+	assert.deepEqual(bTask.after, [aTask.id]);
+	assert.deepEqual(bTask.blockedBy, [aTask.id]);
 	assert.equal(cli("wait", b.data.id, "--timeout", "3s").status, 124, "still waiting");
 	assert.equal(cli("queue", a.data.id, "at", "off").status, 0);
 	assert.equal(cli("queue", a.data.id, "start").status, 0);
@@ -265,14 +313,17 @@ test("cli: plan status lists the graph's edges with their sync state; plan sync 
 	assert.equal(status.status, 0, status.stderr);
 	const mine = json<{ edges: Edge[] }>("plan", "status", "--json", "--", b.data.id).data.edges;
 	for (const e of mine) assert.ok([e.parentSession, e.childSession].includes(b.data.id));
-	const synced = json<{ synced: string[]; edges: Edge[] }>("plan", "sync", "--json", "--", b.data.id);
+	const synced = json<{ task: string; synced: string[]; rerun: boolean; edges: Edge[] }>("plan", "sync", "--json", "--", b.data.id);
 	assert.equal(synced.status, 0, synced.stderr);
 	assert.equal(synced.data.synced.length, 1, "B's one parent");
+	assert.equal(typeof synced.data.task, "string");
+	assert.equal(synced.data.rerun, false, "no --rerun");
+	assert.equal(cli("plan", "status", "--", "no-such-thing").status, 1);
 	assert.equal(cli("plan", "sync", "--", "no-such-thing").status, 1);
 	assert.equal(cli("plan", "bogus").status, 2);
 });
 
-test("cli: the error texts and exit codes the Hermes plugin matches; tags are on the entry and in meta", { skip }, () => {
+test("cli: the error texts and exit codes the Hermes plugin matches; tags are on the entry and in meta", { skip }, async () => {
 	const missing = cli("show", "--json", "--", "no-such-session-1");
 	assert.equal(missing.status, 1);
 	assert.match(missing.stderr, /no session matches/);
@@ -287,7 +338,7 @@ test("cli: the error texts and exit codes the Hermes plugin matches; tags are on
 	assert.equal(idle.status, 1);
 	assert.match(idle.stderr, /question changed|not waiting for an answer|no question is waiting/i);
 	// A real question: the wrong id → "question changed" (1); an answer that doesn't fit → 2.
-	const asking = started("bash touch q.txt");
+	const asking = await startedAsking("bash touch q.txt");
 	const w = json("wait", asking, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3);
 	const moved = cli("answer", asking, `--question=nope`, "--", "yes");
@@ -312,10 +363,53 @@ test("cli: new --worktree auto|always reports the worktree; never/--no-worktree 
 	}
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=sometimes").status, 2);
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=auto", "--no-worktree").status, 2);
+	const unusable = cli("new", repo, "-p", "echo x", "--model", "nowhere/not-a-model");
+	assert.equal(unusable.status, 1, "a model omp can't use fails before AO creates a session (it would leave a terminated one)");
+	assert.match(unusable.stderr, /model/);
 	assert.equal(json<unknown[]>("ls", "--all", "--json").data.length, before + 2, "a refused start creates nothing");
 	type Archived = { id: string; archived: boolean; changed: boolean };
 	const id = made.data.id;
 	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: true });
 	assert.deepEqual(json<Archived>("archive", id, "--json").data, { id, archived: true, changed: false });
 	assert.deepEqual(json<Archived>("unarchive", id, "--json").data, { id, archived: false, changed: true });
+});
+
+test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what show and ls report; mode switches it live; omp flags after -- need the shim", { skip, timeout: 180_000 }, () => {
+	// No extension on this machine: nothing would ask, so ask, edits and plan are refused before a session exists.
+	const before = json<Listed>("ls", "--all", "--json").data.length;
+	const refused = cli("new", repo, "-p", "echo x", "--mode", "ask");
+	assert.equal(refused.status, 1);
+	assert.match(refused.stderr, /omp extension/);
+	assert.equal(cli("new", repo, "-p", "echo x", "--mode", "auto").status, 0, "auto needs no gate");
+	assert.equal(cli("new", repo, "-p", "echo x", "--", "--advisor", "x").status, 1, "no shim to apply omp flags");
+	assert.equal(json<Listed>("ls", "--all", "--json").data.length, before + 1, "a refused start creates nothing");
+	const status = json<{ omp: { extension: { installed: boolean }; shim: { installed: boolean } } }>("status", "--json").data;
+	assert.equal(status.omp.extension.installed, false);
+	assert.equal(status.omp.shim.installed, false);
+
+	installGate();
+	type Entry = { mode?: string; meta: { id: string; permissionMode?: string } };
+	const id = started("echo hello", "--mode", "ask");
+	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "ask", "the file the gate reads");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(json("show", id, "--json").data.mode, "ask");
+	const listed = json<Entry[]>("ls", "--all", "--json").data.find(e => e.meta.id === id);
+	assert.equal(listed?.meta.permissionMode, "ask", "ask is exact now: it is what the file says");
+	assert.equal(listed?.mode, "ask");
+	assert.equal(cli("mode", id, "edits").status, 0);
+	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "edits", "switched live: the next tool call reads it");
+	assert.equal(json("show", id, "--json").data.mode, "edits");
+	assert.equal(json<Entry[]>("ls", "--all", "--json").data.find(e => e.meta.id === id)?.meta.permissionMode, "edits", "ls follows show after a switch");
+
+	// Flags after -- reach omp only through the shim on the AO daemon's PATH. This daemon was not started that way, so
+	// the CLI refuses instead of writing flags that would be ignored (the omp-args file itself is src/ao/spawn.ts's).
+	fs.mkdirSync(path.join(home, "switchyard", "bin"), { recursive: true });
+	fs.writeFileSync(path.join(home, "switchyard", "bin", "omp"), "#!/bin/sh\n# switchyard-omp-shim test\n");
+	const flagged = cli("new", repo, "-p", "echo flagged", "--mode", "auto", "--json", "--", "--advisor", "plan");
+	assert.equal(flagged.status, 1);
+	assert.match(flagged.stderr, /first on its PATH/);
+	const shim = json<{ omp: { shim: { installed: boolean; onDaemonPath?: boolean } }; problems: string[] }>("status", "--json").data;
+	assert.equal(shim.omp.shim.installed, true);
+	assert.equal(shim.omp.shim.onDaemonPath, false);
+	assert.ok(shim.problems.some(p => /first on its PATH/.test(p)));
 });

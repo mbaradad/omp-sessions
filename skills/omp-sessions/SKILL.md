@@ -33,104 +33,20 @@ omp-sessions new /abs/path/to/repo -p "Fix the flaky checkout test. Run the test
 This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and returns right away (`cwd`: the session's worktree). The session keeps working in the background. Ids look like `<project>-<n>`, e.g. `myrepo-3`.
 
 - `-p -` reads the prompt from stdin, which is better for long prompts.
-- Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`omp-sessions config get mode`), else as omp's own `tools.approvalMode` says. The modes:
+- Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`omp-sessions config get mode`), else in `auto`. AO runs every session without its own prompts and the Switchyard omp extension's gate asks instead, so `ask`, `edits` and `plan` work only where that extension is installed (`omp-sessions status --json`: `omp.extension.installed`); `new --mode ask|edits|plan` fails (exit 1, nothing started) without it. `omp-sessions omp-extension [status|install|uninstall] [--json]` manages it (and the shim for omp flags); `new` and `status` install or refresh it by themselves when this build ships it, unless `config set omp-extension off`. The modes:
   - `auto` approves every tool call;
   - `edits` applies file edits but asks before every command (bash included);
-  - `ask` leaves it to omp's own `tools.approvalMode` (AO can't make omp ask for everything);
+  - `ask` asks before every tool call;
   - `plan` is read-only: edits are refused and the model writes a plan.
-  - Never pick `edits` or `ask` for unattended work on your own: it waits at the first command for someone who isn't watching.
-- `--tag` (repeatable) labels the session, e.g. with the ticket or card it works on. The user can filter by tag.
-- `--group <name>` files the session under a group in VS Code, created if missing. Use it to keep related work together, e.g. one group per board or project.
-- `--model provider/id` picks the model (`omp-sessions models --json` lists them). Without it the session uses the user's default (`omp-sessions config get model`), then omp's own default. `--priority urgent|high|normal|low` matters for queued work.
-- Write the prompt the way you would brief a colleague: the goal, the constraints, how to verify, and what to report at the end. The session can't see your conversation.
+- Flags after a bare `--` go to omp itself for this session (`new <dir> -p "…" --json -- --advisor plan`, put every Switchyard flag before the `--`); they need Switchyard's omp shim (`omp.shim.installed`). Machine-wide ones: `config set omp.extraArgs -- --profile work`.
+`question.approval` (boolean) in `show`/`wait --json` says whether the question is a tool approval (true) or a question an agent may answer (false); an approval is never yours to answer unless the user said so. Tool approvals are `approval` questions titled with the tool call (e.g. the command), with the options "Allow once", "Always allow", "Reject" and "Always reject" (`Allow tool: <name>` `select` questions with "Approve" and "Deny" also occur). Never approve destructive commands (deleting data, force-pushing, touching production) unless the user explicitly asked for exactly that.
 
-## Queue or schedule work
-
-Queued work starts when a global concurrency slot is free. Scheduled work starts at a time you give. Both run with no editor open; the omp-sessions planner starts them, and it starts on demand (`omp-sessions server status` shows it).
-
-```sh
-# New session holding a queued task with subtasks; starts when a slot frees up
-omp-sessions new /abs/repo --task "Upgrade dependencies" --sub "bump express to v5" --sub "run the tests" --json
-# Same, but not before 02:00 (also +30m, +2h, or an ISO time)
-omp-sessions new /abs/repo --task "Nightly flaky-test hunt" --at 02:00 --json
-# A long brief goes in the task's notes (stdin with -); the title stays short
-omp-sessions new /abs/repo --task "Migrate the config loader" --notes - --group lightscale --json < brief.md
-# Add a task to an existing session's queue and start the queue (--notes - reads the full brief from stdin)
-omp-sessions queue <session> add "Write the changelog entry" --notes - --run < brief.md
-omp-sessions sched set 2      # at most 2 queued tasks run at once, across all sessions
-```
-
-The queue runs its tasks one by one. A failed task pauses the queue: `omp-sessions queue <session>` shows it, and `omp-sessions queue <session> retry` retries. `omp-sessions queue <session> at <when|off>` reschedules or cancels a start time; `omp-sessions stop` on a scheduled session cancels its start.
-
-More planning controls:
-
-- **Dependencies:** `omp-sessions new /abs/repo --task "Integrate" --after <session> --after <other>` (or `queue <session> after <s>…|off`) holds the queue until those sessions have finished. Self-dependencies and cycles are refused.
-- **Requeue:** `omp-sessions queue <session> requeue` runs it again: failed tasks go back to pending, else a paused or interrupted queue restarts, else the last finished task runs again.
-- **Completed:** `omp-sessions complete <session>` marks a finished session as done (a ✓ in `ls`/`show`; `completed`, `completedAt` in `--json`); `uncomplete` reopens it. It doesn't stop queued work.
-- **Graph changes:** in a git repository a session that waits for others starts from their commits, and when a parent's work changes later, it is merged into the children. `omp-sessions plan status [--json]` lists the edges (`in-sync`, `pending`, `merged`, `upstream-changed`, `resolving`, `conflict`); `show --json` has `upstream` (`{state, edges}`) for a session. `upstream-changed` means a finished child got the new changes but was not re-run: `omp-sessions plan sync <session> --rerun` runs it again with them. `conflict` needs a person: the child agent was asked to resolve the merge and couldn't.
-- **Usage:** a task added with `--usage spare` starts only while every usage window of its provider is below the `sched usage spare <percent>` threshold. Work is held at `sched usage hold <percent>`, and `sched budget <hour|day|week> <usd|off>` caps what queued work may spend. A held session reports `waitReason` (e.g. a provider limit and when it resets); `omp-sessions sched` lists the limits in force.
-
-If the machine reboots or the planner restarts, queued work that hadn't started yet is started again by the planner. A task that was cut short is marked `interrupted` and its queue pauses: it is never rerun on its own. Tell the user, or run it again deliberately with `omp-sessions queue <session> run` (or reschedule it with `queue <session> at <when>`).
-
-## Wait for a session and read the result
-
-```sh
-omp-sessions wait <session> --timeout 2h --json
-```
-
-This blocks until the session has nothing left to do on its own, then prints a session report. The exit code tells you why it stopped waiting:
-
-| Exit | State | Meaning |
-| --- | --- | --- |
-| 0 | `idle` | The turn finished and nothing is queued. Read `reply`. |
-| 3 | `needs_input` | A question or approval is waiting; see `question`. |
-| 4 | `stopped` / `interrupted` | The omp process is gone; see `exitReason`. Resume with `omp-sessions resume <session>`. `interrupted`: a crash or reboot cut a queued task short. |
-| 5 | `scheduled` | It waits for its start time; nothing happens until then. |
-| 124 | – | The timeout passed while the session was still working. Wait again later. |
-
-`omp-sessions show <session> --json` prints the same report without waiting. Its fields:
-
-- `id`, `title`, `cwd` (the session's worktree), `project` (AO project id), `branch`, `tags`, `mode`, `model`, `cost` (USD so far), `changedFiles` (files changed in its worktree);
-- `state`: queued, scheduled, starting, working, needs_input, interrupted, idle or stopped;
-- `queue`: pending, running, done and total tasks;
-- `question`: the waiting question, as `{id, kind, title, message?, options?, questions?}`; `kind` is `approval` (a tool asks for permission), `select`, `confirm`, `input` or `ask` (omp's ask tool: one entry per question in `questions`);
-- `reply`: the last thing the agent said, in full;
-- `exitReason`.
-
-`omp-sessions ls --json` lists running sessions and sessions with work ahead (`--all` adds finished ones). Narrow it with `--project`, `--cwd`, `--group`, `--tag` or `--state <state>` (matches `state` exactly). `omp-sessions tail <session> -n 30` shows recent history as text.
-
-Don't call `show` in a tight loop. `wait` already polls cheaply and handles the moment between sending a prompt and the session picking it up.
-
-## Follow up
-
-```sh
-omp-sessions send <session> "Also add a regression test."   # while it works: runs after the current turn
-omp-sessions send <session> "Stop, use the other API." --steer   # redirects the current turn instead
-omp-sessions wait <session> --json
-```
-
-`send` resumes a stopped session first. A `send` while the session works waits for the turn to end (AO queues it).
-
-## Questions and approvals
-
-When `state` is `needs_input`, the session waits for an answer. Answer only what you were asked to decide. Otherwise tell the user: they are notified in VS Code, on their phone and in Hermes, and can answer there. Pass `--question <id>` (from `show --json`) so the answer is refused if a different question has come up meanwhile.
-
-```sh
-omp-sessions answer <session> 1            # approval or select: option number or exact option text
-omp-sessions answer <session> yes          # confirm: yes / no
-omp-sessions answer <session> "staging"    # input: the text
-omp-sessions answer <session> "2 | 1,3"    # ask: one answer per question, separated by |
-omp-sessions mode <session> auto           # or switch the permission mode (see below)
-```
-
-Tool approvals are `approval` questions titled with the tool call (e.g. the command), with the options "Allow once", "Always allow", "Reject" and "Always reject" (`Allow tool: <name>` `select` questions with "Approve" and "Deny" also occur). Never approve destructive commands (deleting data, force-pushing, touching production) unless the user explicitly asked for exactly that.
-
-`mode <session> plan` switches right away, also mid-turn. Switching between `auto`, `edits` and `ask` restarts omp on the same transcript, so it works only while the session isn't working (abort first, or wait); a stopped session takes it when resumed.
+`mode <session> <mode>` switches right away, also mid-turn: the gate reads the session's mode at its next tool call. `show --json` and `ls --json` report it as `mode` (`meta.permissionMode`), `ask` included. Sessions started before the gate existed have no mode file: for those `plan` is live and the other modes restart omp on the same transcript (only while the session isn't working).
 
 ## Stop, resume, clean up
 
 ```sh
-omp-sessions abort <session>      # interrupt the current turn
+omp-sessions abort <session>      # interrupt the current turn; AO discards messages queued behind it: --json has them in `discarded` ([{turnId, text, requestedAt}]), send them again if still wanted
 omp-sessions stop <session>       # end the omp process; the session, its worktree and transcript stay
 omp-sessions resume <session>     # restart it on the same transcript
 omp-sessions rm <session> -y      # delete the session, its worktree and history (only ones you created and no longer need;

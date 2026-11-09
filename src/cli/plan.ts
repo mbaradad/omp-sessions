@@ -79,7 +79,7 @@ export interface LaneSummary {
 	/** Marked completed (epoch ms of the mark; the marker lives on the lane, PARKED §5). */
 	completed?: number;
 	/** The worst state of its incoming graph edges, and each edge (a task in a git project that waits for other tasks). */
-	upstream?: { state: string; edges: Array<{ parent: string; state: string; files?: string[] }> };
+	upstream?: { state: string; edges: GraphEdge[] };
 }
 
 const EDGE_RANK = ["conflict", "resolving", "upstream-changed", "pending", "merged", "in-sync"];
@@ -114,7 +114,7 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 	for (const e of graphEdges(plan)) if (e.childSession) byChild.set(e.childSession, [...(byChild.get(e.childSession) ?? []), e]);
 	for (const [session, edges] of byChild) {
 		const summary = out.get(session) ?? { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
-		summary.upstream = { state: worstEdgeState(edges), edges: edges.map(e => ({ parent: e.parentSession ?? e.parent, state: e.state, ...(e.files && { files: e.files }) })) };
+		summary.upstream = { state: worstEdgeState(edges), edges };
 		out.set(session, summary);
 	}
 	return out;
