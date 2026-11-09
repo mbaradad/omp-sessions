@@ -64,7 +64,7 @@ interface Printed {
 	tags: string[];
 	changedFiles: number;
 	queue: { pending: number; done: number };
-	question: { id: string; kind: string; options: string[]; questions: Array<{ options: string[] }> };
+	question: { id: string; kind: string; approval: boolean; options: string[]; questions: Array<{ options: string[] }> };
 	answered: boolean;
 	sent: boolean;
 	running: boolean;
@@ -160,6 +160,7 @@ test("cli: an approval → wait 3 with the question; answer --question refuses a
 	assert.equal(w.status, 3, w.stderr);
 	assert.equal(w.data.state, "needs_input");
 	assert.equal(w.data.question.kind, "select", "tool approvals are select questions, as before");
+	assert.equal(w.data.question.approval, true, "…and say so: agents never answer an approval");
 	assert.ok(w.data.question.options.includes("Allow once"), JSON.stringify(w.data.question));
 	assert.equal(cli("answer", id, "--question", "not-this-one", "1").status, 1);
 	assert.equal(cli("answer", id, "maybe").status, 2, "not one of the decisions");
@@ -181,6 +182,7 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 	assert.equal(w.status, 3);
 	// One question: its options, as `options` (kind select) or under `questions` (kind ask).
 	assert.deepEqual(w.data.question.options ?? w.data.question.questions?.[0]?.options, ["yes", "no"]);
+	assert.equal(w.data.question.approval, false, "a plain question: an agent may answer it");
 	assert.equal(cli("answer", id, "2").status, 0);
 	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.reply, "chose no");
 	const streamed = cli("send", id, "echo streamed reply", "--wait");
@@ -397,6 +399,7 @@ test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what 
 	assert.equal(cli("mode", id, "edits").status, 0);
 	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "edits", "switched live: the next tool call reads it");
 	assert.equal(json("show", id, "--json").data.mode, "edits");
+	assert.equal(json<Entry[]>("ls", "--all", "--json").data.find(e => e.meta.id === id)?.meta.permissionMode, "edits", "ls follows show after a switch");
 
 	// Flags after -- reach omp only through the shim on the AO daemon's PATH. This daemon was not started that way, so
 	// the CLI refuses instead of writing flags that would be ignored (the omp-args file itself is src/ao/spawn.ts's).
