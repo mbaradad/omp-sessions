@@ -467,6 +467,7 @@ export class Planner {
 			limits: usage.limits,
 			usageWindows: this.windows,
 			spend: usage.spend,
+			...(this.state.defaultProvider ? { defaultProvider: this.state.defaultProvider } : {}),
 			ao: { ...(this.ao ? { url: this.ao.url } : {}), connected: this.aoConnected, ...(this.lastEventAt ? { lastEventAt: this.lastEventAt } : {}), ...(this.aoError ? { error: this.aoError } : {}) },
 			version: this.opts.version ?? "dev",
 			startedAt: this.startedAt,
@@ -866,18 +867,32 @@ export class Planner {
 		// Put the session's model and thinking back the way they were (best effort).
 		if (run.restore?.model) await ao.setModel(session, run.restore.model).catch(err => this.log("model restore failed", String(err)));
 		if (run.restore?.thinking) await ao.setThinking(session, run.restore.thinking).catch(err => this.log("thinking restore failed", String(err)));
+		// A task that named no model runs on omp's own default: ask the session which provider that was, so a limit error holds the right provider.
+		let provider = run.provider;
+		if (!provider) {
+			provider = providerOf(await ao.currentModel(session).catch(() => undefined));
+			if (provider) {
+				const learned = provider;
+				this.updateRun(id, x => (x.run.provider = learned));
+			}
+		}
+		// The next such task is gated by that provider's limits and usage windows before it starts.
+		if (provider && run.via === "spawn" && !effectiveOptions(this.state, t).model && this.state.defaultProvider !== provider) {
+			const learned = provider;
+			this.commit(s => void (s.defaultProvider = learned));
+		}
 		await this.recordHead(id);
 		switch (turn.state) {
 			case "completed": {
 				const reply = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant" && !m.streaming).pop()?.text;
 				// omp reports a provider limit it gave up retrying as a completed turn whose reply is the error (G35).
 				if (reply && replyIsLimitError(reply, this.now())) {
-					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
+					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(provider ? { provider } : {}) }, ...costPart });
 					return;
 				}
 				// Other provider errors arrive the same way: the run failed (retries apply), it did not finish.
 				if (reply && replyIsProviderError(reply)) {
-					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
+					this.finish(id, { kind: "error", error: { message: reply.trim(), ...(provider ? { provider } : {}) }, ...costPart });
 					return;
 				}
 				this.finish(id, { kind: "completed", ...(reply ? { summary: reply } : {}), ...costPart });
@@ -895,7 +910,7 @@ export class Planner {
 					return;
 				}
 				const reset = turn.usageLimitResetsAt ? ` Usage limit reached; resets at ${new Date(turn.usageLimitResetsAt).toISOString()}.` : "";
-				this.finish(id, { kind: "error", error: { message: `${turn.errorMessage ?? "The turn failed."}${reset}`, ...(run.provider ? { provider: run.provider } : {}) }, ...costPart });
+				this.finish(id, { kind: "error", error: { message: `${turn.errorMessage ?? "The turn failed."}${reset}`, ...(provider ? { provider } : {}) }, ...costPart });
 				return;
 			}
 			case "interrupted":

@@ -167,6 +167,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(failed && { failed }),
 		...(next?.state && { state: next.state }),
 		...(next?.waitReason && { waitReason: next.waitReason }),
+		...(next?.waitUntil && { waitUntil: next.waitUntil }),
 		...(completed && { completed, completedAt }),
 		...(sync && { sync }),
 		...(after.length && { after }),

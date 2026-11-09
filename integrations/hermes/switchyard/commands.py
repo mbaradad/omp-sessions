@@ -117,6 +117,30 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Swi
     }
 
 
+def _usage_lines(s: Optional[dict]) -> list[str]:
+    """What holds queued work back: provider limits in force (with their reset), over-budget windows, held tasks."""
+    if not s:
+        return []
+    now = time.time() * 1000
+    out: list[str] = []
+    held = int(s.get("held") or 0)
+    if held:
+        out.append(f"held: {held} task(s) wait on a provider limit, a usage window, the budget or a retry backoff")
+    for lim in s.get("limits") or []:
+        until = lim.get("until")
+        if isinstance(until, (int, float)) and until > now:
+            out.append(f"limit: {lim.get('provider')} until {time.strftime('%Y-%m-%d %H:%M', time.localtime(until / 1000))}{' (a guess: the error gave no reset time)' if lim.get('guessed') else ''}")
+    budget = s.get("budget") or {}
+    if budget:
+        spent = {u.get("window"): u for u in s.get("spend") or []}
+        parts = []
+        for window, cap in budget.items():
+            u = spent.get(window) or {}
+            parts.append(f"{window} {float(u.get('spent') or 0):.2f}/{cap} USD{' OVER' if u.get('over') else ''}")
+        out.append("budget: " + ", ".join(parts))
+    return out
+
+
 def status_text(d: dict) -> str:
     lane = d["lane"]
     lines = [f"switchyard: {d['switchyard'] or 'NOT FOUND (install it with the Switchyard extension: Switchyard: Install switchyard Command, or set the switchyard setting)'}"]
@@ -124,6 +148,7 @@ def status_text(d: dict) -> str:
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
         lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once switchyard starts it)'}")
+    lines.extend(_usage_lines(s))
     ext = (d.get("omp") or {}).get("extension")
     if isinstance(ext, dict) and ext.get("installed") is False:
         lines.append("omp extension: NOT INSTALLED: cards in mode ask, edits or plan can't be started (auto works); install Switchyard's omp extension (open VS Code with Switchyard)")

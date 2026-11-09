@@ -86,7 +86,7 @@ function nextClock(now: number, hour: number, minute: number, timeZone?: string)
 export function parseResetAt(message: string, now = Date.now()): number | undefined {
 	const text = message.replace(/\s+/g, " ");
 	// Epoch seconds/ms: Claude Code's "Claude AI usage limit reached|1760000000", JSON reset fields.
-	const epoch = /\|\s*(\d{10}(?:\d{3})?)\b/.exec(text) ?? /reset(?:s|_at|sAt|At|sAtSec|_at_sec)?["']?\s*[:=]\s*["']?(\d{10}(?:\d{3})?)\b/i.exec(text);
+	const epoch = /\|\s*(\d{10}(?:\d{3})?)\b/.exec(text) ?? /reset(?:s?_?at(?:_?sec)?|s)?["']?\s*[:=]\s*["']?(\d{10}(?:\d{3})?)\b/i.exec(text);
 	if (epoch) {
 		const n = Number(epoch[1]);
 		return epoch[1].length > 10 ? n : n * 1000;

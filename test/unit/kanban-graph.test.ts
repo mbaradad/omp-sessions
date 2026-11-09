@@ -161,6 +161,13 @@ describe("statusKey with dependencies", () => {
 		assert.equal(statusKey(card("w", { status: "working", blockedBy: ["x"], queue: queue(1) })), "working");
 		assert.equal(statusKey(card("n", { status: "waiting", blockedBy: ["x"], queue: queue(1) })), "waiting");
 	});
+	test("held by a provider limit, usage window or budget → queued, with the reason on the card's queue", () => {
+		const held = { ...queue(1), state: "held", waitReason: "rate-limit anthropic until 14:05", waitUntil: NOW + 3_600_000 };
+		assert.equal(statusKey(card("h", { status: "stopped", queue: held })), "queued");
+		assert.equal(statusKey(card("h", { status: "idle", queue: held })), "queued");
+		assert.equal(statusKey(card("h", { status: "working", queue: held })), "working");
+		assert.equal(statusKey(card("h", { status: "stopped", queue: { ...held, pending: 0 } })), "stopped", "nothing left to start");
+	});
 	test("blocked stopped cards land in the Queued column and stay visible with stopped sessions hidden", () => {
 		const blocked = card("s", { status: "stopped", blockedBy: ["x"], queue: queue(1) });
 		const cols = buildColumns("status", { lanes: [], groups: [] }, [blocked]);

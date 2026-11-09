@@ -850,6 +850,43 @@ class PureTest(unittest.TestCase):
         self.assertNotIn("omp extension", status_text({**base, "omp": {"extension": {"installed": True}}}))
         self.assertNotIn("omp extension", status_text({**base, "omp": None}), "an older CLI without the field: nothing to say")
 
+    def test_status_says_what_holds_queued_work_back(self) -> None:
+        import time as _time
+
+        from hermes_plugins.switchyard.commands import status_text
+
+        base = {
+            "switchyard": "switchyard", "scheduler": None, "notify": True, "last_notification": None, "watches": 0, "profile": "default",
+            "dispatcher": None, "dispatcher_notes": [], "agent_approvals": False, "projects": {}, "linked": [], "omp": None,
+            "lane": {"enabled": True, "assignee": "switchyard", "mode": "ask", "comment_authors": [], "boards": "all", "ticks": {}, "state": "/x"},
+        }
+        until = int((_time.time() + 3600) * 1000)
+        held = status_text({**base, "scheduler": {
+            "server": True, "running": 0, "waiting": 0, "held": 2, "maxConcurrent": 0,
+            "limits": [{"provider": "anthropic", "until": until, "guessed": True}, {"provider": "openai", "until": 1}],
+            "budget": {"day": 20}, "spend": [{"window": "day", "cap": 20, "spent": 21.5, "over": True}],
+        }})
+        self.assertIn("held: 2 task(s)", held)
+        self.assertIn("limit: anthropic until", held)
+        self.assertIn("a guess", held)
+        self.assertNotIn("openai", held, "a limit that has run out is not shown")
+        self.assertIn("budget: day 21.50/20 USD OVER", held)
+        quiet = status_text({**base, "scheduler": {"server": True, "running": 1, "waiting": 0, "held": 0, "limits": [], "budget": {}, "spend": []}})
+        self.assertNotIn("held:", quiet)
+        self.assertNotIn("budget:", quiet)
+
+    def test_server_status_carries_the_planners_limits_and_budget(self) -> None:
+        self.assertEqual(json.loads(switchyard("sched", "budget", "week", "42", "--json").stdout)["budget"]["week"], 42)
+        try:
+            sched = self.tool("switchyard_server_status", {})["scheduler"]
+            self.assertEqual(sched["budget"], {"week": 42})
+            self.assertEqual(sched["spend"][0]["window"], "week")
+            self.assertEqual(sched["limits"], [])
+            self.assertIn("usageWindows", sched)
+            self.assertIn("held", sched)
+        finally:
+            switchyard("sched", "budget", "week", "off", "--json")
+
     def test_decide(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
         link = {"session": "s1", "state": "active", "asked": []}

@@ -203,6 +203,12 @@ export class FakeAo implements AoPort {
 	thinking_ = new Map<string, string>();
 	changes: string[] = [];
 
+	/** What omp's `model` config option reports for a session no setModel touched. */
+	ompDefaultModel: string | undefined = undefined;
+	async currentModel(session: string) {
+		return this.models_.get(session) ?? this.ompDefaultModel;
+	}
+
 	async setModel(session: string, model: string) {
 		const prev = this.models_.get(session) ?? "default/model";
 		this.models_.set(session, model);

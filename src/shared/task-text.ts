@@ -170,6 +170,15 @@ export function formatStartTime(at: number, now = new Date()): string {
 	return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${hm}`;
 }
 
+/**
+ * Why queued work is held, with when it lifts: "rate-limit anthropic until 14:05", "budget day 21.50/20 USD until 18:30",
+ * "retry backoff until 14:05". Reasons that already name the time (limits, usage windows) don't repeat it.
+ */
+export function holdText(reason: string | undefined, until: number | undefined, now = new Date()): string {
+	const why = reason || "held";
+	return until && !/\buntil\b/.test(why) ? `${why} until ${formatStartTime(until, now)}` : why;
+}
+
 /** "1m 05s", "2h 03m", "12s". */
 export function formatDuration(ms: number): string {
 	const s = Math.round(ms / 1000);

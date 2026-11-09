@@ -290,6 +290,7 @@ export function normalizeState(raw: unknown): PlanState {
 			s.keptBranches.push({ repo: kr.repo, branch: kr.branch, task: typeof kr.task === "string" ? kr.task : "", taskId: kr.taskId, ...(typeof kr.tip === "string" ? { tip: kr.tip } : {}), why: typeof kr.why === "string" ? kr.why : "", at: finite(kr.at) ?? 0 });
 	}
 	if (Array.isArray(r.spend)) for (const e of r.spend) if (Array.isArray(e) && finite(e[0]) !== undefined && finite(e[1]) !== undefined) s.spend.push([e[0], e[1]]);
+	if (typeof r.defaultProvider === "string" && r.defaultProvider) s.defaultProvider = r.defaultProvider;
 	return s;
 }
 
@@ -1046,7 +1047,7 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 			continue;
 		}
 		const opts = effectiveOptions(s, t);
-		const hold: Hold | undefined = holdFor(providerOf(opts.model), t.usage === "spare", ctx.usage, now);
+		const hold: Hold | undefined = holdFor(providerOf(opts.model) ?? s.defaultProvider, t.usage === "spare", ctx.usage, now);
 		if (hold) {
 			if (hold.until) holdUntil.push(hold.until);
 			set("held", { waitReason: hold.reason, ...(hold.until ? { waitUntil: hold.until } : {}) });

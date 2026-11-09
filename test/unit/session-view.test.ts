@@ -293,8 +293,8 @@ test("ownFiles: a graph child keeps only the files its edit tools touched (the m
 test("laneQueue: the lane's own state, reason and wait time come from the planner (held by a usage limit, scheduled)", () => {
 	const lane = (extra: Partial<LaneView>): LaneView => ({ id: "L", session: "S", autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1, ...extra });
 	const plan = (l: LaneView): PlanView => ({ rev: 1, edges: [], keptBranches: [], lanes: [l], tasks: [], recurring: [], status: {} as PlanView["status"] });
-	const held = laneQueue(plan(lane({ state: "held", waitReason: "provider usage limit until 21:00" })), "S");
-	assert.deepEqual([held?.state, held?.waitReason], ["held", "provider usage limit until 21:00"]);
+	const held = laneQueue(plan(lane({ state: "held", waitReason: "provider usage limit until 21:00", waitUntil: 9_000 })), "S");
+	assert.deepEqual([held?.state, held?.waitReason, held?.waitUntil], ["held", "provider usage limit until 21:00", 9_000]);
 	assert.equal(laneQueue(plan(lane({ state: "scheduled", waitUntil: 5000 })), "S")?.startAt, 5000);
 	assert.equal(laneQueue(plan(lane({})), "S")?.state, undefined);
 });

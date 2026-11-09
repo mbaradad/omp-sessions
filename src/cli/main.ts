@@ -16,6 +16,7 @@ import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissi
 import { MAX_NOTES, MAX_TITLE } from "../shared/queue";
 import { qrHalfBlocks } from "../shared/remote-qr";
 import { setSessionMode } from "../shared/session-mode-ops";
+import { holdText } from "../shared/task-text";
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
@@ -108,6 +109,8 @@ async function resumeAgent(client: AoClient, s: Session): Promise<boolean> {
 const STATE_COLOR: Record<AgentState, (s: string) => string> = { queued: c.blue, scheduled: c.blue, starting: c.dim, working: c.yellow, needs_input: c.magenta, idle: c.green, interrupted: c.red, stopped: c.dim };
 
 function stateText(s: Session): string {
+	// Held (a provider limit, a usage window, the budget, a retry backoff): the reason is in `show` and under `ls`.
+	if (s.lane?.waitReason && s.state === "queued") return c.yellow("held");
 	if (s.lane?.waiting && s.state === "queued") return c.blue(`queued #${s.lane.waiting.position}`);
 	return STATE_COLOR[s.state](s.state === "needs_input" ? "needs input" : s.state);
 }
@@ -174,6 +177,7 @@ async function cmdList(args: Args): Promise<void> {
 	else printTable(shown);
 	const hidden = sessions.length - shown.length;
 	if (hidden > 0) process.stdout.write(c.dim(`${hidden} finished session${hidden === 1 ? "" : "s"} hidden · switchyard ls --all\n`));
+	for (const s of shown) if (s.lane?.waitReason && s.state === "queued") process.stdout.write(`${c.yellow("held")} ${c.dim(s.id)} ${holdText(s.lane.waitReason, s.lane.waitUntil)}\n`);
 	if (shown.some(s => s.lane?.waiting)) {
 		const p = await plannerIfRunning();
 		const st = p ? await p.call("status", {}) : undefined;
@@ -420,7 +424,7 @@ function printReport(r: CliReport): void {
 		});
 		process.stdout.write(c.dim(`answer: switchyard answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
-	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
+	if (r.waitReason) process.stdout.write(c.yellow(`held: ${holdText(r.waitReason, r.waitUntil)}\n`));
 	if (r.upstream?.length && r.upstreamState && r.upstreamState !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstreamState] ?? c.dim)(`upstream ${r.upstreamState}`)} ${c.dim(r.upstream.map(e => `${e.parentSession ?? e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstreamState === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: switchyard plan sync ${r.id} --rerun`) : ""}\n`);
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
@@ -1154,6 +1158,7 @@ async function cmdSched(args: Args): Promise<void> {
 	const [sub, arg] = args._;
 	let set: Partial<PlannerConfig> | undefined;
 	let budgetSet: ((now: PlannerStatus) => Partial<PlannerConfig>) | undefined;
+	let clearLimits: true | string[] | undefined;
 	switch (sub) {
 		case undefined:
 		case "status":
@@ -1196,15 +1201,21 @@ async function cmdSched(args: Args): Promise<void> {
 			budgetSet = now => ({ usage: { ...now.usage, ...(arg === "hold" ? { holdAtPercent: pct } : { spareBelowPercent: pct }) } });
 			break;
 		}
-		case "limits":
+		case "limits": {
+			// limits [clear [provider…]]: the provider limits learned from failed turns; clear forgets them so held work may start.
+			if (arg === undefined) break;
+			if (arg !== "clear") throw new UsageError("sched limits [clear [provider…]]");
+			const providers = args._.slice(2);
+			clearLimits = providers.length ? providers : true;
 			break;
+		}
 		default:
 			throw new UsageError(`unknown sched command "${sub}" (status, set N, pause, resume, budget, usage, limits)`);
 	}
-	const p = set || budgetSet ? await planner() : await plannerIfRunning();
+	const p = set || budgetSet || clearLimits ? await planner() : await plannerIfRunning();
 	// Budget and usage thresholds replace their whole object in the planner: start from what it has.
 	if (p && budgetSet) set = budgetSet(await p.call("scheduler", {}));
-	const s = p ? await p.call("scheduler", set ? { set } : {}) : undefined;
+	const s = p ? await p.call("scheduler", { ...(set ? { set } : {}), ...(clearLimits ? { clearLimits } : {}) }) : undefined;
 	if (flag(args, "json")) {
 		process.stdout.write(`${JSON.stringify(s ? { ...s, server: true } : { server: false })}\n`);
 		return;
@@ -1535,6 +1546,16 @@ async function cmdStatus(args: Args): Promise<number> {
 	rows.push(row("sessions", `${sessions.length}${states.length ? ` · ${states.map(([k, n]) => `${n} ${k.replace("_", " ")}`).join(" · ")}` : ""}${status.sessions.archived ? c.dim(` (${status.sessions.archived} archived)`) : ""}`));
 	rows.push(row("tasks", `${pending} pending · ${runningTasks} running`));
 	if (plannerStatus) rows.push(row("scheduler", `${plannerStatus.maxConcurrent ? `limit ${plannerStatus.maxConcurrent}` : "no limit"}${plannerStatus.paused ? c.yellow(" · paused") : ""} · ${plannerStatus.running} running · ${plannerStatus.waiting} waiting · ${plannerStatus.scheduled} scheduled`));
+	if (plannerStatus) {
+		const when = (ms: number) => new Date(ms).toLocaleString();
+		const limits = plannerStatus.limits.filter(l => l.until > Date.now());
+		if (plannerStatus.held) rows.push(row("held", `${plannerStatus.held} task${plannerStatus.held === 1 ? "" : "s"} ${c.dim("(provider limit, usage window, budget or retry backoff: switchyard sched)")}`));
+		for (const l of limits) rows.push(row("limit", `${c.yellow(l.provider)} until ${when(l.until)}${l.guessed ? c.dim(" (guessed)") : ""}`));
+		const budget = Object.entries(plannerStatus.budget ?? {});
+		if (budget.length) rows.push(row("budget", budget.map(([w, usd]) => `${w} $${usd}`).join(" · ") + plannerStatus.spend.map(u => `  ${u.window} $${u.spent.toFixed(2)}${u.over ? c.red(" over") : ""}`).join("")));
+		const hot = plannerStatus.usageWindows.filter(w => w.usedPercent >= plannerStatus.usage.spareBelowPercent);
+		if (hot.length) rows.push(row("usage", hot.map(w => `${w.provider} ${w.window} ${Math.round(w.usedPercent)}%`).join(" · ")));
+	}
 	rows.push(row("remote", !remote ? c.dim("unknown") : !remote.enabled ? c.dim("off") : remote.endpoints.length ? `${c.green("on")} ${remote.endpoints.map(e => `${e.kind} ${e.host}:${e.port}`).join(", ")}` : c.yellow("on, preparing")));
 	for (const problem of problems) rows.push(`${c.red("✗")} ${problem}`);
 	process.stdout.write(`${rows.join("\n")}\n`);
@@ -1825,7 +1846,7 @@ ${c.bold("Scheduler")}  ${c.dim("(the planner's global limit on queued tasks run
   sched usage <hold|spare> <percent>
                                   hold work at that percent of a provider's usage window; "spare" tasks start
                                   only while every window is below theirs
-  sched limits                    provider limits in force and usage windows (shown by sched too)
+  sched limits [clear [provider…]] provider limits in force and usage windows (shown by sched too); clear lets held work start
 
 ${c.bold("Server")}  ${c.dim("(the planner service: starts queued and scheduled tasks; started on demand)")}
   server status [--json] | start | stop | restart | log [-f] | install | uninstall
