@@ -218,3 +218,8 @@ export function continuesSession(plan: PlanView | undefined, task: Pick<TaskView
 export function keptBranchText(b: Pick<KeptBranch, "task" | "why">): string {
 	return `of “${b.task}” — ${b.why}`;
 }
+
+/** What a permission mode needs to be enforced: auto runs unrestricted, the others need the Switchyard gate in omp's agent folder. */
+export function modeGateNote(mode: string, gateInstalled: boolean): string {
+	return mode !== "auto" && !gateInstalled ? "the Switchyard permission gate is not installed on this machine: a session started with this mode is refused (use auto, or install the gate)" : "";
+}

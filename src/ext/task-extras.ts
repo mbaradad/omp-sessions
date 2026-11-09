@@ -4,8 +4,9 @@
 import * as vscode from "vscode";
 import type { PermissionMode, PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PERMISSION_MODES, PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, undoneWith } from "../shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, modeGateNote, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
+import { gateStatus } from "../ao/client";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
 import type { TasksDeps } from "./tasks-deps";
@@ -53,8 +54,9 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		const choice = await choose(items);
 		if (!choice) return;
 		if (choice === "mode") {
+			const gate = gateStatus().gate;
 			const picked = await choose([
-				...PERMISSION_MODES.map(m => ({ id: m, label: m === o.mode ? `${m} (current)` : m, detail: MODE_HELP[m] })),
+				...PERMISSION_MODES.map(m => ({ id: m, label: m === o.mode ? `${m} (current)` : m, detail: [MODE_HELP[m], modeGateNote(m, gate)].filter(Boolean).join(" — ") })),
 				{ id: "clearMode", label: "Clear (use the default, auto)" },
 			]);
 			if (!picked) return;

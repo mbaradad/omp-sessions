@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, modeGateNote, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -207,5 +207,15 @@ describe("continuesSession", () => {
 describe("keptBranchText", () => {
 	test("says whose branch it was and why the planner kept it", () => {
 		assert.equal(keptBranchText({ task: "Write release notes", why: "holds 2 commits no other branch has" }), "of “Write release notes” — holds 2 commits no other branch has");
+	});
+});
+
+describe("modeGateNote", () => {
+	test("auto never needs the gate; ask, edits and plan are refused at spawn without it", () => {
+		for (const gate of [true, false]) assert.equal(modeGateNote("auto", gate), "");
+		for (const m of ["ask", "edits", "plan"]) {
+			assert.equal(modeGateNote(m, true), "");
+			assert.match(modeGateNote(m, false), /gate is not installed/);
+		}
 	});
 });
