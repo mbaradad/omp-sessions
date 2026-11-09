@@ -10,6 +10,21 @@ import { after, before, test } from "node:test";
 import { type AoEvent, AoClient, AoError, sessionStateFile, switchyardHome } from "../../src/ao/client";
 import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
+import { ompExtensionDir } from "../../src/shared/omp-extension-install";
+
+const strays: string[] = [];
+
+/** omp's agent folder of a temp "user home" with the Switchyard gate package in it (never the machine's own). */
+function standInGate(): { omp: { home: string; env: NodeJS.ProcessEnv } } {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "ao-contract-omp-"));
+	strays.push(home);
+	const omp = { home, env: {} as NodeJS.ProcessEnv };
+	const dir = ompExtensionDir(omp);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "switchyard", omp: { extensions: ["./mode.js"] } }));
+	fs.writeFileSync(path.join(dir, "mode.js"), "export default () => {};\n");
+	return { omp };
+}
 
 const REPO = "/tmp/ao-smoke-foundation/repo";
 // Below the runner's 120 s limit for the whole file (test/run.mjs): a wait that is stuck must fail with its own
@@ -90,6 +105,7 @@ after(async () => {
 	stream?.close();
 	watcher?.close();
 	if (sessionId) await dispose(sessionId);
+	for (const dir of strays) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("a scratch repo maps to one AO project", async () => {
@@ -186,7 +202,9 @@ test("stop and resume the agent (MAPPING D4)", async () => {
 });
 
 test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempotent retry; a bad option leaves nothing", async () => {
-	const opts = { dir: REPO, displayName: "src/ao spawn", thinking: "off", mode: "edits" as const, prompt: "Reply with exactly: SPAWNED", clientRequestId: `contract-${Date.now()}`, clientMessageId: `contract-msg-${Date.now()}` };
+	// Mode `edits` needs the gate installed (G46: spawn fails closed). The machine's omp has none, and this suite must not install one
+	// there: a stand-in in a temp folder shows spawn what an installed gate looks like. The enforcement itself is checkpoints' to test.
+	const opts = { dir: REPO, displayName: "src/ao spawn", thinking: "off", mode: "edits" as const, gate: standInGate(), prompt: "Reply with exactly: SPAWNED", clientRequestId: `contract-${Date.now()}`, clientMessageId: `contract-msg-${Date.now()}` };
 	const first = await ao.spawnSwitchyard(opts);
 	const id = first.session.id;
 	try {
@@ -235,7 +253,8 @@ test("a crash reads interrupted, a person's Stop stopped: both exit the agent, o
 		await ao.exitAgent(stopped);
 		// Same `exited`; the crash left its turns open, the Stop settled them.
 		const crash = await until(crashed, m => m.state === "interrupted", "interrupted after a crash");
-		assert.deepEqual(crash.conversation?.turns.map(t => t.state), ["running", "queued"]);
+		// One running and one queued turn, left open; their order in the list is AO's (it varied between runs) and not the claim.
+		assert.deepEqual(crash.conversation?.turns.map(t => t.state).sort(), ["queued", "running"]);
 		const stop = await until(stopped, m => m.state === "stopped", "stopped after a person's Stop");
 		assert.ok(stop.conversation?.turns.every(t => t.state === "failed"));
 		assert.equal(stop.view.activity.state, "exited");
