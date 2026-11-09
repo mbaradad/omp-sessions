@@ -9,9 +9,9 @@ import { type Args, flag } from "./args";
 export const MIGRATE_HELP = `  migrate [--apply] [--json]
                                   bring omp Sessions' organization (groups, board lanes), defaults and
                                   scheduler settings into Switchyard; dry run unless --apply (backs up
-                                  ~/.omp/vscode first, never writes or deletes there; safe to repeat). Old
-                                  sessions are not migrated: it lists each with its \`omp --resume\` line
-                                  and its unfinished queued tasks`;
+                                  ~/.omp/vscode first, never writes or deletes there; safe to repeat).
+                                  Sessions and their queues are NOT migrated: it lists each old session
+                                  with its \`omp --resume\` line and its unfinished queued tasks`;
 
 export async function cmdMigrate(args: Args): Promise<number> {
 	const apply = flag(args, "apply");
