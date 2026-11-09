@@ -107,6 +107,8 @@ class DashboardApiTest(unittest.TestCase):
         ln = until(lambda: self.state_is(linked["id"], "idle"), "linked idle")
         self.assertEqual(ln["card"], {"board": "dash", "id": card, "title": "Ship the dashboard tab", "status": "ready", "parents": [], "children": []})
         self.assertEqual(ln["excerpt"], "linked")
+        # The turn the state belongs to: the page's sound dedupe key (`updatedAt` differs between tabs polling at different moments).
+        self.assertTrue(isinstance(ln.get("turnId"), str) and ln["turnId"], ln)
 
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
         d = self.get(f"/sessions/{asking['id']}")

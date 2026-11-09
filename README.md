@@ -250,6 +250,7 @@ npm run watch          # esbuild watch → out/
 npm run typecheck
 npm test               # unit tests (test:unit)
 npm run test:integration  # the planner, CLI and extension code against an isolated AO daemon running a scripted fake omp (needs the `ao` binary)
+npm run test:hermes:sounds  # the Hermes page's bell and sounds in a headless Chromium (needs SWITCHYARD_BROWSER_DEPS: a dir with node_modules/{react,react-dom,playwright-core}; skips without)
 npm run test:e2e:desktop  # real local VS Code (downloaded to .vscode-test/, xvfb if no DISPLAY) against an isolated AO daemon running the real omp (needs `ao` and a logged-in omp)
 npm run install-local  # production build → dist/switchyard-<version>.vsix → installed into ~/.vscode-server
 ```
