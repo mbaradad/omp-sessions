@@ -7,14 +7,14 @@
 // the gate does nothing and AO's mode applies. Node-only, no omp or AO imports (the omp bundle uses it).
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { switchyardHome } from "../ao/native";
+import { sessionStateFile, switchyardHome } from "../ao/native";
 import { writeFileAtomic } from "./checkpoints";
 import { EDIT_TOOLS, PERMISSION_MODES, type PermissionMode, isPermissionMode } from "./permissions";
 
 export { PERMISSION_MODES, type PermissionMode, isPermissionMode };
 
 export function modeFile(aoSessionId: string, home = switchyardHome()): string {
-	return path.join(home, "sessions", aoSessionId, "mode");
+	return sessionStateFile(aoSessionId, "mode", home);
 }
 
 /** The session's mode, or undefined when it has no (valid) mode file. */

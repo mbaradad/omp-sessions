@@ -40,9 +40,9 @@ test("an AO session's `omp acp` gets machine, project and session flags, in that
 	const { run, home } = sandbox();
 	fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ omp: { extraArgs: ["--profile", "work"] } }));
 	fs.mkdirSync(path.join(home, "sessions", "p-1"), { recursive: true });
-	fs.writeFileSync(path.join(home, "sessions", "p-1", "omp-args"), "--plan-yolo\n");
+	fs.writeFileSync(path.join(home, "sessions", "p-1", "omp-args"), "--plan-yolo --prewalk\n");
 	const res = run(["acp", "--approval-mode", "yolo"], { AO_SESSION_ID: "p-1", SWITCHYARD_OMP_ARGS: "--advisor" });
-	assert.deepEqual(res.args, ["acp", "--approval-mode", "yolo", "--profile", "work", "--advisor", "--plan-yolo"]);
+	assert.deepEqual(res.args, ["acp", "--approval-mode", "yolo", "--profile", "work", "--advisor", "--plan-yolo", "--prewalk"]);
 	assert.deepEqual(run(["acp"], { AO_SESSION_ID: "p-2" }).args, ["acp", "--profile", "work"], "another session has no file");
 });
 

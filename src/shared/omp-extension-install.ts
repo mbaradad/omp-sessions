@@ -5,7 +5,7 @@
 // folder is ours: modules no longer shipped are removed. Node-only.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { switchyardHome } from "../ao/native";
+import { shimDir, switchyardHome } from "../ao/native";
 import { type OmpPathOptions, ompPaths } from "./omp-paths";
 
 export const OMP_EXTENSION_PACKAGE = "switchyard";
@@ -104,7 +104,7 @@ const SHIM_MARKER = "switchyard-omp-shim";
 
 /** Where the shim lives; the AO daemon's PATH must list this folder before the real omp's (src/ao/daemon.ts). */
 export function ompShimDir(home = switchyardHome()): string {
-	return path.join(home, "bin");
+	return shimDir(home);
 }
 
 export type ShimInstall = "installed" | "updated" | "unchanged" | "skipped";
