@@ -133,6 +133,8 @@ const MAX_HISTORY_PAGES = 20;
 const SYNC_DEBOUNCE_MS = 60;
 /** Shell output kept per `!command` for the next prompt's context. */
 const MAX_SHELL_CONTEXT = 20_000;
+/** AO's chat view lease lasts 30 s: renew well inside it. */
+const LEASE_RENEW_MS = 15_000;
 
 type ConfigOption = AoSchemas["ConversationConfigOptionResponse"];
 
@@ -236,6 +238,7 @@ export class ChatPanel implements vscode.Disposable {
 	private readonly viewId = crypto.randomUUID();
 	private outbox: ToWebview[] = [];
 	private flushTimer: NodeJS.Timeout | undefined;
+	private leaseTimer: NodeJS.Timeout | undefined;
 	private disposed = false;
 	private readonly disposeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidDispose = this.disposeEmitter.event;
@@ -373,7 +376,8 @@ export class ChatPanel implements vscode.Disposable {
 						if ((s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) || s.state === "gap") this.schedule(true);
 					},
 				});
-				this.lease(true);
+				this.lease(this.surface.visible);
+				this.leaseTimer = setInterval(() => this.lease(this.surface.visible), LEASE_RENEW_MS);
 				this.schedule(true);
 			},
 			err => this.post({ type: "error", message: `AO daemon unreachable: ${errorText(err)}` }),
@@ -385,9 +389,9 @@ export class ChatPanel implements vscode.Disposable {
 		return this.ao;
 	}
 
-	/** AO hibernates idle chats nobody watches; an open chat holds a view lease. */
+	/** AO hibernates idle chats nobody watches; a visible chat holds a view lease (30 s in AO), renewed while it stays open. */
 	private lease(active: boolean): void {
-		void this.ao?.api.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId: this.sessionId } }, body: { viewId: this.viewId, active } }).catch(() => undefined);
+		void this.ao?.chatView(this.sessionId, this.viewId, active).catch(() => undefined);
 	}
 
 	private schedule(full = false): void {
@@ -518,7 +522,7 @@ export class ChatPanel implements vscode.Disposable {
 	/** omp's slash commands, as AO lists them (skills). */
 	private async skills(ao: AoClient): Promise<SlashCommand[]> {
 		try {
-			const { skills } = await unwrap(ao.api.GET("/api/v1/sessions/{sessionId}/conversation/skills", { params: { path: { sessionId: this.sessionId } } }));
+			const skills = await ao.skills(this.sessionId);
 			return skills.map(s => ({ name: s.name, ...(s.description && { description: s.description }), ...(s.inputHint && { input: { hint: s.inputHint } }) }));
 		} catch {
 			return this.serverCommands;
@@ -888,17 +892,12 @@ export class ChatPanel implements vscode.Disposable {
 		const ao = await this.client();
 		const attachments = images.map(i => ({ data: i.data, mimeType: i.mimeType }));
 		const steer = this.feed.isBusy() && (vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer") === "steer";
-		// Images can take long to upload: AO extends the request deadline for this header.
-		const headers = attachments.length ? { "X-AO-Attachment-Upload": "1" } : undefined;
-		const params = { path: { sessionId: this.sessionId } };
+		// The same id on a retry after a restart: AO answers a duplicate instead of sending twice. The wrappers add AO's upload-deadline header for images.
 		const body = { text: message, clientMessageId: crypto.randomUUID(), ...(attachments.length && { attachments }) };
 		await sendResuming(
 			ao,
 			this.sessionId,
-			async () => {
-				if (steer) await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params, body, headers }));
-				else await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params, body, headers }));
-			},
+			async () => void (await (steer ? ao.steerOrSend(this.sessionId, body) : ao.sendMessage(this.sessionId, body))),
 			() => this.post({ type: "notice", level: "info", text: "omp was not running: restarting it on this conversation…" }),
 		);
 		this.schedule();
@@ -1092,7 +1091,7 @@ export class ChatPanel implements vscode.Disposable {
 			case "compact": {
 				const ao = await this.client();
 				this.post({ type: "event", ev: { type: "auto_compaction_start" } });
-				await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/conversation/compact", { params: { path: { sessionId: this.sessionId } } }));
+				await ao.compact(this.sessionId);
 				return;
 			}
 			case "newSession":
@@ -1184,6 +1183,7 @@ export class ChatPanel implements vscode.Disposable {
 		this.disposed = true;
 		clearTimeout(this.flushTimer);
 		clearTimeout(this.syncTimer);
+		clearInterval(this.leaseTimer);
 		this.lease(false);
 		this.shell?.kill();
 		for (const d of this.subs) d.dispose();
