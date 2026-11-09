@@ -18,33 +18,17 @@ export interface LegacySession {
 	id: string;
 	cwd: string;
 	title: string;
-	/** The old host's last reported status (`starting|idle|working|waiting|stopped`). */
-	status: string;
-	/** The old host process is still alive. */
-	hostAlive: boolean;
 	createdAt: number;
+	/** omp's session id: `omp --resume <id>` continues it. */
 	ompSessionId?: string;
-	ompSessionFile?: string;
-	/** Earlier transcripts of the session (fresh-context tasks, `/new`), oldest first. */
-	ompSessionFiles: string[];
-	model?: string;
-	/** `ask|edits|plan|auto` (old names). */
-	permissionMode?: string;
-	/** `launch.json` `ompArgs`: extra omp flags the old host started omp with. */
-	ompArgs: string[];
 	queue?: TaskQueue;
-	/** queue.json `after` (omp/deps, PARKED §1): old session ids whose queues must finish first. */
-	after?: string[];
-	/** Whether `sessions/<id>/worktree.json` exists (omp/worktrees, PARKED §8). */
-	worktree?: boolean;
-	cost?: number;
 }
 
 export interface LegacyScheduler {
 	maxConcurrent: number;
 	paused?: boolean;
 	stopWhenQueueDone?: boolean;
-	/** Spend caps in USD per rolling window (omp/autosched, PARKED §4). */
+	/** Spend caps in USD per rolling window (the paused autoschedule branch, PARKED §4). */
 	budget?: Partial<Record<"hour" | "day" | "week", number>>;
 }
 
@@ -54,8 +38,6 @@ export interface LegacyLauncher {
 	model?: string;
 	service?: string;
 	mode?: string;
-	/** `auto|always|never` (omp/worktrees, PARKED §8). */
-	worktree?: string;
 }
 
 export interface LegacyState {
@@ -65,8 +47,6 @@ export interface LegacyState {
 	/** Session dirs without a readable meta.json. */
 	unreadable: string[];
 	organize?: OrgData;
-	/** organize.json `completed`/`completedAt` per old id (omp/completed-sort, PARKED §5); value: completedAt or 0. */
-	completed: Record<string, number>;
 	/** organize.json exists but does not parse. */
 	organizeError?: string;
 	scheduler?: LegacyScheduler;
@@ -91,56 +71,25 @@ function readJson(file: string): { value?: unknown; error?: string; missing?: tr
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
 
-function processAlive(pid: unknown): boolean {
-	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return err instanceof Error && "code" in err && err.code === "EPERM";
-	}
-}
-
 function readSession(dir: string, id: string): LegacySession | undefined {
 	const meta = readJson(path.join(dir, "meta.json")).value;
 	if (!isRecord(meta)) return undefined;
 	const cwd = str(meta.cwd);
 	if (!cwd) return undefined;
-	const launch = readJson(path.join(dir, "launch.json")).value;
-	const ompArgs = isRecord(launch) && Array.isArray(launch.ompArgs) ? launch.ompArgs.filter((a): a is string => typeof a === "string") : [];
-	const queueFile = readJson(path.join(dir, "queue.json"));
-	const session: LegacySession = {
-		id,
-		cwd,
-		title: str(meta.title) ?? id,
-		status: str(meta.status) ?? "stopped",
-		hostAlive: processAlive(meta.pid),
-		createdAt: typeof meta.createdAt === "number" ? meta.createdAt : 0,
-		ompSessionFiles: Array.isArray(meta.ompSessionFiles) ? meta.ompSessionFiles.filter((f): f is string => typeof f === "string") : [],
-		ompArgs,
-	};
+	const session: LegacySession = { id, cwd, title: str(meta.title) ?? id, createdAt: typeof meta.createdAt === "number" ? meta.createdAt : 0 };
 	const ompSessionId = str(meta.ompSessionId);
 	if (ompSessionId) session.ompSessionId = ompSessionId;
-	const ompSessionFile = str(meta.ompSessionFile);
-	if (ompSessionFile) session.ompSessionFile = ompSessionFile;
-	const model = str(meta.model);
-	if (model) session.model = model;
-	const permissionMode = str(meta.permissionMode);
-	if (permissionMode) session.permissionMode = permissionMode;
-	if (typeof meta.cost === "number" && Number.isFinite(meta.cost)) session.cost = meta.cost;
+	const queueFile = readJson(path.join(dir, "queue.json"));
 	if (queueFile.value !== undefined) {
 		const queue = normalizeQueue(queueFile.value);
 		if (queue.tasks.length) session.queue = queue;
-		const after = isRecord(queueFile.value) && Array.isArray(queueFile.value.after) ? queueFile.value.after.filter((a): a is string => typeof a === "string" && a !== "") : [];
-		if (after.length) session.after = after;
 	}
-	if (fs.existsSync(path.join(dir, "worktree.json"))) session.worktree = true;
 	return session;
 }
 
 /** Everything `migrate` reads from the old state dir. */
 export function readLegacyState(home = legacyHome()): LegacyState {
-	const state: LegacyState = { home, exists: fs.existsSync(home), sessions: [], unreadable: [], completed: {} };
+	const state: LegacyState = { home, exists: fs.existsSync(home), sessions: [], unreadable: [] };
 	if (!state.exists) return state;
 	let ids: string[] = [];
 	try {
@@ -161,14 +110,7 @@ export function readLegacyState(home = legacyHome()): LegacyState {
 
 	const organize = readJson(path.join(home, "organize.json"));
 	if (organize.error) state.organizeError = organize.error;
-	else if (!organize.missing) {
-		state.organize = normalizeOrgData(organize.value);
-		// The completed marker (PARKED §5) postdates organize.ts here, so it is read from the raw file.
-		const raw = isRecord(organize.value) && isRecord(organize.value.sessions) ? organize.value.sessions : {};
-		for (const [id, v] of Object.entries(raw)) {
-			if (isRecord(v) && v.completed === true) state.completed[id] = typeof v.completedAt === "number" && Number.isFinite(v.completedAt) ? v.completedAt : 0;
-		}
-	}
+	else if (!organize.missing) state.organize = normalizeOrgData(organize.value);
 
 	const scheduler = readJson(path.join(home, "scheduler.json")).value;
 	if (isRecord(scheduler)) {
@@ -194,7 +136,6 @@ export function readLegacyState(home = legacyHome()): LegacyState {
 		if (str(launcher.model)) out.model = String(launcher.model).trim();
 		if (str(launcher.service)) out.service = String(launcher.service);
 		if (str(launcher.mode)) out.mode = String(launcher.mode);
-		if (launcher.worktree === "auto" || launcher.worktree === "always" || launcher.worktree === "never") out.worktree = launcher.worktree;
 		state.launcher = out;
 	}
 

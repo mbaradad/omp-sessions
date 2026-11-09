@@ -1,16 +1,14 @@
-// `switchyard migrate`: the transcript graft that hands an old omp conversation to an AO session, the
-// organize.json merge, and which old sessions a run adopts or skips.
+// `switchyard migrate`: what comes over from an omp Sessions install (organization structure, defaults,
+// scheduler), what stays behind (sessions, with their resume line and unfinished tasks), and that a run
+// leaves the old dir alone, backs it up first, and is idempotent.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, test } from "node:test";
-import { graftTranscript, isFreshTranscript, readTranscriptHeader, transcriptsForCwd } from "../../src/migrate/graft";
 import { readLegacyState } from "../../src/migrate/legacy";
-import { type Ledger, mergeOrganize, planSessions, queueImportOps } from "../../src/migrate/migrate";
+import { leftBehind, mergeOrganize, migrate, type PlannerPort } from "../../src/migrate/migrate";
 import { emptyOrgData, type OrgData } from "../../src/shared/organize";
-import type { QueueTask } from "../../src/shared/protocol";
 
 const temps: string[] = [];
 after(() => {
@@ -23,215 +21,163 @@ function temp(): string {
 	return dir;
 }
 
-const line = (v: unknown) => `${JSON.stringify(v)}\n`;
-const TITLE = { type: "title", v: 1, title: "t", source: "user", pad: "    " };
-
-/** A transcript as omp writes it: padded title line, session header, then entries. */
-function transcript(file: string, id: string, cwd: string, entries: object[] = []): string {
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, line(TITLE) + line({ type: "session", version: 3, id, timestamp: "2026-11-01T00:00:00.000Z", cwd, title: "old" }) + entries.map(line).join(""));
-	return file;
-}
-
-const CONVERSATION = [
-	{ type: "model_change", id: "m1", parentId: null, model: "anthropic/claude-opus-5-5" },
-	{ type: "message", id: "u1", parentId: "m1", message: { role: "user", content: "hello" } },
-	{ type: "message", id: "a1", parentId: "u1", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
-];
-
-function entries(file: string): Array<Record<string, unknown>> {
-	return fs
-		.readFileSync(file, "utf8")
-		.split("\n")
-		.filter(Boolean)
-		.map(l => JSON.parse(l) as Record<string, unknown>);
-}
-
-test("graft: the fresh AO transcript takes the old entries verbatim under its own id and cwd; the source is untouched", () => {
-	const dir = temp();
-	const source = transcript(path.join(dir, "sessions", "-old", "2026_OLD.jsonl"), "OLD", "/old/cwd", CONVERSATION);
-	fs.mkdirSync(path.join(dir, "sessions", "-old", "2026_OLD"));
-	fs.writeFileSync(path.join(dir, "sessions", "-old", "2026_OLD", "1.bash.log"), "artifact");
-	const target = transcript(path.join(dir, "sessions", "-ao", "2027_NEW.jsonl"), "NEW", "/ao/ws", [{ type: "model_change", id: "x", parentId: null, model: "m" }]);
-	const before = fs.readFileSync(source, "utf8");
-
-	assert.equal(isFreshTranscript(target), true);
-	const result = graftTranscript({ source, target });
-	assert.deepEqual(result, { sourceId: "OLD", targetId: "NEW", entries: 4, artifactsCopied: true });
-	assert.equal(fs.readFileSync(source, "utf8"), before);
-	const header = readTranscriptHeader(target);
-	assert.equal(header?.id, "NEW");
-	assert.equal(header?.cwd, "/ao/ws");
-	assert.equal(header?.parentSession, "OLD");
-	assert.equal(header?.timestamp, "2026-11-01T00:00:00.000Z");
-	assert.deepEqual(entries(target).slice(2), CONVERSATION);
-	assert.equal(entries(target)[0].type, "title");
-	assert.equal(fs.readFileSync(path.join(dir, "sessions", "-ao", "2027_NEW", "1.bash.log"), "utf8"), "artifact");
-	assert.equal(isFreshTranscript(target), false);
-});
-
-test("graft --model: a model switch continues the active leaf, including a late-usage marker's leaf", () => {
-	const dir = temp();
-	const late = { type: "usage", id: "late", parentId: "u1", activeLeafId: "a1" };
-	const source = transcript(path.join(dir, "o.jsonl"), "OLD", "/o", [...CONVERSATION, late]);
-	const target = transcript(path.join(dir, "n.jsonl"), "NEW", "/n");
-	graftTranscript({ source, target, model: "vllm/qwen", now: new Date("2026-11-09T00:00:00Z") });
-	const last = entries(target).at(-1);
-	assert.equal(last?.type, "model_change");
-	assert.equal(last?.model, "vllm/qwen");
-	assert.equal(last?.parentId, "a1");
-	assert.match(String(last?.id), /^[0-9a-f]{8}$/);
-});
-
-test("graft refuses a target with its own conversation; repeats only on a graft that was not continued", () => {
-	const dir = temp();
-	const source = transcript(path.join(dir, "o.jsonl"), "OLD", "/o", CONVERSATION);
-	const busy = transcript(path.join(dir, "busy.jsonl"), "B", "/b", CONVERSATION);
-	assert.throws(() => graftTranscript({ source, target: busy }), /already holds a conversation/);
-	assert.deepEqual(entries(busy).slice(2), CONVERSATION);
-
-	const target = transcript(path.join(dir, "n.jsonl"), "NEW", "/n");
-	graftTranscript({ source, target, model: "x/y" });
-	const grafted = fs.readFileSync(target, "utf8");
-	graftTranscript({ source, target, model: "x/y" });
-	assert.equal(entries(target).length, grafted.split("\n").filter(Boolean).length);
-
-	fs.appendFileSync(target, line({ type: "message", id: "u2", parentId: "a1", message: { role: "user", content: "new turn" } }));
-	fs.appendFileSync(target, line({ type: "message", id: "a2", parentId: "u2", message: { role: "assistant", content: "ok" } }));
-	assert.throws(() => graftTranscript({ source, target }), /already holds a conversation/);
-	assert.equal(entries(target).at(-1)?.id, "a2");
-});
-
-test("transcriptsForCwd finds the spawn's transcript by header cwd, newer than the spawn", () => {
-	const dir = temp();
-	const a = transcript(path.join(dir, "-ws", "a.jsonl"), "A", "/ao/ws/s-1");
-	transcript(path.join(dir, "-ws", "b.jsonl"), "B", "/ao/ws/s-2");
-	const old = transcript(path.join(dir, "-ws", "c.jsonl"), "C", "/ao/ws/s-1");
-	fs.utimesSync(old, new Date(1000), new Date(1000));
-	assert.deepEqual(transcriptsForCwd(dir, "/ao/ws/s-1", 10_000), [a]);
-});
-
-function legacyHomeWith(sessions: Record<string, object>, extra: Record<string, unknown> = {}): string {
-	const home = temp();
-	for (const [id, meta] of Object.entries(sessions)) {
-		fs.mkdirSync(path.join(home, "sessions", id), { recursive: true });
-		fs.writeFileSync(path.join(home, "sessions", id, "meta.json"), JSON.stringify({ id, title: id, status: "stopped", pid: 0, createdAt: 1, ...meta }));
+/** A tree of files: `{"a/b.json": value}`; values other than strings are written as JSON. */
+function write(root: string, files: Record<string, unknown>): void {
+	for (const [rel, value] of Object.entries(files)) {
+		const file = path.join(root, rel);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value));
 	}
-	for (const [name, value] of Object.entries(extra)) fs.writeFileSync(path.join(home, name), JSON.stringify(value));
+}
+
+const task = (title: string, status: string, extra: object = {}) => ({ id: title, title, status, subtasks: [], createdAt: 1, ...extra });
+
+/** An install with two sessions (one with a half-done queue, one without a transcript), a tree of groups and settings. */
+function oldInstall(): string {
+	const home = temp();
+	write(home, {
+		"sessions/s1/meta.json": { id: "s1", cwd: "/work/a", title: "Alpha", createdAt: 1, ompSessionId: "omp-1" },
+		"sessions/s1/queue.json": { autoRun: true, tasks: [task("done one", "done"), task("later", "pending", { notes: "details" }), task("broken", "failed"), task("skipped", "skipped")] },
+		"sessions/s2/meta.json": { id: "s2", cwd: "/work/b", title: "Beta", createdAt: 2 },
+		"sessions/s2/blobs/x": "snapshot",
+		"organize.json": {
+			version: 1,
+			groups: [{ id: "g1", name: "Work", order: 0 }, { id: "g2", name: "Sub", parentId: "g1", order: 1 }],
+			lanes: [{ id: "doing", name: "Doing", order: 0 }],
+			sessions: { s1: { groupId: "g1", priority: "high", tags: ["x"], pinned: true } },
+			collapsed: { g1: true },
+		},
+		"scheduler.json": { maxConcurrent: 3, paused: true, stopWhenQueueDone: false, budget: { day: 20, week: -1 } },
+		"launcher.json": { mode: "edits", model: "p/m", service: "off", ompPath: "/opt/omp", extraArgs: ["--profile", "work"] },
+		"remote.json": { enabled: true },
+		"server.pid": "1",
+	});
 	return home;
 }
 
-test("plan: adopts sessions with a transcript; skips busy, empty and transcript-less ones; done stays done", () => {
-	const dir = temp();
-	const repo = path.join(dir, "repo");
-	fs.mkdirSync(path.join(repo, "sub"), { recursive: true });
-	execFileSync("git", ["init", "-q", repo]);
-	const plain = path.join(dir, "plain");
-	fs.mkdirSync(plain);
-	const t = (id: string, conv = CONVERSATION) => transcript(path.join(dir, "sessions", "-x", `2026_${id}.jsonl`), id, "/x", conv);
-	const home = legacyHomeWith({
-		inRepo: { cwd: path.join(repo, "sub"), ompSessionFile: t("o1"), ompArgs: [] },
-		plainDir: { cwd: plain, ompSessionId: "o2", permissionMode: "ask" },
-		gone: { cwd: path.join(dir, "deleted"), ompSessionFile: t("o3") },
-		busy: { cwd: plain, ompSessionFile: t("o4"), status: "working", pid: process.pid },
-		empty: { cwd: plain, ompSessionFile: t("o5", []) },
-		none: { cwd: plain },
-		finished: { cwd: plain, ompSessionFile: t("o6") },
-	});
-	fs.writeFileSync(path.join(home, "sessions", "plainDir", "launch.json"), JSON.stringify({ ompArgs: ["--approval-mode", "edits", "--thinking", "high"] }));
-	t("o2");
-	const state = readLegacyState(home);
-	const ledger: Ledger = { version: 1, source: home, backups: [], sessions: { finished: { aoSessionId: "repo-9", state: "done", title: "f", cwd: plain, sourceTranscript: "x", spawnedAt: 0, updatedAt: 0 } } };
-	const byId = Object.fromEntries(planSessions(state, ledger, { sessionsDir: path.join(dir, "sessions"), projects: [{ id: "repo", path: fs.realpathSync(repo) }] }).map(a => [a.id, a]));
+function tree(root: string): string[] {
+	return fs
+		.readdirSync(root, { recursive: true })
+		.map(String)
+		.filter(f => fs.statSync(path.join(root, f)).isFile())
+		.sort()
+		.map(f => `${f}:${fs.readFileSync(path.join(root, f), "utf8")}`);
+}
 
-	assert.deepEqual({ kind: byId.inRepo.kind, projectId: "projectId" in byId.inRepo && byId.inRepo.projectId }, { kind: "adopt", projectId: "repo" });
-	const plainAction = byId.plainDir;
-	assert.ok(plainAction.kind === "adopt");
-	assert.equal(plainAction.standaloneReason, "folder is not in a git repo");
-	assert.equal(plainAction.approvalMode, "accept-edits");
-	assert.match(plainAction.transcript, /2026_o2\.jsonl$/);
-	assert.deepEqual(plainAction.notes, ["omp flags not carried over: --thinking high"]);
-	assert.ok(byId.gone.kind === "adopt" && byId.gone.standaloneReason === "folder no longer exists");
-	assert.ok(byId.busy.kind === "skip" && /busy/.test(byId.busy.reason));
-	assert.ok(byId.empty.kind === "skip" && /empty/.test(byId.empty.reason));
-	assert.ok(byId.none.kind === "skip" && byId.none.reason === "no omp transcript");
-	assert.deepEqual(byId.finished, { kind: "done", id: "finished", title: "finished", aoSessionId: "repo-9" });
+function plannerSpy(fail = false): PlannerPort & { calls: Array<{ op: string; args: unknown }> } {
+	const calls: Array<{ op: string; args: unknown }> = [];
+	return {
+		calls,
+		request: ((op: string, args: unknown) => {
+			calls.push({ op, args });
+			return fail ? Promise.reject(new Error("down")) : Promise.resolve({});
+		}) as PlannerPort["request"],
+	};
+}
+
+test("dry run writes nothing, anywhere, and reports every old session", async () => {
+	const legacyHome = oldInstall();
+	const home = path.join(temp(), "sy");
+	const before = tree(legacyHome);
+	const planner = plannerSpy();
+	const lines: string[] = [];
+	const report = await migrate({ apply: false, legacyHome, home, planner, log: l => lines.push(l) });
+	assert.equal(fs.existsSync(home), false);
+	assert.deepEqual(tree(legacyHome), before);
+	assert.deepEqual(planner.calls, []);
+	assert.equal(report.sessions.length, 2);
+	assert.ok(lines.some(l => l.includes('s1 "Alpha" (/work/a): omp --resume omp-1')));
+	assert.ok(lines.some(l => l.includes('s2 "Beta" (/work/b): no omp transcript')));
+	assert.ok(lines.some(l => l.includes("unfinished (pending): later") && l.includes("sessions/s1/queue.json") && l.includes('switchyard new /work/a --task "…"')));
+	assert.ok(lines.some(l => l.includes("unfinished (failed): broken")));
+	assert.ok(!lines.some(l => l.includes("skipped") && l.includes("unfinished")));
 });
 
-test("organize merge: old ids become AO ids, adopted pins leave the file, existing entries win, a partial run's entries move", () => {
+test("apply: structure, defaults and scheduler come over; the old dir is backed up first and never touched", async () => {
+	const legacyHome = oldInstall();
+	const home = path.join(temp(), "sy");
+	const before = tree(legacyHome);
+	const planner = plannerSpy();
+	const report = await migrate({ apply: true, legacyHome, home, planner });
+
+	assert.deepEqual(tree(legacyHome), before);
+	assert.ok(report.backup?.startsWith(path.join(home, "backups")));
+	assert.deepEqual(tree(report.backup as string), before);
+
+	const organize = JSON.parse(fs.readFileSync(path.join(home, "organize.json"), "utf8")) as OrgData;
+	assert.deepEqual(organize.groups, [{ id: "g1", name: "Work", order: 0 }, { id: "g2", name: "Sub", parentId: "g1", order: 1 }]);
+	assert.deepEqual(organize.lanes, [{ id: "doing", name: "Doing", order: 0 }]);
+	assert.deepEqual(organize.collapsed, { g1: true });
+	assert.deepEqual(organize.sessions, {}, "per-session entries are not migrated");
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")), { mode: "edits", model: "p/m", service: "off" });
+	assert.deepEqual(planner.calls, [{ op: "scheduler", args: { set: { maxConcurrent: 3, paused: true, budget: { day: 20 } } } }]);
+	assert.ok(report.dropped.some(d => d.startsWith("remote.json: phone access was on")));
+	assert.ok(report.dropped.some(d => d.includes("extraArgs --profile work")));
+	assert.ok(report.dropped.some(d => d.startsWith("launcher.json ompPath")));
+});
+
+test("apply twice: the second run writes nothing, makes no backup and does not call the planner again", async () => {
+	const legacyHome = oldInstall();
+	const home = path.join(temp(), "sy");
+	const planner = plannerSpy();
+	await migrate({ apply: true, legacyHome, home, planner });
+	const after1 = tree(home);
+	const second = await migrate({ apply: true, legacyHome, home, planner });
+	assert.deepEqual(tree(home), after1);
+	assert.equal(second.backup, undefined);
+	assert.equal(second.organize?.written, false);
+	assert.equal(planner.calls.length, 1);
+	assert.equal(second.scheduler?.imported, true);
+});
+
+test("a planner that is down or refuses leaves the scheduler for a later run; everything else still comes over", async () => {
+	const legacyHome = oldInstall();
+	const home = path.join(temp(), "sy");
+	const down = await migrate({ apply: true, legacyHome, home, planner: plannerSpy(true) });
+	assert.equal(down.scheduler?.imported, false);
+	assert.equal(fs.existsSync(path.join(home, "organize.json")), true);
+	const none = await migrate({ apply: true, legacyHome, home });
+	assert.equal(none.scheduler?.imported, false);
+	const planner = plannerSpy();
+	const later = await migrate({ apply: true, legacyHome, home, planner });
+	assert.equal(later.scheduler?.imported, true);
+	assert.equal(planner.calls.length, 1);
+});
+
+test("organize merge: groups by id, lanes only when none exist, collapse keys; what exists wins, unknown fields stay", () => {
 	const legacy: OrgData = {
 		...emptyOrgData(),
-		groups: [{ id: "g1", name: "Work", order: 0 }],
+		groups: [{ id: "g1", name: "Work", order: 0 }, { id: "g3", name: "New", order: 1 }],
 		lanes: [{ id: "doing", name: "Doing", order: 0 }],
-		sessions: {
-			a: { groupId: "g1", priority: "high", tags: ["x"], pinned: true },
-			b: { archived: true },
-			c: { color: "red", pinned: true },
-		},
-		collapsed: { g1: true },
+		sessions: { a: { priority: "high" } },
+		collapsed: { g1: true, g3: true },
 	};
 	// A newer Switchyard may already store fields this version doesn't know; the merge keeps them.
-	const existing = { ...emptyOrgData(), groups: [{ id: "g1", name: "Renamed", order: 3 }], sessions: { "ao-b": { color: "blue", completed: true, futureField: 1 } }, collapsed: { g1: false }, sortBy: "completed" };
-
-	const first = mergeOrganize(existing, legacy, { a: "ao-a", b: "ao-b" });
-	assert.deepEqual(first.data.groups, [{ id: "g1", name: "Renamed", order: 3 }]);
-	assert.deepEqual(first.data.lanes, legacy.lanes);
-	assert.deepEqual(first.data.sessions, { "ao-a": { groupId: "g1", priority: "high", tags: ["x"] }, "ao-b": { color: "blue", completed: true, futureField: 1 }, c: { color: "red", pinned: true } });
-	assert.equal((first.data as unknown as Record<string, unknown>).sortBy, "completed");
-	assert.deepEqual(first.data.collapsed, { g1: false });
-
-	// `c` is adopted by a later run: its entry moves to the AO id, without the pin (AO holds it).
-	const second = mergeOrganize(first.data, legacy, { a: "ao-a", b: "ao-b", c: "ao-c" });
-	assert.deepEqual(Object.keys(second.data.sessions).sort(), ["ao-a", "ao-b", "ao-c"]);
-	assert.deepEqual(second.data.sessions["ao-c"], { color: "red" });
-	assert.deepEqual(mergeOrganize(second.data, legacy, { a: "ao-a", b: "ao-b", c: "ao-c" }).data, second.data);
-
-	// The completed marker (PARKED §5) comes over with its time, also for a session with no other entry.
-	const done = mergeOrganize(undefined, legacy, { a: "ao-a", d: "ao-d" }, { a: 42, d: 0 });
-	assert.deepEqual(done.data.sessions["ao-a"], { groupId: "g1", priority: "high", tags: ["x"], completed: true, completedAt: 42 });
-	assert.deepEqual(done.data.sessions["ao-d"], { completed: true });
+	const existing = { ...emptyOrgData(), groups: [{ id: "g1", name: "Renamed", order: 3 }], sessions: { "repo-1": { color: "blue", completed: true } }, collapsed: { g1: false }, sortBy: "completed" };
+	const merged = mergeOrganize(existing, legacy);
+	assert.deepEqual(merged.data.groups, [{ id: "g1", name: "Renamed", order: 3 }, { id: "g3", name: "New", order: 1 }]);
+	assert.deepEqual(merged.data.lanes, legacy.lanes);
+	assert.deepEqual(merged.data.sessions, { "repo-1": { color: "blue", completed: true } });
+	assert.deepEqual(merged.data.collapsed, { g1: false, g3: true });
+	assert.equal((merged.data as unknown as Record<string, unknown>).sortBy, "completed");
+	assert.equal(merged.groups, 1);
+	assert.equal(merged.lanes, 1);
+	assert.equal(mergeOrganize({ ...existing, lanes: [{ id: "mine", name: "Mine", order: 0 }] }, legacy).lanes, 0);
 });
 
-test("queue import: one paused lane on the AO session, tasks in order with their status, a future start kept", () => {
-	const now = 1_000;
-	const task = (id: string, status: QueueTask["status"], extra: Partial<QueueTask> = {}): QueueTask => ({ id, title: `T ${id}`, subtasks: [], status, createdAt: 1, ...extra });
-	const ops = queueImportOps(
-		"repo-3",
-		"Old title",
-		{
-			autoRun: true,
-			startAt: 5_000,
-			tasks: [
-				task("a", "done", { summary: "ok" }),
-				task("b", "skipped"),
-				task("c", "failed", { notes: "n", summary: "boom" }),
-				task("d", "running", { options: { model: "p/m", retries: 2 }, subtasks: [{ id: "s", title: "sub", done: true }] }),
-				task("e", "pending"),
-			],
-		},
-		"high",
-		now,
-	);
-	assert.deepEqual(ops, [
-		{ op: "lane.add", id: "repo-3", title: "Old title", session: "repo-3", autoRun: false, priority: "high" },
-		{ op: "add", ref: "old0", task: { title: "T a", subtasks: [], lane: "repo-3", done: true } },
-		{ op: "add", ref: "old1", task: { title: "T b", subtasks: [], lane: "repo-3" } },
-		{ op: "skip", id: "@old1" },
-		{ op: "add", ref: "old2", task: { title: "T c", notes: "n\n\nLast run failed: boom", subtasks: [], lane: "repo-3" } },
-		{ op: "add", ref: "old3", task: { title: "T d", subtasks: [{ title: "sub", done: true }], lane: "repo-3", options: { model: "p/m", retries: 2 } } },
-		{ op: "add", ref: "old4", task: { title: "T e", subtasks: [], lane: "repo-3" } },
-		{ op: "lane.startAt", id: "repo-3", at: 5_000 },
-	]);
-	assert.equal(queueImportOps("x", "t", { autoRun: false, startAt: 500, tasks: [] }, "normal", now).length, 1);
-	assert.deepEqual(queueImportOps("x", "t", { autoRun: false, tasks: [] }, undefined, now, true).at(-1), { op: "lane.complete", id: "x", completed: true });
+test("a missing old dir is not an error and creates nothing", async () => {
+	const home = path.join(temp(), "sy");
+	const report = await migrate({ apply: true, legacyHome: path.join(temp(), "nope"), home });
+	assert.deepEqual(report.sessions, []);
+	assert.equal(fs.existsSync(home), false);
 });
 
-test("legacy reader: parked-branch fields (queue after, completed marker, budget, worktree mode) survive", () => {
-	const home = legacyHomeWith({ s1: { cwd: "/x" } }, { "organize.json": { version: 1, sessions: { s1: { completed: true, completedAt: 7 }, s2: { completed: true } } }, "scheduler.json": { maxConcurrent: 3, budget: { day: 20, week: -1, hour: "x" } }, "launcher.json": { worktree: "always" } });
-	fs.writeFileSync(path.join(home, "sessions", "s1", "queue.json"), JSON.stringify({ autoRun: false, tasks: [{ id: "t", title: "T", status: "pending" }], after: ["s9", 3] }));
+test("legacy reader: unreadable sessions and corrupt files read as absent; an unfinished task keeps its status", () => {
+	const home = temp();
+	write(home, { "sessions/bad/meta.json": "{nope", "sessions/ok/meta.json": { cwd: "/x", ompSessionId: "o" }, "sessions/ok/queue.json": { tasks: [task("t", "running")] }, "organize.json": "{nope", "scheduler.json": "[]" });
 	const state = readLegacyState(home);
-	assert.deepEqual(state.sessions[0].after, ["s9"]);
-	assert.deepEqual(state.completed, { s1: 7, s2: 0 });
-	assert.deepEqual(state.scheduler, { maxConcurrent: 3, budget: { day: 20 } });
-	assert.equal(state.launcher?.worktree, "always");
+	assert.deepEqual(state.unreadable, ["bad"]);
+	assert.ok(state.organizeError);
+	assert.equal(state.scheduler, undefined);
+	assert.deepEqual(leftBehind(state)[0].unfinished, [{ title: "t", status: "running", hasNotes: false }]);
 });

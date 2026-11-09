@@ -1497,7 +1497,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	projects: { flags: ["json"], run: cmdProjects },
 	skill: { flags: ["dir", "force"], run: cmdSkill },
 	hermes: { flags: ["force", "profile", "all-profiles", "json"], run: cmdHermes },
-	migrate: { flags: ["apply", "only", "model", "json"], run: cmdMigrate },
+	migrate: { flags: ["apply", "json"], run: cmdMigrate },
 };
 
 async function main(argv: string[]): Promise<number> {
