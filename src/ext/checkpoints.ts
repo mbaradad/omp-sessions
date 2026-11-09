@@ -17,9 +17,9 @@ import {
 	type CheckpointResult,
 	type CheckpointState,
 	type FileChange,
-	type TurnLike,
 	type TurnStatus,
 	aoCheckpointDir,
+	aoTurns,
 	fileMatches,
 	liveChanges,
 	matchTurns,
@@ -47,16 +47,6 @@ export interface CheckpointsChange {
 
 function listNames(names: readonly string[]): string {
 	return names.length > 4 ? `${names.slice(0, 4).join(", ")} and ${names.length - 4} more` : names.join(", ");
-}
-
-/** The person's prompts in an AO conversation: each turn's first human message. */
-export function aoTurns(conversation: AoConversation): TurnLike[] {
-	const text = new Map<string, string>();
-	for (const m of conversation.messages) if (m.kind === "message" && m.role === "user" && m.turnId && !text.has(m.turnId)) text.set(m.turnId, m.text);
-	return conversation.turns.flatMap(t => {
-		const prompt = text.get(t.id);
-		return prompt === undefined ? [] : [{ id: t.id, text: prompt, at: Date.parse(t.startedAt ?? t.requestedAt ?? "") || 0 }];
-	});
 }
 
 export class Checkpoints implements vscode.Disposable {

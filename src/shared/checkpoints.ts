@@ -16,6 +16,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AoConversation } from "../ao/client";
 import { switchyardHome } from "../ao/native";
 
 export const EMPTY_BLOB = "empty";
@@ -416,6 +417,16 @@ export interface TurnLike {
 	text: string;
 	/** Epoch ms the turn started (or was requested). */
 	at: number;
+}
+
+/** The person's prompts in an AO conversation: each turn's first human message. */
+export function aoTurns(conversation: AoConversation): TurnLike[] {
+	const text = new Map<string, string>();
+	for (const m of conversation.messages) if (m.kind === "message" && m.role === "user" && m.turnId && !text.has(m.turnId)) text.set(m.turnId, m.text);
+	return conversation.turns.flatMap(t => {
+		const prompt = text.get(t.id);
+		return prompt === undefined ? [] : [{ id: t.id, text: prompt, at: Date.parse(t.startedAt ?? t.requestedAt ?? "") || 0 }];
+	});
 }
 
 export type TurnStatus = "undone" | "command";

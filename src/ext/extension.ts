@@ -366,20 +366,30 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	});
 
+	/** A session's display name: from the Sessions list, else AO's; the id when neither answers. */
+	const titleOf = async (id: string) =>
+		sessions.get(id)?.title ??
+		(await connectAo()
+			.then(ao => ao.getSession(id))
+			.then(
+				view => view.displayName || id,
+				() => id,
+			));
+
 	reg("omp.showChanges", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Show changes of which session?"));
-		const meta = id ? sessions.get(id) : undefined;
-		if (!meta) return;
-		const files = [...checkpoints.baselines(meta.id).keys()];
+		if (!id) return;
+		const files = [...checkpoints.baselines(id).keys()];
 		if (files.length === 0) {
 			void vscode.window.showInformationMessage("This session has not changed any files yet.");
 			return;
 		}
+		const cwd = sessions.get(id)?.cwd ?? checkpoints.state(id)?.cwd ?? "";
 		const pick = await vscode.window.showQuickPick(
-			files.map(f => ({ label: path.basename(f), description: path.relative(meta.cwd, path.dirname(f)) || ".", file: f, iconPath: vscode.ThemeIcon.File, resourceUri: vscode.Uri.file(f) })),
-			{ placeHolder: `${files.length} file(s) changed by "${meta.title}"` },
+			files.map(f => ({ label: path.basename(f), description: path.relative(cwd, path.dirname(f)) || ".", file: f, iconPath: vscode.ThemeIcon.File, resourceUri: vscode.Uri.file(f) })),
+			{ placeHolder: `${files.length} file(s) changed by "${await titleOf(id)}"` },
 		);
-		if (pick) await checkpoints.openFileDiff(meta.id, pick.file, snapshots, panels.get(meta.id)?.surface.viewColumn);
+		if (pick) await checkpoints.openFileDiff(id, pick.file, snapshots, panels.get(id)?.surface.viewColumn);
 	});
 
 	reg("omp.openSessionFileDiff", async (sessionId: unknown, file: unknown) => {
@@ -389,9 +399,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	reg("omp.reviewChanges", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Review changes of which session?"));
-		const meta = id ? sessions.get(id) : undefined;
-		if (!meta) return;
-		await checkpoints.review(meta.id, `omp: ${meta.title}`, snapshots);
+		if (id) await checkpoints.review(id, `omp: ${await titleOf(id)}`, snapshots);
+	});
+
+	reg("switchyard.undo", async (arg?: unknown) => {
+		const id = idFrom(arg) ?? (await pickSession("Undo the last prompt of which session?"));
+		if (!id) return;
+		const done = await checkpoints.undo(id);
+		if (done?.prompt) panels.get(id)?.insertText(done.prompt);
+	});
+
+	reg("switchyard.redo", async (arg?: unknown) => {
+		const id = idFrom(arg) ?? (await pickSession("Redo in which session?"));
+		if (id) await checkpoints.redo(id);
 	});
 
 	reg("omp.resumeFromHistory", async (arg?: unknown) => {
