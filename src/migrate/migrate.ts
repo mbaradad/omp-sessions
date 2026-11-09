@@ -17,6 +17,7 @@ import { switchyardHome } from "../ao/client";
 import type { PlannerOpName, PlannerOps } from "../planner/types";
 import { emptyOrgData, type OrgData } from "../shared/organize";
 import { permissionModeOf } from "../shared/permissions";
+import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
 import { isRecord } from "../shared/transcript-files";
 import { type LegacyState, legacyHome, readLegacyState } from "./legacy";
 
@@ -233,38 +234,26 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 		log(`organize.json: unreadable (${state.organizeError}); not migrated`);
 	}
 
+	// Defaults go through the shared settings module (src/shared/switchyard-config.ts): what is already
+	// set wins, and keys it doesn't know stay.
 	const configFile = path.join(home, "config.json");
-	const wanted: Record<string, string> = {};
+	const current = readSwitchyardConfig(configFile);
+	const patch: SwitchyardConfig = {};
+	const set: Record<string, unknown> = {};
 	const mode = permissionModeOf(state.launcher?.mode);
-	if (mode) wanted.mode = mode;
-	if (state.launcher?.model) wanted.model = state.launcher.model;
-	if (state.launcher?.service === "off") wanted.service = "off";
+	if (mode && current.mode === undefined) set.mode = patch.mode = mode;
+	if (state.launcher?.model && current.model === undefined) set.model = patch.model = state.launcher.model;
+	if (state.launcher?.service === "off" && current.service === undefined) set.service = patch.service = "off";
 	const extraArgs = state.launcher?.extraArgs?.length ? state.launcher.extraArgs : undefined;
-	if (Object.keys(wanted).length || extraArgs) {
-		let existing: Record<string, unknown> = {};
-		try {
-			const raw: unknown = JSON.parse(fs.readFileSync(configFile, "utf8"));
-			if (isRecord(raw)) existing = raw;
-		} catch {
-			/* none yet */
-		}
-		const next: Record<string, unknown> = { ...existing };
-		const set: Record<string, unknown> = {};
-		for (const [k, v] of Object.entries(wanted)) {
-			if (k in existing) continue;
-			next[k] = v;
-			set[k] = v;
-		}
-		// `omp.extraArgs` is the nested key `{"omp": {"extraArgs": [...]}}` (G34: the omp shim reads it).
-		const omp = isRecord(existing.omp) ? existing.omp : undefined;
-		if (extraArgs && !(omp && "extraArgs" in omp) && !("omp.extraArgs" in existing)) {
-			next.omp = { ...omp, extraArgs: [...extraArgs] };
-			set["omp.extraArgs"] = [...extraArgs];
-		}
+	if (extraArgs && current.omp?.extraArgs === undefined) {
+		patch.omp = { extraArgs: [...extraArgs] };
+		set["omp.extraArgs"] = [...extraArgs];
+	}
+	if (state.launcher && (state.launcher.mode || state.launcher.model || state.launcher.service === "off" || extraArgs)) {
 		const written = opts.apply && Object.keys(set).length > 0;
 		if (written) {
 			beforeWrite();
-			writeJsonAtomic(configFile, next);
+			writeSwitchyardConfig(patch, configFile);
 		}
 		report.config = { set, written };
 		const text = Object.entries(set).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(" ") : String(v)}`).join(", ") || "nothing new";
