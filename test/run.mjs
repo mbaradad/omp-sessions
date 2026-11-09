@@ -1,5 +1,7 @@
 // Test runner: bundles the session host and the TypeScript tests with esbuild into .test-out/,
-// then runs them with `node --test`. Usage: node test/run.mjs [unit|host]...
+// then runs them with `node --test`. Usage: node test/run.mjs [unit|host|integration]...
+// No suite named: unit and host. `integration` runs test/integration/ against an isolated AO daemon
+// started per test file by test/ao-fixture.mjs (skips when `ao` is missing; OMP_TEST_AO_BIN picks one).
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -12,7 +14,8 @@ const outDir = process.env.TEST_OUT ? path.resolve(process.env.TEST_OUT) : path.
 const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : undefined;
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
 const selected = suites.length ? suites : ["unit", "host"];
-for (const s of selected) if (s !== "unit" && s !== "host") throw new Error(`unknown suite ${s}`);
+const SUITES = ["unit", "host", "integration"];
+for (const s of selected) if (!SUITES.includes(s)) throw new Error(`unknown suite ${s}`);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
@@ -49,6 +52,14 @@ const files = entryPoints.map(f => path.join(outDir, path.relative(path.join(roo
 // harness's own waits, which time out after seconds.
 const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--test-reporter=spec", "--test-timeout=120000", ...files], {
 	stdio: "inherit",
-	env: { ...process.env, OMP_TEST_HOST_JS: hostJs, OMP_TEST_SERVER_JS: serverJs, OMP_TEST_CLI_JS: cliJs, OMP_TEST_FAKE_OMP: fakeOmp },
+	env: {
+		...process.env,
+		OMP_TEST_HOST_JS: hostJs,
+		OMP_TEST_SERVER_JS: serverJs,
+		OMP_TEST_CLI_JS: cliJs,
+		OMP_TEST_FAKE_OMP: fakeOmp,
+		// test/ao-fixture.mjs puts this first on the AO daemon's PATH as `omp` (any suite may start the fixture).
+		OMP_TEST_FAKE_OMP_ACP: path.join(root, "test", "fake-omp-acp.mjs"),
+	},
 });
 process.exit(res.status ?? 1);

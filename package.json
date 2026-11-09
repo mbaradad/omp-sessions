@@ -2186,6 +2186,7 @@
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",
+		"test:integration": "node test/run.mjs integration",
 		"test:hermes": "node integrations/hermes/tests/run.mjs",
 		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs",
 		"ao:schema": "node scripts/ao-schema.mjs"
