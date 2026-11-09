@@ -119,7 +119,7 @@ test("laneQueue: a session's queue summary from the planner lanes that continue 
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-1", pending: 2, done: 1, total: 3 }), lane({ id: "l_2", session: "repo-1", autoRun: false, startAt: 9000, pending: 1, total: 1 }), lane({ id: "l_3", session: "repo-2", pending: 4, total: 4 })],
 		tasks: [task({ id: "a", lane: "repo-1", position: 2, createdAt: 7 }), task({ id: "b", lane: "repo-1", state: "interrupted" }), task({ id: "c", lane: "l_2", state: "scheduled", waitUntil: 8000 }), task({ id: "d", lane: "l_3", position: 1 })],
 		recurring: [],
@@ -135,7 +135,7 @@ test("laneQueue: dependencies map planner task ids to sessions; failed tasks are
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-2", pending: 1, total: 1 }), lane({ id: "l_a", session: "repo-1", failed: 1, total: 1 })],
 		tasks: [
 			task({ id: "b", lane: "repo-2", state: "blocked", after: ["a", "free"], blockedBy: ["a"] }),
@@ -181,7 +181,7 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "done", createdAt: 5, state: "done", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-3", done: 1, total: 1 }), lane({ id: "repo-1" }), lane({ id: "repo-2" })],
 		tasks: [
 			task({ id: "c", lane: "repo-3", after: ["a", "b"], sync: { a: { state: "upstream-changed", at: 1 }, b: { state: "conflict", at: 1, files: ["x.ts"] } } }),
@@ -202,7 +202,7 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 
 test("priorityOps: update the lane that continues a session, else add one named after it; normal clears", () => {
 	const lane = (l: Partial<LaneView>): LaneView => ({ id: "l_1", autoRun: true, createdAt: 1, pending: 0, running: 0, done: 0, failed: 0, total: 0, ...l });
-	const plan = { rev: 1, edges: [], lanes: [lane({ id: "repo-1" }), lane({ id: "l_x", session: "repo-2" })], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
+	const plan = { rev: 1, edges: [], keptBranches: [], lanes: [lane({ id: "repo-1" }), lane({ id: "l_x", session: "repo-2" })], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
 	assert.deepEqual(priorityOps(plan, ["repo-1", "repo-2", "repo-3"], "urgent"), [
 		{ op: "lane.update", id: "repo-1", priority: "urgent" },
 		{ op: "lane.update", id: "l_x", priority: "urgent" },
@@ -219,7 +219,7 @@ test("dependencyOps: pending tasks wait for every task of the picked sessions; o
 	const lane = (id: string) => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1 });
 	const plan = {
 		rev: 1,
-		edges: [],
+		edges: [], keptBranches: [],
 		lanes: [lane("a"), lane("b"), lane("c")],
 		tasks: [
 			{ id: "ta1", lane: "a", status: "done", state: "done" },
@@ -240,7 +240,7 @@ test("dependencyOps: pending tasks wait for every task of the picked sessions; o
 
 test("completeOps / laneQueue: the marker is the planner's lane.complete; a session without a lane gets one", () => {
 	const lane = (id: string, extra: Partial<LaneView> = {}): LaneView => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 0, running: 0, done: 1, failed: 0, total: 1, ...extra });
-	const plan = { rev: 1, edges: [], lanes: [lane("a", { completed: true, completedAt: 99 }), lane("b")], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
+	const plan = { rev: 1, edges: [], keptBranches: [], lanes: [lane("a", { completed: true, completedAt: 99 }), lane("b")], tasks: [], recurring: [], status: {} as PlanView["status"] } satisfies PlanView;
 	assert.deepEqual(completeOps(plan, ["A", "C"], true), [{ op: "lane.complete", id: "a", completed: true }, { op: "lane.add", id: "C", session: "C" }, { op: "lane.complete", id: "C", completed: true }]);
 	assert.deepEqual(completeOps(plan, ["B"], false), [{ op: "lane.complete", id: "b", completed: false }]);
 	assert.deepEqual([laneQueue(plan, "A")?.completed, laneQueue(plan, "A")?.completedAt], [true, 99]);
@@ -249,7 +249,7 @@ test("completeOps / laneQueue: the marker is the planner's lane.complete; a sess
 
 test("taskTransitions: only tasks that were known and changed state; the next map covers the whole plan", () => {
 	const task = (id: string, state: TaskView["state"], extra: Partial<TaskView> = {}): TaskView => ({ id, title: id, subtasks: [], status: "pending", createdAt: 0, state, ...extra });
-	const plan = (...tasks: TaskView[]): PlanView => ({ rev: 1, edges: [], lanes: [{ id: "l", session: "S", autoRun: true, createdAt: 0, pending: 0, running: 0, done: 0, failed: 0, total: 0 }], tasks, recurring: [], status: {} as PlanView["status"] });
+	const plan = (...tasks: TaskView[]): PlanView => ({ rev: 1, edges: [], keptBranches: [], lanes: [{ id: "l", session: "S", autoRun: true, createdAt: 0, pending: 0, running: 0, done: 0, failed: 0, total: 0 }], tasks, recurring: [], status: {} as PlanView["status"] });
 	const first = taskTransitions(new Map(), plan(task("a", "running"), task("b", "waiting", { lane: "l" })));
 	assert.deepEqual(first.changes, []);
 	const second = taskTransitions(first.next, plan(task("a", "done", { session: "S1" }), task("b", "waiting", { lane: "l" }), task("c", "running")));
@@ -268,7 +268,7 @@ test("parentBranches: the branches of the tasks another session's tasks build on
 	const git = (branch: string) => ({ repo: "/r", branch });
 	const plan: PlanView = {
 		rev: 1,
-		edges: [],
+		edges: [], keptBranches: [],
 		lanes: [lane("p"), lane("q"), lane("c")],
 		tasks: [task("tp", { lane: "p", git: git("switchyard/tp") }), task("tq", { lane: "q" }), task("tc1", { lane: "c", git: git("switchyard/tc1") }), task("tc2", { lane: "c", after: ["tc1", "tp", "tq"] })],
 		recurring: [],
@@ -289,7 +289,7 @@ test("ownFiles: a graph child keeps only the files its edit tools touched (the m
 
 test("laneQueue: the lane's own state, reason and wait time come from the planner (held by a usage limit, scheduled)", () => {
 	const lane = (extra: Partial<LaneView>): LaneView => ({ id: "L", session: "S", autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1, ...extra });
-	const plan = (l: LaneView): PlanView => ({ rev: 1, edges: [], lanes: [l], tasks: [], recurring: [], status: {} as PlanView["status"] });
+	const plan = (l: LaneView): PlanView => ({ rev: 1, edges: [], keptBranches: [], lanes: [l], tasks: [], recurring: [], status: {} as PlanView["status"] });
 	const held = laneQueue(plan(lane({ state: "held", waitReason: "provider usage limit until 21:00" })), "S");
 	assert.deepEqual([held?.state, held?.waitReason], ["held", "provider usage limit until 21:00"]);
 	assert.equal(laneQueue(plan(lane({ state: "scheduled", waitUntil: 5000 })), "S")?.startAt, 5000);
