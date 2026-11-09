@@ -127,6 +127,26 @@ test("laneQueue: a session's queue summary from the planner lanes that continue 
 	assert.equal(laneQueue(undefined, "repo-1"), undefined);
 });
 
+test("laneQueue: dependencies map planner task ids to sessions; failed tasks are counted", () => {
+	const lane = (l: Partial<LaneView>): LaneView => ({ id: "l_1", autoRun: true, createdAt: 1, pending: 0, running: 0, done: 0, failed: 0, total: 0, ...l });
+	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
+	const plan = {
+		rev: 1,
+		lanes: [lane({ id: "repo-2", pending: 1, total: 1 }), lane({ id: "l_a", session: "repo-1", failed: 1, total: 1 })],
+		tasks: [
+			task({ id: "b", lane: "repo-2", state: "blocked", after: ["a", "free"], blockedBy: ["a"] }),
+			task({ id: "a", lane: "l_a", status: "failed", state: "failed" }),
+			task({ id: "free", session: "repo-9", status: "done", state: "done" }),
+		],
+		recurring: [],
+		status: {} as PlanView["status"],
+	} satisfies PlanView;
+	assert.deepEqual(laneQueue(plan, "repo-2")?.after, ["repo-1", "repo-9"]);
+	assert.deepEqual(laneQueue(plan, "repo-2")?.blockedBy, ["repo-1"]);
+	assert.equal(laneQueue(plan, "repo-1")?.failed, 1);
+	assert.equal(laneQueue(plan, "repo-1")?.after, undefined);
+});
+
 test("pairing readiness: no code without an address or a password; pending while the tunnel starts", () => {
 	assert.equal(pairingLink({ enabled: true, password: "pw", endpoints: [] }), undefined);
 	assert.equal(pairingReady({ enabled: false, password: "pw", endpoints: [lan] }), false);

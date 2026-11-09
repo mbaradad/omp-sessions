@@ -34,7 +34,7 @@ export interface SessionMeta {
 	/** Task queue summary for tree badges. `waiting`: the next task waits for a global concurrency slot
 	 * (`position` 1-based among waiting sessions, `since` epoch ms). `interrupted`: pending tasks a host
 	 * crash or reboot cut short (see QueueTask.interrupted). */
-	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number } };
+	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number }; /** Failed tasks (requeue). */ failed?: number; /** Sessions whose queues must finish first (dependencies); `blockedBy`: the unfinished ones. */ after?: string[]; blockedBy?: string[] };
 	/** omp's own todo plan (phases → tasks), mirrored for the Tasks view. */
 	plan?: Array<{ name: string; tasks: Array<{ content: string; status: string; blocker?: string }> }>;
 	/** Extension version whose host.js runs this session (absent: hosts that predate the field). */

@@ -120,6 +120,16 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const startAt = Math.min(...lanes.flatMap(l => (l.startAt ? [l.startAt] : [])), ...tasks.flatMap(t => (t.state === "scheduled" && t.waitUntil ? [t.waitUntil] : [])));
 	const interrupted = tasks.filter(t => t.state === "interrupted").length;
 	const waiting = tasks.find(t => t.state === "waiting" && t.position !== undefined);
+	// Dependencies are task ids in the planner; the views (cards, graph) show sessions: the AO session each task runs in or its lane continues.
+	const laneOf = new Map(plan.lanes.map(l => [l.id, l]));
+	const sessionOf = (taskId: string): string | undefined => {
+		const t = plan.tasks.find(x => x.id === taskId);
+		return t && (t.session ?? (t.lane !== undefined ? (laneOf.get(t.lane)?.session ?? t.lane) : undefined));
+	};
+	const sessionsOf = (taskIds: Iterable<string>) => [...new Set([...taskIds].flatMap(id => sessionOf(id) ?? []))].filter(s => s !== sessionId);
+	const after = sessionsOf(tasks.flatMap(t => t.after ?? []));
+	const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []));
+	const failed = tasks.filter(t => t.state === "failed").length;
 	return {
 		pending: total("pending"),
 		running: total("running"),
@@ -128,6 +138,9 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		autoRun: lanes.some(l => l.autoRun),
 		...(Number.isFinite(startAt) && { startAt }),
 		...(interrupted && { interrupted }),
+		...(failed && { failed }),
+		...(after.length && { after }),
+		...(blockedBy.length && { blockedBy }),
 		...(waiting?.position !== undefined && { waiting: { position: waiting.position, since: waiting.createdAt } }),
 	};
 }
