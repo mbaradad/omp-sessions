@@ -157,6 +157,7 @@ export async function startAoFixture(opts = {}) {
 	const agentDir = path.join(root, "omp-agent");
 	const fakeOmpLog = path.join(root, "fake-omp.log");
 	const usageFile = path.join(root, "omp-usage.json");
+	const rulesFile = path.join(root, "omp-rules.json");
 	const binDir = path.join(root, "bin");
 	for (const d of [dataDir, home, agentDir, binDir]) fs.mkdirSync(d, { recursive: true });
 
@@ -178,6 +179,7 @@ export async function startAoFixture(opts = {}) {
 			PI_CODING_AGENT_DIR: agentDir,
 			FAKE_OMP_LOG: fakeOmpLog,
 			FAKE_OMP_USAGE: usageFile,
+			FAKE_OMP_RULES: rulesFile,
 			...opts.fakeOmpEnv,
 		});
 	}
@@ -239,7 +241,7 @@ export async function startAoFixture(opts = {}) {
 	/** What a process needs to run the same omp AO runs (the fake, its store, log and usage file). */
 	const ompEnv = opts.realOmp
 		? {}
-		: Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]));
+		: Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]));
 
 	const fx = {
 		baseUrl,
@@ -270,6 +272,16 @@ export async function startAoFixture(opts = {}) {
 			const tmp = `${usageFile}.${process.pid}.tmp`;
 			fs.writeFileSync(tmp, JSON.stringify(windows));
 			fs.renameSync(tmp, usageFile);
+		},
+		/**
+		 * Scripts for prompts the test doesn't write (a planner's follow-ups, resolve tasks): the first rule
+		 * whose `match` regex matches a prompt runs its `script` instead, `$1`… = the groups.
+		 */
+		setFakeRules(rules) {
+			if (opts.realOmp) throw new Error("setFakeRules needs the fake omp");
+			const tmp = `${rulesFile}.${process.pid}.tmp`;
+			fs.writeFileSync(tmp, JSON.stringify(rules));
+			fs.renameSync(tmp, rulesFile);
 		},
 		/** JSON request against the daemon; throws on non-2xx with the response body. */
 		async api(method, urlPath, body) {

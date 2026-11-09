@@ -15,10 +15,19 @@
 //   echo <text>             stream <text> as assistant text (several agent_message_chunk)
 //   think <text>            stream <text> as reasoning (agent_thought_chunk)
 //   prompt                  stream the whole prompt text received (to assert what a client sent)
-//   bash <command>          `bash` tool call (kind execute); asks session/request_permission first
-//                           unless --approval-mode yolo or an earlier "allow_always"
+//   bash <command>          `bash` tool call (kind execute) that really runs <command> with sh in the
+//                           session cwd (a non-zero exit fails the call); asks session/request_permission
+//                           first unless --approval-mode yolo or an earlier "allow_always"
+//   commit <message>        `bash` tool call running `git add -A && git commit -m <message>` in the cwd
+//   resolve [union|ours|theirs]  finishes the merge in progress in the cwd as an agent would: rewrites
+//                           every conflicted file (union keeps both sides, ours first), `git add`, `git
+//                           commit --no-edit`; a `bash` tool call, gated like bash. Typical resolve task:
+//                           `bash git merge <branch>` (fails on the conflict) then `resolve union`
 //   write <relpath> <text>  `write` tool call (kind edit) that really writes <cwd>/<relpath>; no
 //                           permission, like omp (normal edits are not gated)
+//   append <relpath> <text> `edit` tool call adding the line <text> to <cwd>/<relpath>
+//   edit <relpath> <old> => <new>  `edit` tool call replacing the first <old> (fails when it's missing)
+//                           (<text>, <old>, <new>: `\n` is a newline)
 //   delete <relpath>        `delete` tool call (kind delete); always asks permission, then removes the file
 //   ask [question] [| a | b ...]  `ask` tool: form elicitation (default question "Pick one", options
 //                           alpha/beta, plus q0__other); replies "chose <answer>" or "ask cancelled"
@@ -38,6 +47,9 @@
 //   /compact                (whole prompt) compaction command: "Compacted" text, end_turn
 //   /<other>                (whole prompt) "Unknown command: /<other>"
 //
+// Prompts a test doesn't write itself (a planner's follow-ups, resolve tasks) are scripted with
+// FAKE_OMP_RULES: the first rule whose regex matches the prompt runs its script instead.
+//
 // Flags (`omp acp ...`): --model <provider/id|id>, --thinking <level>, --approval-mode
 // default|write|yolo|always-ask, --yolo; others are accepted and ignored.
 //
@@ -51,7 +63,10 @@
 //   FAKE_OMP_NO_MODELS=1  no models: `models --json` is empty and session/new has no `model` option
 //   FAKE_OMP_USAGE        JSON file `omp usage --json` reports: omp's payload ({reports}) or compact
 //                         windows [{provider, id, label?, usedPercent, resetsAt?}]; read on every call
+//   FAKE_OMP_RULES        JSON file [{match, flags?, script}]: `script` replaces a prompt that `match`
+//                         (a regex) matches, `$1`…`$9` = its groups; read on every prompt
 
+import { spawn, spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -445,6 +460,104 @@ function resolveIn(s, rel) {
 	return { abs, rel: path.relative(s.cwd, abs) || rel };
 }
 
+const shellQuote = text => `'${text.replace(/'/g, `'\\''`)}'`;
+/** Script text escapes: `\n` is a newline, `\\` a backslash. */
+const unescapeText = text => text.replace(/\\(n|\\)/g, (_, c) => (c === "n" ? "\n" : "\\"));
+
+/** Runs `command` with sh in `cwd` (killed if the turn is cancelled): its exit code and combined output. */
+function runShell(command, cwd, signal) {
+	const { promise, resolve, reject } = Promise.withResolvers();
+	if (signal.aborted) {
+		reject(new Cancelled());
+		return promise;
+	}
+	const child = spawn("sh", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+	let output = "";
+	child.stdout.on("data", d => (output += d));
+	child.stderr.on("data", d => (output += d));
+	const onAbort = () => child.kill("SIGKILL");
+	signal.addEventListener("abort", onAbort, { once: true });
+	child.once("error", err => {
+		signal.removeEventListener("abort", onAbort);
+		resolve({ code: 127, output: String(err) });
+	});
+	child.once("close", code => {
+		signal.removeEventListener("abort", onAbort);
+		if (signal.aborted) reject(new Cancelled());
+		else resolve({ code: code ?? 1, output });
+	});
+	return promise;
+}
+
+/** omp's `bash` tool: really runs `command` in the session cwd; asks permission unless yolo. A non-zero exit fails the tool call. */
+function shellTool(s, turn, command) {
+	return toolCall(s, turn, {
+		name: "bash",
+		kind: "execute",
+		title: `$ ${command}`.slice(0, 82),
+		rawInput: { command },
+		gate: approvalMode === "yolo" ? undefined : "bash",
+		run: async () => {
+			const { code, output } = await runShell(command, s.cwd, turn.signal);
+			const text = `${output.slice(-4000)}${code === 0 ? "" : `\nexit code ${code}`}`.trim() || "(no output)";
+			return { text, failed: code !== 0 };
+		},
+	});
+}
+
+/** A write/edit tool call on `rel`: `change(oldText|null)` returns the new text, or {error}. Not gated, like omp's normal edits. */
+function fileTool(s, turn, name, rel, rawInput, change) {
+	const { abs, rel: shown } = resolveIn(s, rel);
+	return toolCall(s, turn, {
+		name,
+		kind: "edit",
+		title: `${name}: ${shown}`,
+		rawInput,
+		locations: [{ path: abs }],
+		run: async () => {
+			const oldText = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
+			const newText = change(oldText);
+			if (typeof newText !== "string") return { text: newText.error, failed: true };
+			fs.mkdirSync(path.dirname(abs), { recursive: true });
+			fs.writeFileSync(abs, newText);
+			return { text: `${name === "write" ? "Wrote" : "Edited"} ${shown}`, diff: { path: shown, oldText, newText } };
+		},
+	});
+}
+
+/** Keeps one or both sides of every conflict block (`<<<<<<<` … `>>>>>>>`, diff3 base dropped). */
+function resolveConflicts(text, strategy) {
+	return text.replace(/^<<<<<<< [^\n]*\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\n]*\n[\s\S]*?)?^=======\n([\s\S]*?)^>>>>>>> [^\n]*(?:\n|$)/gm, (_, ours, theirs) =>
+		strategy === "ours" ? ours : strategy === "theirs" ? theirs : ours + theirs,
+	);
+}
+
+/**
+ * Resolves the merge in progress in the session cwd, as an agent would by editing the conflicted
+ * files and committing: `union` keeps both sides (ours first), `ours`/`theirs` one side. Gated like bash.
+ */
+function resolveTool(s, turn, strategy) {
+	const git = (...args) => spawnSync("git", args, { cwd: s.cwd, encoding: "utf8" });
+	return toolCall(s, turn, {
+		name: "bash",
+		kind: "execute",
+		title: `$ git commit --no-edit  # resolve conflicts (${strategy})`,
+		rawInput: { command: `resolve conflicts (${strategy}) && git commit --no-edit` },
+		gate: approvalMode === "yolo" ? undefined : "bash",
+		run: async () => {
+			const files = git("diff", "--name-only", "--diff-filter=U").stdout.split("\n").filter(Boolean);
+			if (files.length === 0) return { text: "no conflicted files", failed: true };
+			for (const f of files) {
+				const abs = path.join(s.cwd, f);
+				fs.writeFileSync(abs, resolveConflicts(fs.readFileSync(abs, "utf8"), strategy));
+			}
+			git("add", "--", ...files);
+			const commit = git("commit", "-q", "--no-edit");
+			return commit.status === 0 ? { text: `resolved ${files.join(", ")} (${strategy}) and committed` } : { text: `${commit.stdout}${commit.stderr}`, failed: true };
+		},
+	});
+}
+
 async function runAsk(s, turn, line) {
 	const parts = line
 		.slice(3)
@@ -497,17 +610,14 @@ async function runStep(s, turn, line) {
 		case "think":
 			return streamMessage(s, turn, rest, "agent_thought_chunk");
 		case "bash":
-			await toolCall(s, turn, {
-				name: "bash",
-				kind: "execute",
-				title: `$ ${rest}`.slice(0, 82),
-				rawInput: { command: rest },
-				gate: approvalMode === "yolo" ? undefined : "bash",
-				run: async () => {
-					await sleep(DELAY, turn.signal);
-					return { text: `ran: ${rest}` };
-				},
-			});
+			await shellTool(s, turn, rest);
+			return;
+		case "commit":
+			// What an agent does to commit: `git add -A && git commit` through its bash tool.
+			await shellTool(s, turn, `git add -A && git commit -q -m ${shellQuote(rest || "fake omp commit")}`);
+			return;
+		case "resolve":
+			await resolveTool(s, turn, rest || "union");
 			return;
 		case "slow": {
 			const ms = Number(rest) || 1000;
@@ -529,20 +639,23 @@ async function runStep(s, turn, line) {
 		}
 		case "write": {
 			const [rel, ...words] = rest.split(/\s+/);
-			const { abs, rel: shown } = resolveIn(s, rel);
-			const content = words.join(" ");
-			await toolCall(s, turn, {
-				name: "write",
-				kind: "edit",
-				title: `write: ${shown}`,
-				rawInput: { path: rel, content },
-				locations: [{ path: abs }],
-				run: async () => {
-					const oldText = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
-					fs.mkdirSync(path.dirname(abs), { recursive: true });
-					fs.writeFileSync(abs, content);
-					return { text: `Wrote ${shown}`, diff: { path: shown, oldText, newText: content } };
-				},
+			const content = unescapeText(words.join(" "));
+			await fileTool(s, turn, "write", rel, { path: rel, content }, () => content);
+			return;
+		}
+		case "append": {
+			const [rel, ...words] = rest.split(/\s+/);
+			const line = `${unescapeText(words.join(" "))}\n`;
+			await fileTool(s, turn, "edit", rel, { path: rel, append: line }, old => (old && !old.endsWith("\n") ? `${old}\n` : (old ?? "")) + line);
+			return;
+		}
+		case "edit": {
+			const m = /^(\S+)\s+([\s\S]*?)\s+=>\s+([\s\S]*)$/.exec(rest);
+			if (!m) throw internal(`fake omp: edit <path> <old> => <new>, got: ${rest}`);
+			const [, rel, from, to] = m;
+			await fileTool(s, turn, "edit", rel, { path: rel, oldText: from, newText: to }, old => {
+				if (old === null || !old.includes(unescapeText(from))) return { error: `edit: "${from}" not found in ${rel}` };
+				return old.replace(unescapeText(from), unescapeText(to));
 			});
 			return;
 		}
@@ -612,7 +725,28 @@ async function runStep(s, turn, line) {
 	}
 }
 
-const COMMAND_RE = /^(echo|think|bash|slow|write|delete|ask|plan|title|fail|limited|refuse|prompt|cost|error|crash)(\s|$)/;
+const COMMAND_RE = /^(echo|think|bash|commit|resolve|slow|write|append|edit|delete|ask|plan|title|fail|limited|refuse|prompt|cost|error|crash)(\s|$)/;
+
+/**
+ * FAKE_OMP_RULES (read on every prompt): [{match, flags?, script}]. The first rule whose regex matches
+ * the prompt runs `script` instead (`$1`…`$9` = its groups): how a test scripts replies to prompts it
+ * doesn't write itself, such as a planner's follow-ups.
+ */
+function ruleScript(text) {
+	if (!process.env.FAKE_OMP_RULES) return undefined;
+	let rules;
+	try {
+		rules = JSON.parse(fs.readFileSync(process.env.FAKE_OMP_RULES, "utf8"));
+	} catch (err) {
+		if (err.code === "ENOENT") return undefined;
+		throw err;
+	}
+	for (const rule of rules) {
+		const m = new RegExp(rule.match, rule.flags ?? "").exec(text);
+		if (m) return rule.script.replace(/\$(\d)/g, (_, i) => m[Number(i)] ?? "");
+	}
+	return undefined;
+}
 
 async function runTurn(s, turn, text) {
 	append(s, { type: "user", messageId: turn.messageId, text });
@@ -621,13 +755,14 @@ async function runTurn(s, turn, text) {
 		await streamMessage(s, turn, name === "compact" ? "Compacted" : `Unknown command: /${name}`);
 		return;
 	}
-	const lines = text
+	const script = ruleScript(text) ?? text;
+	const lines = script
 		.split("\n")
 		.map(l => l.trim())
 		.filter(l => l && l !== "---");
 	// A script runs its command lines and ignores the prose around them (a task title, parents'
 	// results a planner appends); a prompt with no command line is echoed whole.
-	const steps = lines.some(l => COMMAND_RE.test(l)) ? lines.filter(l => COMMAND_RE.test(l)) : [`echo ${text}`];
+	const steps = lines.some(l => COMMAND_RE.test(l)) ? lines.filter(l => COMMAND_RE.test(l)) : [`echo ${script}`];
 	for (const line of steps) {
 		if (turn.stopReason || turn.ended) break;
 		await runStep(s, turn, line);
