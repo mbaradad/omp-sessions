@@ -315,8 +315,11 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 - `requeue {id, clean: true}`: before the retry is sent, `PlannerOptions.rewind(task)` undoes the earlier attempt's turn
   (files and context). Refused when a later task of the same session exists (undo would rewind it too), when the
   task has no earlier turn, and failed at dispatch with a clear message when the planner has no `rewind` hook.
-- The two hooks are supplied by the process (`main.ts`): they are built on `src/shared/checkpoint-ops.ts`
-  (`turnStatuses` for `undone`; `planUndo` + `runCheckpointCommand` for `rewind`), wired at integration.
+- The two hooks are supplied by the process: `main.ts` passes `...checkpointHooks()` (`src/planner/checkpoint-hooks.ts`,
+  from ao/checkpoints: `turnStatuses` for `undone`, `planUndo` + `runCheckpointCommand` for `rewind`; an undo that
+  would overwrite changes is refused, never forced).
+- The permission mode of a session the planner starts is set through checkpoints' `setSessionMode` (G40), never by
+  writing the mode file.
 
 ## Events (`subscribe {topic: "plan"}`)
 

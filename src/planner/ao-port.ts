@@ -3,6 +3,7 @@
 // a retryable failure (daemon unreachable, 5xx, a spawn still being committed) from a final one.
 import { AoClient, AoError, DAEMON_UNREACHABLE } from "../ao/client";
 import { type AoSessionMode, spawnSwitchyardSession } from "../ao/spawn";
+import { setSessionMode } from "../shared/session-mode-ops";
 import type { SessionStart } from "./types";
 import type { AoConversation, AoEvent, AoStreamStatus } from "../ao/client";
 
@@ -148,6 +149,8 @@ export function aoPort(ao: AoClient): AoPort {
 					...(opts.model ? { model: opts.model } : {}),
 					...(opts.thinking ? { thinking: opts.thinking } : {}),
 					...(opts.mode ? { mode: opts.mode as AoSessionMode } : {}),
+					// The mode file is written by checkpoints' setSessionMode only (G40), never by hand.
+					setMode: (sessionId, mode) => setSessionMode(ao, sessionId, mode),
 				});
 				return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}), ...(res.sent?.turnId ? { turn: res.sent.turnId } : {}) };
 			} catch (err) {
