@@ -9,12 +9,12 @@
 // someone else) becomes `interrupted` and is never re-run unattended.
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
-import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
+import { type Outcome, PlanError, advance, taskByRef, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
 import { type UserDefaults, readUserDefaults } from "./defaults";
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
-import type { PlanOp, PlanState, SessionStart, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
+import type { EdgeView, PlanOp, PlanState, SessionStart, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, replyIsProviderError, spendUse } from "./usage";
 
 export interface PlannerOptions {
@@ -364,7 +364,38 @@ export class Planner {
 		const tasks = views
 			.filter(t => (!lane || t.lane === lane) && (all || !((t.state === "done" || t.state === "skipped") && (t.finishedAt ?? now) < weekAgo)))
 			.map(t => (t.waitReason === "starting" && !this.ao ? { ...t, waitReason: `waiting for AO (${this.aoError ?? "not connected"})` } : t));
-		return { rev: this.state.rev, tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+		return { rev: this.state.rev, edges: this.edges(), tasks, lanes: laneViews(this.state, views).filter(l => !lane || l.id === lane), recurring: this.state.recurring, status: this.status(views) };
+	}
+
+	/** Every parent → child edge that has a propagation state. */
+	edges(): EdgeView[] {
+		const out: EdgeView[] = [];
+		for (const child of this.state.tasks) {
+			for (const [parentId, e] of Object.entries(child.sync ?? {})) {
+				const parent = this.state.tasks.find(t => t.id === parentId);
+				out.push({
+					parent: parentId,
+					...(parent?.session ? { parentSession: parent.session } : {}),
+					child: child.id,
+					...(child.session ? { childSession: child.session } : {}),
+					state: e.state,
+					...(e.files?.length ? { files: e.files } : {}),
+					...(parent?.git?.head ? { parentHead: parent.git.head } : {}),
+					...(child.git?.head ? { childHead: child.git.head } : {}),
+					at: e.at,
+				});
+			}
+		}
+		return out;
+	}
+
+	/** `plan sync`: propagate now, wait for it, answer with the edges around the task (as child and as parent). */
+	async syncTask(ref: string, rerun = false): Promise<{ task: string; rerun: boolean; edges: EdgeView[] }> {
+		const task = taskByRef(this.state, ref);
+		if (!task) throw new PlanError(`unknown task ${ref}`);
+		if (rerun) this.edit([{ op: "rerun", id: task.id }]);
+		else await this.propagation.sync(task.id);
+		return { task: task.id, rerun, edges: this.edges().filter(e => e.child === task.id || e.parent === task.id) };
 	}
 
 	status(views: TaskView[] = this.evaluateNow().views): PlannerStatus {

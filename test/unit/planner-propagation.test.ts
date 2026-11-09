@@ -330,3 +330,29 @@ test("every git task starts on an explicit branch, and a branch AO renames after
 	assert.equal(read(ao, sent(p, "B") as string, "x.txt"), "A1\n", "the child still got the parent's commit");
 	assert.equal(byTitle(p, "B").sync?.[a.id]?.state, "in-sync");
 });
+
+test("the `sync` wire op propagates and answers with the edges; the plan view lists every edge with sessions and heads", async t => {
+	const rig = await graph(t);
+	const { ao, p } = rig;
+	const a = byTitle(p, "A");
+	const edges = p.view().edges;
+	assert.equal(edges.length, 2);
+	const toB = edges.find(e => e.child === byTitle(p, "B").id);
+	assert.deepEqual([toB?.parent, toB?.parentSession, toB?.childSession, toB?.state, toB?.parentHead === a.git?.head], [a.id, a.session, sent(p, "B"), "in-sync", true]);
+	// Somebody committed in A's worktree outside the planner; `sync` (by SESSION id) commits, merges into the idle child and waits.
+	const cSession = sent(p, "C") as string;
+	ao.finishTurn(cSession, "completed", "C done");
+	await until("C done", () => byTitle(p, "C").status === "done");
+	write(ao, a.session as string, "x.txt", "A-outside\n");
+	const res = await p.syncTask(a.session as string);
+	assert.equal(res.task, a.id);
+	assert.equal(res.rerun, false);
+	const toC = res.edges.find(e => e.child === byTitle(p, "C").id);
+	assert.equal(toC?.state, "upstream-changed");
+	assert.equal(read(ao, cSession, "x.txt"), "A-outside\n");
+	// `--rerun` on the finished child: one more run with the upstream note.
+	const rerun = await p.syncTask(cSession, true);
+	assert.equal(rerun.rerun, true);
+	assert.equal(byTitle(p, "C").status, "pending");
+	assert.equal(byTitle(p, "C").followUpOnly, true);
+});

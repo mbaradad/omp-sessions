@@ -173,6 +173,7 @@ interface PlannerConfig {
 | `edit` | `{ops: PlanOp[], rev?: number}` | `{rev, refs: Record<string,string>}` (refs → new ids) |
 | `getQueue` | `{id}` (lane id or AO session id) | `TaskQueue` view of the lane (old shape + `after?` per task) |
 | `queue` | `{id, ops: QueueOp[]}` (old ops + `after`, `requeue`) | same `TaskQueue` view |
+| `sync` | `{id, rerun?}` (task id or AO session id) | `{task, rerun, edges: EdgeView[]}`: propagates now **and answers when done** (commit the worktree, merge into the children); with `rerun` it queues the "re-run with parent changes" run instead (`edges` = the state at that moment) |
 | `scheduler` | `{set?: Partial<PlannerConfig>}` | `PlannerStatus` |
 | `status` | – | `PlannerStatus` |
 | `shutdown` | – | `{}` |
@@ -182,7 +183,8 @@ the whole batch with a message naming the problem (cycles name the path). `rev` 
 batch when the plan changed since (`error: "stale rev N"`).
 
 ```ts
-interface PlanView { rev: number; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
+interface EdgeView { parent: string; parentSession?: string; child: string; childSession?: string; state: "in-sync"|"pending"|"merged"|"upstream-changed"|"resolving"|"conflict"; files?: string[]; parentHead?: string; childHead?: string; at: number }   // derived from Task.sync
+interface PlanView { rev: number; edges: EdgeView[]; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
 interface LaneView extends Lane { pending: number; running: number; done: number; failed: number; total: number }
 interface PlannerStatus extends PlannerConfig {
   running: number; waiting: number; scheduled: number; held: number; blocked: number; interrupted: number;
@@ -340,6 +342,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).
 - 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
 - 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.
 - 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.

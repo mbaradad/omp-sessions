@@ -55,6 +55,7 @@ export function createApiServer(opts: ApiOptions): net.Server {
 	const handlers: { [K in PlannerOpName]: (args: Record<string, unknown>) => PlannerOps[K]["result"] | Promise<PlannerOps[K]["result"]> } = {
 		ping: () => opts.info(),
 		plan: a => planner.view(typeof a.lane === "string" ? a.lane : undefined, a.all === true),
+		sync: a => planner.syncTask(str(a.id, "id"), a.rerun === true),
 		edit: a => planner.edit(Array.isArray(a.ops) ? (a.ops as PlanOp[]) : [], typeof a.rev === "number" ? a.rev : undefined),
 		getQueue: a => planner.getQueue(str(a.id, "id")),
 		queue: a => planner.queue(str(a.id, "id"), Array.isArray(a.ops) ? (a.ops as QueueOp[]) : []),
