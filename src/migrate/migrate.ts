@@ -31,6 +31,8 @@ export interface Ledger {
 	backups: string[];
 	/** scheduler.json went to the planner's config. */
 	schedulerImported?: boolean;
+	/** ISO time of the first `--apply` that left nothing to do (the scheduler, if any, reached the planner). The done marker clients look for. */
+	completedAt?: string;
 }
 
 /** The part of PlannerClient the migration uses. */
@@ -78,7 +80,7 @@ export interface MigrateReport {
 function readLedger(file: string, source: string): Ledger {
 	try {
 		const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-		if (isRecord(raw) && raw.version === 1) return { version: 1, source, backups: Array.isArray(raw.backups) ? raw.backups.filter((b): b is string => typeof b === "string") : [], ...(raw.schedulerImported === true && { schedulerImported: true }) };
+		if (isRecord(raw) && raw.version === 1) return { version: 1, source, backups: Array.isArray(raw.backups) ? raw.backups.filter((b): b is string => typeof b === "string") : [], ...(raw.schedulerImported === true && { schedulerImported: true }), ...(typeof raw.completedAt === "string" && { completedAt: raw.completedAt }) };
 	} catch {
 		/* none yet */
 	}
@@ -292,5 +294,10 @@ export async function migrate(opts: MigrateOptions): Promise<MigrateReport> {
 	}
 	for (const d of report.dropped) log(`not migrated: ${d}`);
 	if (!opts.apply) log("Dry run: nothing was written. Run again with --apply to migrate.");
+	else if (!ledger.completedAt && (!state.scheduler || ledger.schedulerImported)) {
+		// Written even when there was nothing to copy, so a client can tell the import was run (and not offer it again).
+		ledger.completedAt = new Date().toISOString();
+		writeJsonAtomic(ledgerFile, ledger);
+	}
 	return report;
 }

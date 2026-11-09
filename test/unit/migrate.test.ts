@@ -21,6 +21,12 @@ function temp(): string {
 	return dir;
 }
 
+/** The done marker of a Switchyard home's migration.json, if written. */
+function completedAt(home: string): string | undefined {
+	const raw: unknown = JSON.parse(fs.readFileSync(path.join(home, "migration.json"), "utf8"));
+	return typeof raw === "object" && raw !== null && "completedAt" in raw && typeof raw.completedAt === "string" ? raw.completedAt : undefined;
+}
+
 /** A tree of files: `{"a/b.json": value}`; values other than strings are written as JSON. */
 function write(root: string, files: Record<string, unknown>): void {
 	for (const [rel, value] of Object.entries(files)) {
@@ -150,12 +156,28 @@ test("a planner that is down or refuses leaves the scheduler for a later run; ev
 	const down = await migrate({ apply: true, legacyHome, home, planner: plannerSpy(true) });
 	assert.equal(down.scheduler?.imported, false);
 	assert.equal(fs.existsSync(path.join(home, "organize.json")), true);
+	assert.equal(completedAt(home), undefined, "the scheduler is still pending: not done");
 	const none = await migrate({ apply: true, legacyHome, home });
 	assert.equal(none.scheduler?.imported, false);
 	const planner = plannerSpy();
 	const later = await migrate({ apply: true, legacyHome, home, planner });
 	assert.equal(later.scheduler?.imported, true);
 	assert.equal(planner.calls.length, 1);
+	assert.ok(completedAt(home), "nothing left to do: marked done");
+});
+
+test("done marker: an --apply with nothing to copy still writes migration.json (once, never in a dry run), so clients stop offering the import", async () => {
+	const legacyHome = temp();
+	write(legacyHome, { "sessions/s1/meta.json": { cwd: "/x", title: "Only a session", ompSessionId: "o1" } });
+	const home = path.join(temp(), "sy");
+	await migrate({ apply: false, legacyHome, home });
+	assert.equal(fs.existsSync(path.join(home, "migration.json")), false);
+	const first = await migrate({ apply: true, legacyHome, home });
+	assert.equal(first.backup, undefined, "nothing was written to copy over, so no backup either");
+	const marker = fs.readFileSync(path.join(home, "migration.json"), "utf8");
+	assert.ok(completedAt(home));
+	await migrate({ apply: true, legacyHome, home });
+	assert.equal(fs.readFileSync(path.join(home, "migration.json"), "utf8"), marker, "a second run leaves it as it is");
 });
 
 test("organize merge: groups by id, lanes only when none exist, collapse keys; what exists wins, unknown fields stay", () => {
