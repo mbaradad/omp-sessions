@@ -249,6 +249,24 @@ test("answerFor: single-field questions and typed fields", () => {
 	assert.deepEqual(answerFor(free, "a | b"), { kind: "input", body: { action: "accept", content: { name: "a | b" } } });
 });
 
+test("an assistant-only history turn after a compaction does not shadow the real last reply (G33, validate's repro)", () => {
+	// repo-10: "2999" was the last reply before the compaction; every restart appends a recovered turn holding only that
+	// assistant message, with a later sequence than the replies that came after it.
+	const history = { ...turn("h1", "recovered"), providerTurnId: "acp-history-turn:h1" };
+	const c = conversation({
+		turns: [turn("t1", "completed"), turn("t2", "completed"), history],
+		messages: [message(1, "user", "count", "t1"), message(2, "assistant", "2999", "t1"), message(3, "user", "next", "t2"), message(4, "assistant", "REAL LAST", "t2"), message(5, "assistant", "2999", "h1")],
+	});
+	assert.equal(lastReply(c), "REAL LAST");
+	assert.equal(sessionModel(view(), c).reply, "REAL LAST");
+	// Several restarts, several copies: still the real one. A conversation of history turns alone has no reply.
+	const twice = conversation({ ...c, turns: [...c.turns, { ...turn("h2", "recovered"), providerTurnId: "acp-history-turn:h2" }], messages: [...c.messages, message(6, "assistant", "2999", "h2")] });
+	assert.equal(lastReply(twice), "REAL LAST");
+	assert.equal(lastReply(conversation({ turns: [history], messages: [message(1, "assistant", "2999", "h1")] })), undefined);
+	// A normal turn's messages (and a message with no turn) still count.
+	assert.equal(lastReply(conversation({ turns: [turn("t1", "completed")], messages: [message(1, "assistant", "plain", "t1"), message(2, "assistant", "no turn")] })), "no turn");
+});
+
 test("turns AO imports from omp's history after resume are not new work (G33)", () => {
 	// As ext-chat read them: steered and image prompts come back `recovered` with an acp-history-turn providerTurnId.
 	const history = (id: string) => ({ ...turn(id, "recovered"), providerTurnId: `acp-history-turn:${id}` });
