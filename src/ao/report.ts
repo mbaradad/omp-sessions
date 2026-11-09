@@ -119,7 +119,9 @@ export function reportQuestion(q: AoQuestion): AoReportQuestion {
 	const base = { id: q.id, title, ...(message && { message }) };
 	if (q.kind === "approval") return { ...base, kind: "select", options: q.options ?? [] };
 	const fields = q.questions ?? [];
-	if (fields.length > 1 || fields.some(f => f.multi)) return { ...base, kind: "ask", questions: fields.map(f => ({ question: f.question, options: f.options, multi: f.multi })) };
+	// omp's `ask` tool: `ask` whatever the number of questions (one answer per question, separated by |). Its form shape is
+	// one field per question plus a `<key>__other` free-text companion; a form without that is a plain question.
+	if (fields.length > 1 || fields.some(f => f.multi || f.otherKey)) return { ...base, kind: "ask", questions: fields.map(f => ({ question: f.question, options: f.options, multi: f.multi })) };
 	const [field] = fields;
 	if (field?.options.length) return { ...base, kind: "select", options: field.options };
 	if (field?.type === "boolean") return { ...base, kind: "confirm" };

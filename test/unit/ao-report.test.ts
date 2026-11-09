@@ -72,6 +72,17 @@ test("approvalModeFor: the launch setting for a permission mode, the inverse of 
 	for (const mode of ["edits", "auto"] as const) assert.equal(permissionModeOf({ approvalMode: approvalModeFor(mode) }), mode);
 });
 
+test("reportQuestion: omp's ask tool is `ask` even with one question; a plain single-field form is not", () => {
+	const form = (properties: Record<string, unknown>) => questionOf({ kind: "activity", id: "a", activityKind: "user_input", status: "pending", summary: "Answer 1 question", revision: 0, sequence: 1, createdAt: T, requestId: "r", detail: { schema: { type: "object", properties } } } satisfies AoActivity);
+	// As AO receives omp's `ask` with a single question: q0 plus q0__other.
+	const one = form({ q0: { title: "Which color?", type: "string", oneOf: [{ const: "red", title: "red" }, { const: "blue", title: "blue" }] }, q0__other: { title: "Other (type your own)", type: "string" } });
+	assert.deepEqual(reportQuestion(one), { id: "r", title: "Answer 1 question", kind: "ask", questions: [{ question: "Which color?", options: ["red", "blue"], multi: false }] });
+	// A form with no __other companion stays select / confirm / input.
+	assert.equal(reportQuestion(form({ env: { type: "string", enum: ["dev", "prod"] } })).kind, "select");
+	assert.equal(reportQuestion(form({ ok: { type: "boolean" } })).kind, "confirm");
+	assert.equal(reportQuestion(form({ name: { type: "string" } })).kind, "input");
+});
+
 test("reportQuestion: omp's one-line title, the rest as the message", () => {
 	const write = questionOf({ kind: "activity", id: "a", activityKind: "approval", status: "pending", summary: "Allow tool: write\nPath: perm.txt\nContent:\nhi", revision: 0, sequence: 1, createdAt: T, requestId: "r", detail: { decisions: [{ id: "allow_once" }, { id: "reject_once" }] } } satisfies AoActivity);
 	assert.deepEqual(reportQuestion(write), { id: "r", title: "Allow tool: write", message: "Path: perm.txt\nContent:\nhi", kind: "select", options: ["Allow once", "Reject"] });
