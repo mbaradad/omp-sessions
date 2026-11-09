@@ -148,13 +148,18 @@ export function uiRequestOf(a: AoActivity, toolName?: string): PendingRequest {
 	if (question.url && !fields.length) return { question, ui: { ...base, method: "select", title: `${title}\nAnswer it at ${question.url}, then choose Done.`, options: [OPEN_LINK, "Done"] } };
 	if (fields.length === 1 && fields[0].type === "boolean") return { question, ui: { ...base, method: "confirm", title, message: fields[0].question } };
 	if (fields.length === 1 && !fields[0].options.length && !fields[0].multi) return { question, ui: { ...base, method: "input", title: fields[0].question === title ? title : `${title}: ${fields[0].question}` } };
+	// omp's `ask` puts each question's short header in the property's description.
+	const props = rec(rec(question.schema)?.properties) ?? {};
 	return {
 		question,
 		ui: {
 			...base,
 			method: "ask",
 			title,
-			questions: fields.map(f => ({ id: f.key, question: f.question, options: f.options.map(label => ({ label })), multi: f.multi })),
+			questions: fields.map(f => {
+				const header = str(rec(props[f.key])?.description);
+				return { id: f.key, ...(header && header !== f.question && { header }), question: f.question, options: f.options.map(label => ({ label })), multi: f.multi };
+			}),
 		},
 	};
 }
@@ -382,15 +387,17 @@ export class ChatFeed {
 		return rows.sort((a, b) => key(a) - key(b));
 	}
 
+	/** A queued prompt shows as a queue chip, and one withdrawn before it ran not at all. */
 	private visible(r: Row): boolean {
-		if (r.kind === "message") return !(r.role === "user" && r.turnId && this.turns.get(r.turnId)?.state === "queued");
-		return true;
+		if (r.kind !== "message" || r.role !== "user" || !r.turnId) return true;
+		const t = this.turns.get(r.turnId);
+		return !(t && (t.state === "queued" || (t.state === "cancelled" && !t.startedAt)));
 	}
 
 	private turnNotice(t: AoTurn): { level: "error" | "warning"; text: string } | undefined {
 		if (t.state === "failed") return { level: "error", text: `⚠ ${t.errorMessage || "The turn failed."}` };
 		if (t.state === "recovered") return { level: "warning", text: t.errorMessage || "The daemon lost this turn while it ran." };
-		if (t.state === "interrupted" || t.state === "cancelled") return t.hasHumanPrompt ? { level: "warning", text: "Interrupted" } : undefined;
+		if (t.state === "interrupted" || t.state === "cancelled") return t.hasHumanPrompt && t.startedAt ? { level: "warning", text: "Interrupted" } : undefined;
 		return undefined;
 	}
 

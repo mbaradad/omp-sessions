@@ -85,6 +85,14 @@ test("a queued prompt stays in the queue chips until its turn runs, then shows b
 	);
 });
 
+test("a queued prompt withdrawn before it ran leaves no trace in the transcript", () => {
+	const feed = new ChatFeed();
+	feed.reset(conv({ turns: [turn("t1", "running"), turn("t2", "queued")], messages: [msg(1, "user", "first", "t1"), msg(2, "user", "second", "t2")], controller: "busy" }));
+	const posts = feed.apply(conv({ turns: [turn("t1", "running"), turn("t2", "cancelled", { completedAt: T })], messages: [msg(2, "user", "second", "t2")], controller: "busy" }));
+	assert.deepEqual(posts, []);
+	assert.deepEqual(feed.queued(), []);
+});
+
 test("tool activity: card starts, streams output, ends with omp's own result and details", () => {
 	const feed = new ChatFeed();
 	feed.reset(conv({ turns: [turn("t1", "running")], messages: [msg(1, "user", "run it", "t1")], controller: "busy" }));
@@ -173,7 +181,7 @@ test("omp's ask: an ask dialog whose answers become the elicitation's form conte
 	const [ui] = feed.reset(conv({ turns: [turn("t1", "running")], activities: [ask] })).pendingUi;
 	assert.equal(ui.method, "ask");
 	assert.deepEqual(ui.questions, [
-		{ id: "q0", question: "Which color?", options: [{ label: "Red" }, { label: "Blue" }], multi: false },
+		{ id: "q0", header: "Color", question: "Which color?", options: [{ label: "Red" }, { label: "Blue" }], multi: false },
 		{ id: "q1", question: "Which sizes?", options: [{ label: "S" }, { label: "L" }], multi: true },
 	]);
 	const req = feed.request("req-ask");
@@ -194,7 +202,7 @@ test("steers show as the user's words; failures and interrupts as notices", () =
 	const feed = new ChatFeed();
 	const snap = feed.reset(
 		conv({
-			turns: [turn("t1", "interrupted"), turn("t2", "failed", { errorMessage: "model overloaded" })],
+			turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "failed", { errorMessage: "model overloaded" })],
 			messages: [msg(1, "user", "go", "t1")],
 			activities: [act(2, { activityKind: "system", status: "completed", turnId: "t1", summary: "Steered", detail: { event: "steer", text: "use tabs", origin: "human" } })],
 		}),

@@ -404,7 +404,7 @@ export class ChatPanel implements vscode.Disposable {
 		this.outbox = [];
 		this.postChatConfig();
 		this.state = this.buildState();
-		this.postedState = JSON.stringify(this.state);
+		this.postedState = JSON.stringify([this.state, this.mode]);
 		this.post({
 			type: "init",
 			meta,
@@ -490,7 +490,8 @@ export class ChatPanel implements vscode.Disposable {
 
 	private postState(): void {
 		this.state = this.buildState();
-		const json = JSON.stringify(this.state);
+		// The mode chip lives in meta; plan mode changes only it.
+		const json = JSON.stringify([this.state, this.mode]);
 		if (json === this.postedState) return;
 		this.postedState = json;
 		this.post({ type: "state", state: this.state });
@@ -542,11 +543,13 @@ export class ChatPanel implements vscode.Disposable {
 			this.postState();
 			return;
 		}
-		if (this.feed.isBusy()) {
+		const ao = await this.client();
+		// Ask AO, not the feed: a turn that just started may not have reached this chat yet.
+		const now = await ao.getConversation(this.sessionId, { limit: 1 });
+		if (now.controller === "busy" || now.turns.some(t => t.state === "running" || t.state === "queued")) {
 			this.post({ type: "notice", level: "warning", text: `Switching to ${PERMISSION_MODE_INFO[mode].label} restarts omp: wait for this turn to end, or interrupt it (Esc), then switch again.` });
 			return;
 		}
-		const ao = await this.client();
 		this.switchingMode = true;
 		try {
 			this.post({ type: "notice", level: "info", text: `Restarting omp in ${PERMISSION_MODE_INFO[mode].label} mode (same conversation)…` });
@@ -556,7 +559,9 @@ export class ChatPanel implements vscode.Disposable {
 			this.post({ type: "notice", level: "info", text: `${PERMISSION_MODE_INFO[mode].label} mode: ${PERMISSION_MODE_INFO[mode].detail}.` });
 		} finally {
 			this.switchingMode = false;
-			this.schedule(true);
+			await this.refreshOptions(ao);
+			this.postState();
+			this.schedule();
 		}
 	}
 
