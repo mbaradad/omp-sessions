@@ -187,6 +187,36 @@ test("approvals as omp sends them: bare ACP option ids get labels and kinds", ()
 	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
 });
 
+test("write/edit permission prompts arrive as user_input and are approvals too (G12, VALIDATION.md §3)", () => {
+	// As validate read them under omp's always-ask: summary "Allow tool: write\nPath: …", one enum field, resolved through inputs/{id}/resolve.
+	const write = activity({
+		activityKind: "user_input",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: overlay-edit.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: overlay-edit.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const q = questionOf(write);
+	assert.equal(q.kind, "approval");
+	assert.equal(q.title, "Allow tool: write\nPath: overlay-edit.md");
+	assert.deepEqual(q.options, ["Approve", "Approve write for this session", "Deny"]);
+	assert.deepEqual(q.decisions?.map(d => d.kind), ["allow_once", "allow_always", "reject_once"]);
+	// yes/no, number and label all answer it, through the inputs route with the enum value.
+	const accept = (value: string) => ({ kind: "input", body: { action: "accept", content: { value } } });
+	assert.deepEqual(answerFor(q, "yes"), accept("Approve"));
+	assert.deepEqual(answerFor(q, "2"), accept("Approve write for this session"));
+	assert.deepEqual(answerFor(q, "no"), accept("Deny"));
+	assert.deepEqual(answerFor(q, "deny"), accept("Deny"));
+	assert.ok("error" in answerFor(q, "maybe"));
+	// It waits like any approval: needs_input, and the report shows a select.
+	const waiting = conversation({ turns: [turn("t1", "running")], activities: [{ ...write, turnId: "t1" }] });
+	assert.equal(agentState(view(), waiting), "needs_input");
+	assert.equal(sessionModel(view(), waiting).question?.kind, "approval");
+	// omp's `ask` forms are not permission prompts, nor a form that merely has a Yes/No choice.
+	assert.equal(questionOf(ask).kind, "input");
+	const yesNo = activity({ activityKind: "user_input", requestId: "r", detail: { schema: { type: "object", properties: { ok: { type: "string", enum: ["Yes", "No"] } } } } });
+	assert.equal(questionOf(yesNo).kind, "input");
+});
+
 test("answerFor: approvals by number, label or yes/no", () => {
 	const q = questionOf(approval);
 	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "always" });
@@ -217,6 +247,24 @@ test("answerFor: single-field questions and typed fields", () => {
 	const free = questionOf(activity({ activityKind: "user_input", requestId: "r", detail: { schema: { type: "object", properties: { name: { type: "string" } } } } }));
 	// Free text keeps its pipes: a single field takes the whole answer.
 	assert.deepEqual(answerFor(free, "a | b"), { kind: "input", body: { action: "accept", content: { name: "a | b" } } });
+});
+
+test("turns AO imports from omp's history after resume are not new work (G33)", () => {
+	// As ext-chat read them: steered and image prompts come back `recovered` with an acp-history-turn providerTurnId.
+	const history = (id: string) => ({ ...turn(id, "recovered"), providerTurnId: `acp-history-turn:${id}` });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	const after = conversation({ turns: [turn("t0", "completed"), lost, history("h1"), history("h2")] });
+	// Not counted: one finished turn and one lost one, not four.
+	const q = queueOf(after);
+	assert.deepEqual({ pending: q.pending, running: q.running, done: q.done, total: q.total }, { pending: 0, running: 0, done: 2, total: 2 });
+	// A history turn last does not hide the lost turn before it: reason kept; with the agent down it is interrupted.
+	assert.equal(sessionModel(view(), after).exitReason, AO_LOST_TURN_ERROR);
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), after), "interrupted");
+	// Alone, history turns are an idle conversation with nothing to report.
+	const onlyHistory = conversation({ turns: [history("h1")] });
+	assert.equal(agentState(view(), onlyHistory), "idle");
+	assert.equal(sessionModel(view(), onlyHistory).queue.total, 0);
+	assert.equal(sessionModel(view(), onlyHistory).exitReason, undefined);
 });
 
 test("queueOf: queued turns in order with their prompts", () => {

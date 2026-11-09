@@ -14,6 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
 export { AO_SCHEMA_COMMIT };
@@ -30,6 +31,7 @@ export type AoMessage = AoSchemas["ConversationMessageResponse"];
 export type AoActivity = AoSchemas["ConversationActivityResponse"];
 export type AoUsage = AoSchemas["ConversationUsagePayload"];
 export type AoTurnSettings = AoSchemas["ConversationTurnSettingsPayload"];
+export type AoConfigOptions = AoSchemas["ConversationConfigOptionsResponse"];
 export type AoWorkspaceManifest = AoSchemas["WorkspaceManifestResponse"];
 export type AoProject = AoSchemas["ProjectSummary"];
 export type AoSpawnRequest = AoSchemas["SpawnSessionRequest"];
@@ -49,7 +51,8 @@ export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
-export { nativeSessionFile, readNativeSession, switchyardHome } from "./native";
+export { nativeSessionFile, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
+export type { AoSessionMode, SpawnedSwitchyardSession, SpawnSwitchyardOptions } from "./spawn";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -352,6 +355,15 @@ export class AoClient {
 	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
+	}
+
+	/**
+	 * Starts a Switchyard session the way every client does (MAPPING D11: bypass launch, the mode file,
+	 * model and thinking validated against the session's own options, extra omp arguments, then the
+	 * prompt with a `clientMessageId`). See spawn.ts.
+	 */
+	spawnSwitchyard(options?: SpawnSwitchyardOptions): Promise<SpawnedSwitchyardSession> {
+		return spawnSwitchyardSession(this, options);
 	}
 
 	// ---- agent accounts (provider limits and usage) ----

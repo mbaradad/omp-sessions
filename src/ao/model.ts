@@ -8,7 +8,7 @@ import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResol
 export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
 export { deltaCursor, followConversation, mergeConversation } from "./follow";
 export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
-export { permissionModeOf, reportQuestion, sessionReport } from "./report";
+export { approvalModeFor, permissionModeOf, planModeOf, reportQuestion, sessionReport } from "./report";
 
 /**
  * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
@@ -62,6 +62,8 @@ export interface AoQuestion {
 	schema?: unknown;
 	/** input in URL mode: the page that answers it. */
 	url?: string;
+	/** approval that arrived as a `user_input` form (omp's write/edit prompts): the form field the chosen decision's id goes into, resolved through the inputs route. */
+	inputField?: string;
 	turnId?: string;
 	createdAt: number;
 }
@@ -190,6 +192,13 @@ export function questionOf(activity: AoActivity): AoQuestion {
 	}
 	const fields = schemaFields(detail.schema);
 	const message = str(detail.message);
+	const permission = permissionPrompt(fields);
+	if (permission) {
+		// omp's write/edit permission prompts arrive as a `user_input` form (VALIDATION.md §3, G12): one
+		// field offering Approve / Approve … for this session / Deny. Same concept as bash's approval.
+		const decisions = permission.options.map((label, i): AoDecision => ({ id: String(permission.values[i]), label, kind: permissionKind(label) }));
+		return { ...base, kind: "approval", decisions, options: permission.options, inputField: permission.key, ...(message && message !== activity.summary && { message }) };
+	}
 	return {
 		...base,
 		kind: "input",
@@ -199,6 +208,19 @@ export function questionOf(activity: AoActivity): AoQuestion {
 		...(detail.schema !== undefined && { schema: detail.schema }),
 		...(str(detail.url) && { url: str(detail.url) }),
 	};
+}
+
+/** ACP option kind of a permission choice: `Approve` once, `Approve … for this session` always, `Deny` rejects. */
+function permissionKind(label: string): string {
+	if (/^deny\b|^reject\b/i.test(label)) return "reject_once";
+	return /session|always/i.test(label) ? "allow_always" : "allow_once";
+}
+
+/** The single field of a form that is a tool-permission prompt: choices include an approval and a denial. */
+function permissionPrompt(fields: AoQuestionField[]): AoQuestionField | undefined {
+	const [field] = fields;
+	if (fields.length !== 1 || field.multi || field.options.length < 2) return undefined;
+	return field.options.some(o => /^approve\b|^allow\b/i.test(o)) && field.options.some(o => /^deny\b|^reject\b/i.test(o)) ? field : undefined;
 }
 
 export function questionsOf(conversation: AoConversation): AoQuestion[] {
@@ -216,12 +238,26 @@ export function lastReply(conversation: AoConversation, max = REPLY_MAX): string
 
 const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
+/** providerTurnId of a turn AO imported from omp's recorded history after exit-agent + resume-agent (G33). */
+const HISTORY_TURN_PREFIX = "acp-history-turn:";
+
+/**
+ * The turns that ran in this conversation: those AO replays from omp's history on resume (prompts
+ * already recorded, steered or with images, come back as `recovered` turns whose providerTurnId starts
+ * with `acp-history-turn:`) are not new work. They are not counted in the queue, and are never "the
+ * last turn" that decides interrupted or the exit reason.
+ */
+export function realTurns(conversation: AoConversation): AoTurn[] {
+	return conversation.turns.filter(t => !t.providerTurnId?.startsWith(HISTORY_TURN_PREFIX));
+}
+
 export function queueOf(conversation: AoConversation): AoQueue {
 	const textOf = new Map<string, string>();
 	for (const m of conversation.messages) if (m.role === "user" && m.turnId && !textOf.has(m.turnId)) textOf.set(m.turnId, m.text);
-	const queued = conversation.turns.filter(t => t.state === "queued");
-	const running = conversation.turns.filter(t => t.state === "running").length;
-	const done = conversation.turns.filter(t => DONE_TURNS[t.state]).length;
+	const turns = realTurns(conversation);
+	const queued = turns.filter(t => t.state === "queued");
+	const running = turns.filter(t => t.state === "running").length;
+	const done = turns.filter(t => DONE_TURNS[t.state]).length;
 	return {
 		pending: queued.length,
 		running,
@@ -271,7 +307,7 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
 		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
 		const down = conversation.controller === "stopped" || view.activity.state === "exited";
-		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (down && (running || pending || lostTurn(realTurns(conversation).at(-1)))) return "interrupted";
 		if (pending) return "needs_input";
 		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
@@ -311,7 +347,7 @@ function lostTurn(turn: AoTurn | undefined): boolean {
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
-	const last = conversation?.turns.at(-1);
+	const last = conversation && realTurns(conversation).at(-1);
 	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
@@ -403,11 +439,12 @@ export function answerFor(question: AoQuestion, answer: string): AoAnswer {
 		const decisions = question.decisions ?? [];
 		if (decisions.length === 0) return { error: "This approval offers no decisions." };
 		const i = pick(decisions.map(d => d.label), text) ?? pick(decisions.map(d => d.id), text);
-		if (i !== undefined) return { kind: "approval", decisionId: decisions[i].id };
 		const kindMatch = YES.test(text) ? ["allow_once", "allow_always"] : NO.test(text) ? ["reject_once", "reject_always"] : undefined;
-		const byKind = kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
-		if (byKind) return { kind: "approval", decisionId: byKind.id };
-		return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		const chosen = i !== undefined ? decisions[i] : kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
+		if (!chosen) return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		// A permission prompt that arrived as a question is answered through the inputs route, the choice as the field's value.
+		if (question.inputField) return { kind: "input", body: { action: "accept", content: { [question.inputField]: chosen.id } } };
+		return { kind: "approval", decisionId: chosen.id };
 	}
 	if (question.url && !question.questions) return { error: `This question is answered in a browser: ${question.url}` };
 	const fields = question.questions ?? [];

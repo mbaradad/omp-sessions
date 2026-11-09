@@ -24,6 +24,20 @@ export function nativeSessionFile(aoSessionId: string, home = switchyardHome()):
 	return path.join(home, "sessions", aoSessionId, "omp.json");
 }
 
+/**
+ * A per-session state file: `<home>/sessions/<AO session id>/<name>`. The names in use: `omp.json` (G9),
+ * `mode` (G7, the permission mode the omp extension's gate reads), `omp-args` (G34, extra `omp acp`
+ * arguments the shim appends), and the checkpoints folder.
+ */
+export function sessionStateFile(aoSessionId: string, name: string, home = switchyardHome()): string {
+	return path.join(home, "sessions", aoSessionId, name);
+}
+
+/** Where the `omp` shim lives (G34): first on the PATH of a daemon Switchyard starts. */
+export function shimDir(home = switchyardHome()): string {
+	return path.join(home, "bin");
+}
+
 /** What the extension recorded for this AO session, or undefined before it ran (or for a non-omp session). */
 export function readNativeSession(aoSessionId: string, home = switchyardHome()): AoNativeSession | undefined {
 	let raw: unknown;
