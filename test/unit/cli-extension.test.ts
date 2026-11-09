@@ -36,19 +36,25 @@ function machine<T>(fn: (m: { shipped: string; agent: string; home: string }) =>
 test("install puts the gate and the shim in place; a changed bundle makes the report older and ensureBundles refreshes it once", () =>
 	machine(({ shipped, agent, home }) => {
 		const bundles = bundlesAt(shipped);
-		assert.deepEqual(bundlesAt(path.join(shipped, "nowhere")), {}, "a build that ships nothing");
+		assert.deepEqual([bundlesAt(path.join(shipped, "nowhere")).extensions, bundlesAt(path.join(shipped, "nowhere")).shim], [undefined, undefined], "a build that ships nothing");
 		const before = extensionReport(undefined, bundles);
 		assert.equal(before.installed, false);
 		assert.equal(before.shim.installed, false);
+		assert.equal(before.shim.inEffect, false, "not installed: not in effect");
 		assert.equal(before.shipped, true);
 
 		const result = installBundles(bundles);
-		assert.equal(result.extensions, true);
-		assert.equal(result.shim, "installed");
+		assert.deepEqual(result.installed, ["gate", "shim"]);
+		assert.equal(result.error, undefined);
+		assert.equal(installBundles(bundles).upToDate, true, "idempotent: the second call writes nothing");
 		const after = extensionReport(undefined, bundles);
 		assert.equal(after.installed, true, "the gate counts only when the package lists mode.js");
 		assert.deepEqual(after.modules, ["checkpoints.js", "mode.js"]);
 		assert.equal(after.current && after.shim.current && after.shim.installed, true);
+		assert.equal(after.shim.inEffect, undefined, "installed, but no daemon to read a PATH from: not claimed either way");
+		// A daemon whose PATH starts elsewhere (this test process: its own PATH) does not have the shim first.
+		const against = extensionReport(process.pid, bundles).shim;
+		assert.deepEqual([against.onDaemonPath, against.inEffect], [false, false]);
 		assert.ok(fs.statSync(path.join(home, "bin", "omp")).mode & 0o100, "the shim is executable");
 		assert.equal(fs.existsSync(path.join(agent, "extensions", "switchyard", "package.json")), true);
 
@@ -89,7 +95,28 @@ test("ensureBundles reports the first install; config omp-extension off stops it
 		// A file called omp that isn't the shim is never replaced or removed.
 		fs.mkdirSync(path.join(home, "bin"), { recursive: true });
 		fs.writeFileSync(path.join(home, "bin", "omp"), "#!/bin/sh\nexec real-omp\n");
-		assert.equal(installBundles(bundles).shim, "skipped");
+		const foreign = installBundles(bundles);
+		assert.match(foreign.error ?? "", /not Switchyard's/, "an omp that isn't ours is reported, not replaced");
 		assert.equal(uninstallBundles().shim, false);
 		assert.equal(fs.readFileSync(path.join(home, "bin", "omp"), "utf8"), "#!/bin/sh\nexec real-omp\n");
+	}));
+
+test("a read-only agent folder (the locked migration dirs) is reported as an error, not thrown; the install guard =0 skips instead of writing", () =>
+	machine(({ shipped, agent }) => {
+		const bundles = bundlesAt(shipped);
+		fs.mkdirSync(path.join(agent, "extensions"), { recursive: true });
+		fs.chmodSync(path.join(agent, "extensions"), 0o555);
+		try {
+			const result = installBundles(bundles);
+			// root ignores file modes, so only assert the failure shape where the folder really is not writable.
+			if (result.error) assert.match(result.error, /could not install the omp extensions/);
+			assert.equal(typeof result.upToDate, "boolean");
+			process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS = "0";
+			const guarded = installBundles(bundles);
+			assert.deepEqual(guarded.installed, []);
+			assert.match(guarded.skipped ?? "", /SWITCHYARD_INSTALL_OMP_EXTENSIONS=1/);
+		} finally {
+			delete process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS;
+			fs.chmodSync(path.join(agent, "extensions"), 0o755);
+		}
 	}));

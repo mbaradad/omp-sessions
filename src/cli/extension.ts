@@ -8,9 +8,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSwitchyardConfig } from "../ao/config";
 import { gateStatus } from "../ao/gate";
-import { type ShimInstall, installOmpExtensions, installOmpShim, ompExtensionDir, ompShimDir, removeLegacyOmpExtensions, removeOmpShim } from "../shared/omp-extension-install";
+import { type OmpIntegrationResult, ensureOmpIntegration, ompExtensionDir, ompShimDir, removeOmpShim } from "../shared/omp-extension-install";
 
 export interface Bundles {
+	/** The folder the bundles sit in (beside cli.js): what `ensureOmpIntegration` takes as `bundleRoot`. */
+	root: string;
 	/** Folder of the extension modules, or undefined when this build ships none. */
 	extensions?: string;
 	/** The shim script, or undefined when this build ships none. */
@@ -21,7 +23,7 @@ export interface Bundles {
 export function bundlesAt(base: string): Bundles {
 	const extensions = path.join(base, "omp-extension");
 	const shim = path.join(base, "omp-shim", "omp");
-	return { ...(isDirectory(extensions) && { extensions }), ...(fs.existsSync(shim) && { shim }) };
+	return { root: base, ...(isDirectory(extensions) && { extensions }), ...(fs.existsSync(shim) && { shim }) };
 }
 
 export function shippedBundles(): Bundles {
@@ -89,6 +91,8 @@ export interface ExtensionReport {
 		path: string;
 		/** The AO daemon's PATH lists the shim's folder first (so its flags reach omp); undefined when it can't be told. */
 		onDaemonPath?: boolean;
+		/** The launcher is in effect: omp flags reach omp. False when not installed or not first on the daemon's PATH. */
+		inEffect?: boolean;
 	};
 	/** This build ships the bundles `install` copies. */
 	shipped: boolean;
@@ -110,29 +114,25 @@ export function extensionReport(daemonPid?: number, bundles: Bundles = shippedBu
 			current: bundles.shim ? shimCurrent(bundles.shim, binDir) : true,
 			path: status.shimFile,
 			...(first !== undefined && { onDaemonPath: path.resolve(first) === path.resolve(binDir) }),
+			// In effect = installed and first on the running daemon's PATH; undefined when installed but the daemon's PATH can't be read.
+			...(!status.shim ? { inEffect: false } : first !== undefined ? { inEffect: path.resolve(first) === path.resolve(binDir) } : {}),
 		},
 		shipped: !!(bundles.extensions || bundles.shim),
 		auto: readSwitchyardConfig().ompExtension ?? "on",
 	};
 }
 
-export interface InstallResult {
-	/** The package's modules were written (or changed). */
-	extensions: boolean;
-	/** What happened to the shim; `skipped`: a file of that name is not ours, or this platform has no shim. */
-	shim: ShimInstall | "not shipped";
-	/** The pre-rename package or the old stand-alone bridge was removed. */
-	legacyRemoved: boolean;
-}
+export type InstallResult = OmpIntegrationResult;
 
-/** Copies what this build ships into omp's agent folder and the Switchyard `bin` folder. */
+/**
+ * Installs what this build ships through checkpoints' `ensureOmpIntegration` (the one install path, GAPS G46): the
+ * gate package into omp's agent folder, the shim into the Switchyard `bin` folder, legacy folders removed. It never
+ * throws for a failed write (EACCES comes back as `error`); the non-production guard (`SWITCHYARD_INSTALL_OMP_EXTENSIONS`)
+ * comes back as `skipped`. The CLI is an installed product, so it asks as production.
+ */
 export function installBundles(bundles: Bundles = shippedBundles()): InstallResult {
 	if (!bundles.extensions && !bundles.shim) throw new Error("this build ships neither the omp extension nor the shim (no omp-extension/ or omp-shim/ next to cli.js)");
-	const dir = ompExtensionDir();
-	const legacyRemoved = removeLegacyOmpExtensions(dir);
-	const extensions = bundles.extensions ? installOmpExtensions(bundles.extensions, dir) : false;
-	const shim = bundles.shim ? installOmpShim(bundles.shim) : "not shipped";
-	return { extensions, shim, legacyRemoved };
+	return ensureOmpIntegration({ bundleRoot: bundles.root, production: true });
 }
 
 /** Removes Switchyard's package from omp's agent folder and the shim; true for each that was there. */
@@ -144,16 +144,18 @@ export function uninstallBundles(): { extensions: boolean; shim: boolean } {
 }
 
 /**
- * `new` and `status`: installs or refreshes the extension and the shim when they are missing or older than
- * what this build ships, unless `config set omp-extension off`. Returns what it did, for a one-time notice
- * (only a first install is worth one; a refresh is silent).
+ * Before `new`, `resume`, a `send` that wakes a stopped session, `queue run` and on `status`: installs or refreshes the
+ * extension and the shim when they are missing or older than what this build ships, unless `config set omp-extension
+ * off` or the install guard is `=0`. Returns what it did: a first install (worth one notice), or the `error` that left
+ * something missing (a read-only folder is reported, not fatal). Nothing to say: undefined.
  */
-export function ensureBundles(bundles: Bundles = shippedBundles()): { firstInstall: boolean; dir: string } | undefined {
+export function ensureBundles(bundles: Bundles = shippedBundles()): { firstInstall: boolean; dir: string; error?: string } | undefined {
 	if (!bundles.extensions && !bundles.shim) return undefined;
 	// `=0` is what test and dev runs pin (checkpoints' globalInstallAllowed): never touch the shared omp agent folder by itself.
 	if (process.env.SWITCHYARD_INSTALL_OMP_EXTENSIONS === "0" || readSwitchyardConfig().ompExtension === "off") return undefined;
 	const report = extensionReport(undefined, bundles);
 	if (report.installed && report.current && (!bundles.shim || (report.shim.installed && report.shim.current))) return undefined;
 	const result = installBundles(bundles);
-	return result.extensions || result.shim === "installed" ? { firstInstall: !report.installed, dir: report.dir } : undefined;
+	if (result.error) return { firstInstall: false, dir: report.dir, error: result.error };
+	return result.installed.length ? { firstInstall: !report.installed, dir: report.dir } : undefined;
 }

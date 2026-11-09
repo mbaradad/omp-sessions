@@ -64,7 +64,7 @@ interface Printed {
 	tags: string[];
 	changedFiles: number;
 	queue: { pending: number; done: number };
-	question: { id: string; kind: string; options: string[]; questions: Array<{ options: string[] }> };
+	question: { id: string; kind: string; approval: boolean; options: string[]; questions: Array<{ options: string[] }> };
 	answered: boolean;
 	sent: boolean;
 	running: boolean;
@@ -127,6 +127,10 @@ test("cli: usage errors exit 2; status says what runs and never starts the plann
 	assert.equal(s.status, 1, "the planner is down");
 	assert.equal(s.data.ao.running, true);
 	assert.equal(s.data.ao.url, ao.baseUrl);
+	const hib = json<{ ao: { chatHibernation?: boolean }; notes: string[]; problems: string[] }>("status", "--json").data;
+	assert.equal(hib.ao.chatHibernation, false, "AO starts with chat hibernation off");
+	assert.ok(hib.notes.some(n => /chat-hibernation/.test(n)), "the note carries the one-line fix");
+	assert.ok(!hib.problems.some(p => /hibernation/.test(p)), "off is a note, not a problem");
 	assert.equal(s.data.server.running, false);
 	assert.equal(typeof s.data.omp.readiness, "string", "AO's readiness of the omp agent (unknown until AO probed it)");
 	assert.equal(json("server", "status", "--json").data.running, false, "status started no planner");
@@ -156,6 +160,7 @@ test("cli: an approval → wait 3 with the question; answer --question refuses a
 	assert.equal(w.status, 3, w.stderr);
 	assert.equal(w.data.state, "needs_input");
 	assert.equal(w.data.question.kind, "select", "tool approvals are select questions, as before");
+	assert.equal(w.data.question.approval, true, "…and say so: agents never answer an approval");
 	assert.ok(w.data.question.options.includes("Allow once"), JSON.stringify(w.data.question));
 	assert.equal(cli("answer", id, "--question", "not-this-one", "1").status, 1);
 	assert.equal(cli("answer", id, "maybe").status, 2, "not one of the decisions");
@@ -177,6 +182,7 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 	assert.equal(w.status, 3);
 	// One question: its options, as `options` (kind select) or under `questions` (kind ask).
 	assert.deepEqual(w.data.question.options ?? w.data.question.questions?.[0]?.options, ["yes", "no"]);
+	assert.equal(w.data.question.approval, false, "a plain question: an agent may answer it");
 	assert.equal(cli("answer", id, "2").status, 0);
 	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.reply, "chose no");
 	const streamed = cli("send", id, "echo streamed reply", "--wait");
@@ -194,7 +200,12 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 test("cli: wait exits 124 while it works; abort ends the turn", { skip }, () => {
 	const id = started("slow 20000", "--mode", "auto");
 	assert.equal(cli("wait", id, "--timeout", "2s").status, 124);
-	assert.equal(cli("abort", id).status, 0);
+	// A follow-up queued behind the running turn: AO discards it on abort (G41), the CLI hands it back.
+	assert.equal(json("send", id, "echo queued reply", "--json").data.sent, true);
+	const aborted = json<{ aborted: boolean; discarded: Array<{ text: string }> }>("abort", id, "--json");
+	assert.equal(aborted.status, 0, aborted.stderr);
+	assert.equal(aborted.data.aborted, true);
+	assert.deepEqual(aborted.data.discarded.map(d => d.text), ["echo queued reply"]);
 	assert.notEqual(cli("wait", id, "--timeout", "30s").status, 124);
 	assert.equal(cli("abort", id).status, 1, "nothing to abort");
 });
@@ -226,6 +237,12 @@ test("cli: new --task --after waits for the other session; queue after refuses i
 	assert.equal(b.status, 0, b.stderr);
 	assert.equal(json("show", b.data.id, "--json").data.state, "queued", "blocked behind A");
 	assert.equal(cli("queue", b.data.id, "after", b.data.id).status, 1, "a queue can't wait for itself");
+	// Hermes reads the dependency from `queue <s> --json`: tasks[].after and blockedBy are task ids (not session ids).
+	type Q = { tasks: Array<{ id: string; after?: string[]; blockedBy?: string[] }> };
+	const aTask = json<Q>("queue", a.data.id, "--json").data.tasks[0];
+	const bTask = json<Q>("queue", b.data.id, "--json").data.tasks[0];
+	assert.deepEqual(bTask.after, [aTask.id]);
+	assert.deepEqual(bTask.blockedBy, [aTask.id]);
 	assert.equal(cli("wait", b.data.id, "--timeout", "3s").status, 124, "still waiting");
 	assert.equal(cli("queue", a.data.id, "at", "off").status, 0);
 	assert.equal(cli("queue", a.data.id, "start").status, 0);
@@ -346,6 +363,9 @@ test("cli: new --worktree auto|always reports the worktree; never/--no-worktree 
 	}
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=sometimes").status, 2);
 	assert.equal(cli("new", repo, "-p", "echo x", "--worktree=auto", "--no-worktree").status, 2);
+	const unusable = cli("new", repo, "-p", "echo x", "--model", "nowhere/not-a-model");
+	assert.equal(unusable.status, 1, "a model omp can't use fails before AO creates a session (it would leave a terminated one)");
+	assert.match(unusable.stderr, /model/);
 	assert.equal(json<unknown[]>("ls", "--all", "--json").data.length, before + 2, "a refused start creates nothing");
 	type Archived = { id: string; archived: boolean; changed: boolean };
 	const id = made.data.id;
@@ -379,6 +399,7 @@ test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what 
 	assert.equal(cli("mode", id, "edits").status, 0);
 	assert.equal(fs.readFileSync(path.join(home, "switchyard", "sessions", id, "mode"), "utf8").trim(), "edits", "switched live: the next tool call reads it");
 	assert.equal(json("show", id, "--json").data.mode, "edits");
+	assert.equal(json<Entry[]>("ls", "--all", "--json").data.find(e => e.meta.id === id)?.meta.permissionMode, "edits", "ls follows show after a switch");
 
 	// Flags after -- reach omp only through the shim on the AO daemon's PATH. This daemon was not started that way, so
 	// the CLI refuses instead of writing flags that would be ignored (the omp-args file itself is src/ao/spawn.ts's).
@@ -391,4 +412,52 @@ test("cli: --mode ask|edits|plan needs the omp extension; the mode file is what 
 	assert.equal(shim.omp.shim.installed, true);
 	assert.equal(shim.omp.shim.onDaemonPath, false);
 	assert.ok(shim.problems.some(p => /first on its PATH/.test(p)));
+});
+
+test("cli: config set hibernation applies it to the running AO at once; status says when the config says on but AO reads off", { skip }, async () => {
+	type Status = { ao: { chatHibernation?: boolean }; notes: string[]; problems: string[] };
+	assert.equal((await client.chatHibernation()), false, "AO starts with hibernation off");
+	const set = cli("config", "set", "hibernation", "on");
+	assert.equal(set.status, 0, set.stderr);
+	assert.match(set.stdout, /applied to the running AO now/);
+	assert.equal(await client.chatHibernation(), true);
+	assert.equal(json<string>("config", "get", "hibernation", "--json").data, "on");
+	assert.equal(cli("config", "set", "hibernation", "maybe").status, 2);
+	// AO forgets it on every boot: config on, AO reading off = not applied yet, and the status says so (a note, not a problem).
+	await client.applyChatHibernation(false);
+	const lost = json<Status>("status", "--json").data;
+	assert.equal(lost.ao.chatHibernation, false);
+	assert.ok(lost.notes.some(n => /has not been applied yet/.test(n)), JSON.stringify(lost.notes));
+	assert.ok(!lost.problems.some(p => /hibernation/.test(p)));
+	assert.equal(json<string>("config", "set", "hibernation", "on", "--json").status, 0, "--json applies it too");
+	assert.equal(await client.chatHibernation(), true);
+	// Unset removes the key and leaves AO as it is.
+	assert.equal(cli("config", "unset", "hibernation").status, 0);
+	assert.equal(json<string | null>("config", "get", "hibernation", "--json").data, null);
+	assert.equal(await client.chatHibernation(), true, "an absent key leaves AO alone");
+	await client.applyChatHibernation(false);
+});
+
+test("cli: models reads a running session's omp choices (the only exact list); with no running session it says so; model refuses an id the session doesn't offer", { skip, timeout: 120_000 }, async () => {
+	type Models = { models: Array<{ selector: string; source?: string }>; source: string | null; note?: string };
+	// Every session of this run is over by now or running: stop what runs, so there is nothing to read from.
+	for (const s of (await client.listSessions({})).sessions) await client.exitAgent(s.id).catch(() => undefined);
+	const none = json<Models>("models", "--json");
+	assert.equal(none.status, 0, "a script gets valid JSON either way");
+	assert.equal(none.data.source, null);
+	assert.deepEqual(none.data.models, []);
+	assert.match(none.data.note ?? "", /no running session/);
+	assert.equal(cli("models").status, 1, "plain text: an error, with the same explanation");
+
+	const id = started("echo models please", "--mode", "auto");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	const listed = json<Models>("models", "--json", "--session", id);
+	assert.equal(listed.status, 0, listed.stderr);
+	assert.equal(listed.data.source, id);
+	const offered = (await client.configOptions(id)).options.find(o => o.id === "model")?.choices?.map(ch => ch.value) ?? [];
+	assert.deepEqual(listed.data.models.map(m => m.selector).sort(), [...offered].sort(), "exactly the session's own choices");
+	assert.equal(json<Models>("models", "--json").data.source, id, "the newest running session when none is given");
+	const refused = cli("model", id, "nowhere/not-offered");
+	assert.equal(refused.status, 1);
+	assert.match(refused.stderr, /offers no model/);
 });
