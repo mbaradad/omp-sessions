@@ -84,7 +84,7 @@ Limits:
 - A daemon that Switchyard did not start (the AO desktop app, or an already installed unit such as a dev one) does not get the launcher on its PATH: put `~/.switchyard/bin` first on that daemon's PATH yourself, or the arguments are ignored.
 - The unit Switchyard writes for a daemon it starts only gets that PATH entry if `~/.switchyard/bin/omp` exists **at that time**. Install the launcher (`switchyard omp-extension install`) before the first daemon start, or rewrite the unit afterwards.
 - An argument that contains whitespace goes in as a JSON array of strings; plain words split on whitespace. An empty argument is refused.
-- `switchyard status` is meant to say whether the launcher is in effect; that check is not built yet (G34).
+- `switchyard status` says whether the launcher is in effect: it reports the launcher as installed and current, and raises a problem when it is not first on the running daemon's PATH. `switchyard new … -- <flags>` is refused in that case rather than silently ignoring the flags.
 
 ### Coming from omp Sessions
 
