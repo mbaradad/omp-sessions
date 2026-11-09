@@ -5,11 +5,10 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { HOST_CRASHED, isOutdated, settleDeadHost } from "../shared/health";
+import { settleDeadHost } from "../shared/health";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
-import { canConnect, hostAlive as hostIsAlive, sendToHost } from "../shared/launch";
+import { canConnect, hostAlive as hostIsAlive } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import type { HermesFacts } from "./doctor-hermes";
@@ -33,7 +32,6 @@ import type { ServerControl } from "./server";
 import { resolveOmpPath } from "./sessions";
 
 const HIDE_MISSING_KEY = "omp.doctor.hideOmpMissing";
-const SEEN_VERSION_KEY = "omp.doctor.seenVersion";
 const LEARN_MORE = "https://omp.sh";
 const IS_WINDOWS = process.platform === "win32";
 
@@ -208,8 +206,6 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 	let missingShown = false;
 	let installWatch: NodeJS.Timeout | undefined;
 	let doctorPanel: vscode.WebviewPanel | undefined;
-	/** Busy sessions to restart on the current host as soon as they are idle. */
-	const upgradeWhenIdle = new Set<string>();
 	const authNotified = new Set<string>();
 	context.subscriptions.push({ dispose: () => clearInterval(installWatch) });
 
@@ -295,139 +291,6 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 	}
 	context.subscriptions.push(sessions.onDidChange(checkAuth));
 	checkAuth();
-
-	// ---------- crash recovery ----------
-	context.subscriptions.push(
-		sessions.onDidTransition(({ meta, from }) => {
-			if (upgradeWhenIdle.has(meta.id) && meta.status === "idle") {
-				upgradeWhenIdle.delete(meta.id);
-				void restartOnCurrentHost(meta);
-			}
-			if (meta.status !== "stopped" || from === "stopped" || meta.exitReason !== HOST_CRASHED || !sessions.notifies(meta)) return;
-			void vscode.window.showWarningMessage(plain(`The omp session "${meta.title}" stopped unexpectedly mid-turn (its host process died).`), "Resume and Continue", "Show Log").then(a => {
-				if (a === "Resume and Continue") void api.launchAndOpen({ cwd: meta.cwd, id: meta.id });
-				else if (a === "Show Log") void vscode.commands.executeCommand("omp.showLog", meta.id);
-			});
-		}),
-	);
-
-	reg("omp.doctor.markStopped", async (arg?: unknown) => {
-		const id = api.idFrom(arg);
-		const raw = id ? readMetaFile(id) : undefined;
-		if (!id || !raw || raw.status === "stopped") return;
-		if (hostIsAlive(raw)) {
-			void vscode.window.showWarningMessage("That session's host is running; stop it instead.");
-			return;
-		}
-		const file = path.join(sessionDir(id), "meta.json");
-		const tmp = `${file}.doctor.tmp`;
-		try {
-			fs.writeFileSync(tmp, JSON.stringify({ ...settleDeadHost(raw, false), updatedAt: Date.now() }, null, 1));
-			fs.renameSync(tmp, file);
-		} catch (err) {
-			void vscode.window.showErrorMessage(plain(`Could not update ${file}: ${(err as Error).message}`));
-		}
-		sessions.refresh();
-		if (doctorPanel) await runDoctor();
-	});
-
-	// ---------- host upgrades ----------
-	/** Stops the session's host and resumes it on this extension's host. */
-	async function restartOnCurrentHost(meta: SessionMeta): Promise<boolean> {
-		return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: restarting "${meta.title}" on host ${sessions.version}` }, async () => {
-			if (!(await sendToHost(meta, { t: "stop" }))) {
-				try {
-					process.kill(meta.pid, "SIGTERM");
-				} catch {
-					/* already gone */
-				}
-			}
-			const deadline = Date.now() + 15_000;
-			while (Date.now() < deadline) {
-				sessions.refresh();
-				if (sessions.get(meta.id)?.status !== "stopped") await sleep(200);
-				else break;
-			}
-			if (sessions.get(meta.id)?.status !== "stopped") {
-				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not stop within 15 s; it still runs on the old host.`), "Show Log").then(a => a && vscode.commands.executeCommand("omp.showLog", meta.id));
-				return false;
-			}
-			try {
-				sessions.launch({ cwd: meta.cwd, id: meta.id });
-			} catch (err) {
-				void vscode.window.showErrorMessage(plain(`Could not restart "${meta.title}": ${(err as Error).message}`));
-				return false;
-			}
-			const ok = await sessions.waitForSocket(meta.id);
-			if (!ok) {
-				const reason = sessions.get(meta.id)?.exitReason;
-				void vscode.window.showErrorMessage(plain(`"${meta.title}" did not come back up${reason ? `: ${reason}` : ""}.`), "Show Log").then(a => a && vscode.commands.executeCommand("omp.showLog", meta.id));
-			}
-			return ok;
-		});
-	}
-
-	reg("omp.upgradeSession", async (arg?: unknown) => {
-		const id = api.idFrom(arg) ?? (await api.pickSession("Upgrade which session's host?", m => isOutdated(m, sessions.version)));
-		const meta = id ? sessions.get(id) : undefined;
-		if (!meta) {
-			if (!id) void vscode.window.showInformationMessage(`All running sessions use the current host (${sessions.version}).`);
-			return;
-		}
-		if (meta.status === "stopped") {
-			void vscode.window.showInformationMessage(plain(`"${meta.title}" is stopped; resuming it starts the current host.`));
-			return;
-		}
-		if (!isOutdated(meta, sessions.version)) {
-			const again = await vscode.window.showInformationMessage(plain(`"${meta.title}" already runs the current host (${sessions.version}). Restart it anyway?`), "Restart");
-			if (!again) return;
-		}
-		if (meta.status === "idle") {
-			if (await restartOnCurrentHost(meta)) void vscode.window.showInformationMessage(plain(`"${meta.title}" now runs host ${sessions.version}.`));
-			return;
-		}
-		const pick = await vscode.window.showWarningMessage(
-			`"${meta.title}" is ${meta.status === "waiting" ? "waiting for input" : meta.status}.`,
-			{ modal: true, detail: "Upgrading restarts its host. Wait until it is idle, or restart now: the current turn stops, and you continue it on the new host by sending a message." },
-			"Upgrade When Idle",
-			"Restart Now",
-		);
-		if (pick === "Upgrade When Idle") {
-			upgradeWhenIdle.add(meta.id);
-			void vscode.window.showInformationMessage(plain(`"${meta.title}" will restart on the current host when it is idle.`));
-		} else if (pick === "Restart Now") await restartOnCurrentHost(meta);
-	});
-
-	async function upgradeAll(includeBusy: boolean): Promise<void> {
-		const outdated = sessions.all().filter(m => isOutdated(m, sessions.version));
-		if (outdated.length === 0) {
-			void vscode.window.showInformationMessage(`All running sessions use the current host (${sessions.version}).`);
-			return;
-		}
-		const idle = outdated.filter(m => m.status === "idle");
-		const busy = outdated.filter(m => m.status !== "idle");
-		if (includeBusy) for (const m of busy) upgradeWhenIdle.add(m.id);
-		const results = await Promise.all(idle.map(m => restartOnCurrentHost(m)));
-		const done = results.filter(Boolean).length;
-		const parts = [`Upgraded ${done} of ${idle.length} idle session(s) to host ${sessions.version}.`];
-		if (busy.length) parts.push(includeBusy ? `${busy.length} busy session(s) will restart when idle.` : `${busy.length} busy session(s) left as they are.`);
-		void vscode.window.showInformationMessage(parts.join(" "));
-		if (doctorPanel) await runDoctor();
-	}
-	reg("omp.upgradeAllSessions", () => upgradeAll(true));
-
-	// One-time offer after the extension was updated while sessions kept running on the old host.
-	const seen = context.globalState.get<string>(SEEN_VERSION_KEY);
-	if (sessions.version !== "unknown" && seen !== sessions.version) {
-		void context.globalState.update(SEEN_VERSION_KEY, sessions.version);
-		const outdated = sessions.all().filter(m => isOutdated(m, sessions.version));
-		if (outdated.length) {
-			const names = outdated.slice(0, 3).map(m => `"${m.title}"`).join(", ") + (outdated.length > 3 ? ` and ${outdated.length - 3} more` : "");
-			void vscode.window.showInformationMessage(plain(`omp Sessions was updated to ${sessions.version}. ${outdated.length} running session(s) still use the previous host: ${names}.`), "Upgrade Idle Sessions", "Later").then(a => {
-				if (a === "Upgrade Idle Sessions") void upgradeAll(false);
-			});
-		}
-	}
 
 	// ---------- report ----------
 	async function gatherFacts(): Promise<DoctorFacts> {

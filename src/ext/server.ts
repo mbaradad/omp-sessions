@@ -1,32 +1,33 @@
-// The omp-sessions server and CLI from the extension's side: mirrors `omp.path`/`omp.extraArgs` into
-// launcher.json, installs host/server/cli bundles into a stable runtime folder (the extension
-// folder changes with every update), keeps the server running at this version, installs
-// the `omp-sessions` command (`omp.installCli`) and moves what the old command name (0.5.0 and
-// earlier) installed to the new one (shared/rename-migration.ts).
+// The machine side from the extension: the AO daemon that runs every session (found through its run file,
+// started as the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts),
+// the `omp-sessions` command (`omp.installCli`) and the runtime folder it runs from (the extension folder
+// changes with every update), and the `omp.path`/`omp.extraArgs` mirror in launcher.json the CLI reads.
 import { execFile, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { type AoClient, defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "../ao/client";
+import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
-import { ompPathProblem, readHostVersion, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
-import { stateRoot } from "../shared/protocol";
-import { migrateLegacyLauncher, migrateLegacyService } from "../shared/rename-migration";
-import { type EnsureServerOptions, LAUNCHD_LABEL, SYSTEMD_UNIT, ServerClient, type ServiceInstall, compareVersions, ensureServer, installUserService, removeServiceUnit, stopServer } from "../shared/server-client";
-import { serverLogPath } from "../shared/server-protocol";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
+import { ompPathProblem, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
+import { stateRoot } from "../shared/protocol";
+import { migrateLegacyLauncher } from "../shared/rename-migration";
 import type { OmpApi } from "./api";
 import { type ServerFacts, parseMachineStatus } from "./doctor-server";
 import { plain } from "./plain";
 
-/** Bundles the CLI and server run from, the phone app the server serves, the agent skill the CLI installs (plus the Hermes plugin folder). */
-const RUNTIME_FILES = ["host.js", "server.js", "cli.js", "mobile.html", "mobile.js", "mobile.css", "manifest.webmanifest", "mobile-icon.png", "mobile-icon.svg", "omp-sessions.SKILL.md"];
+/** What the CLI runs from: its bundle and the agent skill it installs (plus the Hermes plugin folder). */
+const RUNTIME_FILES = ["cli.js", "omp-sessions.SKILL.md"];
 
-/** What other extension modules need from the server side. */
+/** What other extension modules need from the machine side. */
 export interface ServerControl {
-	/** Starts the server (or restarts an older one); resolves with a status line, rejects when it does not come up. */
+	/** Finds or starts the AO daemon; resolves with a status line, rejects when it does not come up. */
 	ensureRunning(): Promise<string>;
-	/** `omp-sessions status --json` from the installed runtime (never starts the server), or why it could not be read. */
+	/** `omp-sessions status --json` from the installed runtime (never starts anything), or why it could not be read. */
 	status(): Promise<Pick<ServerFacts, "status" | "error">>;
+	/** A client for the AO daemon, starting it when none runs (an explicit user action asked for it). */
+	client(): Promise<AoClient>;
 }
 
 export function runtimeDir(): string {
@@ -39,15 +40,23 @@ function copyAtomic(from: string, to: string): void {
 	fs.renameSync(tmp, to);
 }
 
+function runtimeVersion(dir: string): string | undefined {
+	try {
+		const pkg: unknown = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+		return pkg && typeof pkg === "object" && "version" in pkg && typeof pkg.version === "string" ? pkg.version : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Copies the bundles (+ a package.json carrying the version) into the runtime folder when its
- * version differs. Running hosts keep the code they loaded; renames never tear a file.
+ * version differs. A running CLI keeps the code it loaded; renames never tear a file.
  */
 export function installRuntime(outDir: string, version: string): string {
 	const dir = runtimeDir();
-	const current = readHostVersion(path.join(dir, "host.js"));
 	const complete = RUNTIME_FILES.every(f => fs.existsSync(path.join(dir, f))) && fs.existsSync(path.join(dir, PLUGIN_BUNDLE, "plugin.yaml"));
-	if (complete && current === version) return dir;
+	if (complete && runtimeVersion(dir) === version) return dir;
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	for (const f of RUNTIME_FILES) copyAtomic(path.join(outDir, f), path.join(dir, f));
 	// The Hermes plugin `omp-sessions hermes install` copies from (a folder: swapped in whole).
@@ -74,7 +83,7 @@ function findSystemNode(): string | undefined {
 }
 
 /**
- * Runtime for the server and CLI: a system Node 22+ survives VS Code updates; otherwise this
+ * Runtime for the CLI: a system Node 22+ survives VS Code updates; otherwise this
  * VS Code's own runtime (Electron/node as Node via ELECTRON_RUN_AS_NODE).
  */
 function runtimeNode(): { path: string; electron: boolean } {
@@ -87,12 +96,21 @@ function onPath(dir: string): boolean {
 	return (process.env.PATH ?? "").split(sep).some(p => p && path.resolve(p) === path.resolve(dir));
 }
 
+/** The systemd user unit that runs the default AO daemon, when one is installed. */
+function installedUnit(): string | undefined {
+	if (process.platform !== "linux") return undefined;
+	const unit = daemonUnitName(defaultRunFile());
+	return spawnSync("systemctl", ["--user", "cat", `${unit}.service`], { stdio: "ignore", timeout: 5_000 }).status === 0 ? unit : undefined;
+}
+
+function shellQuote(args: readonly string[]): string {
+	return args.map(a => `'${a.replace(/'/g, `'\\''`)}'`).join(" ");
+}
+
 export function registerServer(api: OmpApi): ServerControl {
-	const { context } = api;
+	const { context, ao } = api;
 	const outDir = path.join(context.extensionPath, "out");
 	const version = api.sessions.version;
-	const log = vscode.window.createOutputChannel("omp Server", { log: true });
-	context.subscriptions.push(log);
 
 	/**
 	 * Mirrors the user's own `omp.path`/`omp.extraArgs`/`omp.server.installService` (never a workspace's: they
@@ -117,7 +135,7 @@ export function registerServer(api: OmpApi): ServerControl {
 		try {
 			writeLauncherSettings(next);
 		} catch (err) {
-			log.warn(`could not write launcher settings: ${String(err)}`);
+			ao.log.warn(`could not write launcher settings: ${String(err)}`);
 		}
 	};
 	syncLauncher();
@@ -132,7 +150,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	try {
 		runtime = installRuntime(outDir, version);
 	} catch (err) {
-		log.error(`could not install the omp-sessions runtime: ${String(err)}`);
+		ao.log.error(`could not install the omp-sessions runtime: ${String(err)}`);
 	}
 	let node: { path: string; electron: boolean } | undefined;
 	const getNode = () => {
@@ -155,75 +173,11 @@ export function registerServer(api: OmpApi): ServerControl {
 		if (text !== existing) writeLauncher(file, text);
 	};
 
-	/** Moves the old command's launcher and service to the new name (a no-op once done). */
-	const migrate = async () => {
-		try {
-			const moved = migrateLegacyLauncher();
-			if (moved) {
-				log.info(`replaced the launcher ${moved.from} with ${moved.to}`);
-				const dir = path.dirname(moved.to);
-				if (!onPath(dir)) void vscode.window.showInformationMessage(plain(`The terminal command is now \`${COMMAND}\`, installed at ${moved.to}. Add ${dir} to your PATH to run it.`));
-			}
-		} catch (err) {
-			log.warn(`could not replace the old launcher: ${String(err)}`);
-		}
-		try {
-			const service = await migrateLegacyService();
-			if (service) log.info(`replaced the service ${service.from} with ${service.to}${service.started ? "" : " (it did not start; see systemctl/launchctl)"}`);
-		} catch (err) {
-			log.warn(`could not replace the old service: ${String(err)}`);
-		}
-	};
-
-	let migration: Promise<void> | undefined;
-	/**
-	 * Tells the user once that the server now starts at login (ensureServer installed the user service).
-	 * Turn Off does what `omp-sessions server uninstall && omp-sessions config set service off` does, and
-	 * starts the server again without the service (removing the unit stopped the server it ran).
-	 */
-	const onServiceInstalled = (r: ServiceInstall) => {
-		log.info(`installed the omp-sessions ${r.kind} user service ${r.file}${r.ok ? "" : " (it did not start)"}`);
-		void vscode.window.showInformationMessage(plain(`The omp-sessions server is now a ${r.kind} user service (${r.file}): it restarts after a crash or reboot.`), "Turn Off").then(async a => {
-			if (!a) return;
-			try {
-				removeServiceUnit(r.kind, r.file, r.kind === "systemd" ? SYSTEMD_UNIT : LAUNCHD_LABEL);
-				writeLauncherSettings({ service: "off" });
-				await vscode.workspace.getConfiguration("omp").update("server.installService", false, vscode.ConfigurationTarget.Global);
-				log.info(`removed the omp-sessions user service ${r.file}; service off`);
-				log.info(await startServer(false));
-			} catch (err) {
-				void vscode.window.showErrorMessage(plain(`Could not remove the omp-sessions service: ${err instanceof Error ? err.message : String(err)}`));
-			}
-		});
-	};
-	/**
-	 * VS Code's own runtime moves with VS Code updates (Remote-SSH: `~/.vscode-server/…/Stable-<commit>/…`):
-	 * no new login service runs it. A unit whose node is gone is re-pointed at it, though, at every start.
-	 */
-	const serverStart = (): EnsureServerOptions => ({
-		onServiceInstalled,
-		onServiceRepaired: r => log.info(`the ${r.kind} user service ran a node or server.js that is gone; it now runs ${getNode().path} (${r.file})`),
-		installService: !getNode().electron,
-	});
-	const startServer = async (restart: boolean): Promise<string> => {
-		if (!runtime) throw new Error("the omp-sessions runtime is not installed");
-		// The old command's service would hold the server socket, and must be gone before a new one is installed.
-		await (migration ??= migrate());
-		const script = path.join(runtime, "server.js");
-		if (restart) await stopServer();
-		let client = await ensureServer(script, getNode().path, undefined, serverStart());
-		if (!client) throw new Error(`the omp-sessions server did not start (see ${serverLogPath()})`);
-		let info = await client.request("ping", {}, 3000);
-		if (compareVersions(info.version, version) < 0) {
-			log.info(`restarting omp-sessions server ${info.version} → ${version}`);
-			client.close();
-			await stopServer();
-			client = await ensureServer(script, getNode().path, undefined, serverStart());
-			if (!client) throw new Error(`the omp-sessions server did not restart (see ${serverLogPath()})`);
-			info = await client.request("ping", {}, 3000);
-		}
-		client.close();
-		return `omp-sessions server ${info.version} running (pid ${info.pid})`;
+	const ensureRunning = async (): Promise<string> => {
+		const client = await ao.client(true);
+		const daemon = await findDaemon();
+		const unit = installedUnit();
+		return `AO daemon running at ${client.baseUrl}${daemon ? ` (pid ${daemon.pid}${unit ? `, systemd unit ${unit}` : ""})` : ""}`;
 	};
 
 	/** Runs the runtime's CLI as the `omp-sessions` launcher would: this node (Electron as Node when it is VS Code's). */
@@ -231,7 +185,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	const status = (): Promise<Pick<ServerFacts, "status" | "error">> => {
 		const { promise, resolve } = Promise.withResolvers<Pick<ServerFacts, "status" | "error">>();
 		if (!runtime) {
-			resolve({ error: "the omp-sessions runtime is not installed (see the omp Server output)" });
+			resolve({ error: "the omp-sessions runtime is not installed (see the AO output)" });
 			return promise;
 		}
 		execFile(getNode().path, [path.join(runtime, "cli.js"), "status", "--json"], { encoding: "utf8", env: { ...process.env, ...cliEnv(), NO_COLOR: "1" }, timeout: 30_000, windowsHide: true }, (err, stdout, stderr) => {
@@ -241,36 +195,23 @@ export function registerServer(api: OmpApi): ServerControl {
 		return promise;
 	};
 
-	/** `omp-sessions server install` from the extension: (re)writes the login service for this node and runtime, and starts it. */
-	const installService = async (): Promise<ServiceInstall> => {
-		if (!runtime) throw new Error("the omp-sessions runtime is not installed");
-		await (migration ??= migrate());
-		const installed = await installUserService(path.join(runtime, "server.js"), getNode().path);
-		if (!installed) throw new Error("login services exist on Linux (systemd) and macOS (launchd); on Windows the server starts on demand");
-		log.info(`installed the omp-sessions ${installed.kind} user service ${installed.file}${installed.ok ? "" : " (it did not start)"}`);
-		return installed;
-	};
+	const showError = (err: unknown) =>
+		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
 
-	// Off the activation path: finding node and starting the server take a moment. The migration
-	// comes first: an old service would hold the server socket.
-	setTimeout(async () => {
-		await (migration ??= migrate());
+	// Off the activation path: finding node takes a moment.
+	setTimeout(() => {
 		try {
+			migrateLegacyLauncher();
 			refreshShim();
 		} catch (err) {
-			log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
+			ao.log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
 		}
-		if (process.env.OMP_SESSIONS_NO_SERVER || !vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true)) return;
-		startServer(false).then(
-			msg => log.info(msg),
-			err => log.error(String(err instanceof Error ? err.message : err)),
-		);
 	}, 1500);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("omp.installCli", async () => {
 			if (!runtime) {
-				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the omp Server output.");
+				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the AO output.");
 				return;
 			}
 			const file = launcherPath();
@@ -292,49 +233,81 @@ export function registerServer(api: OmpApi): ServerControl {
 		}),
 		vscode.commands.registerCommand("omp.server.start", async () => {
 			try {
-				void vscode.window.showInformationMessage(plain(await startServer(false)));
+				void vscode.window.showInformationMessage(plain(await ensureRunning()));
+				api.sessions.refresh();
 			} catch (err) {
-				void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Server Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
+				showError(err);
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.install", async () => {
+			// ensureDaemon installs and enables the `ao-daemon` user unit when it starts the default daemon under systemd.
+			if (process.platform !== "linux") {
+				void vscode.window.showInformationMessage("A login service for AO exists on Linux (systemd); elsewhere omp Sessions starts the AO daemon when it needs it.");
+				return;
+			}
 			try {
-				const r = await installService();
-				const electron = getNode().electron ? " It runs VS Code's own Node, which VS Code updates replace: the next server start re-points it." : "";
-				if (r.ok) void vscode.window.showInformationMessage(plain(`The omp-sessions server is now a ${r.kind} user service (${r.file}): it starts at login and restarts after a crash.${electron}`));
-				else void vscode.window.showWarningMessage(plain(`Wrote the ${r.kind} user service ${r.file}, but it did not start (see ${r.kind === "systemd" ? "systemctl --user status" : "launchctl"}).`));
+				let unit = installedUnit();
+				if (!unit) {
+					const running = await findDaemon();
+					if (running) {
+						const ok = await vscode.window.showWarningMessage(
+							"Restart the AO daemon as a systemd user service?",
+							{ modal: true, detail: "It runs without one now. Sessions keep running across the restart (their hosts are separate processes); the service starts AO at login and after a crash." },
+							"Restart as Service",
+						);
+						if (ok !== "Restart as Service") return;
+						await stopDaemon(running);
+					}
+					await ensureDaemon({ supervisor: "systemd", log: m => ao.log.info(m) });
+					unit = installedUnit();
+				}
+				if (unit) void vscode.window.showInformationMessage(plain(`The AO daemon runs as the systemd user service ${unit}.service: it starts at login and restarts after a crash.`));
+				else void vscode.window.showWarningMessage("systemd did not take the AO service; see the AO output.");
+				api.sessions.refresh();
 			} catch (err) {
-				void vscode.window.showErrorMessage(plain(`Could not install the omp-sessions service: ${err instanceof Error ? err.message : String(err)}`));
+				showError(err);
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.statusInTerminal", () => {
 			if (!runtime) {
-				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the omp Server output.");
+				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the AO output.");
 				return;
 			}
 			const args = [getNode().path, path.join(runtime, "cli.js"), "status"];
 			const windows = process.platform === "win32";
 			const terminal = vscode.window.createTerminal({ name: COMMAND, env: cliEnv(), shellPath: windows ? "powershell.exe" : undefined });
 			terminal.show();
-			terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : args.map(a => `'${a.replace(/'/g, `'\\''`)}'`).join(" "));
+			terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : shellQuote(args));
 		}),
 		vscode.commands.registerCommand("omp.server.restart", async () => {
+			const ok = await vscode.window.showWarningMessage(
+				"Restart the AO daemon?",
+				{ modal: true, detail: "Running sessions keep running (their hosts are separate processes) and reconnect when it is back." },
+				"Restart",
+			);
+			if (ok !== "Restart") return;
 			try {
-				void vscode.window.showInformationMessage(plain(await startServer(true)));
+				const running = await findDaemon();
+				if (running) await stopDaemon(running);
+				await ensureDaemon({ log: m => ao.log.info(m) });
+				void vscode.window.showInformationMessage(plain(await ensureRunning()));
+				api.sessions.refresh();
 			} catch (err) {
-				void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)));
+				showError(err);
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.showLog", async () => {
-			const file = serverLogPath();
-			if (!fs.existsSync(file)) {
-				const running = await ServerClient.connect().catch(() => undefined);
-				running?.close();
-				void vscode.window.showInformationMessage(running ? "The omp-sessions server has not logged anything yet." : "The omp-sessions server has not run yet.");
+			const unit = installedUnit();
+			if (unit) {
+				const terminal = vscode.window.createTerminal({ name: "AO daemon log" });
+				terminal.show();
+				terminal.sendText(shellQuote(["journalctl", "--user", "-u", `${unit}.service`, "-n", "300", "-f"]));
 				return;
 			}
-			await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
+			const file = path.join(path.dirname(defaultRunFile()), "daemon.log");
+			if (fs.existsSync(file)) await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
+			else ao.log.show();
 		}),
 	);
-	return { ensureRunning: () => startServer(false), status };
+	return { ensureRunning, status, client: () => ao.client(true) };
 }

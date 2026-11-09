@@ -151,18 +151,6 @@
 				"category": "omp"
 			},
 			{
-				"command": "omp.upgradeSession",
-				"title": "Upgrade Session Host",
-				"category": "omp",
-				"icon": "$(sync)"
-			},
-			{
-				"command": "omp.upgradeAllSessions",
-				"title": "Upgrade All Session Hosts",
-				"category": "omp",
-				"icon": "$(sync)"
-			},
-			{
 				"command": "omp.cleanUpSnapshots",
 				"title": "Clean Up File Snapshots…",
 				"category": "omp",
@@ -332,12 +320,6 @@
 				"command": "omp.sendSelection",
 				"title": "Send Selection to omp",
 				"category": "omp"
-			},
-			{
-				"command": "omp.showLog",
-				"title": "Show Session Host Log",
-				"category": "omp",
-				"icon": "$(output)"
 			},
 			{
 				"command": "omp.refresh",
@@ -904,11 +886,6 @@
 				"icon": "$(debug-pause)"
 			},
 			{
-				"command": "omp.doctor.markStopped",
-				"title": "Mark Session Stopped",
-				"category": "omp"
-			},
-			{
 				"command": "omp.installCli",
 				"title": "Install omp-sessions Command (Terminal CLI)",
 				"category": "omp",
@@ -1282,11 +1259,6 @@
 					"group": "9_delete@1"
 				},
 				{
-					"command": "omp.upgradeSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
-					"group": "2_lifecycle@9"
-				},
-				{
 					"command": "omp.newWorktreeSession",
 					"when": "view == omp.sessions && viewItem == project",
 					"group": "1_project@2"
@@ -1485,11 +1457,6 @@
 					"command": "omp.renameSession",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@2"
-				},
-				{
-					"command": "omp.showLog",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "1_session@3"
 				},
 				{
 					"command": "omp.hermes.openCard",
@@ -1702,10 +1669,6 @@
 				{
 					"command": "omp.organize.hideArchived",
 					"when": "omp.sessions.showArchived"
-				},
-				{
-					"command": "omp.doctor.markStopped",
-					"when": "false"
 				},
 				{
 					"command": "omp.tasks.addSubtask",
@@ -2183,6 +2146,7 @@
 		"install-local": "npm run package && sh scripts/install-local.sh",
 		"publish:ovsx": "npx --yes ovsx publish --no-dependencies",
 		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
+		"test:e2e:views": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/views.mjs",
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",

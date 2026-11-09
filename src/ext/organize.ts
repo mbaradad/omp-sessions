@@ -4,7 +4,6 @@
 
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import { sendToHost } from "../shared/launch";
 import { ORG_COLORS, type OrgColor, type OrgData, type OrgGroup, PRIORITIES, type Priority, childGroups, effectiveColor, groupPath } from "../shared/organize";
 import { GROUP_MODES, type GroupMode, ROOT_KEY, SORT_MODES, type SortMode, isGroupMode, isSortMode, resolveSort } from "../shared/organize-view";
 import { type SessionMeta, sessionDir } from "../shared/protocol";
@@ -228,35 +227,43 @@ export function registerOrganize(api: OmpApi): void {
 		}
 	})();
 
-	// ---------- store sync, cleanup of deleted sessions ----------
-	let known = new Set(sessions.all().map(m => m.id));
+	// ---------- store sync, cleanup of deleted sessions, AO pins ----------
+	/** Session ids of the last AO list; undefined until the first one arrived (an empty list before that means "not loaded", not "all deleted"). */
+	let known: Set<string> | undefined;
+	/** AO's pin of each session as last seen, so a pin set in AO's own apps comes over while ours is still in flight to AO. */
+	const aoPins = new Map<string, boolean>();
 	const cleanup = () => store.cleanup(id => !!sessions.get(id) || fs.existsSync(sessionDir(id)));
-	try {
-		cleanup();
-	} catch {
-		/* read-only home: keep the stale entries */
-	}
 	const storeSub = store.onDidChange(() => {
 		decoEmitter.fire(sessions.all().map(m => sessionUri(m.id)));
 		setChatDecorator(chatDecoration);
 		if (tree.filter) updateChrome();
 	});
-	context.subscriptions.push(
-		{ dispose: () => storeSub.dispose() },
-		sessions.onDidChange(() => {
-			const now = new Set(sessions.all().map(m => m.id));
-			const removed = [...known].some(id => !now.has(id));
-			known = now;
-			if (removed) {
-				try {
-					cleanup();
-				} catch {
-					/* retried on the next removal */
-				}
+	const syncFromAo = () => {
+		if (!sessions.loaded) return;
+		const now = new Set(sessions.all().map(m => m.id));
+		const removed = !known || [...known].some(id => !now.has(id));
+		known = now;
+		if (removed) {
+			try {
+				cleanup();
+			} catch {
+				/* read-only home: retried on the next removal */
 			}
-			if (tree.filter) updateChrome();
-		}),
-	);
+		}
+		const pinned: string[] = [];
+		const unpinned: string[] = [];
+		for (const id of now) {
+			const ao = sessions.model(id)?.pinned;
+			if (ao === undefined || aoPins.get(id) === ao) continue;
+			aoPins.set(id, ao);
+			if (ao !== !!store.session(id).pinned) (ao ? pinned : unpinned).push(id);
+		}
+		if (pinned.length) store.setPinned(pinned, true);
+		if (unpinned.length) store.setPinned(unpinned, false);
+		if (tree.filter) updateChrome();
+	};
+	syncFromAo();
+	context.subscriptions.push({ dispose: () => storeSub.dispose() }, sessions.onDidChange(syncFromAo));
 
 	// ---------- collapse state ----------
 	const remember = (node: Node, collapsed: boolean) => {
@@ -520,8 +527,13 @@ export function registerOrganize(api: OmpApi): void {
 			const metas = await targetSessions(arg, all, placeHolder, filter);
 			if (metas.length) apply(metas.map(m => m.id));
 		});
-	flagCommand("omp.organize.pin", "Pin which session?", ids => store.setPinned(ids, true), m => !store.session(m.id).pinned);
-	flagCommand("omp.organize.unpin", "Unpin which session?", ids => store.setPinned(ids, false), m => !!store.session(m.id).pinned);
+	/** Pins live in AO too (its apps show them); organize.json keeps the copy the views sort by. */
+	const pin = (ids: string[], pinned: boolean) => {
+		store.setPinned(ids, pinned);
+		for (const id of ids) void sessions.setPinned(id, pinned).catch(err => api.ao.log.warn(`AO pin ${id}: ${String(err)}`));
+	};
+	flagCommand("omp.organize.pin", "Pin which session?", ids => pin(ids, true), m => !store.session(m.id).pinned);
+	flagCommand("omp.organize.unpin", "Unpin which session?", ids => pin(ids, false), m => !!store.session(m.id).pinned);
 	flagCommand(
 		"omp.organize.archive",
 		"Archive which session?",
@@ -653,21 +665,13 @@ export function registerOrganize(api: OmpApi): void {
 		if (working || metas.length > 1) {
 			const ok = await vscode.window.showWarningMessage(
 				`Stop ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} sessions`}?`,
-				{ modal: true, detail: `${working ? `${working} ${working === 1 ? "is" : "are"} working. ` : ""}omp exits; transcripts are kept and can be resumed.` },
+				{ modal: true, detail: `${working ? `${working} ${working === 1 ? "is" : "are"} working. ` : ""}The omp agents exit; the sessions and transcripts stay and can be resumed.` },
 				"Stop",
 			);
 			if (ok !== "Stop") return;
 		}
-		await Promise.all(
-			metas.map(async m => {
-				if (await sendToHost(m, { t: "stop" })) return;
-				try {
-					process.kill(m.pid, "SIGTERM");
-				} catch {
-					/* already gone */
-				}
-			}),
-		);
+		const failed = (await Promise.allSettled(metas.map(m => sessions.stop(m.id)))).filter(r => r.status === "rejected");
+		if (failed.length) void vscode.window.showErrorMessage(plain(`Could not stop ${failed.length} session(s): ${String((failed[0] as PromiseRejectedResult).reason)}`));
 	});
 
 	reg("omp.organize.resumeSelected", async (arg?: unknown, all?: unknown) => {
@@ -679,14 +683,14 @@ export function registerOrganize(api: OmpApi): void {
 		let started = 0;
 		for (const m of metas) {
 			try {
-				sessions.launch({ cwd: m.cwd, id: m.id });
+				await sessions.resume(m.id);
 				started++;
 			} catch (err) {
 				void vscode.window.showErrorMessage(plain(`Could not resume “${m.title}”: ${err instanceof Error ? err.message : String(err)}`));
 				break;
 			}
 		}
-		if (started) vscode.window.setStatusBarMessage(`$(debug-start) Resuming ${started} session${started === 1 ? "" : "s"} in the background`, 4000);
+		if (started) vscode.window.setStatusBarMessage(`$(debug-start) Resumed ${started} session${started === 1 ? "" : "s"}`, 4000);
 	});
 
 	reg("omp.organize.deleteSelected", async (arg?: unknown, all?: unknown) => {
@@ -698,17 +702,21 @@ export function registerOrganize(api: OmpApi): void {
 			return;
 		}
 		const ok = await vscode.window.showWarningMessage(
-			`Remove ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} stopped sessions`} from the list?`,
+			`Remove ${metas.length === 1 ? `“${metas[0].title}”` : `${metas.length} stopped sessions`}?`,
 			{
 				modal: true,
-				detail: `Deletes the sessions' omp Sessions records and file snapshots. omp transcripts stay in ~/.omp/agent/sessions.${running ? ` ${running} running session${running === 1 ? " is" : "s are"} skipped.` : ""}`,
+				detail: `Deletes the sessions from AO, with their worktrees when they have no uncommitted changes. omp transcripts stay in ~/.omp/agent/sessions.${running ? ` ${running} running session${running === 1 ? " is" : "s are"} skipped.` : ""}`,
 			},
 			"Remove",
 		);
 		if (ok !== "Remove") return;
 		for (const m of metas) {
 			api.closePanel(m.id);
-			sessions.remove(m.id);
+			try {
+				await sessions.remove(m.id);
+			} catch (err) {
+				void vscode.window.showErrorMessage(plain(`Could not remove “${m.title}”: ${err instanceof Error ? err.message : String(err)}`));
+			}
 		}
 	});
 }

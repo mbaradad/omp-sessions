@@ -1,15 +1,16 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
-import { settleDeadHost } from "../shared/health";
-import { type LaunchOptions, canConnect, findOmp, hostAlive, launchHost, readHostVersion, sendToHost } from "../shared/launch";
+import { type AoClient, type AoNativeSession, type AoSpawnResponse, type AoTurnSettings, readNativeSession } from "../ao/client";
+import { type AoAgentState, type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
+import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
-import { type FileChange, type QueueOp, type SessionMeta, type TaskQueue, sessionDir, sessionsRoot } from "../shared/protocol";
+import type { PermissionMode } from "../shared/permissions";
+import { type FileChange, type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
+import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
-import { plain } from "./plain";
+import type { AoConnection } from "./ao-connection";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -48,79 +49,271 @@ export function resolveOmpPath(): string | undefined {
 	return findOmp(vscode.workspace.getConfiguration("omp").get<string>("path"));
 }
 
-/** Thrown by `SessionManager.launch` when no omp executable is found (see `onOmpMissing`). */
+/** Thrown when no omp executable is found (see `onOmpMissing`). */
 export class OmpMissingError extends Error {
 	constructor() {
 		super("Could not find the `omp` executable. Install omp or set `omp.path` in settings.");
 	}
 }
 
+/** What a new session starts with. AO runs it: in a worktree of the folder's git repository, else in a scratch folder. */
+export interface NewSessionOptions {
+	cwd: string;
+	/** Open (resume when stopped) this existing session instead of creating one. */
+	id?: string;
+	title?: string;
+	/** First prompt. */
+	prompt?: string;
+	/** Old name of the first prompt (New Session with Options' goal). */
+	goal?: string;
+	model?: string;
+	/** Thinking level (AO `effort`). */
+	effort?: string;
+	mode?: PermissionMode;
+	/** omp CLI flags: `--model`, `--thinking` and `--approval-mode` apply; `omp acp` takes no others (GAPS G10). */
+	ompArgs?: string[];
+	/** An omp transcript to continue: AO cannot adopt one yet (GAPS G8). */
+	resumeFile?: string;
+}
+
+/** AO launch settings for a permission mode. omp maps AO `default` to its own asking mode and `bypass-permissions` to yolo; plan is omp's `mode` config option. */
+export function approvalModeFor(mode: PermissionMode): { approvalMode: NonNullable<AoTurnSettings["approvalMode"]>; plan: boolean } {
+	switch (mode) {
+		case "ask":
+			return { approvalMode: "default", plan: false };
+		case "edits":
+			return { approvalMode: "accept-edits", plan: false };
+		case "auto":
+			return { approvalMode: "bypass-permissions", plan: false };
+		case "plan":
+			return { approvalMode: "default", plan: true };
+	}
+}
+
+/** The permission mode a conversation runs in; undefined when AO doesn't say. */
+export function permissionModeOf(settings: AoTurnSettings | undefined): PermissionMode | undefined {
+	if (settings?.planMode) return "plan";
+	switch (settings?.approvalMode) {
+		case "default":
+			return "ask";
+		case "accept-edits":
+		case "auto":
+			return "edits";
+		case "bypass-permissions":
+			return "auto";
+	}
+	return undefined;
+}
+
+/** The status the views show for an AO state; `queued`/`interrupted` show as idle with their detail on the queue or exit reason. */
+export function statusOf(state: AoAgentState): SessionStatus {
+	switch (state) {
+		case "starting":
+			return "starting";
+		case "working":
+			return "working";
+		case "needs_input":
+			return "waiting";
+		case "stopped":
+			return "stopped";
+		default:
+			return "idle";
+	}
+}
+
+/** Last assistant text kept for tooltips and board cards. */
+const LAST_TEXT_MAX = 600;
+
+/**
+ * The views' session record for an AO session model (`cwd`: its workspace folder; `native`: the omp session
+ * the Switchyard omp extension recorded, for the transcript). Host-only fields stay empty: AO runs the agent.
+ */
+export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSession): SessionMeta {
+	const state = model.state;
+	const permissionMode = permissionModeOf(model.conversation?.settings);
+	const stoppedWithError = state === "stopped" && !!model.exitReason;
+	const account = model.conversation?.account;
+	const authProblem = account?.authenticationState === "required" ? account.reauthReason || account.lastAuthFailureReason || "the provider needs a login" : undefined;
+	return {
+		id: model.id,
+		cwd,
+		title: model.title,
+		status: statusOf(state),
+		pid: 0,
+		socket: "",
+		createdAt: model.createdAt,
+		updatedAt: model.updatedAt,
+		changedFiles: model.changedFiles.length,
+		...(model.model && { model: model.model }),
+		...(model.cost !== undefined && { cost: model.cost }),
+		...(model.reply && { lastText: model.reply.length > LAST_TEXT_MAX ? `${model.reply.slice(0, LAST_TEXT_MAX)}…` : model.reply }),
+		...(model.exitReason && { exitReason: model.exitReason }),
+		...(stoppedWithError && { exitCode: 1 }),
+		...(permissionMode && { permissionMode }),
+		...(authProblem && { authProblem }),
+		...(native?.ompSessionId && { ompSessionId: native.ompSessionId }),
+		...(native?.sessionFile && { ompSessionFile: native.sessionFile }),
+	};
+}
+
+/** Parses the omp flags `omp acp` can still honor out of old-style launch arguments; returns the others. */
+export function launchFlags(args: readonly string[]): { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } {
+	const out: { model?: string; effort?: string; mode?: PermissionMode; ignored: string[] } = { ignored: [] };
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		const [flag, inline] = a.startsWith("--") && a.includes("=") ? [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a, undefined];
+		const value = () => inline ?? args[++i];
+		if (flag === "--model") out.model = value();
+		else if (flag === "--thinking") out.effort = value();
+		else if (flag === "--approval-mode") {
+			const v = value();
+			if (v === "ask" || v === "edits" || v === "plan" || v === "auto") out.mode = v;
+			else out.ignored.push(`${flag} ${v}`);
+		} else out.ignored.push(a);
+	}
+	return out;
+}
+
+/**
+ * Every AO session, as `SessionMeta` records for the views (tree, board, status bar, notifications), kept
+ * current from AO's change stream by an AoSessionWatcher; plus the session commands (new, stop, resume,
+ * rename, remove) on AO's API.
+ */
 export class SessionManager implements vscode.Disposable {
 	private sessions = new Map<string, SessionMeta>();
+	private readonly models = new Map<string, AoSessionModel>();
+	/** Workspace folder of each session (AO's list has none; a session's folder never moves). */
+	private readonly workspaces = new Map<string, string>();
+	/** Files changed in each session's worktree, as last counted. */
+	private readonly fileCounts = new Map<string, number>();
 	private readonly emitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.emitter.event;
 	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
 	/** Fires when a known session changes status (not on first observation). */
 	readonly onDidTransition = this.transitionEmitter.event;
-	private timer: NodeJS.Timeout;
-	private watcher: fs.FSWatcher | undefined;
-
-	/** Version of this extension (from the package.json next to `out/host.js`), recorded by hosts it starts. */
-	readonly version: string;
 	private readonly missingEmitter = new vscode.EventEmitter<void>();
-	/** Fires when a launch fails because the omp executable cannot be found. */
+	/** Fires when AO reports that it can't start omp. */
 	readonly onOmpMissing = this.missingEmitter.event;
+	private watcher: AoSessionWatcher | undefined;
+	private starting: Promise<AoSessionWatcher> | undefined;
+	private retry: NodeJS.Timeout | undefined;
+	private disposed = false;
+	/** Set once the first list arrived (until then the views show no sessions, not "none"). */
+	loaded = false;
 
-	constructor(private readonly hostScript: string) {
-		this.version = readHostVersion(hostScript);
-		fs.mkdirSync(sessionsRoot(), { recursive: true, mode: 0o700 });
-		this.refresh();
-		this.timer = setInterval(() => this.refresh(), 1000);
-		try {
-			this.watcher = fs.watch(sessionsRoot(), { recursive: true }, () => this.scheduleRefresh());
-		} catch {
-			/* polling still covers it */
-		}
+	constructor(
+		private readonly ao: AoConnection,
+		/** This extension's version. */
+		readonly version: string,
+	) {
+		void this.connect().catch(() => undefined);
 	}
 
-	private pending: NodeJS.Timeout | undefined;
-	private scheduleRefresh(): void {
-		this.pending ??= setTimeout(() => {
-			this.pending = undefined;
-			this.refresh();
-		}, 80);
-	}
-
-	refresh(): void {
-		const next = new Map<string, SessionMeta>();
-		let entries: string[] = [];
-		try {
-			entries = fs.readdirSync(sessionsRoot());
-		} catch {
-			/* no sessions yet */
-		}
-		for (const id of entries) {
-			let meta: SessionMeta;
+	/** The watcher on the connected daemon; connects (and retries every 10 s in the background) when needed. */
+	private connect(): Promise<AoSessionWatcher> {
+		if (this.watcher) return Promise.resolve(this.watcher);
+		this.starting ??= (async () => {
 			try {
-				meta = JSON.parse(fs.readFileSync(path.join(sessionDir(id), "meta.json"), "utf8")) as SessionMeta;
-			} catch {
-				continue;
+				const client = await this.ao.client();
+				const watcher = new AoSessionWatcher(client, { conversationLimit: 20 });
+				watcher.onChange(change => void this.apply(client, change.changed, change.removed));
+				watcher.onStatus(s => {
+					if (s.state === "retrying") this.ao.log.warn(`AO change stream: ${s.error} (retry ${s.attempt})`);
+				});
+				await watcher.start();
+				if (this.disposed) watcher.close();
+				else this.watcher = watcher;
+				return watcher;
+			} catch (err) {
+				clearTimeout(this.retry);
+				if (!this.disposed) this.retry = setTimeout(() => void this.connect().catch(() => undefined), 10_000);
+				throw err;
+			} finally {
+				this.starting = undefined;
 			}
-			if (meta.status !== "stopped") meta = settleDeadHost(meta, hostAlive(meta));
-			next.set(id, meta);
+		})();
+		return this.starting;
+	}
+
+	private async workspaceOf(client: AoClient, model: AoSessionModel): Promise<string> {
+		const known = this.workspaces.get(model.id);
+		if (known) return known;
+		const { data } = await client.api.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId: model.id } } }).catch(() => ({ data: undefined }));
+		const dir = data?.workspacePath;
+		// A terminated session may have released its workspace: retry on its next change.
+		if (dir) this.workspaces.set(model.id, dir);
+		return dir ?? "";
+	}
+
+	private async apply(client: AoClient, changed: readonly AoSessionModel[], removed: readonly string[]): Promise<void> {
+		const cwds = await Promise.all(changed.map(m => this.workspaceOf(client, m)));
+		if (this.disposed) return;
+		const next = new Map(this.sessions);
+		const transitions: { meta: SessionMeta; from: SessionStatus }[] = [];
+		let dirty = removed.length > 0 || !this.loaded;
+		for (const id of removed) {
+			next.delete(id);
+			this.models.delete(id);
 		}
-		let changed = next.size !== this.sessions.size;
-		for (const [id, meta] of next) {
-			const prev = this.sessions.get(id);
-			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title) changed = true;
-			if (prev && prev.status !== meta.status) this.transitionEmitter.fire({ meta, from: prev.status });
-		}
+		const recount: string[] = [];
+		changed.forEach((model, i) => {
+			const meta = metaOf(model, cwds[i], readNativeSession(model.id));
+			// Turn diffs miss files the agent created; the worktree's changes (counted below) don't.
+			meta.changedFiles = Math.max(meta.changedFiles, this.fileCounts.get(model.id) ?? 0);
+			const prev = next.get(model.id);
+			this.models.set(model.id, model);
+			next.set(model.id, meta);
+			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title || prev.cwd !== meta.cwd || prev.cost !== meta.cost) dirty = true;
+			if (prev && prev.status !== meta.status) transitions.push({ meta, from: prev.status });
+			if (meta.status !== "working" && meta.status !== "starting" && (!prev || prev.status !== meta.status)) recount.push(model.id);
+		});
 		this.sessions = next;
-		if (changed) this.emitter.fire();
+		this.loaded = true;
+		for (const t of transitions) this.transitionEmitter.fire(t);
+		if (dirty) this.emitter.fire();
+		for (const id of recount) void this.recountFiles(id);
+	}
+
+	/** Updates a session's changed-file count from its worktree (after a turn, on first sight). */
+	private async recountFiles(id: string): Promise<void> {
+		const files = await this.workspaceFiles(id).catch(() => undefined);
+		if (!files || this.disposed) return;
+		this.fileCounts.set(id, files.length);
+		const meta = this.sessions.get(id);
+		if (!meta || meta.changedFiles === files.length) return;
+		this.sessions.set(id, { ...meta, changedFiles: files.length });
+		this.emitter.fire();
+	}
+
+	/** Files the session changed in its workspace compared with its base branch (AO `workspace/files`), paths relative to its folder. */
+	async workspaceFiles(id: string): Promise<AoChangedFile[]> {
+		const client = await this.ao.client();
+		const { data, error, response } = await client.api.GET("/api/v1/sessions/{sessionId}/workspace/files", { params: { path: { sessionId: id } } });
+		if (!response.ok || !data) throw new Error(errorMessage(error, response));
+		return data.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
+	}
+
+	/** Relists every session from AO. */
+	refresh(): void {
+		void this.connect()
+			.then(w => w.reload())
+			.catch(() => undefined);
+	}
+
+	/** Refetches one session now and resolves with its record. */
+	async refreshSession(id: string): Promise<SessionMeta | undefined> {
+		const watcher = await this.connect();
+		await watcher.refresh(id).catch(() => undefined);
+		return this.sessions.get(id);
 	}
 
 	get(id: string): SessionMeta | undefined {
 		return this.sessions.get(id);
+	}
+
+	/** The AO model behind a session (conversation snapshot, question, queue of turns). */
+	model(id: string): AoSessionModel | undefined {
+		return this.models.get(id);
 	}
 
 	all(): SessionMeta[] {
@@ -133,12 +326,12 @@ export class SessionManager implements vscode.Disposable {
 
 	/**
 	 * The session's folder is a workspace folder or inside one (as spelled, or with symlinks resolved); sessions
-	 * in linked git worktrees count for their main repository. Workspace folders are local paths on the
-	 * extension host's machine: `file:` (local or remote extension host) or `vscode-remote:` URIs.
+	 * in linked git worktrees (every AO project session) count for their main repository. Workspace folders are
+	 * local paths on the extension host's machine: `file:` (local or remote extension host) or `vscode-remote:` URIs.
 	 */
 	inWorkspace(meta: SessionMeta): boolean {
 		const folders = (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === "file" || f.uri.scheme === "vscode-remote").map(f => f.uri.fsPath);
-		if (!folders.length) return false;
+		if (!folders.length || !meta.cwd) return false;
 		const project = projectRoot(meta.cwd);
 		const dirs = project.worktree ? [meta.cwd, project.root] : [meta.cwd];
 		return withinAny(dirs, folders) || withinAny(dirs.map(realPath), folders.map(realPath));
@@ -181,43 +374,145 @@ export class SessionManager implements vscode.Disposable {
 	}
 
 	/**
-	 * Launch a detached host. Reusing an existing id resumes that session's omp transcript with
-	 * the omp arguments it was created with (persisted in `launch.json`).
+	 * Starts a session in AO (in a worktree of `cwd`'s git repository, else in a scratch folder), or with
+	 * `id` reopens that one (resuming it when stopped). Resolves with its id once AO has it.
 	 */
-	launch(opts: LaunchOptions): string {
-		const omp = resolveOmpPath();
-		if (!omp) {
-			this.missingEmitter.fire();
-			throw new OmpMissingError();
+	async launch(opts: NewSessionOptions): Promise<string> {
+		const client = await this.ao.client();
+		if (opts.id) {
+			await this.resume(opts.id);
+			return opts.id;
 		}
-		const extraArgs = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
-		const id = launchHost(
-			{
-				hostScript: this.hostScript,
-				omp,
-				hostVersion: this.version,
-				extraArgs,
-				onError: err => void vscode.window.showErrorMessage(plain(`Could not start the omp session host: ${err.message}`)),
-			},
-			opts,
-		);
-		if (opts.id) this.refresh();
+		if (opts.resumeFile) throw new Error("AO cannot continue an existing omp transcript yet (GAPS G8): start a new session instead.");
+		const flags = launchFlags(opts.ompArgs ?? []);
+		if (flags.ignored.length) this.ao.log.warn(`omp flags omp acp can't take, ignored: ${flags.ignored.join(" ")}`);
+		// Precedence: this launch, then the project's saved defaults (Session Settings), then the omp Sessions defaults.
+		const project = launchFlags(readProjectDefaults(opts.cwd)?.args ?? []);
+		const defaults = readLauncherSettings();
+		const mode = opts.mode ?? flags.mode ?? project.mode ?? defaults.mode;
+		const approval = mode ? approvalModeFor(mode) : undefined;
+		const aoProject = await client.projectForFolder(opts.cwd);
+		const prompt = (opts.prompt ?? opts.goal)?.trim();
+		const model = opts.model ?? flags.model ?? project.model ?? defaults.model;
+		const effort = opts.effort ?? flags.effort ?? project.effort;
+		const title = opts.title?.trim().slice(0, 100);
+		let response: AoSpawnResponse;
+		try {
+			response = await client.spawnSession({
+				harness: "omp",
+				mode: "chat",
+				kind: "worker",
+				...(aoProject && { projectId: aoProject.id }),
+				...(title && { displayName: title }),
+				...(prompt && { prompt }),
+				...(model && { model }),
+				...(effort && { effort }),
+				...(approval && { approvalMode: approval.approvalMode }),
+			});
+		} catch (err) {
+			if (err instanceof Error && /omp.*(not (installed|found)|missing)|harness.*(not installed|unavailable)/i.test(err.message)) this.missingEmitter.fire();
+			throw err;
+		}
+		const id = response.session.id;
+		if (approval?.plan) await this.setPlanMode(id, true).catch(err => this.ao.log.warn(`plan mode for ${id}: ${String(err)}`));
+		await this.refreshSession(id);
 		return id;
 	}
 
-	/** Waits until the host accepts connections (Unix sockets and Windows pipes alike). */
-	async waitForSocket(id: string, timeoutMs = 20000): Promise<boolean> {
-		const deadline = Date.now() + timeoutMs;
-		const started = Date.now();
-		while (Date.now() < deadline) {
-			this.refresh();
-			const meta = this.get(id);
-			// The host already gave up (missing folder, omp failed to start).
-			if (meta?.status === "stopped" && meta.updatedAt >= started) return false;
-			if (meta && meta.status !== "stopped" && (await canConnect(meta.socket))) return true;
-			await sleep(150);
+	/** omp's plan mode (its `mode` config option): live, no restart. */
+	async setPlanMode(id: string, plan: boolean): Promise<void> {
+		const client = await this.ao.client();
+		const { response, error } = await client.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", {
+			params: { path: { sessionId: id, configId: "mode" } },
+			body: { value: plan ? "plan" : "default" },
+		});
+		if (!response.ok) throw new Error(errorMessage(error, response));
+	}
+
+	/** Stops the session's agent; the session and its transcript stay (MAPPING D4: AO `exit-agent`). */
+	async stop(id: string): Promise<void> {
+		const client = await this.ao.client();
+		const { response, error } = await client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: id } } });
+		if (!response.ok) throw new Error(errorMessage(error, response));
+		await this.refreshSession(id);
+	}
+
+	/** Brings a stopped session back: `resume-agent` after a stop, `restore` after AO terminated it. */
+	async resume(id: string): Promise<void> {
+		const client = await this.ao.client();
+		const view = this.models.get(id)?.view ?? (await client.getSession(id));
+		if (view.isTerminated) await client.restoreSession(id);
+		else {
+			const { response, error } = await client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: id } } });
+			if (!response.ok) throw new Error(errorMessage(error, response));
 		}
-		return false;
+		await this.refreshSession(id);
+	}
+
+	async rename(id: string, title: string): Promise<void> {
+		const client = await this.ao.client();
+		await client.renameSession(id, title.slice(0, 100));
+		await this.refreshSession(id);
+	}
+
+	/**
+	 * Deletes the session from AO (terminating it first) with its worktree. AO refuses while the worktree has
+	 * uncommitted changes: the session then stays, terminated (stopped), and the error names the folder.
+	 */
+	async remove(id: string): Promise<void> {
+		const client = await this.ao.client();
+		const view = this.models.get(id)?.view;
+		if (!view?.isTerminated) await client.killSession(id);
+		const { response, error } = await client.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId: id }, query: { cleanup: true } } });
+		if (!response.ok && response.status !== 404) {
+			const cwd = this.sessions.get(id)?.cwd;
+			await this.refreshSession(id);
+			throw new Error(`${errorMessage(error, response)}${response.status === 409 && cwd ? ` (${cwd}: commit or discard the changes there, then remove it again)` : ""}`);
+		}
+		await this.refreshSession(id);
+	}
+
+	/** Pins or unpins the session in AO (its own pin, shown by AO's apps too). */
+	async setPinned(id: string, pinned: boolean): Promise<void> {
+		const client = await this.ao.client();
+		const params = { params: { path: { sessionId: id } } };
+		const { response, error } = pinned ? await client.api.POST("/api/v1/sessions/{sessionId}/pin", params) : await client.api.DELETE("/api/v1/sessions/{sessionId}/pin", params);
+		if (!response.ok) throw new Error(errorMessage(error, response));
+		await this.refreshSession(id);
+	}
+
+	/** Model (and thinking) for the session's next turns. */
+	async setModel(id: string, settings: { model?: string; effort?: string }): Promise<void> {
+		const client = await this.ao.client();
+		await client.setTurnSettings(id, { ...(settings.model && { model: settings.model }), ...(settings.effort && { reasoningEffort: settings.effort }) });
+		await this.refreshSession(id);
+	}
+
+	/**
+	 * Switches the permission mode. Plan is omp's live `mode` option; the approval level is fixed when AO
+	 * launches omp (GAPS G7), so changing it restarts the idle agent (exit-agent, resume-agent: same transcript).
+	 * Resolves with how it applied; throws while the agent is busy or stopped.
+	 */
+	async setMode(id: string, mode: PermissionMode): Promise<"live" | "restarted"> {
+		const meta = this.get(id);
+		if (!meta) throw new Error("that session no longer exists");
+		if (meta.status === "stopped") throw new Error("the session is stopped: resume it first");
+		const client = await this.ao.client();
+		const want = approvalModeFor(mode);
+		const current = this.models.get(id)?.conversation?.settings.approvalMode ?? "default";
+		let how: "live" | "restarted" = "live";
+		if (want.approvalMode !== current) {
+			if (meta.status !== "idle") throw new Error(`AO restarts omp to change how approvals are answered, which only happens while the session is idle (it is ${meta.status})`);
+			await client.setTurnSettings(id, { approvalMode: want.approvalMode });
+			const exit = await client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: id } } });
+			if (!exit.response.ok) throw new Error(errorMessage(exit.error, exit.response));
+			const resume = await client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: id } } });
+			if (!resume.response.ok) throw new Error(errorMessage(resume.error, resume.response));
+			how = "restarted";
+		}
+		await this.setPlanMode(id, want.plan);
+		await this.refreshSession(id);
+		return how;
 	}
 
 	queue(id: string): TaskQueue {
@@ -247,19 +542,19 @@ export class SessionManager implements vscode.Disposable {
 		this.refresh();
 	}
 
-	remove(id: string): void {
-		fs.rmSync(sessionDir(id), { recursive: true, force: true });
-		this.refresh();
-	}
-
 	dispose(): void {
-		clearInterval(this.timer);
-		clearTimeout(this.pending);
+		this.disposed = true;
+		clearTimeout(this.retry);
 		this.watcher?.close();
 		this.emitter.dispose();
 		this.transitionEmitter.dispose();
 		this.missingEmitter.dispose();
 	}
+}
+
+function errorMessage(error: unknown, response: Response): string {
+	const message = isRecord(error) && typeof error.message === "string" ? error.message : undefined;
+	return message ?? `AO answered HTTP ${response.status}`;
 }
 
 export interface HistoryEntry {

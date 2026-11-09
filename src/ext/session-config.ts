@@ -1,9 +1,7 @@
-// "omp: Session Settings…": per-session skills / tools / MCP servers / rules / extensions / LSP,
-// plus model, thinking, permission mode and max time. Saved to the session's launch.json (flags)
-// and session-config.json (the host turns it into an omp settings overlay on every start).
-import { setTimeout as sleep } from "node:timers/promises";
+// "omp: Session Settings…": model, thinking and permission mode of a session, applied through AO, plus the
+// project defaults new sessions start with. The per-session skills / tools / MCP servers / rules /
+// extensions / LSP / max time rows remain for project defaults; AO's `omp acp` can't take them (GAPS G10).
 import * as vscode from "vscode";
-import { sendToHost, setSessionPermissionMode } from "../shared/launch";
 import { PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
 import { sessionDir } from "../shared/protocol";
 import {
@@ -21,9 +19,7 @@ import {
 	readProjectDefaults,
 	readSessionToggles,
 	settingsSummary,
-	writeLaunchArgs,
 	writeProjectDefaults,
-	writeSessionToggles,
 } from "../shared/session-config";
 import { type Capabilities, discoverCapabilities } from "../shared/session-discovery";
 import type { OmpApi } from "./api";
@@ -305,74 +301,41 @@ function modeLabel(value: unknown): string | undefined {
 	return mode ? PERMISSION_MODE_INFO[mode].label : undefined;
 }
 
-async function stopAndWait(api: OmpApi, id: string): Promise<void> {
+/**
+ * Applies model, thinking and permission mode through AO (model and thinking for the next turn; the mode
+ * as SessionManager.setMode does). `omp acp` takes no launch flags or tool/skill/MCP toggles (GAPS G10):
+ * changes to those are reported, not applied.
+ */
+async function applyToSession(api: OmpApi, id: string, before: SettingsDraft, draft: SettingsDraft): Promise<void> {
 	const meta = api.sessions.get(id);
-	if (!meta || meta.status === "stopped") return;
-	const kill = () => {
+	if (!meta) return;
+	const applied: string[] = [];
+	const problems: string[] = [];
+	const model = draft.flags.model !== before.flags.model ? draft.flags.model : undefined;
+	const effort = draft.flags.thinking !== before.flags.thinking ? draft.flags.thinking : undefined;
+	if (model || effort) {
 		try {
-			process.kill(meta.pid, "SIGTERM");
-		} catch {
-			/* already gone */
+			await api.sessions.setModel(id, { model, effort });
+			applied.push([model ? `model ${model}` : "", effort ? `thinking ${effort}` : ""].filter(Boolean).join(" and "));
+		} catch (err) {
+			problems.push(`model/thinking: ${err instanceof Error ? err.message : String(err)}`);
 		}
-	};
-	if (!(await sendToHost(meta, { t: "stop" }))) kill();
-	const deadline = Date.now() + 10_000;
-	while (Date.now() < deadline) {
-		api.sessions.refresh();
-		if (api.sessions.get(id)?.status === "stopped") return;
-		await sleep(200);
-	}
-	kill();
-	await sleep(500);
-}
-
-/** Restarts a session with its saved launch settings; the conversation continues via resume. */
-async function restart(api: OmpApi, id: string): Promise<void> {
-	const meta = api.sessions.get(id);
-	if (!meta) return;
-	await stopAndWait(api, id);
-	await api.launchAndOpen({ cwd: meta.cwd, id });
-}
-
-async function applyToSession(api: OmpApi, id: string, original: string[], before: SettingsDraft, draft: SettingsDraft): Promise<void> {
-	writeLaunchArgs(id, applyFlags(original, draft.flags));
-	writeSessionToggles(id, draft.toggles);
-	api.refreshTree();
-	const meta = api.sessions.get(id);
-	if (!meta) return;
-	if (meta.status === "stopped") {
-		const a = await vscode.window.showInformationMessage(plain(`Saved settings of "${meta.title}"; they apply when it is resumed.`), "Resume now");
-		if (a) await api.launchAndOpen({ cwd: meta.cwd, id });
-		return;
-	}
-	// Model and thinking switch live; the rest needs a fresh omp process.
-	const live: string[] = [];
-	const model = draft.flags.model;
-	if (model && model !== before.flags.model && model.includes("/")) {
-		const slash = model.indexOf("/");
-		if (await sendToHost(meta, { t: "rpc", cmd: { type: "set_model", provider: model.slice(0, slash), modelId: model.slice(slash + 1) } })) live.push(`model ${model}`);
-	}
-	if (draft.flags.thinking && draft.flags.thinking !== before.flags.thinking) {
-		if (await sendToHost(meta, { t: "rpc", cmd: { type: "set_thinking_level", level: draft.flags.thinking } })) live.push(`thinking ${draft.flags.thinking}`);
 	}
 	const mode = permissionModeOf(draft.flags.approvalMode);
-	const modeChanged = draft.flags.approvalMode !== before.flags.approvalMode;
-	if (mode && modeChanged && (await setSessionPermissionMode(meta, mode))) live.push(`to ${PERMISSION_MODE_INFO[mode].label} mode`);
-	// Hosts that predate permission modes take the approval flag only at start.
-	const restartNeeded =
-		JSON.stringify(normalizeToggles(before.toggles)) !== JSON.stringify(normalizeToggles(draft.toggles)) || RESTART_FLAGS.some(k => before.flags[k] !== draft.flags[k]) || (modeChanged && meta.permissionMode === undefined);
-	const liveNote = live.length ? `Switched ${live.join(" and ")} now. ` : "";
-	if (!restartNeeded) {
-		void vscode.window.showInformationMessage(plain(`${liveNote}Saved settings of "${meta.title}".`));
-		return;
+	if (mode && draft.flags.approvalMode !== before.flags.approvalMode) {
+		try {
+			await api.sessions.setMode(id, mode);
+			applied.push(`${PERMISSION_MODE_INFO[mode].label} mode`);
+		} catch (err) {
+			problems.push(`mode: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
-	const now = "Apply now (restart session)";
-	const later = "Apply on next resume";
-	const choice =
-		meta.status === "idle"
-			? await vscode.window.showInformationMessage(plain(`${liveNote}The other changes need "${meta.title}" to restart; the conversation continues after it.`), now, later)
-			: await vscode.window.showWarningMessage(plain(`${liveNote}"${meta.title}" is ${meta.status === "working" ? "working" : "waiting for input"}; the other changes apply when it restarts.`), "Restart now anyway", later);
-	if (choice === now || choice === "Restart now anyway") await restart(api, id);
+	const unsupported = JSON.stringify(normalizeToggles(before.toggles)) !== JSON.stringify(normalizeToggles(draft.toggles)) || RESTART_FLAGS.some(k => before.flags[k] !== draft.flags[k]);
+	if (unsupported) problems.push("skills, tools, MCP servers, rules, extensions, LSP and max time can't be set for sessions AO runs (GAPS G10)");
+	api.refreshTree();
+	const text = [applied.length ? `"${meta.title}" now uses ${applied.join(", ")}.` : "", problems.length ? `Not applied: ${problems.join("; ")}.` : ""].filter(Boolean).join(" ");
+	if (problems.length) void vscode.window.showWarningMessage(plain(text));
+	else if (text) void vscode.window.showInformationMessage(plain(text));
 }
 
 async function sessionSettings(api: OmpApi, arg: unknown): Promise<void> {
@@ -410,7 +373,7 @@ async function sessionSettings(api: OmpApi, arg: unknown): Promise<void> {
 			case undefined:
 				return;
 			case "apply":
-				if (JSON.stringify(draft) !== JSON.stringify(before)) await applyToSession(api, id, original, before, draft);
+				if (JSON.stringify(draft) !== JSON.stringify(before)) await applyToSession(api, id, before, draft);
 				return;
 			case "saveDefault":
 				writeProjectDefaults(root, { args: applyFlags([], draft.flags), toggles: draft.toggles });

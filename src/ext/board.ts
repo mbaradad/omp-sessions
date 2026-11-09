@@ -5,9 +5,9 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { effectiveColor, effectiveRank } from "../shared/organize";
-import { MAX_CONCURRENT, readScheduler, writeScheduler } from "../shared/scheduler";
 import type { BoardData, BoardCard, FromBoard, ToBoard } from "../kanban/board";
 import type { OmpApi } from "./api";
+import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -30,7 +30,8 @@ function buildData(api: OmpApi): BoardData {
 			id: m.id,
 			title: m.title,
 			cwd: m.cwd,
-			project: path.basename(m.cwd) || m.cwd,
+			// AO runs project sessions in worktrees named after the session: name the repository instead.
+			project: path.basename(projectRoot(m.cwd).root) || m.cwd,
 			status: m.status,
 			lastText: m.lastText,
 			cost: m.cost,
@@ -75,19 +76,6 @@ function apply(api: OmpApi, updates: FromBoard): void {
 			d.sessions[u.id] = e;
 		}
 	});
-}
-
-async function setConcurrency(api: OmpApi, max?: number): Promise<void> {
-	const cfg = readScheduler();
-	const value =
-		max ??
-		(await vscode.window.showInputBox({
-			prompt: "Max concurrent queued tasks (0 = unlimited)",
-			value: String(cfg.maxConcurrent),
-			validateInput: v => (v.trim() === "" || !/^\d+$/.test(v.trim()) ? "Digits only" : undefined),
-		}));
-	if (value === undefined) return;
-	writeScheduler({ ...cfg, maxConcurrent: Math.max(0, Math.min(MAX_CONCURRENT, typeof value === "number" ? value : Number(value.trim()))) });
 }
 
 async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
@@ -137,7 +125,7 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			store.deleteLane(msg.id);
 			break;
 		case "concurrency":
-			await setConcurrency(api, msg.max);
+			await vscode.commands.executeCommand("omp.scheduler.setConcurrency", msg.max);
 			break;
 		case "newSession": {
 			const cwd = await api.pickFolder();
