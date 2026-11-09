@@ -274,7 +274,7 @@ export async function startAoFixture(opts = {}) {
 		fs.closeSync(log);
 		const exited = new Promise(r => proc.once("exit", (code, signal) => r({ code, signal })));
 		proc.once("error", () => {});
-		const ready = await waitReady(`http://127.0.0.1:${port}`, exited, readyTimeoutMs);
+		const ready = await waitReady(`http://127.0.0.1:${port}`, exited, readyTimeoutMs, { pid: proc.pid, dataDir });
 		if (ready === true) return { proc };
 		killGroup(proc.pid, "SIGKILL");
 		return { failed: ready, tail: fs.readFileSync(logFile, "utf8").split("\n").slice(-40).join("\n") };
@@ -446,8 +446,12 @@ export async function startAoFixture(opts = {}) {
 	return fx;
 }
 
-/** true when /readyz answers ready, "exited" when the daemon died, "timeout" otherwise. */
-async function waitReady(baseUrl, exited, timeoutMs) {
+/**
+ * true when /readyz answers ready *from the daemon we spawned* (its pid and `workingDirectory` = our data
+ * dir; another daemon on a busy port would also answer ready, and a test would silently run against it),
+ * "exited" when ours died, "timeout" otherwise.
+ */
+async function waitReady(baseUrl, exited, timeoutMs, expect) {
 	let dead = false;
 	exited.then(() => (dead = true));
 	const deadline = Date.now() + timeoutMs;
@@ -455,12 +459,17 @@ async function waitReady(baseUrl, exited, timeoutMs) {
 		if (dead) return "exited";
 		try {
 			const res = await fetch(`${baseUrl}/readyz`, { signal: AbortSignal.timeout(1000) });
-			if (res.ok && (await res.json()).status === "ready") return true;
+			if (res.ok) {
+				const body = await res.json();
+				if (body.status === "ready" && body.pid === expect.pid && sameDir(body.workingDirectory, expect.dataDir)) return true;
+			}
 		} catch {}
 		await sleep(100);
 	}
 	return dead ? "exited" : "timeout";
 }
+
+const sameDir = (a, b) => typeof a === "string" && path.resolve(a) === path.resolve(b);
 
 /**
  * node:test helper: one fixture for the calling test file (or describe block), started in

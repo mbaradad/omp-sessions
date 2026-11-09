@@ -65,3 +65,16 @@ test("real omp stays isolated: the fixture HOME links only the shared agent dir"
 		await ao.stop();
 	}
 });
+
+test("a busy port never makes the fixture adopt another daemon: it fails instead", { skip }, async () => {
+	const first = await startAoFixture();
+	try {
+		await assert.rejects(startAoFixture({ env: { AO_PORT: String(first.port) }, readyTimeoutMs: 6_000 }), /ao daemon (exited|not ready)/);
+		// The first daemon is untouched and still ours.
+		const ready = (await (await fetch(`${first.baseUrl}/readyz`)).json()) as { pid: number; workingDirectory: string };
+		assert.equal(ready.pid, first.pid);
+		assert.equal(path.resolve(ready.workingDirectory), path.resolve(first.dataDir));
+	} finally {
+		await first.stop();
+	}
+});

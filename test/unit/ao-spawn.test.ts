@@ -149,6 +149,44 @@ test("spawnSwitchyardSession: extra omp arguments are written for the shim and t
 	}
 });
 
+test("spawnSwitchyardSession: the caller's setMode runs after the restart and the options, before the prompt; the helper writes no mode file then", async () => {
+	const home = tmpHome();
+	try {
+		const { ao, calls } = fakeAo();
+		const asked: string[] = [];
+		await spawnSwitchyardSession(ao, {
+			ompArgs: ["--advisor"],
+			model: "anthropic/haiku",
+			thinking: "off",
+			mode: "plan",
+			prompt: "go",
+			home,
+			// checkpoints' setSessionMode: writes the file and sets omp's plan option itself.
+			setMode: async (id, mode) => void (asked.push(`${id}=${mode}`), calls.push(`setMode ${mode}`)),
+		});
+		assert.deepEqual(asked, ["repo-1=plan"]);
+		// Restart first (it resets omp's live options), then model and thinking, then the mode, then the prompt.
+		assert.deepEqual(calls.slice(calls.indexOf("exitAgent")), ["exitAgent", "resumeAgent", "getConversation", "configOptions", "setConfigOption model=anthropic/haiku", "configOptions", "setConfigOption thinking=off", "setMode plan", "sendMessage"]);
+		// The hook owns the file and the plan option: the helper wrote no mode file and set no plan option of its own.
+		assert.equal(fs.existsSync(sessionFile(home, "mode")), false);
+		assert.equal(calls.includes("setConfigOption mode=plan"), false);
+
+		// Without a hook, plan is applied after the restart too, not before it.
+		const plain = fakeAo();
+		await spawnSwitchyardSession(plain.ao, { ompArgs: ["--advisor"], mode: "plan", home });
+		assert.deepEqual(plain.calls.slice(plain.calls.indexOf("exitAgent")), ["exitAgent", "resumeAgent", "getConversation", "configOptions", "setConfigOption mode=plan"]);
+		assert.equal(fs.readFileSync(sessionFile(home, "mode"), "utf8"), "plan\n");
+
+		// A hook that fails: no prompt is sent and the session is removed.
+		const failing = fakeAo();
+		await assert.rejects(spawnSwitchyardSession(failing.ao, { prompt: "go", home, setMode: async () => Promise.reject(new Error("gate unavailable")) }), /gate unavailable/);
+		assert.deepEqual(failing.calls.slice(-3), ["getConversation", "killSession", "deleteSession"]);
+		assert.equal(failing.calls.includes("sendMessage"), false);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
 test("daemonEnv: the Switchyard omp shim's folder goes first on the PATH of a daemon we start, only when it exists", () => {
 	const home = tmpHome();
 	try {
