@@ -127,7 +127,8 @@ function SessionCard(p: {
 				},
 				icon("external", 11),
 			),
-			s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
+			s.harness && s.harness !== "omp" ? h("span", { className: "omps-chip omps-harness", title: `Runs on the ${s.harness} harness (omp-only: plan mode, the approval gate, /undo)` }, s.harness) : null,
+			s.group ? h("span", { className: "omps-chip", title: "Group" }, s.group) : null,
 			s.upstream?.some(e => e.state === "conflict")
 				? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict")
 				: s.upstream?.some(e => e.state === "upstream-changed")

@@ -16,6 +16,8 @@ export interface TaskSession {
 	title: string;
 	/** "working" shows a spinner on its queue; "stopped" keeps it out of the add-task picker and the plan-only list. */
 	state: string;
+	/** The AO harness; absent: omp. omp's todo plan is mirrored for omp sessions only. */
+	harness?: string;
 }
 
 /** The sessions the Tasks view reads (AoSessionModel fits as it is; so can a view over SessionManager). */

@@ -27,6 +27,8 @@ export interface SessionMeta {
 	ompSessionFiles?: string[];
 	ompSessionId?: string;
 	model?: string;
+	/** The AO harness the session runs (claude-code, codex, omp, …); absent: omp (AO sessions from before harnesses were recorded). */
+	harness?: string;
 	exitCode?: number | null;
 	exitReason?: string;
 	/** Number of distinct files the agent changed in this session. */

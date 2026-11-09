@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { isOmpHarness } from "../ao/harness";
 import { OrganizeStore, organizeFile } from "../shared/organize";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
@@ -106,7 +107,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		view.webview.options = { enableCommandUris: true };
 		view.description = undefined;
 		view.webview.html = `<!DOCTYPE html><html><body style="font-family:var(--vscode-font-family);color:var(--vscode-descriptionForeground);padding:16px;line-height:1.6">
-<p>Open an omp session here: pick one in the Sessions view and choose <b>Open in Side Bar</b>, or set <code>switchyard.chatLocation</code> to <code>sidebar</code>.</p>
+<p>Open a session here: pick one in the Sessions view and choose <b>Open in Side Bar</b>, or set <code>switchyard.chatLocation</code> to <code>sidebar</code>.</p>
 <p><a href="command:switchyard.openInSidebar">Choose a session…</a> · <a href="command:switchyard.newSession">New session</a></p></body></html>`;
 	};
 	function showInSidebar(id: string): ChatPanel | undefined {
@@ -160,7 +161,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	function openPanel(id: string, where?: "editor" | "sidebar"): ChatPanel | undefined {
 		const meta = sessions.get(id);
 		if (!meta) {
-			void vscode.window.showWarningMessage("That omp session no longer exists.");
+			void vscode.window.showWarningMessage("That session no longer exists.");
 			return undefined;
 		}
 		if ((where ?? vscode.workspace.getConfiguration("switchyard").get<string>("chatLocation")) === "sidebar") return showInSidebar(id);
@@ -208,23 +209,37 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			const preferred = activeFile ? vscode.workspace.getWorkspaceFolder(activeFile) : undefined;
 			const pick = await vscode.window.showQuickPick(
 				folders.map(f => ({ label: f.name, description: f.uri.fsPath, folder: f, picked: f === preferred })),
-				{ placeHolder: "Folder for the omp session" },
+				{ placeHolder: "Folder for the session" },
 			);
 			return pick?.folder.uri.fsPath;
 		}
-		const chosen = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: "Start omp here" });
+		const chosen = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: "Start the session here" });
 		return chosen?.[0]?.fsPath;
 	}
 
+	/** The harness of a new session in `cwd` (asks when several are logged in to AO and nobody chose); undefined when cancelled or it failed (shown). */
+	async function chooseHarness(cwd: string): Promise<string | undefined> {
+		try {
+			return await sessions.chooseHarness(cwd);
+		} catch (err) {
+			void vscode.window.showErrorMessage(plain(`Session did not start: ${err instanceof Error ? err.message : String(err)}`), "Show AO Log").then(a => a && ao.log.show());
+			return undefined;
+		}
+	}
+
 	async function launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined> {
+		// A new session's harness: asked only when nobody chose and several are logged in to AO (chooseHarness).
+		const harness = opts.id || opts.harness ? opts.harness : await chooseHarness(opts.cwd);
+		if (!opts.id && !harness) return undefined;
+		const launch = { ...opts, ...(harness && { harness }) };
 		let id: string;
 		try {
-			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "Switchyard: resuming the session" : "Switchyard: starting a session in AO" }, () => sessions.launch(opts));
+			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "Switchyard: resuming the session" : `Switchyard: starting a ${harness} session in AO` }, () => sessions.launch(launch));
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			// G46: a mode other than auto is refused while the permission gate is not installed; the message is shown as it is, with the fix.
 			const needsGate = /needs the Switchyard permission gate/.test(message);
-			void vscode.window.showErrorMessage(plain(`omp session did not start: ${message}`), ...(needsGate ? ["Install Gate and Shim"] : []), "Show AO Log").then(a => {
+			void vscode.window.showErrorMessage(plain(`Session did not start: ${message}`), ...(needsGate ? ["Install Gate and Shim"] : []), "Show AO Log").then(a => {
 				if (a === "Install Gate and Shim") void vscode.commands.executeCommand("switchyard.installOmpIntegration");
 				else if (a) ao.log.show();
 			});
@@ -260,7 +275,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		if (open) return open;
 		const candidates = sessions.all().filter(m => m.status !== "stopped" && sessions.inWorkspace(m) && related(m));
 		if (candidates.length === 0 && lastActive) return lastActive;
-		const id = candidates.length === 1 ? candidates[0].id : await pickSession("Send to which omp session?", m => m.status !== "stopped" && sessions.inWorkspace(m) && (candidates.length === 0 || related(m)));
+		const id = candidates.length === 1 ? candidates[0].id : await pickSession("Send to which session?", m => m.status !== "stopped" && sessions.inWorkspace(m) && (candidates.length === 0 || related(m)));
 		return id ? openPanel(id) : undefined;
 	}
 
@@ -285,14 +300,16 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	reg("switchyard.newSessionWithOptions", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (!cwd) return;
-		const opts = await askLaunchOptions(cwd, sessions);
-		if (opts) await launchAndOpen({ cwd, ...opts });
+		const harness = await chooseHarness(cwd);
+		if (!harness) return;
+		const opts = await askLaunchOptions(cwd, sessions, harness);
+		if (opts) await launchAndOpen({ cwd, harness, ...opts });
 	});
 	reg("switchyard.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), sessions));
 	reg("switchyard.setDefaultMode", () => chooseDefaultMode());
 
 	reg("switchyard.openSession", async (arg?: unknown) => {
-		const id = idFrom(arg) ?? (await pickSession("Open omp session"));
+		const id = idFrom(arg) ?? (await pickSession("Open session"));
 		if (id) openPanel(id)?.focusComposer();
 	});
 
@@ -322,7 +339,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta || meta.status === "stopped") return;
 		if (meta.status === "working") {
-			const ok = await vscode.window.showWarningMessage(`"${meta.title}" is working. Stop it?`, { modal: true, detail: "The omp agent exits; the session and its transcript stay and can be resumed." }, "Stop");
+			const ok = await vscode.window.showWarningMessage(`"${meta.title}" is working. Stop it?`, { modal: true, detail: "The agent exits; the session and its transcript stay and can be resumed." }, "Stop");
 			if (ok !== "Stop") return;
 		}
 		await act(`stop "${meta.title}"`, () => sessions.stop(meta.id));
@@ -349,7 +366,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		}
 		const ok = await vscode.window.showWarningMessage(
 			`Remove "${meta.title}"?`,
-			{ modal: true, detail: "Deletes the session from AO, with its worktree when it has no uncommitted changes. The omp transcript stays in ~/.omp/agent/sessions." },
+			{ modal: true, detail: `Deletes the session from AO, with its worktree when it has no uncommitted changes.${isOmpHarness(meta.harness) ? " The omp transcript stays in ~/.omp/agent/sessions." : ""}` },
 			"Remove",
 		);
 		if (ok !== "Remove") return;
@@ -425,7 +442,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		const sel = editor.selection;
 		const target = await targetPanel(doc.uri.scheme === "file" ? vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath : undefined);
 		if (!target) {
-			void vscode.window.showInformationMessage("Open or start an omp session first.");
+			void vscode.window.showInformationMessage("Open or start a session first.");
 			return;
 		}
 		const cwd = target.meta?.cwd ?? "";
@@ -456,7 +473,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	const scmPrompt = (prompt: string) => async (arg?: unknown) => {
 		const panel = await targetPanel(repoRoot(arg));
 		if (!panel) {
-			void vscode.window.showInformationMessage("Start an omp session for this repository first.");
+			void vscode.window.showInformationMessage("Start a session for this repository first.");
 			return;
 		}
 		const root = repoRoot(arg);
@@ -483,6 +500,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		snapshots,
 		openPanel,
 		launchAndOpen,
+		chooseHarness,
 		pickSession,
 		pickFolder,
 		targetPanel,
@@ -497,7 +515,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
 	// One planner connection per window: the Tasks view, the session queues and the views' plan summaries share it.
-	const taskSession = (m: SessionMeta) => ({ id: m.id, title: m.title, state: m.status });
+	const taskSession = (m: SessionMeta) => ({ id: m.id, title: m.title, state: m.status, ...(m.harness && { harness: m.harness }) });
 	const tasksDeps = createTasksDeps(context, {
 		ao: () => ao.client(),
 		sessions: {
@@ -552,7 +570,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			status.command = "switchyard.server.start";
 		} else if (local.length === 0) {
 			status.text = "$(hubot) Switchyard";
-			status.tooltip = `No omp sessions running${sessions.scope() === "all" ? "" : " for this workspace"}. Click to open one.${COMMAND_CENTER_HINT}`;
+			status.tooltip = `No sessions running${sessions.scope() === "all" ? "" : " for this workspace"}. Click to open one.${COMMAND_CENTER_HINT}`;
 			status.command = "switchyard.focus";
 		} else {
 			const parts = [working ? `$(loading~spin) ${working}` : "", waiting ? `$(bell-dot) ${waiting}` : "", idle ? `$(pass) ${idle}` : ""].filter(Boolean);
@@ -591,9 +609,10 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			if (attended) return;
 			let message: string | undefined;
 			// A merge conflict is needs-input too, but the Tasks view toasts it with the files and the graph (ext-tasks): not twice.
-			if (meta.status === "waiting") message = meta.queue?.sync?.state === "conflict" ? undefined : `omp needs your input: ${meta.title}`;
-			else if (meta.status === "idle" && from === "working") message = `omp finished: ${meta.title}`;
-			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `omp session exited (${meta.exitReason}): ${meta.title}`;
+			const agent = meta.harness ?? "omp";
+			if (meta.status === "waiting") message = meta.queue?.sync?.state === "conflict" ? undefined : `${agent} needs your input: ${meta.title}`;
+			else if (meta.status === "idle" && from === "working") message = `${agent} finished: ${meta.title}`;
+			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `${agent} session exited (${meta.exitReason}): ${meta.title}`;
 			if (!message) return;
 			void vscode.window.showInformationMessage(plain(message), "Open").then(a => {
 				if (a) openPanel(meta.id);

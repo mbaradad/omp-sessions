@@ -1,6 +1,6 @@
 ---
 name: switchyard
-description: Start, queue, schedule and supervise oh-my-pi (omp) coding sessions that keep running in the background, using the switchyard CLI. Use when coding work should run as its own persistent omp session that the user can watch and steer (from VS Code, the terminal, their phone or Hermes), when queueing or scheduling coding tasks for later, or when checking on, answering or following up on existing omp sessions.
+description: Start, queue, schedule and supervise coding agent sessions (Claude Code, Codex, oh-my-pi/omp and the other harnesses Agent Orchestrator runs) that keep running in the background, using the switchyard CLI. Use when coding work should run as its own persistent session that the user can watch and steer (from VS Code, the terminal, their phone or Hermes), when queueing or scheduling coding tasks for later, or when checking on, answering or following up on existing sessions.
 license: MIT
 metadata:
   switchyard:
@@ -12,13 +12,13 @@ metadata:
 
 # Switchyard
 
-`switchyard` drives omp coding sessions that run in the background on this machine. The Agent Orchestrator (AO) daemon runs them (`omp acp` in a host process of its own per session); the switchyard planner starts queued and scheduled work. A session keeps working after you (the calling agent) exit, with no editor open, and across SSH drops. The user sees the same sessions in VS Code (the Switchyard extension), in the terminal, in the AO phone app and in Hermes, so anything you start here is visible to them, and they can step in.
+`switchyard` drives coding agent sessions that run in the background on this machine. The Agent Orchestrator (AO) daemon runs them (the agent harness AO is set up for, e.g. `claude-code`, `codex` or `omp`, in a host process of its own per session); the switchyard planner starts queued and scheduled work. A session keeps working after you (the calling agent) exit, with no editor open, and across SSH drops. The user sees the same sessions in VS Code (the Switchyard extension), in the terminal, in the AO phone app and in Hermes, so anything you start here is visible to them, and they can step in.
 
-Use it to hand coding work to omp instead of doing it inline: one session per task, in the repository it concerns. Then come back for the result.
+Use it to hand coding work to a background agent instead of doing it inline: one session per task, in the repository it concerns. Then come back for the result.
 
 ## Before you start
 
-- Run `switchyard status --json` once: it says whether the AO daemon (`ao`) and the planner (`server`) run, whether AO can run omp (`omp.readiness`), the default model, sessions by state and any problems (`ok: false` with `problems`). If the command is missing, ask the user to install it: *omp: Install switchyard Command* in VS Code (it goes to `~/.local/bin`, or `%LOCALAPPDATA%\switchyard` on Windows), or the standalone package from the GitHub release.
+- Run `switchyard status --json` once: it says whether the AO daemon (`ao`) and the planner (`server`) run, the harness new sessions get (`harness.default`, `harness.reason`), whether AO can run omp (`omp.readiness`), the default model, sessions by state and any problems (`ok: false` with `problems`). If the command is missing, ask the user to install it: *omp: Install switchyard Command* in VS Code (it goes to `~/.local/bin`, or `%LOCALAPPDATA%\switchyard` on Windows), or the standalone package from the GitHub release.
 - Sessions run on this machine, for the folder you give. Use absolute paths. A folder in a git repository runs in that repository's AO project, and AO gives every session **its own git worktree and branch** (`ao/<session>/root`): the session's `cwd` in `--json` output is that worktree, not your checkout, and its changes reach your checkout only when someone merges that branch. A folder outside git runs in a scratch folder AO creates. `switchyard projects --json` lists the AO projects (`[{path, name, id, lastUsed, sessions}]`, newest first), which helps when the user names a project rather than a path.
 - Every command that takes `<session>` accepts the id, an id prefix, or words from the title. Ids are the safest choice.
 - `--json` output is meant for you; the rest is for people.
@@ -30,9 +30,11 @@ switchyard new /abs/path/to/repo -p "Fix the flaky checkout test. Run the test s
   --title "Fix flaky checkout test" --tag ticket:ENG-142 --json
 ```
 
-This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and returns right away (`cwd`: the session's worktree). The session keeps working in the background. Ids look like `<project>-<n>`, e.g. `myrepo-3`.
+This prints `{"id": "...", "started": true, "title": "...", "cwd": "...", "harness": "...", "harnessSource": "..."}` and returns right away (`cwd`: the session's worktree; `harness`: the agent it runs, and why: `explicit`, `config`, `project`, or AO's default `only`/`omp`/`usage`). The session keeps working in the background. Ids look like `<project>-<n>`, e.g. `myrepo-3`.
 
 - `-p -` reads the prompt from stdin, which is better for long prompts.
+- Leave out `--harness` unless the user asked for a specific agent: the session then runs the user's default (`switchyard config get harness`), else the AO project's worker harness, else AO's default (the only logged-in chat harness; with several, `omp` when it is logged in, else the most used one). `switchyard harnesses --json` lists AO's chat harnesses with `authStatus` and the `default` with its `reason`. A harness AO can't chat with is refused (exit 1, nothing started) with the list.
+- On a harness other than omp, `auto`, `edits` and `ask` become AO's approval modes (`bypass-permissions`, `accept-edits`, `default`; a mode the harness can't run is refused); `plan`, flags after `--`, the omp-extension features (`/undo`, the todo mirror) and the user's default model are omp-only.
 - Leave out `--mode` unless the user asked for a specific permission mode: the session then starts in the user's default (`switchyard config get mode`), else in `auto`. AO runs every session without its own prompts and the Switchyard omp extension's gate asks instead, so `ask`, `edits` and `plan` work only where that extension is installed (`switchyard status --json`: `omp.extension.installed`); `new --mode ask|edits|plan` fails (exit 1, nothing started) without it. `switchyard omp-extension [status|install|uninstall] [--json]` manages it (and the shim for omp flags); `new`, `resume`, a `send` that wakes a stopped session, `queue run` and `status` install or refresh it by themselves when this build ships it, unless `config set omp-extension off`. The modes:
   - `auto` approves every tool call;
   - `edits` applies file edits but asks before every command (bash included);
@@ -42,7 +44,7 @@ This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and r
 - Flags after a bare `--` go to omp itself for this session (`new <dir> -p "…" --json -- --advisor plan`, put every Switchyard flag before the `--`); they need Switchyard's omp shim (`omp.shim.installed`). Machine-wide ones: `config set omp.extraArgs -- --profile work`.
 - `--tag` (repeatable) labels the session, e.g. with the ticket or card it works on. The user can filter by tag.
 - `--group <name>` files the session under a group in VS Code, created if missing. Use it to keep related work together, e.g. one group per board or project.
-- `--model provider/id` picks the model (`switchyard models --json` lists the models a running session's omp offers, `source` says which session; with no session running the list is empty and `note` says so). Without it the session uses the user's default (`switchyard config get model`), then omp's own default. `--priority urgent|high|normal|low` matters for queued work.
+- `--model provider/id` picks the model (`switchyard models --json` lists the models a running session's omp offers, `source` says which session; with no session running the list is empty and `note` says so; `switchyard models --harness <id> --json` lists another harness's from AO's catalog). Without it an omp session uses the user's default (`switchyard config get model`), then omp's own default; another harness uses its own default. `--priority urgent|high|normal|low` matters for queued work.
 - Write the prompt the way you would brief a colleague: the goal, the constraints, how to verify, and what to report at the end. The session can't see your conversation.
 
 ## Queue or schedule work
@@ -147,9 +149,9 @@ Idle sessions cost nothing. Leave finished sessions for the user to review unles
 
 ## Hermes Agent
 
-With the switchyard Hermes plugin installed (`switchyard hermes install`), a Hermes agent gets native tools for everything above: `switchyard_session_start`, `switchyard_session_status`, `switchyard_session_wait`, `switchyard_session_send`, `switchyard_session_answer`, `switchyard_session_mode`, `switchyard_session_model`, `switchyard_session_stop`, `switchyard_queue_add`, `switchyard_queue_schedule`, `switchyard_sessions_list`, `switchyard_projects_list`, `switchyard_models_list` and `switchyard_server_status`. Prefer the tools to shelling out. Approval dialogs stay with the user unless the plugin's `agent_approvals` setting is on. Hermes also gets a message in the chat when a session it started finishes or needs input, so there is no need to keep waiting on it.
+With the switchyard Hermes plugin installed (`switchyard hermes install`), a Hermes agent gets native tools for everything above: `switchyard_session_start`, `switchyard_session_status`, `switchyard_session_wait`, `switchyard_session_send`, `switchyard_session_answer`, `switchyard_session_mode`, `switchyard_session_model`, `switchyard_session_stop`, `switchyard_queue_add`, `switchyard_queue_schedule`, `switchyard_sessions_list`, `switchyard_projects_list`, `switchyard_models_list` and `switchyard_server_status` (`switchyard_session_start` takes `harness` like `new --harness`). Prefer the tools to shelling out. Approval dialogs stay with the user unless the plugin's `agent_approvals` setting is on. Hermes also gets a message in the chat when a session it started finishes or needs input, so there is no need to keep waiting on it.
 
-The plugin can also run kanban cards as omp sessions. With the lane on (`hermes switchyard lane on --board <slug>`), a card assigned to `switchyard` is claimed by the lane. It runs as an omp session in the card's workspace, or in the board's configured folder, and its outcome goes back to the card:
+The plugin can also run kanban cards as agent sessions. With the lane on (`hermes switchyard lane on --board <slug>`), a card assigned to `switchyard` is claimed by the lane. It runs as a session in the card's workspace, or in the board's configured folder, on the board's harness (`hermes switchyard board <slug> --harness <id>`, else the default), and its outcome goes back to the card:
 
 ```sh
 hermes kanban --board <slug> create "Fix flaky checkout test" --assignee switchyard --workspace dir:/abs/repo --body "..."
@@ -169,7 +171,7 @@ Use cards when the work belongs on a board with dependencies. Use the tools, or 
 Sessions are AO sessions, so AO's HTTP API reaches them. On this machine it listens on loopback without auth (the port is in `~/.ao/running.json`, usually `http://127.0.0.1:3001`). From another machine, the user turns on AO's phone listener (`switchyard remote on`; `switchyard remote status` lists its addresses; `switchyard remote qr` pairs the AO mobile app) and the client sends AO's pairing password as `Authorization: Bearer <password>`. The main endpoints, under `/api/v1`:
 
 - `GET /sessions`, `GET /sessions/<id>`, `GET /sessions/<id>/conversation` (messages, pending approvals and questions, usage)
-- `POST /sessions` with `{projectId, harness: "omp", mode: "chat", kind: "worker", prompt, displayName, approvalMode}`
+- `POST /sessions` with `{projectId, harness, mode: "chat", kind: "worker", prompt, displayName, approvalMode}` (`harness`: one of `GET /settings` `chatHarnesses`)
 - `POST /sessions/<id>/conversation/messages` with `{text}`; `.../steer-or-send` with `{text, clientMessageId}` to steer
 - `POST /sessions/<id>/conversation/approvals/<requestId>/resolve` with `{decisionId}`; `.../inputs/<requestId>/resolve` with `{action, content}`
 - `POST /sessions/<id>/conversation/interrupt`, `/sessions/<id>/exit-agent`, `/sessions/<id>/resume-agent`

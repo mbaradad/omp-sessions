@@ -60,7 +60,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 
 	async function panelFor(uri: vscode.Uri | undefined): Promise<ChatPanel | undefined> {
 		const panel = await api.targetPanel(uri ? vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath : undefined);
-		if (!panel) void vscode.window.showInformationMessage("Open or start an omp session first.");
+		if (!panel) void vscode.window.showInformationMessage("Open or start a session first.");
 		return panel;
 	}
 
@@ -92,17 +92,17 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 				provideCodeActions(doc, range, ctx) {
 					const actions: vscode.CodeAction[] = [];
 					if (ctx.diagnostics.length > 0) {
-						const fix = new vscode.CodeAction(`Fix with omp${ctx.diagnostics.length > 1 ? ` (${ctx.diagnostics.length} problems)` : ""}`, vscode.CodeActionKind.QuickFix);
+						const fix = new vscode.CodeAction(`Fix with Agent${ctx.diagnostics.length > 1 ? ` (${ctx.diagnostics.length} problems)` : ""}`, vscode.CodeActionKind.QuickFix);
 						fix.diagnostics = [...ctx.diagnostics];
 						fix.isPreferred = false;
-						fix.command = { command: "switchyard.fixDiagnostics", title: "Fix with omp", arguments: [doc.uri, range, [...ctx.diagnostics]] };
+						fix.command = { command: "switchyard.fixDiagnostics", title: "Fix with Agent", arguments: [doc.uri, range, [...ctx.diagnostics]] };
 						actions.push(fix);
 					}
 					if (!range.isEmpty) {
-						const explain = new vscode.CodeAction("Explain with omp", vscode.CodeActionKind.Empty);
-						explain.command = { command: "switchyard.explainSelection", title: "Explain with omp", arguments: [doc.uri, range] };
-						const ask = new vscode.CodeAction("Ask omp about this…", vscode.CodeActionKind.Empty);
-						ask.command = { command: "switchyard.askAboutSelection", title: "Ask omp about this…", arguments: [doc.uri, range] };
+						const explain = new vscode.CodeAction("Explain with Agent", vscode.CodeActionKind.Empty);
+						explain.command = { command: "switchyard.explainSelection", title: "Explain with Agent", arguments: [doc.uri, range] };
+						const ask = new vscode.CodeAction("Ask Agent about this…", vscode.CodeActionKind.Empty);
+						ask.command = { command: "switchyard.askAboutSelection", title: "Ask Agent about this…", arguments: [doc.uri, range] };
 						actions.push(explain, ask);
 					}
 					return actions;

@@ -1,4 +1,4 @@
-# Talk to omp
+# Talk to the agent
 
 - `/` completes omp's commands and the extension's (`/tree`, `/fork`, `/goal`, `/btw`, `/agents`, `/changes`, `/queue` …)
 - `@` completes files, `!cmd` runs a shell command in the session

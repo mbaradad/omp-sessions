@@ -427,6 +427,7 @@ class Switchyard:
         group: Optional[str] = None,
         priority: Optional[str] = None,
         model: Optional[str] = None,
+        harness: Optional[str] = None,
         after: Sequence[str] = (),
     ) -> dict:
         """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?, after?}.
@@ -452,7 +453,7 @@ class Switchyard:
             if at:
                 args.append(f"--at={at}")
             args += [f"--after={s}" for s in after]
-        for flag, value in (("title", title), ("mode", mode), ("group", group), ("priority", priority), ("model", model)):
+        for flag, value in (("title", title), ("mode", mode), ("group", group), ("priority", priority), ("model", model), ("harness", harness)):
             if value:
                 args.append(f"--{flag}={value}")
         args += [f"--tag={t}" for t in tags]

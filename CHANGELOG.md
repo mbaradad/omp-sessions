@@ -2,7 +2,7 @@
 
 ## 0.7.0
 
-**omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
+**omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (whichever harness AO is set up for: Claude Code, Codex, omp through `omp acp`, …); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
 
 **New names, no aliases.** Extension `mbaradad.switchyard` (a new Marketplace listing; it installs next to the old one), commands and settings `switchyard.*` (were `omp.*`), CLI `switchyard` (was `omp-sessions`), state in `~/.switchyard` (was `~/.omp/vscode`), env `SWITCHYARD_*`, agent skill `switchyard`, Hermes plugin `switchyard` with tools `switchyard_*` and `hermes switchyard …`. `switchyard migrate [--apply]` imports the old defaults, the concurrency settings and the organization (groups, colors, board lanes); it is a dry run without `--apply`. **No session is migrated**: old sessions stay reachable with `omp --resume <id>`, and `migrate` lists each one.
 
@@ -13,6 +13,14 @@
 - **Switchyard's omp extension** (installed into `~/.omp/agent/extensions/switchyard/`) carries what AO lacks: checkpoints (`/undo` and `/redo` rewind the conversation and the files the edit tools changed), live permission modes (Ask, Edits, Plan, Auto), the todo mirror, and the VS Code language-tools bridge. A small `omp` shim passes extra launch flags.
 - **The phone uses AO's mobile app.** *Connect Phone* shows AO's pairing link and QR code. The old phone app, its HTTP API and `remote.json` are gone.
 - **Clients on `src/ao`:** the VS Code extension (Sessions, Tasks, board, graph, chat, review, dashboard), the `switchyard` CLI with the same commands, `--json` shapes and `wait` exit codes, the MCP bridge, the Hermes plugin with its kanban lane, and the agent skill.
+
+### Harnesses: the agent AO is set up for, not only omp
+
+- **Every session runs the harness AO's configuration picks.** Candidates are AO's chat harnesses (`settings.chatHarnesses`) with the readiness of its agent catalog (`/agents`). Order, the same in every client and for the planner's queued and scheduled tasks: the harness asked for (`switchyard new --harness <id>`, a task's or lane's `harness` option, Hermes `switchyard_session_start` `harness` or a board's `harness`, VS Code's pick), Switchyard's default (`switchyard config set harness <id>|none`, VS Code `switchyard.defaultHarness`), the AO project's `worker.agent`, then AO's default: the only authorized one, or with several `omp` when authorized, else the most used (none authorized: the installed ones). Unknown or non-chat harnesses are refused with the list. Switchyard no longer sets `worker.agent: omp` on projects it registers.
+- **`switchyard harnesses [--json]`** lists AO's chat harnesses with their auth status and says which one new sessions get and why; `status` shows the default harness; `new --json`, `ls --json` and `show --json` carry `harness` (`new` also `harnessSource`), `ls` and `show` name a harness other than omp.
+- **Permission modes on other harnesses** are AO approval modes: Ask → `default`, Edits → `accept-edits`, Auto → `bypass-permissions`. A mode the harness can't run (Kimi: only `default`) is refused when asked for; a default mode gives way to the nearest one. `switchyard mode` and VS Code switch them through AO (restarting an idle agent).
+- **omp-only, and said so:** Plan mode, the permission gate, `/undo` and `/redo` checkpoints (VS Code, the planner's clean retry), the todo mirror, extra omp flags (`new … --`, `switchyard.extraArgs`), the default model of `config set model`, and the live model list of a running omp. Other harnesses get their models from AO's catalog (`switchyard models --harness <id>`, VS Code's pickers). `spawn`'s fail-closed gate check applies to omp only.
+- **VS Code**: New Session asks for the harness only when several are authorized and nothing names a default (AO's default preselected); the Sessions tree shows a harness other than omp; editor actions are now *Fix with Agent*, *Commit with Agent*, *Explain with Agent*, … **Hermes**: the page's cards show the harness; `hermes switchyard board <slug> --harness <id>` sets a board's.
 
 ### Removed
 

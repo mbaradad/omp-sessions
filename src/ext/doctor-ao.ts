@@ -55,7 +55,7 @@ const INSTALL_SERVICE: Fix = { label: "Install login services", command: "switch
 
 export function aoChecks(f: AoFacts): Check[] {
 	if (!f.url) {
-		return [{ level: "error", title: "The AO daemon is not reachable", detail: `${f.error ?? "No daemon answered."}\nEvery omp session runs in Agent Orchestrator (\`ao daemon\`); Switchyard finds it through ~/.ao/running.json.`, fixes: [START, LOG] }];
+		return [{ level: "error", title: "The AO daemon is not reachable", detail: `${f.error ?? "No daemon answered."}\nEvery session runs in Agent Orchestrator (\`ao daemon\`); Switchyard finds it through ~/.ao/running.json.`, fixes: [START, LOG] }];
 	}
 	const checks: Check[] = [
 		{ level: "ok", title: `AO daemon running at ${f.url}`, detail: [f.pid ? `pid ${f.pid}` : "", f.sessions !== undefined ? `${f.sessions} session(s)` : ""].filter(Boolean).join(" · ") || undefined },

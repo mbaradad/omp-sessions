@@ -43,8 +43,10 @@ export interface TaskOptions {
 	cwd?: string;
 	/** AO project id; wins over cwd. */
 	project?: string;
-	/** Permission mode of a session the planner starts (default `auto`: the gate lets everything through). Unattended work that asks will wait for a person. */
+	/** Permission mode of a session the planner starts (default `auto`: the gate lets everything through). Unattended work that asks will wait for a person. `plan` is omp-only. */
 	mode?: PermissionMode;
+	/** AO harness of a session the planner starts (claude-code, codex, omp, …); absent: Switchyard's default, the AO project's worker harness, else AO's default (src/ao/harness.ts). */
+	harness?: string;
 }
 
 /** What a new AO session starts with (the `spawn` of a TaskRun; MAPPING D11). */
@@ -54,8 +56,12 @@ export interface SessionStart {
 	/** An existing local branch AO checks out (graph propagation seeds one at the parent's head). */
 	branch?: string;
 	model?: string;
+	/** The user's default model (config.json): applied only when the session turns out to run omp. */
+	defaultModel?: string;
 	thinking?: string;
 	mode?: PermissionMode;
+	/** The harness asked for (task, lane or planner option, else the user's default); absent: the AO project's worker harness, else AO's default. */
+	harness?: string;
 }
 
 /**

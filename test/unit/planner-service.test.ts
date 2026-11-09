@@ -319,17 +319,19 @@ test("a task with a timeout still notices its turn ending within a moment (a slo
 	assert.ok(Date.now() - at < 5000, `noticed after ${Date.now() - at} ms`);
 });
 
-test("a new session starts with the user's default model and mode (config.json) when nothing else names one; a continued session and explicit options win", async t => {
+test("a new session starts with the user's default model, mode and harness (config.json) when nothing else names one; a continued session and explicit options win", async t => {
 	const ao = new FakeAo();
-	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, userDefaults: () => ({ model: "anthropic/claude-x", mode: "edits" }) });
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, userDefaults: () => ({ model: "anthropic/claude-x", mode: "edits", harness: "claude-code" }) });
 	p.start();
 	t.after(() => p.stop());
 	p.setConfig({ maxConcurrent: 0 });
-	p.edit([{ op: "add", task: { title: "plain" } }, { op: "add", task: { title: "explicit", options: { model: "anthropic/other", mode: "plan" } } }, { op: "lane.add", id: "l_00000000ff" }, { op: "add", task: { title: "first", lane: "l_00000000ff" } }, { op: "add", task: { title: "second", lane: "l_00000000ff" } }]);
+	p.edit([{ op: "add", task: { title: "plain" } }, { op: "add", task: { title: "explicit", options: { model: "anthropic/other", mode: "plan", harness: "omp" } } }, { op: "lane.add", id: "l_00000000ff" }, { op: "add", task: { title: "first", lane: "l_00000000ff" } }, { op: "add", task: { title: "second", lane: "l_00000000ff" } }]);
 	await until("sent", () => ["plain", "explicit", "first"].every(n => byTitle(p, n).run?.phase === "sent"));
 	const body = (title: string) => ao.sessions.get(byTitle(p, title).run?.session as string)?.spawnBody;
-	assert.deepEqual([body("plain")?.model, body("plain")?.mode], ["anthropic/claude-x", "edits"]);
-	assert.deepEqual([body("explicit")?.model, body("explicit")?.mode], ["anthropic/other", "plan"]);
+	// The user's model is an omp model: it travels as defaultModel, which the start sequence applies to omp sessions only.
+	assert.deepEqual([body("plain")?.model, body("plain")?.defaultModel, body("plain")?.mode], [undefined, "anthropic/claude-x", "edits"]);
+	assert.deepEqual([body("explicit")?.model, body("explicit")?.defaultModel, body("explicit")?.mode], ["anthropic/other", undefined, "plan"]);
+	assert.deepEqual([body("plain")?.harness, body("explicit")?.harness], ["claude-code", "omp"], "a task's harness wins over the user's default");
 	ao.finishTurn(byTitle(p, "first").run?.session as string, "completed", "one");
 	await until("second sent", () => byTitle(p, "second").run?.phase === "sent");
 	assert.equal(byTitle(p, "second").run?.via, "send");

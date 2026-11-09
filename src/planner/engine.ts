@@ -103,6 +103,8 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	if (typeof r.cwd === "string" && r.cwd.trim()) out.cwd = r.cwd.trim();
 	if (typeof r.project === "string" && r.project.trim()) out.project = r.project.trim();
 	if (typeof r.mode === "string" && (PERMISSION_MODES as readonly string[]).includes(r.mode)) out.mode = r.mode as TaskOptions["mode"];
+	// A harness id as AO names them (claude-code, opencode-v2, omp); whether AO can chat with it is checked at dispatch.
+	if (typeof r.harness === "string" && /^[a-z0-9][a-z0-9._-]*$/i.test(r.harness.trim())) out.harness = r.harness.trim();
 	return Object.keys(out).length ? out : undefined;
 }
 

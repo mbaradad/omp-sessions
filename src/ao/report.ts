@@ -2,6 +2,7 @@
 // the same shape src/shared/session-report.ts gives today, built from an AoSessionModel.
 import type { AoConfigOptions, AoTurnSettings } from "./client";
 import type { AoAgentState, AoQuestion, AoSessionModel } from "./model";
+import { isOmpHarness } from "./harness";
 
 /** The permission modes the CLI and skill speak (src/shared/permissions.ts). */
 export type AoPermissionMode = "ask" | "edits" | "plan" | "auto";
@@ -39,6 +40,8 @@ export interface AoSessionReport {
 	state: AoAgentState;
 	status: AoReportStatus;
 	mode?: AoPermissionMode;
+	/** The AO harness it runs (claude-code, codex, omp, …). */
+	harness?: string;
 	model?: string;
 	cost?: number;
 	changedFiles: number;
@@ -62,8 +65,11 @@ export interface AoSessionReport {
  * flag, so omp's own `tools.approvalMode` decides (G12) and the mode is unknown (undefined).
  * Plan mode is omp's live `mode` config option, not `settings.planMode` (unset for omp): pass
  * `plan` from `planModeOf(await client.configOptions(id))`; `settings.planMode` is honoured as well.
+ * Another harness (`harness` given, not omp): AO's `default` is the harness asking through AO's approvals = `ask`
+ * (its own baseline: Claude Code, e.g., follows its settings.json); AO's `auto` (the harness's own auto mode, which
+ * still stops risky actions) reads `edits`.
  */
-export function permissionModeOf(settings: AoTurnSettings | undefined, plan = false): AoPermissionMode | undefined {
+export function permissionModeOf(settings: AoTurnSettings | undefined, plan = false, harness?: string): AoPermissionMode | undefined {
 	if (plan || settings?.planMode) return "plan";
 	switch (settings?.approvalMode) {
 		case "accept-edits":
@@ -71,6 +77,8 @@ export function permissionModeOf(settings: AoTurnSettings | undefined, plan = fa
 			return "edits";
 		case "bypass-permissions":
 			return "auto";
+		case "default":
+			return harness && !isOmpHarness(harness) ? "ask" : undefined;
 		default:
 			return undefined;
 	}
@@ -156,7 +164,8 @@ export function sessionReport(model: AoSessionModel, extra: AoReportExtra = {}):
 		createdAt: model.createdAt,
 		updatedAt: model.updatedAt,
 	};
-	const mode = extra.mode ?? permissionModeOf(model.conversation?.settings);
+	const mode = extra.mode ?? permissionModeOf(model.conversation?.settings, false, model.harness);
+	if (model.harness) report.harness = model.harness;
 	if (mode) report.mode = mode;
 	if (model.model) report.model = model.model;
 	if (model.cost) report.cost = model.cost;

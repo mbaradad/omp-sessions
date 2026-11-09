@@ -285,7 +285,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 				return;
 			}
 			if (text === "/help") {
-				say(c.dim("Type to prompt (steers while omp works). /abort  /stop  /detach   Ctrl-C aborts a turn, Ctrl-D detaches."));
+				say(c.dim("Type to prompt (steers while the agent works). /abort  /stop  /detach   Ctrl-C aborts a turn, Ctrl-D detaches."));
 				return;
 			}
 			echoed.add(text);

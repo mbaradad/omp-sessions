@@ -127,7 +127,7 @@ async function exportChoice(args: string): Promise<PanelCommand | undefined | nu
 async function permissionMode(ctx: CommandContext, arg: string): Promise<void> {
 	const meta = ctx.meta;
 	if (!meta) return;
-	const mode = arg ? permissionModeOf(arg.toLowerCase()) : await pickPermissionMode(ctx.mode ?? "ask", `Permission mode · ${meta.title}`);
+	const mode = arg ? permissionModeOf(arg.toLowerCase()) : await pickPermissionMode(ctx.mode ?? "ask", `Permission mode · ${meta.title}`, undefined, meta.harness);
 	if (mode === undefined && arg) {
 		ctx.post({ type: "notice", level: "warning", text: `Unknown mode "${arg}": use ask, edits, plan or auto.` });
 		return;

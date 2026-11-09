@@ -41,7 +41,7 @@ export function registerAgentSkill(api: OmpApi): void {
 			const picked = await vscode.window.showQuickPick(items, {
 				canPickMany: true,
 				title: "Install the switchyard skill",
-				placeHolder: "Agents that should learn to start, schedule and check omp sessions through switchyard",
+				placeHolder: "Agents that should learn to start, schedule and check agent sessions through switchyard",
 			});
 			if (!picked?.length) return;
 			const lines: string[] = [];

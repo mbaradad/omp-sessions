@@ -326,6 +326,8 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "status": meta.get("status"),
         "mode": meta.get("permissionMode") or info.get("mode"),
         "model": meta.get("model"),
+        # The AO harness running it (`ls --json` top level); missing on older servers means omp.
+        "harness": info.get("harness") or "omp",
         "cost": meta.get("cost") or 0,
         "changedFiles": meta.get("changedFiles") or 0,
         "createdAt": meta.get("createdAt"),
@@ -809,6 +811,7 @@ def boards_view() -> dict:
                 "effectiveAssignee": assignee,
                 "effectiveMode": entry.get("mode") or s.lane.mode,
                 "model": entry.get("model"),
+                "harness": entry.get("harness"),
                 "commentAuthors": entry.get("comment_authors"),
                 "effectiveCommentAuthors": list(trusted.comment_authors),
                 "archiveCompleted": entry.get("archive_completed"),
@@ -842,7 +845,7 @@ def update_board(slug: str, body: dict) -> dict:
     if slug not in {b["slug"] for b in board_slugs()}:
         raise ApiError(404, f"no kanban board {slug}")
     fields: dict[str, Optional[str]] = {}
-    for key, name in (("folder", "folder"), ("group", "group"), ("mode", "mode"), ("assignee", "assignee"), ("model", "model"), ("commentAuthors", "comment_authors")):
+    for key, name in (("folder", "folder"), ("group", "group"), ("mode", "mode"), ("assignee", "assignee"), ("model", "model"), ("harness", "harness"), ("commentAuthors", "comment_authors")):
         if key in body:
             v = body[key]
             if v is not None and not isinstance(v, str):

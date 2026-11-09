@@ -120,8 +120,8 @@ async function askTask(title: string): Promise<string | undefined> {
 
 type ModelItem = vscode.QuickPickItem & { selector: string };
 
-/** Models for best-of-N runs (multi-select, typed selectors allowed); [] = default model. */
-async function askModels(cwd: string, title: string, sessions: ModelChoices): Promise<string[] | undefined> {
+/** Models of `harness` for best-of-N runs (multi-select, typed selectors allowed); [] = default model. */
+async function askModels(cwd: string, title: string, sessions: ModelChoices, harness: string): Promise<string[] | undefined> {
 	const qp = vscode.window.createQuickPick<ModelItem>();
 	qp.title = title;
 	qp.placeholder = "Models to compare — runs cycle through the checked ones; none = default model. Type a selector to add one.";
@@ -141,7 +141,7 @@ async function askModels(cwd: string, title: string, sessions: ModelChoices): Pr
 	qp.onDidChangeSelection(sel => {
 		for (const s of sel) if (s.description === "custom model selector" && !custom.some(c => c.selector === s.selector)) custom.push({ ...s, description: "custom" });
 	});
-	void loadModels(cwd, sessions).then(list => {
+	void loadModels(cwd, sessions, harness).then(list => {
 		models = list.models.map(m => ({ label: `${m.default ? "$(star-full) " : ""}${m.name}`, description: `${m.selector}${m.default ? " · default" : ""}`, selector: m.selector }));
 		qp.busy = false;
 		render();
@@ -219,7 +219,10 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	const step = (n: number) => `Best-of-N in git worktrees (${n}/3)`;
 	const task = await askTask(step(1));
 	if (!task) return;
-	const models = await askModels(folder, step(2), api.sessions);
+	// One harness for every run (asked once when several are logged in to AO); its models to compare.
+	const harness = await api.chooseHarness(folder);
+	if (!harness) return;
+	const models = await askModels(folder, step(2), api.sessions, harness);
 	if (!models) return;
 	const runsFor = (n: number) => Array.from({ length: n }, (_, i) => (models.length ? models[i % models.length] : undefined));
 	const minN = Math.min(4, Math.max(2, models.length));
@@ -237,7 +240,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	// One at a time: AO creates each run's worktree, and concurrent `git worktree add` races on the repository's lock files.
 	const started: SessionMeta[] = [];
 	for (const [i, model] of runs.entries()) {
-		const panel = await api.launchAndOpen({ cwd: folder, title: `${title} #${i + 1}${model ? ` · ${model.split("/").pop()}` : ""}`, prompt: task, model, branch: `best-of-n/${batch}-${i + 1}` });
+		const panel = await api.launchAndOpen({ cwd: folder, harness, title: `${title} #${i + 1}${model ? ` · ${model.split("/").pop()}` : ""}`, prompt: task, model, branch: `best-of-n/${batch}-${i + 1}` });
 		const meta = panel && api.sessions.get(panel.sessionId);
 		const wt = meta && worktreeOf(meta);
 		if (!meta || !wt) continue;

@@ -20,19 +20,36 @@ const configOptions = (current: { model?: string; thinking?: string; mode?: stri
 });
 
 /** Records every call the helper makes on the client; what AO answers is fixed, so only the helper's behaviour is under test. */
-function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; refreshState?: "idle" | "queued" | "refreshing" | "error" }[]; ready?: boolean; turns?: number } = {}) {
+/** AO's chat harnesses and their auth status in the fakes: by default omp and claude-code are authorized (omp is then the default). */
+type FakeHarnesses = Record<string, "authorized" | "unknown" | "unauthorized">;
+const HARNESSES: FakeHarnesses = { "claude-code": "authorized", codex: "unknown", omp: "authorized" };
+
+function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; refreshState?: "idle" | "queued" | "refreshing" | "error" }[]; ready?: boolean; turns?: number; harnesses?: FakeHarnesses; worker?: string; modes?: string[] } = {}) {
 	let catalogCalls = 0;
 	const calls: string[] = [];
+	const harnesses = opts.harnesses ?? HARNESSES;
+	const catalogOf: string[] = [];
 	const state = { model: "anthropic/opus", thinking: "high", mode: "default" };
 	const sent: unknown[] = [];
 	const spawns: Record<string, unknown>[] = [];
 	const fake = {
-		agentModels: async () => {
+		// What the harness is resolved from: read-only, not recorded in `calls`.
+		settings: async () => ({ chatHarnesses: Object.keys(harnesses) }),
+		agents: async () => {
+			const supported = Object.entries(harnesses).map(([id, authStatus]) => ({ id, label: id, authStatus }));
+			return { supported, installed: supported, authorized: supported.filter(a => a.authStatus === "authorized") };
+		},
+		chatPermissionModes: async () => opts.modes,
+		unavailableChatHarnesses: async () => new Map<string, string>(),
+		getProject: async (id: string) => ({ id, name: id, path: "/repo", kind: "single_repo", folderMissing: false, defaultBranch: "main", repo: "", config: opts.worker ? { worker: { agent: opts.worker } } : {} }),
+		agentModels: async (harness: string) => {
 			calls.push("agentModels");
+			catalogOf.push(harness);
 			const step = opts.catalogSteps?.[Math.min(catalogCalls++, opts.catalogSteps.length - 1)];
 			return { models: (step?.models ?? opts.catalog ?? ["anthropic/opus", "anthropic/haiku", "zai/glm-4.5"]).map(id => ({ id })), ...(step?.refreshState && { refreshState: step.refreshState }) };
 		},
-		projectForFolder: async (dir: string) => (calls.push(`projectForFolder ${dir}`), dir.includes("outside") ? undefined : { id: "repo", path: dir, name: "repo", kind: "single_repo", sessionPrefix: "repo", folderMissing: false }),
+		// Only a lookup that may register the project is recorded (the harness lookup passes create: false).
+		projectForFolder: async (dir: string, o?: { create?: boolean }) => (o?.create !== false && calls.push(`projectForFolder ${dir}`), dir.includes("outside") ? undefined : { id: "repo", path: dir, name: "repo", kind: "single_repo", sessionPrefix: "repo", folderMissing: false }),
 		spawnSession: async (body: Record<string, unknown>) => (calls.push("spawnSession"), spawns.push(body), { session: { id: "repo-1" }, promptBytes: 0, systemPromptBytes: 0 }),
 		configOptions: async () => (calls.push("configOptions"), configOptions(state)),
 		exitAgent: async () => void calls.push("exitAgent"),
@@ -44,7 +61,7 @@ function fakeAo(opts: { catalog?: string[]; catalogSteps?: { models: string[]; r
 		sendMessage: async (_id: string, body: unknown) => (calls.push("sendMessage"), sent.push(body), { duplicate: false, state: "running" as const, turnId: "t1" }),
 	};
 	// The helper uses only these methods of AoClient; the fake has exactly them.
-	return { ao: fake as unknown as AoClient, calls, sent, spawns };
+	return { ao: fake as unknown as AoClient, calls, sent, spawns, catalogOf };
 }
 
 const tmpHome = () => fs.mkdtempSync(path.join(os.tmpdir(), "ao-spawn-test-"));
@@ -306,6 +323,106 @@ test("spawnSwitchyardSession: a catalog that never settles skips the pre-check; 
 		(gone.ao as unknown as { agentModels: () => Promise<never> }).agentModels = () => Promise.reject(new Error("offline"));
 		await spawnSwitchyardSession(gone.ao, { model: "anthropic/haiku", home, catalogWaitMs: 40 });
 		assert.ok(gone.calls.includes("spawnSession"));
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession resolves the harness: explicit, then Switchyard's default, then the project's worker harness, then AO's default", async () => {
+	const home = tmpHome();
+	try {
+		const harnessOf = async (opts: Parameters<typeof spawnSwitchyardSession>[1], ao = fakeAo()) => {
+			const res = await spawnSwitchyardSession(ao.ao, { home, dir: "/repo", ...opts });
+			assert.equal(ao.spawns[0].harness, res.harness, "the session is spawned with the resolved harness");
+			return [res.harness, res.harnessSource];
+		};
+		assert.deepEqual(await harnessOf({ harness: "claude-code", defaultHarness: "omp" }, fakeAo({ worker: "codex" })), ["claude-code", "explicit"]);
+		assert.deepEqual(await harnessOf({ defaultHarness: "codex" }, fakeAo({ worker: "omp" })), ["codex", "config"]);
+		assert.deepEqual(await harnessOf({ defaultHarness: null }, fakeAo({ worker: "claude-code" })), ["claude-code", "project"]);
+		assert.deepEqual(await harnessOf({ defaultHarness: null }), ["omp", "omp"], "several authorized: omp");
+		// config.json's `harness` is Switchyard's default when the caller passes none.
+		fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ harness: "codex" }));
+		assert.deepEqual(await harnessOf({}, fakeAo({ worker: "omp" })), ["codex", "config"]);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession refuses a harness AO can't chat with, listing the available ones, before anything exists", async () => {
+	const home = tmpHome();
+	try {
+		for (const harness of ["aider", "nope"]) {
+			const { ao, calls } = fakeAo();
+			await assert.rejects(spawnSwitchyardSession(ao, { home, harness, prompt: "go" }), new RegExp(`"${harness}" is not one of AO's chat harnesses; available: claude-code, codex \\(unknown\\), omp`));
+			assert.deepEqual(calls, [], "no session created");
+		}
+		const { ao } = fakeAo({ worker: "aider" });
+		await assert.rejects(spawnSwitchyardSession(ao, { home, dir: "/repo", defaultHarness: null }), /"aider" \(the AO project's worker.agent\) is not one of AO's chat harnesses/);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession for another harness: AO's approval mode, model and effort in the request, no omp steps, no mode file; plan and omp flags are omp-only", async () => {
+	const home = tmpHome();
+	try {
+		const { ao, calls, spawns, sent, catalogOf } = fakeAo({ catalog: ["claude-opus-5"] });
+		const res = await spawnSwitchyardSession(ao, { home, harness: "claude-code", mode: "edits", model: "claude-opus-5", thinking: "high", defaultModel: "anthropic/opus", prompt: "go", clientRequestId: "rq" });
+		assert.equal(res.harness, "claude-code");
+		assert.deepEqual(spawns, [{ harness: "claude-code", mode: "chat", kind: "worker", approvalMode: "accept-edits", clientRequestId: "rq", model: "claude-opus-5", effort: "high" }]);
+		assert.deepEqual(catalogOf, ["claude-code"], "the model is checked against the harness's own catalog");
+		assert.deepEqual(calls, ["agentModels", "spawnSession", "sendMessage"], "no config options, no restart, no omp mode");
+		assert.equal(sent.length, 1);
+		assert.equal(fs.existsSync(sessionFile(home, "mode")), false, "no mode file: the gate is omp's");
+		// The mode mapping: ask → default, auto → bypass-permissions; the config's (omp) default model is not applied.
+		for (const [mode, approvalMode] of [["ask", "default"], ["auto", "bypass-permissions"]] as const) {
+			const f = fakeAo();
+			await spawnSwitchyardSession(f.ao, { home, harness: "claude-code", mode, defaultModel: "anthropic/opus" });
+			assert.equal(f.spawns[0].approvalMode, approvalMode);
+			assert.equal("model" in f.spawns[0], false);
+		}
+		// The gate is not needed for another harness: ask starts without it.
+		const nogate = fakeAo();
+		await spawnSwitchyardSession(nogate.ao, { home, harness: "claude-code", mode: "ask", gate: ompHome(false) });
+		const refused = fakeAo();
+		await assert.rejects(spawnSwitchyardSession(refused.ao, { home, harness: "claude-code", mode: "plan" }), /Permission mode "plan" is omp-only.*runs claude-code/);
+		await assert.rejects(spawnSwitchyardSession(refused.ao, { home, harness: "claude-code", ompArgs: ["--profile", "work"] }), /Extra omp arguments \(--profile work\) is omp-only/);
+		assert.deepEqual(refused.calls, []);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: config.json's default model goes to omp sessions only", async () => {
+	const home = tmpHome();
+	try {
+		fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ model: "anthropic/haiku" }));
+		const omp = fakeAo();
+		await spawnSwitchyardSession(omp.ao, { home, harness: "omp", gate });
+		assert.ok(omp.calls.includes("setConfigOption model=anthropic/haiku"));
+		const other = fakeAo();
+		await spawnSwitchyardSession(other.ao, { home, harness: "claude-code" });
+		assert.equal("model" in other.spawns[0], false);
+		assert.equal(other.calls.includes("agentModels"), false);
+	} finally {
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("spawnSwitchyardSession: a harness that can't run the mode asked for is refused; a default mode gives way to the nearest one AO offers", async () => {
+	const home = tmpHome();
+	try {
+		const kimi = { harnesses: { kimi: "authorized" as const }, modes: ["default"] };
+		const asked = fakeAo(kimi);
+		await assert.rejects(spawnSwitchyardSession(asked.ao, { home, harness: "kimi", mode: "auto" }), /Permission mode "auto" \(AO bypass-permissions\) is not available for kimi; AO runs it in: ask \(AO default\)/);
+		assert.deepEqual(asked.calls, []);
+		const defaulted = fakeAo(kimi);
+		const res = await spawnSwitchyardSession(defaulted.ao, { home, harness: "kimi", defaultMode: null });
+		assert.deepEqual([defaulted.spawns[0].approvalMode, res.mode], ["default", "ask"]);
+		// A default `plan` (omp's) starts another harness in ask.
+		const plan = fakeAo();
+		assert.equal((await spawnSwitchyardSession(plan.ao, { home, harness: "claude-code", defaultMode: "plan" })).mode, "ask");
+		assert.equal(plan.spawns[0].approvalMode, "default");
 	} finally {
 		fs.rmSync(home, { recursive: true, force: true });
 	}

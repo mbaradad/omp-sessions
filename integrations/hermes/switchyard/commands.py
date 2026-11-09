@@ -287,7 +287,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub.add_parser("sessions", help="running omp sessions")
     lane = sub.add_parser("lane", help="the kanban lane: on, off, run")
     lane_sub = lane.add_subparsers(dest="lane_cmd")
-    on = lane_sub.add_parser("on", help="run cards assigned to the assignee as omp sessions")
+    on = lane_sub.add_parser("on", help="run cards assigned to the assignee as coding agent sessions")
     on.add_argument("--assignee", help="card assignee the lane takes (default switchyard)")
     on.add_argument("--mode", choices=MODES, help="starting permission mode of card sessions")
     on.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every board)")
@@ -303,6 +303,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     board.add_argument("--mode", choices=MODES)
     board.add_argument("--assignee")
     board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": Switchyard's default)")
+    board.add_argument("--harness", help="AO chat harness of the board's card sessions, e.g. claude-code, codex, omp (`switchyard harnesses` lists them; \"\": Switchyard's default, the AO project's worker harness, else AO's default)")
     board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
     board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their omp sessions) once the lane completes them (default: the lane's setting)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
@@ -361,6 +362,7 @@ def set_board(
     mode: Optional[str] = None,
     assignee: Optional[str] = None,
     model: Optional[str] = None,
+    harness: Optional[str] = None,
     comment_authors: Optional[str] = None,
     archive_completed: Optional[str] = None,
     remove: bool = False,
@@ -385,7 +387,7 @@ def set_board(
                 entry["folder"] = path
             else:
                 entry.pop("folder", None)
-        for key, value in (("group", group), ("mode", mode), ("assignee", assignee), ("model", model)):
+        for key, value in (("group", group), ("mode", mode), ("assignee", assignee), ("model", model), ("harness", harness)):
             if value is None:
                 continue
             if value.strip():
@@ -457,7 +459,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
     if cmd == "board":
         try:
             ac = args.archive_completed
-            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, model=args.model, comment_authors=args.comment_authors, archive_completed=None if ac is None else "" if ac == "default" else ac, remove=args.remove)
+            set_board(args.slug, folder=args.folder or None, group=args.group or None, mode=args.mode or None, assignee=args.assignee or None, model=args.model, harness=args.harness, comment_authors=args.comment_authors, archive_completed=None if ac is None else "" if ac == "default" else ac, remove=args.remove)
         except ValueError as exc:
             print(exc)
             return 1

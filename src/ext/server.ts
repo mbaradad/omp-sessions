@@ -130,19 +130,24 @@ export function registerServer(api: OmpApi): ServerControl {
 	const version = api.sessions.version;
 
 	/**
-	 * Mirrors the user's own `switchyard.extraArgs`/`switchyard.server.installService` (never a workspace's: they apply to every
-	 * session on this machine) into ~/.switchyard/config.json (`switchyard.extraArgs`, which the omp shim reads, and `service`). A key the user hasn't set keeps config.json's value (the CLI's
-	 * `config set` may have set it), unless `cleared` lists it (the user just removed the setting).
+	 * Mirrors the user's own `switchyard.extraArgs`/`switchyard.server.installService`/`switchyard.defaultHarness` (never a
+	 * workspace's: they apply to every session on this machine) into ~/.switchyard/config.json (`omp.extraArgs`, which the omp
+	 * shim reads, `service`, and `harness`, the default harness every client resolves). A key the user hasn't set keeps
+	 * config.json's value (the CLI's `config set` may have set it), unless `cleared` lists it (the user just removed the
+	 * setting). An empty default harness removes `harness`.
 	 */
-	const syncLauncher = (cleared: { extraArgs?: boolean; service?: boolean } = {}) => {
+	const syncLauncher = (cleared: { extraArgs?: boolean; service?: boolean; harness?: boolean } = {}) => {
 		const cfg = vscode.workspace.getConfiguration("switchyard");
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
+		const harness = cfg.inspect<string>("defaultHarness")?.globalValue;
 		const next: SwitchyardConfig = {};
 		if (extraArgs !== undefined) next.omp = { extraArgs: extraArgs.length ? extraArgs : undefined };
 		else if (cleared.extraArgs) next.omp = { extraArgs: undefined };
 		if (service !== undefined) next.service = service ? "on" : "off";
 		else if (cleared.service) next.service = undefined;
+		if (harness !== undefined) next.harness = harness.trim() || undefined;
+		else if (cleared.harness) next.harness = undefined;
 		if (!Object.keys(next).length) return;
 		try {
 			writeSwitchyardConfig(next);
@@ -153,8 +158,8 @@ export function registerServer(api: OmpApi): ServerControl {
 	syncLauncher();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			const changed = { extraArgs: e.affectsConfiguration("switchyard.extraArgs"), service: e.affectsConfiguration("switchyard.server.installService") };
-			if (changed.extraArgs || changed.service) syncLauncher(changed);
+			const changed = { extraArgs: e.affectsConfiguration("switchyard.extraArgs"), service: e.affectsConfiguration("switchyard.server.installService"), harness: e.affectsConfiguration("switchyard.defaultHarness") };
+			if (changed.extraArgs || changed.service || changed.harness) syncLauncher(changed);
 		}),
 	);
 

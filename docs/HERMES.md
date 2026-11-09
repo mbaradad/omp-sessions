@@ -1,13 +1,13 @@
 # Hermes Agent: the switchyard plugin
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to omp. The `switchyard` Hermes plugin gives it:
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to coding agent sessions (omp, Claude Code, Codex or any other chat harness Agent Orchestrator runs). The `switchyard` Hermes plugin gives it:
 
-- **Tools** (toolset `switchyard`, 16 tools) to start, queue, schedule, check, wait on, answer, steer and stop omp sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the Switchyard setup (the Agent Orchestrator daemon and omp).
-- **Notifications.** When an omp session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
-- **A kanban lane.** Kanban cards assigned to `switchyard` run as omp sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
+- **Tools** (toolset `switchyard`, 16 tools) to start, queue, schedule, check, wait on, answer, steer and stop sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the Switchyard setup (the Agent Orchestrator daemon and omp).
+- **Notifications.** When a session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
+- **A kanban lane.** Kanban cards assigned to `switchyard` run as coding agent sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`switchyard` skill**, plus `/switchyard` in chats and `hermes switchyard …` in a terminal.
 
-The plugin drives the `switchyard` CLI, so every session it starts is an ordinary omp session run by [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO), the daemon behind Switchyard. The plugin never talks to AO itself: `switchyard` is the one client that maps AO sessions onto Switchyard states, questions, queues and costs, the same way for VS Code, the CLI and Hermes. You can watch and steer a session from the Switchyard page in Hermes, with `switchyard attach`, in the AO app or AO Mobile, or in VS Code (Switchyard). Queued sessions respect omp's global concurrency limit (`switchyard sched set <n>`).
+The plugin drives the `switchyard` CLI, so every session it starts is an ordinary session run by [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO), the daemon behind Switchyard, on whichever AO harness is resolved (see **Harnesses** below). The plugin never talks to AO itself: `switchyard` is the one client that maps AO sessions onto Switchyard states, questions, queues and costs, the same way for VS Code, the CLI and Hermes. You can watch and steer a session from the Switchyard page in Hermes, with `switchyard attach`, in the AO app or AO Mobile, or in VS Code (Switchyard). Queued sessions respect Switchyard's global concurrency limit (`switchyard sched set <n>`).
 
 For the whole arrangement (one workstation running omp, the AO daemon and Hermes; VS Code and Hermes Desktop on a laptop; AO Mobile on the phone), see [the setup guide](SETUP.md).
 
@@ -77,7 +77,7 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | --- | --- |
 | `switchyard_sessions_list` | Lists sessions: running and with work ahead (queued, scheduled, interrupted), or all with `all: true`. |
 | `switchyard_projects_list` | Lists where sessions can run: recent omp folders, kanban boards with their configured folders and groups, and Hermes projects. |
-| `switchyard_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time); `after` (with `task`) names sessions whose work must finish first: the task branches from their work and later gets their changes (see [Parent changes](#parent-changes)). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder and group). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority` and `model`. |
+| `switchyard_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time); `after` (with `task`) names sessions whose work must finish first: the task branches from their work and later gets their changes (see [Parent changes](#parent-changes)). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder, group and harness). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority`, `model` and `harness` (an AO chat harness id such as `claude-code`, `codex` or `omp`; see **Harnesses**). |
 | `switchyard_session_status` | Returns a session's state, pending question, last reply, queue, cost, changed files, and `upstream`: the sync state of each parent. |
 | `switchyard_session_wait` | Blocks until the session is idle, needs input, stopped or interrupted, or scheduled. The default timeout is 300 s, at most 600 s. |
 | `switchyard_session_send` | Sends a prompt (resuming a stopped session). While the session works, the prompt runs after the current turn; `steer: true` redirects the turn instead. |
@@ -96,7 +96,9 @@ States: `queued` (waiting for a slot), `scheduled` (waiting for its start time),
 
 **Approvals stay with people.** Select and confirm dialogs (tool approvals, plan approval) count as approvals. By default the Hermes agent can't answer them, can't switch the mode while one waits, and can't switch a session to a less restrictive mode; set `agent_approvals: true` in the plugin settings to allow it. Answers carry the question's id, so an answer is refused if a different dialog has come up meanwhile. omp's text in tool results and chat notes is marked as data, not instructions.
 
-**Models.** A session started by the tools or the lane uses, in order: the `model` given (or a card's own model override), the board's `model`, then the Switchyard default (`switchyard config set model`), then omp's own default.
+**Models.** A session started by the tools or the lane uses, in order: the `model` given (or a card's own model override), the board's `model`, then the Switchyard default (`switchyard config set model`, applied to omp sessions only), then the harness's own default.
+
+**Harnesses.** A session runs on one of AO's chat harnesses (`switchyard harnesses` lists them with their readiness). The harness is, in order: the `harness` given to `switchyard_session_start`, the board's `harness` (lane cards, and the tool with `board`), the Switchyard default (`switchyard config set harness <id>`), the AO project's worker harness, else AO's default (the only authorized harness; with several, omp if authorized, else the most used). The plugin checks nothing itself: `switchyard new` refuses an unknown or non-chat harness and lists the valid ones. Plan mode, the approval gate of Switchyard's omp extension, `/undo` checkpoints and omp's own flags are omp-only; on other harnesses `mode` maps to AO approval modes (`ask` → `default`, the harness asking through AO's approvals; `edits` → `accept-edits`; `auto` → `bypass-permissions`) and `plan` is refused. Cards on the Switchyard page show a chip with the harness when it isn't omp.
 
 ## Notifications
 
@@ -194,6 +196,7 @@ hermes switchyard lane on                                   # every board, assig
 hermes switchyard lane on --board lightscale --mode auto    # only these boards (repeat --board); starting permission mode
 hermes switchyard lane on --comment-authors dashboard,alice # whose comments reach omp ("*": anyone)
 hermes switchyard board lightscale --folder ~/src/lightscale --group Lightscale --mode auto --model anthropic/claude-sonnet-4-5
+hermes switchyard board lightscale --harness claude-code   # AO harness of the board's card sessions ("": back to the default chain)
 hermes switchyard project lightscale ~/src/lightscale       # folder for a Hermes project, by id, slug or name
 hermes switchyard lane off                                  # stop taking new cards; linked cards keep reporting
 hermes switchyard lane run                                  # one pass now
@@ -226,6 +229,7 @@ plugins:
               group: Lightscale        # default: the board's name
               mode: auto
               model: anthropic/claude-sonnet-4-5   # unset: the Switchyard default
+              harness: claude-code                 # AO chat harness; unset: Switchyard's default, the AO project's worker harness, else AO's default
               comment_authors: [dashboard, alice]  # replaces the lane's list on this board
               archive_completed: true              # replaces the lane's archive_completed on this board
         projects:

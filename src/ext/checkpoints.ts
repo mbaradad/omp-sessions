@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, type AoConversation, switchyardHome } from "../ao/client";
+import { type AoClient, type AoConversation, type AoSessionView, isOmpHarness, switchyardHome } from "../ao/client";
 import { type UndoTarget, interruptAndWait, isBusy, planRedo, planUndo, runCheckpointCommand } from "../shared/checkpoint-ops";
 import {
 	type CheckpointResult,
@@ -42,6 +42,13 @@ export interface CheckpointsChange {
 
 function listNames(names: readonly string[]): string {
 	return names.length > 4 ? `${names.slice(0, 4).join(", ")} and ${names.length - 4} more` : names.join(", ");
+}
+
+/** Undo/redo is the omp extension's (it rewinds omp's own conversation): another harness gets a message, not a /undo it would read as a prompt. */
+function ompOnlyCheckpoints(view: AoSessionView): boolean {
+	if (isOmpHarness(view.harness)) return false;
+	void vscode.window.showInformationMessage(`Undo/redo checkpoints are omp-only (Switchyard's omp extension); this session runs ${view.harness}.`);
+	return true;
 }
 
 export class Checkpoints implements vscode.Disposable {
@@ -131,6 +138,7 @@ export class Checkpoints implements vscode.Disposable {
 	async undo(sessionId: string, target?: UndoTarget): Promise<CheckpointResult | undefined> {
 		const ao = await this.connect();
 		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
+		if (ompOnlyCheckpoints(view)) return undefined;
 		const plan = planUndo(sessionId, conversation, target);
 		if ("error" in plan) {
 			void vscode.window.showInformationMessage(plan.error);
@@ -164,6 +172,7 @@ export class Checkpoints implements vscode.Disposable {
 	async redo(sessionId: string): Promise<CheckpointResult | undefined> {
 		const ao = await this.connect();
 		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
+		if (ompOnlyCheckpoints(view)) return undefined;
 		const plan = planRedo(sessionId);
 		if ("error" in plan) {
 			void vscode.window.showInformationMessage(plan.error);

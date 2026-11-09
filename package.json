@@ -60,11 +60,11 @@
 	"capabilities": {
 		"untrustedWorkspaces": {
 			"supported": false,
-			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts sessions through the AO daemon. Trust the folder to use it."
+			"description": "Sessions run coding agents (omp, Claude Code, Codex, …): they run shell commands, edit files and load project configuration (AGENTS.md, .omp/, …) from the folder, and the extension starts sessions through the AO daemon. Trust the folder to use it."
 		},
 		"virtualWorkspaces": {
 			"supported": false,
-			"description": "Sessions run omp as a process on the file system of the extension host; virtual file systems are not reachable from it."
+			"description": "Sessions run their agent as a process on the file system of the extension host; virtual file systems are not reachable from it."
 		}
 	},
 	"categories": [
@@ -115,7 +115,7 @@
 			},
 			{
 				"view": "switchyard.tasks",
-				"contents": "Queue work for omp: tasks run one after another in the background, even with VS Code closed. Subtasks, drag & drop to reorder, check to complete.\n[Add task](command:switchyard.tasks.add)"
+				"contents": "Queue work for your agent sessions: tasks run one after another in the background, even with VS Code closed. Subtasks, drag & drop to reorder, check to complete.\n[Add task](command:switchyard.tasks.add)"
 			}
 		],
 		"commands": [
@@ -245,7 +245,7 @@
 			},
 			{
 				"command": "switchyard.setDefaultModel",
-				"title": "Set Default Model for New Sessions…",
+				"title": "Set Default omp Model for New Sessions…",
 				"category": "Switchyard",
 				"icon": "$(sparkle)"
 			},
@@ -332,7 +332,7 @@
 			},
 			{
 				"command": "switchyard.sendSelection",
-				"title": "Send Selection to omp",
+				"title": "Send Selection to Session",
 				"category": "Switchyard"
 			},
 			{
@@ -355,25 +355,25 @@
 			},
 			{
 				"command": "switchyard.sendTerminalSelection",
-				"title": "Send Terminal Selection to omp",
+				"title": "Send Terminal Selection to Session",
 				"category": "Switchyard",
 				"icon": "$(terminal)"
 			},
 			{
 				"command": "switchyard.explainSelection",
-				"title": "Explain Selection with omp",
+				"title": "Explain Selection with Agent",
 				"category": "Switchyard",
 				"icon": "$(question)"
 			},
 			{
 				"command": "switchyard.askAboutSelection",
-				"title": "Ask omp about Selection…",
+				"title": "Ask Agent about Selection…",
 				"category": "Switchyard",
 				"icon": "$(comment)"
 			},
 			{
 				"command": "switchyard.fixDiagnostics",
-				"title": "Fix Problems at Cursor with omp",
+				"title": "Fix Problems at Cursor with Agent",
 				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
@@ -397,19 +397,19 @@
 			},
 			{
 				"command": "switchyard.scm.commit",
-				"title": "Commit with omp",
+				"title": "Commit with Agent",
 				"category": "Switchyard",
 				"icon": "$(git-commit)"
 			},
 			{
 				"command": "switchyard.scm.review",
-				"title": "Review Uncommitted Changes with omp",
+				"title": "Review Uncommitted Changes with Agent",
 				"category": "Switchyard",
 				"icon": "$(checklist)"
 			},
 			{
 				"command": "switchyard.scm.pr",
-				"title": "Write PR Description with omp",
+				"title": "Write PR Description with Agent",
 				"category": "Switchyard",
 				"icon": "$(git-pull-request)"
 			},
@@ -583,43 +583,43 @@
 			},
 			{
 				"command": "switchyard.editWithOmp",
-				"title": "Edit with omp…",
+				"title": "Edit with Agent…",
 				"category": "Switchyard",
 				"icon": "$(sparkle)"
 			},
 			{
 				"command": "switchyard.fixFileProblems",
-				"title": "Fix File Problems with omp",
+				"title": "Fix File Problems with Agent",
 				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
 				"command": "switchyard.fixWorkspaceProblems",
-				"title": "Fix Workspace Errors with omp",
+				"title": "Fix Workspace Errors with Agent",
 				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
 				"command": "switchyard.fixLastFailedCommand",
-				"title": "Fix Failed Command with omp",
+				"title": "Fix Failed Command with Agent",
 				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
 				"command": "switchyard.explainFile",
-				"title": "Explain File with omp",
+				"title": "Explain File with Agent",
 				"category": "Switchyard",
 				"icon": "$(question)"
 			},
 			{
 				"command": "switchyard.writeTests",
-				"title": "Write Tests with omp",
+				"title": "Write Tests with Agent",
 				"category": "Switchyard",
 				"icon": "$(beaker)"
 			},
 			{
 				"command": "switchyard.addDocs",
-				"title": "Add Docs with omp",
+				"title": "Add Docs with Agent",
 				"category": "Switchyard",
 				"icon": "$(book)"
 			},
@@ -2131,7 +2131,7 @@
 					{
 						"id": "daemon",
 						"title": "Agent Orchestrator runs the sessions",
-						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:switchyard.server.start)",
+						"description": "The AO daemon starts each session's agent (omp, Claude Code, Codex, …) and keeps it running.\n[Start AO and the planner](command:switchyard.server.start)",
 						"media": {
 							"markdown": "media/walkthrough/daemon.md"
 						},
@@ -2154,7 +2154,7 @@
 					},
 					{
 						"id": "chat",
-						"title": "Talk to omp",
+						"title": "Talk to the agent",
 						"description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:switchyard.focus)",
 						"media": {
 							"markdown": "media/walkthrough/chat.md"
@@ -2188,8 +2188,8 @@
 					},
 					{
 						"id": "editor",
-						"title": "Use omp from the editor",
-						"description": "Fix with omp, add files, terminal output, git chores.",
+						"title": "Use agents from the editor",
+						"description": "Fix with an agent, add files, terminal output, git chores.",
 						"media": {
 							"markdown": "media/walkthrough/editor.md"
 						},
@@ -2264,6 +2264,12 @@
 					"default": [],
 					"scope": "machine",
 					"description": "Extra omp CLI arguments for every omp session on this machine, from any client, e.g. [\"--profile\", \"work\"]. Mirrored to ~/.switchyard/config.json and applied by the Switchyard omp shim when AO launches omp. Can't be set per workspace."
+				},
+				"switchyard.defaultHarness": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"markdownDescription": "AO harness (`omp`, `claude-code`, `codex`, … — `switchyard harnesses` lists them) of new sessions that name none, from any client. Empty: the AO project's worker harness, else AO's default (the only logged-in harness; with several, VS Code asks). Mirrored to `harness` in ~/.switchyard/config.json. Can't be set per workspace."
 				},
 				"switchyard.vscodeTools": {
 					"type": "boolean",
@@ -2353,7 +2359,7 @@
 				"switchyard.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **Switchyard: Start Planner and AO Daemon** starts both."
+					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **Switchyard: Start Planner and AO Daemon** starts both."
 				},
 				"switchyard.server.installService": {
 					"type": "boolean",
@@ -2369,7 +2375,7 @@
 					],
 					"enumDescriptions": [
 						"Sessions whose folder is a workspace folder or inside one (any status).",
-						"Every omp session on this machine."
+						"Every session on this machine."
 					],
 					"default": "workspace",
 					"description": "Which sessions the Sessions view, Tasks view, Sessions Board and status bar list. A window without folders lists all sessions."
@@ -2377,7 +2383,7 @@
 				"switchyard.saveBeforePrompt": {
 					"type": "boolean",
 					"default": true,
-					"description": "Save unsaved editors inside the session folder before sending a prompt, so omp sees what you see."
+					"description": "Save unsaved editors inside the session folder before sending a prompt, so the agent sees what you see."
 				},
 				"switchyard.notifications": {
 					"type": "boolean",
@@ -2387,7 +2393,7 @@
 				"switchyard.notifyAllSessions": {
 					"type": "boolean",
 					"default": false,
-					"markdownDescription": "Notify about every omp session on this machine, including those started from `switchyard`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
+					"markdownDescription": "Notify about every session on this machine, including those started from `switchyard`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
 				},
 				"switchyard.sound.completion": {
 					"type": "string",
@@ -2409,7 +2415,7 @@
 						"Music box"
 					],
 					"default": "Two-note comfort",
-					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open omp chat or the Sessions Board, on the computer you run VS Code on, for the sessions `switchyard.notifyAllSessions` covers; with several omp chats or windows open only one plays it. Listen to them all with **Switchyard: Test Completion Sound**."
+					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open session chat or the Sessions Board, on the computer you run VS Code on, for the sessions `switchyard.notifyAllSessions` covers; with several chats or windows open only one plays it. Listen to them all with **Switchyard: Test Completion Sound**."
 				},
 				"switchyard.sound.input": {
 					"type": "string",
@@ -2448,7 +2454,7 @@
 				"switchyard.hermes.dashboardUrl": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "Hermes Agent dashboard that **Open Hermes Card** opens (its Kanban page) for sessions started by the Hermes kanban lane. Empty: the dashboard Hermes records as running on the machine omp runs on (any port), else `http://localhost:9119`. In a remote window a `localhost` address is forwarded to your machine."
+					"markdownDescription": "Hermes Agent dashboard that **Open Hermes Card** opens (its Kanban page) for sessions started by the Hermes kanban lane. Empty: the dashboard Hermes records as running on the machine the sessions run on (any port), else `http://localhost:9119`. In a remote window a `localhost` address is forwarded to your machine."
 				},
 				"switchyard.chat.toolCardsCollapsed": {
 					"type": "boolean",
@@ -2483,7 +2489,7 @@
 				"switchyard.terminalHints": {
 					"type": "boolean",
 					"default": true,
-					"description": "After a command fails in a terminal inside a running session's folder, show \"Switchyard: fix failed command?\" in the status bar for 15 seconds. (Fix Failed Command with omp works either way; needs VS Code shell integration.)"
+					"description": "After a command fails in a terminal inside a running session's folder, show \"Switchyard: fix failed command?\" in the status bar for 15 seconds. (Fix Failed Command with Agent works either way; needs VS Code shell integration.)"
 				}
 			}
 		}
