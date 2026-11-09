@@ -4,6 +4,7 @@
 import * as vscode from "vscode";
 import type { PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
+import { checkTaskOption } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { type TaskNode, type TasksProvider, editOrWarn, isNode } from "./tasks";
@@ -49,6 +50,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 				prompt: { model: "provider/modelId (e.g. anthropic/claude-opus-4-6)", thinking: `one of: ${THINKING_LEVELS.join(", ")}`, retries: "number 1–10", timeout: "minutes" }[choice],
 				value: current(choice === "model" ? o.model : choice === "thinking" ? o.thinking : choice === "retries" ? o.retries : o.timeoutMinutes),
 				ignoreFocusOut: true,
+				validateInput: v => checkTaskOption(choice, v),
 			});
 			if (value === undefined) return;
 			const v = value.trim();
@@ -59,16 +61,10 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 				if (v) o.thinking = v;
 				else delete o.thinking;
 			} else if (choice === "retries") {
-				if (v) {
-					const n = Number(v);
-					if (!Number.isFinite(n) || n < 1) void vscode.window.showWarningMessage("Retries must be a whole number from 1–10.");
-					else o.retries = Math.trunc(n);
-				} else delete o.retries;
-			} else if (v) {
-				const n = Number(v);
-				if (!Number.isFinite(n) || n <= 0) void vscode.window.showWarningMessage("The limit must be a positive number of minutes.");
-				else o.timeoutMinutes = n;
-			} else delete o.timeoutMinutes;
+				if (v) o.retries = Number(v);
+				else delete o.retries;
+			} else if (v) o.timeoutMinutes = Number(v);
+			else delete o.timeoutMinutes;
 		} else if (choice === "clearModel") delete o.model;
 		else if (choice === "clearThinking") delete o.thinking;
 		else if (choice === "fresh") o.freshContext = !o.freshContext;

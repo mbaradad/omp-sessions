@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { holdLines, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { checkTaskOption, holdLines, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -118,5 +118,30 @@ describe("sync state", () => {
 		assert.deepEqual(found.map(c => [c.task.id, c.parentId, c.files]), [["c", "a", ["x.txt", "y.txt"]], ["c", "d", []]]);
 		const later = syncConflicts(plan([], [task("c", { sync: { a: { state: "conflict", at: 9 } } })]));
 		assert.notEqual(later[0].key, found[0].key);
+	});
+});
+
+describe("checkTaskOption", () => {
+	test("a model must look like provider/modelId (further slashes allowed); a bare name is refused so it isn't silently dropped", () => {
+		assert.equal(checkTaskOption("model", "anthropic/claude-opus-4-6"), undefined);
+		assert.equal(checkTaskOption("model", " openrouter/anthropic/claude-opus "), undefined);
+		for (const bad of ["opus", "anthropic/", "/x", "a b/c", "anthropic/ claude"]) assert.ok(checkTaskOption("model", bad), bad);
+	});
+
+	test("thinking is one of omp's levels (minimal is read as low by the planner)", () => {
+		for (const ok of ["off", "auto", "low", "medium", "high", "xhigh", "max", "minimal"]) assert.equal(checkTaskOption("thinking", ok), undefined, ok);
+		assert.match(checkTaskOption("thinking", "extreme") ?? "", /One of: off, auto, low/);
+	});
+
+	test("retries are whole numbers 1-10 and the time limit is minutes up to a day", () => {
+		assert.equal(checkTaskOption("retries", "3"), undefined);
+		for (const bad of ["0", "11", "2.5", "-1", "x"]) assert.ok(checkTaskOption("retries", bad), bad);
+		assert.equal(checkTaskOption("timeout", "90"), undefined);
+		assert.equal(checkTaskOption("timeout", "0.5"), undefined);
+		for (const bad of ["0", "-5", "1441", "soon"]) assert.ok(checkTaskOption("timeout", bad), bad);
+	});
+
+	test("empty text is valid in every field: it clears the option", () => {
+		for (const f of ["model", "thinking", "retries", "timeout"] as const) assert.equal(checkTaskOption(f, "  "), undefined, f);
 	});
 });

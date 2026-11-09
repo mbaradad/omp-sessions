@@ -1,7 +1,7 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
 import type { BudgetCaps, EdgeSync, LaneView, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
-import { PRIORITIES } from "../planner/types";
+import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
 const rank = (p: Priority | undefined): number => PRIORITIES.indexOf(p ?? "normal");
@@ -136,4 +136,27 @@ export function holdLines(status: Pick<PlannerStatus, "limits" | "spend">, now =
 		out.push(`spend this ${s.window}: $${s.spent.toFixed(2)} of $${s.cap}${s.over ? ` (cap reached${s.freesAt ? `, frees ${formatStartTime(s.freesAt, now)}` : ""})` : ""}`);
 	}
 	return out;
+}
+
+export type TaskOptionField = "model" | "thinking" | "retries" | "timeout";
+
+/**
+ * Why typed text is not a usable value for a task option, or undefined when it is (empty clears the option).
+ * The planner silently drops an option it can't read, so a typo must be refused here: `opus` would otherwise
+ * be accepted and the task would run on the session's own model. (Whether the model exists is the planner's
+ * dispatch-time check; this only catches what can't be a model id.)
+ */
+export function checkTaskOption(field: TaskOptionField, text: string): string | undefined {
+	const t = text.trim();
+	if (!t) return undefined;
+	switch (field) {
+		case "model":
+			return /^[^/\s]+\/\S+$/.test(t) ? undefined : "Type provider/modelId, e.g. anthropic/claude-opus-4-6 (empty clears it).";
+		case "thinking":
+			return t === "minimal" || (THINKING_LEVELS as readonly string[]).includes(t) ? undefined : `One of: ${THINKING_LEVELS.join(", ")} (empty clears it).`;
+		case "retries":
+			return /^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= 10 ? undefined : "A whole number from 1 to 10 (empty clears it).";
+		case "timeout":
+			return Number.isFinite(Number(t)) && Number(t) > 0 && Number(t) <= 24 * 60 ? undefined : "Minutes, more than 0 and at most 1440 (empty clears it).";
+	}
 }
