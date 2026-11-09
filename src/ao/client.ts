@@ -272,6 +272,21 @@ export class AoClient {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
+	/**
+	 * Steers the running turn with this text (omp's `_session/steering`). Refused when no turn runs
+	 * (CHAT_NO_ACTIVE_TURN: send it as a message instead). It also folds every queued message into the
+	 * same steering call, in queue order, and those queued turns end (VALIDATION.md §5): warn before
+	 * steering a session with a queue. `clientMessageId` is generated when absent.
+	 */
+	steer(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSchemas["SteerConversationResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+	}
+
+	/** Delivers one queued message into the running turn now (steers with its text), leaving the others queued. */
+	promoteQueuedTurn(sessionId: string, turnId: string): Promise<AoSchemas["PromoteQueuedTurnResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
+	}
+
 	/** Stops the running turn. */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
