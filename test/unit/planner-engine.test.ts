@@ -420,3 +420,15 @@ describe("task options", () => {
 		assert.equal(normalizeOptions({ thinking: "extreme" }), undefined);
 	});
 });
+
+// The chat panel (ext-chat) turns these message shapes into chips by their first line and trailing sentence.
+describe("task prompt shapes the chat panel recognises", () => {
+	test("a lane task, a free task and a follow-up keep their heads and trailers", () => {
+		const { s: state } = plan([{ op: "lane.add", id: "l_00000000d4" }, { op: "add", task: { title: "In lane", lane: "l_00000000d4" } }, { op: "add", task: { title: "Free" } }]);
+		const [inLane, free] = state.tasks;
+		assert.match(taskPrompt(state, inLane), /^\[Task 1\/1 from the queue\] In lane\n[\s\S]*\nWork through this task completely/);
+		assert.match(taskPrompt(state, free), /^\[Task from the plan\] Free\n[\s\S]*\nWork through this task completely/);
+		const followUp = { ...free, followUpOnly: true, followUp: "A changed x.txt." };
+		assert.match(taskPrompt(state, followUp), /^\[Follow-up on your task\] Free\n\nA changed x\.txt\.\n\nTake this into account, fix whatever it breaks/);
+	});
+});
