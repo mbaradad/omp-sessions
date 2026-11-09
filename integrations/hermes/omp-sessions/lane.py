@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval
+from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval, short
 from .settings import ANY_AUTHOR, BoardLane, Settings, board_lane
 from .store import Busy, Store
 
@@ -66,10 +66,6 @@ def link_key(board: str, card: str) -> str:
     return f"{board}/{card}"
 
 
-def short(session_id: str) -> str:
-    return session_id[:8]
-
-
 def clip(text: str, limit: int) -> str:
     text = text.strip()
     return text if len(text) <= limit else f"{text[:limit].rstrip()}\n… (clipped)"
@@ -98,24 +94,19 @@ def compose_notes(
     *,
     board: str,
     card_id: str,
-    cwd: str,
-    branch: Optional[str],
     context: str,
     skills: list[tuple[str, Optional[str]]],
 ) -> str:
     """The queued task's notes (omp gets them under the card title): what the session is for, the
     card's worker context as Hermes builds it for its own workers (body, parent results, comments),
-    and the SKILL.md files of the card's skills."""
+    and the SKILL.md files of the card's skills. They name no folder or branch: AO runs the session in
+    its own worktree, and a path here would send omp's edits into the folder the lane started from."""
     head = [
         f"This omp session works on Hermes kanban card {board}/{card_id}.",
         "The omp-sessions plugin reports back to the card on its own: your final reply becomes the card's result "
         "(and the input of cards that depend on it), and questions or approvals you ask show up on the card. "
         "You don't need any kanban tools.",
-        "",
-        f"Working folder: {cwd}",
     ]
-    if branch:
-        head.append(f"Branch: {branch} (a git worktree for this card; commit your work on it)")
     tail: list[str] = []
     if skills:
         tail += ["", "## Skills", "The card asks for these skills. Read each SKILL.md before you start and follow it:"]
@@ -168,15 +159,17 @@ class Card:
 
 
 def question_text(q: dict) -> str:
-    lines = [str(q.get("title") or "omp asks a question")]
+    subs = [s for s in q.get("questions") or [] if isinstance(s, dict)]
+    title = str(q.get("title") or "omp asks a question")
+    # AO's ask elicitation repeats its one question as the dialog title.
+    lines = [] if len(subs) == 1 and str(subs[0].get("question") or "") == title else [title]
     if q.get("message"):
         lines.append(str(q["message"]))
     if q.get("options"):
         lines.append("Options: " + " · ".join(str(o) for o in q["options"]))
-    for sub in q.get("questions") or []:
-        if isinstance(sub, dict):
-            opts = " · ".join(str(o) for o in sub.get("options") or [])
-            lines.append(f"{sub.get('question', '')}" + (f" ({opts})" if opts else ""))
+    for sub in subs:
+        opts = " · ".join(str(o) for o in sub.get("options") or [])
+        lines.append(f"{sub.get('question', '')}" + (f" ({opts})" if opts else ""))
     return "\n".join(lines)
 
 
@@ -520,7 +513,7 @@ class Lane:
             context = f"# Kanban task {task.id}: {task.title}\n\n## Body\n{task.body or '(empty)'}\n\n(worker context unavailable: {exc})"
         roots = skill_roots(Path(get_hermes_home()))
         skills = [(name, find_skill(name, roots)) for name in (task.skills or [])]
-        notes = compose_notes(board=slug, card_id=task.id, cwd=link["cwd"], branch=link.get("branch"), context=context, skills=skills)
+        notes = compose_notes(board=slug, card_id=task.id, context=context, skills=skills)
         # Parent cards that ran in the lane become the session's `after`, so the planner starts this
         # card's worktree from their branches and later propagates their changes (GRAPH-PROPAGATION.md).
         try:
@@ -556,8 +549,9 @@ class Lane:
             conn,
             task.id,
             AUTHOR,
-            f"Queued as omp session {short(sid)} in {link['cwd']}"
-            + (f" (branch {link['branch']})" if link.get("branch") else "")
+            # Where omp really works: AO's worktree for the session, not the folder the lane gave it.
+            f"Queued as omp session {short(sid)} in {res.get('cwd') or link['cwd']}"
+            + (f" (branch {link['branch']})" if link.get("branch") and res.get("cwd") in (None, link["cwd"]) else "")
             + f". It starts when omp has a free slot. Follow or steer it in {WHERE_TO_ANSWER}, or with `omp-sessions attach {short(sid)}`; "
             f"comments here by {authors} reach the session too. This card is updated when it finishes or needs input.",
         )

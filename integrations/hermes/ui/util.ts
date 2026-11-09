@@ -48,8 +48,9 @@ export function money(cost: number): string {
 	return `$${cost < 10 ? cost.toFixed(2) : cost.toFixed(0)}`;
 }
 
+/** AO ids (`<project>-<n>`) in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8. */
 export function shortId(id: string): string {
-	return id.slice(0, 8);
+	return !id.includes("-") && id.length > 12 ? id.slice(0, 8) : id;
 }
 
 export const STATE_LABEL: Record<State, string> = {

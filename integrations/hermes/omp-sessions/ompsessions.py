@@ -34,6 +34,12 @@ def is_approval(question: dict) -> bool:
     return str(question.get("kind") or "") not in TEXT_QUESTION_KINDS
 
 
+def short(session_id: str) -> str:
+    """A session id for messages: AO ids (`<project>-<n>`, already short and what every command takes)
+    in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8, the prefix it was known by."""
+    return session_id[:8] if "-" not in session_id and len(session_id) > 12 else session_id
+
+
 def free_text_ok(value: str) -> str:
     """A session reference or schedule for a positional argument: never something omp-sessions reads as a flag."""
     if value.startswith("-"):

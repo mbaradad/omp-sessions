@@ -8,8 +8,8 @@ import os
 import time
 from typing import Any, Callable, Optional, Sequence
 
-from .lane import Lane, short
-from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions
+from .lane import Lane
+from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions, short
 from .settings import MODES, Settings, board_lane, parse_authors, update_setting
 from .store import Store, profile_of
 
@@ -116,7 +116,7 @@ def status_text(d: dict) -> str:
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
-        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · omp-sessions server not running'}")
+        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once omp-sessions starts it)'}")
     last = d.get("last_notification") or {}
     lines.append(
         f"notify: {'on' if d['notify'] else 'off'}"
@@ -167,7 +167,7 @@ def sessions_summary(omp: OmpSessions) -> str:
         q = s.get("queue") or {}
         queue = f" · queue {q.get('done', 0)}/{q.get('total', 0)}" if q.get("total") else ""
         group = f" · {s['group']}" if s.get("group") else ""
-        lines.append(f"{str(m.get('id', ''))[:8]}  {agent_state(s):<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
+        lines.append(f"{short(str(m.get('id', '')))}  {agent_state(s):<11} {m.get('title', '')!s:.60}{group}{queue}\n          {m.get('cwd', '')}")
     return "\n".join(lines)
 
 
@@ -195,7 +195,7 @@ def sessions_brief(omp: OmpSessions) -> str:
     lines = [" · ".join(f"{len(by[k])} {label}" for k, label in labels if by.get(k))]
     for s in (by.get("needs_input") or [])[:5]:
         m = s.get("meta") or {}
-        lines.append(f"needs you: {str(m.get('id', ''))[:8]} {m.get('title', '')!s:.60}")
+        lines.append(f"needs you: {short(str(m.get('id', '')))} {m.get('title', '')!s:.60}")
     return "\n".join(lines)
 
 

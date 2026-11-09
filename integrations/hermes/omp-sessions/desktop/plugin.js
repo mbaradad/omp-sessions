@@ -90,7 +90,7 @@ function money(cost) {
   return `$${cost < 10 ? cost.toFixed(2) : cost.toFixed(0)}`;
 }
 function shortId(id) {
-  return id.slice(0, 8);
+  return !id.includes("-") && id.length > 12 ? id.slice(0, 8) : id;
 }
 var STATE_LABEL = {
   needs_input: "Needs you",

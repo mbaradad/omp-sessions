@@ -705,9 +705,8 @@ class PureTest(unittest.TestCase):
         (root / "outside" / "evil" / "SKILL.md").write_text("x")
         for bad in ("../outside/evil", "cat/my-skill", "..\\outside\\evil", ".."):
             self.assertIsNone(self.lane.find_skill(bad, roots), bad)
-        notes = self.lane.compose_notes(board="b", card_id="t_1", cwd="/w", branch="wt/t_1", context="X" * 50_000, skills=[("my-skill", found), ("gone", None)])
+        notes = self.lane.compose_notes(board="b", card_id="t_1", context="X" * 50_000, skills=[("my-skill", found), ("gone", None)])
         self.assertLessEqual(len(notes), 20_000)
-        self.assertIn("Branch: wt/t_1", notes)
         self.assertIn(f"- my-skill: {found}", notes)
         self.assertIn("- gone: (not found on this machine)", notes)
         self.assertIn("(clipped)", notes)

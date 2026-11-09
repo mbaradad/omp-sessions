@@ -352,7 +352,7 @@ def session_detail(sid: str) -> dict:
         raise ApiError(404, f"no session matches {sid}")
     info = next((i for i in o.sessions(all=True) if (i.get("meta") or {}).get("id") == report.get("id")), None)
     if info is None:
-        raise ApiError(404, f"session {sid[:8]} is gone")
+        raise ApiError(404, f"session {ompsessions.short(sid)} is gone")
     by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")}
     ref = card_ref(info, by_session)
     card = card_lookup({ref}).get(ref) if ref else None
@@ -506,7 +506,7 @@ def open_project(sid: str, base_url: str) -> dict:
         raise ApiError(404, f"no session matches {sid}")
     info = next((i for i in o.sessions(all=True) if (i.get("meta") or {}).get("id") == report.get("id")), None)
     if info is None:
-        raise ApiError(404, f"session {sid[:8]} is gone")
+        raise ApiError(404, f"session {ompsessions.short(sid)} is gone")
     by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")}
     ref = card_ref(info, by_session)
     card = card_lookup({ref}).get(ref) if ref else None

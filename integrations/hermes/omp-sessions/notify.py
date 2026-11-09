@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .ompsessions import OmpSessions, is_approval
+from .ompsessions import OmpSessions, is_approval, short
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def signature(report: dict) -> str:
 def note_text(report: dict, agent_approvals: bool = False) -> str:
     """The note for a settled session. What omp wrote (question, reply, reason, title) sits in an
     <omp-output> block marked as data: it may echo files, web pages or tool output omp read."""
-    sid = str(report.get("id", ""))[:8]
+    sid = short(str(report.get("id", "")))
     state = report.get("state")
     q = report.get("question") if isinstance(report.get("question"), dict) else {}
     head = {

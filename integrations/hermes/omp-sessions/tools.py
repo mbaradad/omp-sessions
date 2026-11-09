@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from .lane import one_line
 from .notify import Notifier, current_session_key
-from .ompsessions import PRIORITIES, WAIT_EXIT, OmpSessions, OmpSessionsError, error_text, free_text_ok, is_approval
+from .ompsessions import PRIORITIES, WAIT_EXIT, OmpSessions, OmpSessionsError, error_text, free_text_ok, is_approval, short
 from .settings import MODE_ORDER, MODES, Settings
 
 TOOLSET = "omp_sessions"
@@ -425,7 +425,7 @@ class Tools:
                 raise OmpSessionsError(f"no session matches {sid}")
             q = report.get("question") if report.get("state") == "needs_input" else None
             if not isinstance(q, dict):
-                raise OmpSessionsError(f"omp session {str(report.get('id'))[:8]} is not waiting for an answer ({report.get('state')})")
+                raise OmpSessionsError(f"omp session {short(str(report.get('id')))} is not waiting for an answer ({report.get('state')})")
             if is_approval(q) and not self.settings().agent_approvals:
                 raise OmpSessionsError(
                     f"this is an approval dialog ({one_line(str(q.get('title') or q.get('kind')), 120)}): the user approves or denies it in VS Code, "
