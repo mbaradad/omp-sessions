@@ -417,6 +417,7 @@ reset, and the task starts by itself then. The header's `retry-after-ms` wins ov
 
 ## Changelog
 
+- 2026-11-09: usage gating on tasks with no model: `PlanState.defaultProvider` / `status.defaultProvider` (learned from the session's `model` config option); `AoPort.currentModel`; reset fields `resets_at`/`reset_at`/… parsed; `sched limits clear`.
 - 2026-11-09: removing a task also removes its AO session when its branch is deleted (kept branch = kept session).
 - 2026-11-09: `PlanView.keptBranches` (leftover switchyard/* branches with unmerged work) and op `branch.clean`.
 - 2026-11-09: the service installs the omp gate/shim at start (G46); `ping` returns `omp`.
