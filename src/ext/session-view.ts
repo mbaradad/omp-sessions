@@ -134,7 +134,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const ids = new Set(lanes.map(l => l.id));
 	const tasks = plan.tasks.filter(t => t.lane !== undefined && ids.has(t.lane));
 	const total = (key: "pending" | "running" | "done" | "total") => lanes.reduce((n, l) => n + l[key], 0);
-	const startAt = Math.min(...lanes.flatMap(l => (l.startAt ? [l.startAt] : [])), ...tasks.flatMap(t => (t.state === "scheduled" && t.waitUntil ? [t.waitUntil] : [])));
+	const startAt = Math.min(...lanes.flatMap(l => (l.startAt ? [l.startAt] : l.state === "scheduled" && l.waitUntil ? [l.waitUntil] : [])), ...tasks.flatMap(t => (t.state === "scheduled" && t.waitUntil ? [t.waitUntil] : [])));
 	const interrupted = tasks.filter(t => t.state === "interrupted").length;
 	const waiting = tasks.find(t => t.state === "waiting" && t.position !== undefined);
 	const sessionOf = taskSessionOf(plan);
@@ -142,6 +142,8 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const after = sessionsOf(tasks.flatMap(t => t.after ?? []));
 	const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []));
 	const failed = tasks.filter(t => t.state === "failed").length;
+	// The planner's own word for what the lane's next open task is doing (running, waiting, scheduled, held, blocked…) and why.
+	const next = lanes.find(l => l.state !== undefined);
 	const completed = lanes.every(l => l.completed === true);
 	const completedAt = Math.max(...lanes.map(l => l.completedAt ?? 0));
 	// Propagation (GRAPH-PROPAGATION.md): the worst state over every parent edge of the session's tasks, and the parent sessions in it.
@@ -163,6 +165,8 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(Number.isFinite(startAt) && { startAt }),
 		...(interrupted && { interrupted }),
 		...(failed && { failed }),
+		...(next?.state && { state: next.state }),
+		...(next?.waitReason && { waitReason: next.waitReason }),
 		...(completed && { completed, completedAt }),
 		...(sync && { sync }),
 		...(after.length && { after }),

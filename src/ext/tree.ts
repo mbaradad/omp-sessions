@@ -180,6 +180,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.waitReason) tip.appendMarkdown(`$(clock) ${m.queue.state ?? "waiting"}: ${m.queue.waitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.queue?.sync) {
 			const from = m.queue.sync.parents.map(id => this.sessions.get(id)?.title ?? id.slice(0, 8)).join(", ");
 			const files = m.queue.sync.files?.length ? ` in ${m.queue.sync.files.slice(0, 5).join(", ")}${m.queue.sync.files.length > 5 ? ", …" : ""}` : "";

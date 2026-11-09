@@ -33,7 +33,7 @@ export interface ServerControl {
 }
 
 export function runtimeDir(): string {
-	return path.join(stateRoot(), "runtime");
+	return path.join(switchyardHome(), "runtime");
 }
 
 function copyAtomic(from: string, to: string): void {
@@ -103,6 +103,14 @@ export function installedUnit(): string | undefined {
 	if (process.platform !== "linux") return undefined;
 	const unit = daemonUnitName(defaultRunFile());
 	return spawnSync("systemctl", ["--user", "cat", `${unit}.service`], { stdio: "ignore", timeout: 5_000 }).status === 0 ? unit : undefined;
+}
+
+function readIfExists(file: string): string | undefined {
+	try {
+		return fs.readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
 }
 
 function shellQuote(args: readonly string[]): string {
@@ -185,7 +193,10 @@ export function registerServer(api: OmpApi): ServerControl {
 		// test or scratch home must never create a user unit), and never when the person said `service off` (setting or CLI).
 		const wantService =
 			vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) && readSwitchyardConfig().service !== "off" && !process.env.SWITCHYARD_HOME && !getNode().electron;
-		if (wantService && kind && !fs.existsSync(serviceUnitPath(kind))) {
+		// A unit that pins another script (the runtime copy moved, e.g. from ~/.omp/vscode/runtime to ~/.switchyard/runtime) is
+		// installed again: the service would keep running the old planner.
+		const unitText = kind ? readIfExists(serviceUnitPath(kind)) : undefined;
+		if (wantService && kind && (unitText === undefined || !unitText.includes(script))) {
 			const r = installPlannerService(script, getNode().path);
 			if (r) ao.log.info(`installed the planner ${r.kind} user service ${r.file}${r.ok ? "" : " (it did not start)"}`);
 		}

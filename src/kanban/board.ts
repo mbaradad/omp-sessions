@@ -25,7 +25,7 @@ export interface BoardCard {
 	status: SessionStatus;
 	lastText?: string;
 	cost?: number;
-	queue?: { pending: number; running: number; done: number; total: number };
+	queue?: { pending: number; running: number; done: number; total: number; state?: string; waitReason?: string };
 	/** Set while the session waits for a global concurrency slot. */
 	waiting?: { position: number; since: number };
 	/** Worst sync state of the incoming dependency edges (a parent's changes reaching this worktree), with the parents in that state. */

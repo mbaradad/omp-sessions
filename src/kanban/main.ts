@@ -452,7 +452,11 @@ function statusPill(c: BoardCard): HTMLElement {
 	const key = statusKey(c);
 	if (key === "working") return el("span", "pill working", el("span", "spinner"), c.status === "starting" ? "Starting" : "Working");
 	if (key === "waiting") return el("span", "pill waiting", icon("bell"), "Needs input");
-	if (key === "queued") return el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : "Queued");
+	if (key === "queued") {
+		const pill = el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : "Queued");
+		if (c.queue?.waitReason) pill.title = `${c.queue.state ?? "waiting"}: ${c.queue.waitReason}`;
+		return pill;
+	}
 	if (key === "stopped") return el("span", "pill stopped", icon("circle"), "Stopped");
 	if (key === "completed") return el("span", "pill completed", icon("check"), "Completed");
 	return el("span", "pill idle", icon("check"), "Idle");
