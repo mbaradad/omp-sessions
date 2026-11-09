@@ -348,6 +348,27 @@ test("cli: queue at schedules, reschedules (forms the board and Hermes also send
 	assert.equal(cli("queue", id, "at", "off").status, 0);
 });
 
+test("cli: the completed mark shows in ls --json; a person's prompt and a starting queued task clear it, a /command does not", { skip, timeout: 180_000 }, () => {
+	const created = json("new", repo, "--task", "echo first", "--mode", "auto", "--json");
+	assert.equal(created.status, 0, created.stderr);
+	const id = created.data.id;
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	const completed = () => json<{ completed: boolean }>("show", id, "--json").data.completed;
+	json("complete", id, "--json");
+	const row = json<Array<{ meta: { id: string }; completed: boolean; completedAt?: number }>>("ls", "--all", "--json").data.find(r => r.meta.id === id);
+	assert.deepEqual([row?.completed, typeof row?.completedAt], [true, "number"]);
+	assert.equal(cli("send", id, "/cost").status, 0);
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(completed(), true, "a /command is not new work");
+	assert.equal(cli("send", id, "echo again").status, 0);
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(completed(), false, "a prompt clears the mark");
+	json("complete", id, "--json");
+	assert.equal(cli("queue", id, "add", "echo queued").status, 0);
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	assert.equal(completed(), false, "a queued task starting clears the mark");
+});
+
 test("cli: sched budget, usage and limits are set through the planner; --usage spare needs --task", { skip }, () => {
 	type Status = { budget?: Record<string, number>; usage: { holdAtPercent: number; spareBelowPercent: number }; limits: unknown[] };
 	assert.equal(json<Status>("sched", "budget", "day", "5", "--json").data.budget?.day, 5);
