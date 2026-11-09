@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Usage-based auto-scheduling, completed.** The planner holds queued work while a provider's rate or usage limit is in force (until the reset the provider's error states) or its `omp usage` window is at the hold threshold, and starts it by itself afterwards; a spend budget per rolling hour, day or week holds new tasks while finished turns have spent it. Verified end to end against an isolated AO daemon and real omp (a stub provider answering 429): a reset above omp's 5-minute retry limit holds the task and it starts at the reset; a shorter one is retried by omp itself.
+- Tasks that name no model are now covered: the planner learns the provider of omp's default model from the first session it starts for such a task, so a limit error holds that provider and later tasks (and `spare` ones) are gated by its limits and usage windows.
+- Fixed: a reset given as `"resets_at": <epoch>` (and `reset_at`, `resetsAt`, `resetAt`, `resetsAtSec`) in a provider's error was not read, so the hold used a 5-minute backoff guess.
+- Why work waits is now visible: the Sessions tree description of a held session says why and until when, the board card shows a *Held* pill and a line with the reason and time (held sessions sit in the Queued column), `switchyard ls` shows `held` with a line under the table, and `show`, `status` and `sched` list limits, windows, spend and the held count. The Tasks view no longer repeats the time ("until 14:05 until 14:05").
+- `switchyard sched limits clear [provider…]` forgets provider limits so held work starts now (the VS Code *Clear Provider Limits* command did already). `status --json` (and Hermes' `switchyard_server_status`) carry `scheduler.held`, `limits`, `usageWindows`, `budget` and `spend`; `/switchyard status` in Hermes prints them.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.

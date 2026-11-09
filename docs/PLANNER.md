@@ -399,11 +399,21 @@ reports account windows only for Claude/Codex accounts, never for omp sessions; 
 one provider the one with most room counts; tier-scoped windows are ignored); (3) spend of
 planner-dispatched tasks (difference of AO's conversation `usage.cost` before/after the turn) against
 `budget`. The provider of a task is the prefix of its effective `model`; a task without a model (none on the task,
-its lane or `PlannerConfig.defaults`) has no known provider and is gated by the budget only: set `defaults.model`
-to gate such tasks (and `usage: "spare"` ones) on a provider. A task is `held` while its provider is limited, any of its windows is ≥
+its lane or `PlannerConfig.defaults`) runs on omp's own default model, whose provider the planner learns from the
+session it starts for such a task (the `model` config option, `PlanState.defaultProvider`, `status.defaultProvider`):
+a limit error on that run holds that provider, and from then on such tasks are gated by it and by its windows. Before
+the first run (nothing learned) they are gated by the budget only; set `defaults.model` to gate them from the start.
+A task is `held` while its provider is limited, any of its windows is ≥
 `holdAtPercent`, or a budget cap is reached; a `usage: "spare"` task also waits until every window of
 its provider is < `spareBelowPercent`. `waitUntil` is the earliest known reset. `SWITCHYARD_PLANNER_USAGE=off`
 disables the omp poll.
+
+Behaviour of omp 18.12.6 with a provider that answers 429 (stub provider, real omp, isolated AO; 2026-11-09): omp retries a
+limit itself while the stated reset is short: with `retry-after: 45` the turn stayed `running` for two minutes, omp sent a
+request every ~40 s, and the task finished the moment the provider recovered, with no limit ever reaching the planner.
+With a reset above omp's `retry.maxDelayMs` (5 min; tried with `retry-after: 305` and 3600) omp ends the turn at once
+as a *completed* turn whose reply is `429 … retry-after-ms=<ms> …` (G35): the planner holds the provider until that
+reset, and the task starts by itself then. The header's `retry-after-ms` wins over prose in the same message.
 
 ## Changelog
 

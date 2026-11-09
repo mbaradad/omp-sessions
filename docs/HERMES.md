@@ -88,7 +88,7 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | `switchyard_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on; `after` sets the sessions the queue waits for. |
 | `switchyard_queue_schedule` | Sets or changes when a session's queue starts (`at`), cancels it (`at: "off"`), and/or sets its `priority`. |
 | `switchyard_models_list` | Lists the models omp can use (`provider/id`), with the Switchyard default and omp's own. |
-| `switchyard_server_status` | The `switchyard status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. |
+| `switchyard_server_status` | The `switchyard status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. `scheduler` carries what holds queued work back: `held` (count), `limits` (provider rate/usage limits in force and when they reset), `usageWindows` (omp's provider windows), `budget` and `spend` (caps and what each rolling window has spent). `/switchyard status` prints the same. |
 | `switchyard_plan_status` | Lists the graph's edges (parent → child) with their sync state and conflicting files, for one session or every plan. |
 | `switchyard_plan_sync` | Brings a session's parents' changes into its worktree now and returns each edge's sync state; `rerun: true` also runs its task again with them. |
 
