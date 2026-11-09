@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { AoClient, AoConfigOptions, AoProject, AoSendResponse, AoSessionView } from "./client";
 import { refuseRealStateInTests, sessionStateFile, switchyardHome } from "./native";
 import { writeMode } from "../shared/session-mode";
@@ -38,7 +39,7 @@ export interface SpawnSwitchyardOptions {
 	model?: string;
 	/** omp's thinking level (`off`, `low`, `medium`, `high`, …), checked against its choices. */
 	thinking?: string;
-	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). Any other mode needs the permission gate installed: without it the spawn is refused (`switchyard install`). */
+	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). Any other mode needs the permission gate installed: without it the spawn is refused (`switchyard omp-extension install`). */
 	mode?: AoSessionMode;
 	/** Where to look for the gate (omp's agent folder): default the machine's own. For tests that install a stand-in gate in a temp folder. */
 	gate?: { omp?: OmpPathOptions };
@@ -63,6 +64,8 @@ export interface SpawnSwitchyardOptions {
 	clientRequestId?: string;
 	/** Switchyard's state folder; default `$SWITCHYARD_HOME` or `~/.switchyard`. */
 	home?: string;
+	/** How long to wait for AO's model catalog to settle (a fresh daemon answers empty while it refreshes) before skipping the pre-check. Default 5 s. */
+	catalogWaitMs?: number;
 	/** How long to wait for the agent after a restart. Default 90 s. */
 	readyTimeoutMs?: number;
 }
@@ -95,6 +98,27 @@ function writeFileAtomic(file: string, content: string): void {
 	fs.renameSync(tmp, file);
 }
 
+/**
+ * AO's omp model catalog once it can be trusted. A daemon that has just started answers with no models and
+ * `refreshState: "refreshing"` for a second or two (omp lists its models in the background): that is not "the model
+ * does not exist", so an empty or still-refreshing answer that lacks the model is asked again, for up to `waitMs`.
+ * A catalog that has the model, or that has settled without it, is returned. undefined: it never settled or could
+ * not be read: the caller skips the pre-check, and the session's own config options (step 4) still reject a bad
+ * model, removing the session.
+ */
+async function settledCatalog(client: AoClient, model: string, waitMs: number): Promise<Awaited<ReturnType<AoClient["agentModels"]>> | undefined> {
+	const deadline = Date.now() + waitMs;
+	const pause = Math.min(250, Math.ceil(waitMs / 4));
+	for (;;) {
+		const catalog = await client.agentModels("omp").catch(() => undefined);
+		if (!catalog || catalog.models.some(m => m.id === model)) return catalog;
+		const settling = catalog.models.length === 0 || catalog.refreshState === "refreshing" || catalog.refreshState === "queued";
+		if (!settling) return catalog;
+		if (Date.now() >= deadline) return undefined;
+		await sleep(pause);
+	}
+}
+
 /** Starts a Switchyard session (see the file header). Rejects before creating anything for an unknown model. */
 export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwitchyardOptions = {}): Promise<SpawnedSwitchyardSession> {
 	const home = options.home ?? switchyardHome();
@@ -106,12 +130,12 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 	// so a mode file nobody reads would run everything unrestricted while reporting the mode. Refuse before anything exists.
 	if (mode !== "auto") {
 		const status = gateStatus(options.gate);
-		if (!status.gate) throw new Error(`Permission mode "${mode}" needs the Switchyard permission gate, which is not installed (looked in ${status.extensionDir}). Run \`switchyard install\`; without the gate a session can only start in mode "auto".`);
+		if (!status.gate) throw new Error(`Permission mode "${mode}" needs the Switchyard permission gate, which is not installed (looked in ${status.extensionDir}). Run \`switchyard omp-extension install\`; without the gate a session can only start in mode "auto".`);
 	}
 
 	// 1. A model no catalog knows would leave a terminated session behind; refuse it before any session exists.
 	if (options.model) {
-		const catalog = await client.agentModels("omp").catch(() => undefined);
+		const catalog = await settledCatalog(client, options.model, options.catalogWaitMs ?? 5_000);
 		if (catalog && !catalog.models.some(m => m.id === options.model)) throw new Error(`Unknown omp model "${options.model}" (not in AO's model catalog)`);
 	}
 	const project = options.projectId ? undefined : options.dir ? await client.projectForFolder(options.dir) : undefined;
