@@ -362,3 +362,23 @@ test("`scheduler {clearLimits}` forgets a provider limit and held work starts; a
 	personSays("one more thing please");
 	await until("cleared by the prompt", () => p2.state.lanes[0].completed === undefined);
 });
+
+test("a turn AO marks completed while its last reply still streams: the summary waits for the final text; a reply that never settles is taken after the grace", async t => {
+	const ao = new FakeAo();
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, settleMs: 1500 });
+	p.start();
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "races" } }, { op: "add", task: { title: "stuck" } }]);
+	const s1 = await until("races sent", () => byTitle(p, "races").run?.phase === "sent" && byTitle(p, "races").run?.session);
+	const s2 = await until("stuck sent", () => byTitle(p, "stuck").run?.phase === "sent" && byTitle(p, "stuck").run?.session);
+	ao.finishTurnWhileStreaming(s1, "Found three bu");
+	ao.finishTurnWhileStreaming(s2, "never fin");
+	await sleep(500);
+	assert.equal(byTitle(p, "races").status, "running", "not recorded while the reply streams");
+	ao.settleReply(s1, "Found three bugs in parser.ts");
+	await until("races done", () => byTitle(p, "races").status === "done");
+	assert.equal(byTitle(p, "races").summary, "Found three bugs in parser.ts");
+	// A reply that never stops streaming does not hold the task forever.
+	await until("stuck done after the grace", () => byTitle(p, "stuck").status === "done", 8000);
+});

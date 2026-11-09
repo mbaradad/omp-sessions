@@ -229,6 +229,24 @@ export class FakeAo implements AoPort {
 		this.event(session);
 	}
 
+	/** AO marks the turn completed while its last reply is still streaming; `settleReply` finishes it. */
+	finishTurnWhileStreaming(session: string, partial: string): void {
+		const s = this.sessions.get(session);
+		const turn = s?.conv.turns.find(t => t.state === "running");
+		assert.ok(s && turn, `no running turn in ${session}`);
+		turn.state = "completed";
+		s.conv.messages.push({ turnId: turn.id, role: "assistant", text: partial, streaming: true });
+		this.event(session);
+	}
+
+	settleReply(session: string, finalText: string): void {
+		const m = this.sessions.get(session)?.conv.messages.filter(x => x.role === "assistant" && x.streaming).pop();
+		assert.ok(m, "no streaming reply");
+		m.text = finalText;
+		m.streaming = false;
+		this.event(session);
+	}
+
 	promptOf(session: string): string {
 		return this.sessions.get(session)?.conv.messages.find(m => m.role === "user")?.text ?? "";
 	}

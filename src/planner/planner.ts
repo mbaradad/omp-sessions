@@ -36,6 +36,8 @@ export interface PlannerOptions {
 	undone?: (task: Task) => Promise<boolean>;
 	/** Undoes this task's earlier turn before it runs again (`requeue {clean}`); throws when it can't. */
 	rewind?: (task: Task) => Promise<void>;
+	/** How long a completed turn may wait for its last reply to stop streaming (default 5 s). */
+	settleMs?: number;
 	/** How often a running task's session is asked about when no event said it died (default 10 s). */
 	livenessMs?: number;
 	/** Fallback poll of running tasks (events usually come first). */
@@ -75,6 +77,8 @@ export class Planner {
 	/** Tasks to look at again once their in-flight step ends. */
 	private readonly recheck = new Set<string>();
 	private readonly interruptSent = new Set<string>();
+	/** When a completed turn was first seen with its reply still streaming (bounded wait for the final text). */
+	private readonly settleSince = new Map<string, number>();
 	/** When AO was last asked whether a running task's session is still alive. */
 	private readonly livenessAt = new Map<string, number>();
 	private tickTimer: NodeJS.Timeout | undefined;
@@ -823,6 +827,19 @@ export class Planner {
 			if (timeout) this.follow(id, Math.max(500, Math.min(30_000, (t.startedAt ?? this.now()) + timeout * 60_000 - this.now())));
 			return;
 		}
+		// AO can mark a turn completed a moment before its last assistant message stops streaming (about 1 read in 20):
+		// recording the summary now would take the previous reply, or none. Look again shortly, for a bounded time.
+		if (turn.state === "completed") {
+			const first = this.settleSince.get(id) ?? this.now();
+			this.settleSince.set(id, first);
+			const mine = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant");
+			const waited = this.now() - first;
+			if ((mine.some(m => m.streaming) && waited < (this.opts.settleMs ?? 5000)) || (mine.length === 0 && waited < Math.min(1000, this.opts.settleMs ?? 5000))) {
+				this.follow(id, 250);
+				return;
+			}
+		}
+		this.settleSince.delete(id);
 		const cost = conv.cost !== undefined ? Math.max(0, conv.cost - (run.baseCost ?? 0)) : undefined;
 		const costPart = cost ? { cost } : {};
 		// Put the session's model and thinking back the way they were (best effort).
