@@ -976,6 +976,30 @@
 				"icon": "$(credit-card)"
 			},
 			{
+				"command": "switchyard.scheduler.configure",
+				"title": "Planner Settings…",
+				"category": "Switchyard",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "switchyard.scheduler.setUsage",
+				"title": "Set Usage Limits for Queued Tasks…",
+				"category": "Switchyard",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "switchyard.scheduler.setDefaultModel",
+				"title": "Set Default Model for Queued Tasks…",
+				"category": "Switchyard",
+				"icon": "$(hubot)"
+			},
+			{
+				"command": "switchyard.scheduler.clearLimits",
+				"title": "Clear Provider Limits…",
+				"category": "Switchyard",
+				"icon": "$(clear-all)"
+			},
+			{
 				"command": "omp.doctor.markStopped",
 				"title": "Mark Session Stopped",
 				"category": "omp"
@@ -1140,6 +1164,26 @@
 					"command": "switchyard.scheduler.setBudget",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@3"
+				},
+				{
+					"command": "switchyard.scheduler.configure",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@4"
+				},
+				{
+					"command": "switchyard.scheduler.setUsage",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@5"
+				},
+				{
+					"command": "switchyard.scheduler.setDefaultModel",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@6"
+				},
+				{
+					"command": "switchyard.scheduler.clearLimits",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@7"
 				},
 				{
 					"command": "switchyard.tasks.showGraph",

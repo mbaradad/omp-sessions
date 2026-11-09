@@ -4,7 +4,7 @@
 import * as vscode from "vscode";
 import type { PermissionMode, PlanOp, Priority, TaskOptions } from "../planner/types";
 import { PERMISSION_MODES, PRIORITIES, THINKING_LEVELS } from "../planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, modeGateNote, undoneWith } from "../shared/plan-tree";
+import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, isUndoable, modeGateNote, spareNote, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import { gateStatus } from "../ao/client";
 import type { OmpApi } from "./api";
@@ -47,12 +47,18 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 			{ id: "clearThinking", label: "Clear thinking level" },
 			{ id: "fresh", label: o.freshContext ? "Fresh context: ON" : "Fresh context: OFF", detail: "run the task in a new session (clean context)" },
 			{ id: "mode", label: `Permission mode${o.mode ? ` — ${o.mode}` : ""}`, detail: `ask / edits / plan / auto (default auto): for a session this task STARTS; ignored when the task continues a session${continuesSession(deps.planner.plan, task, o.freshContext) ? ". Right now it would continue its queue's session, so the mode is ignored (unless that session ends or fresh context is on)" : ""}` },
+			{ id: "usage", label: task.usage === "spare" ? "Usage: spare (only when provider usage leaves room)" : "Usage: normal", detail: `${task.usage === "spare" ? "click for normal" : "click for spare"}. Spare: ${spareNote(deps.planner.plan, { lane: task.lane, options: task.options })}` },
 			{ id: "retries", label: `Automatic retries${o.retries ? ` — ${o.retries}` : ""}`, detail: "1–10, with backoff; 0 = none" },
 			{ id: "timeout", label: `Time limit${o.timeoutMinutes ? ` — ${o.timeoutMinutes} min` : ""}`, detail: "minutes; 0 = none" },
 			{ id: "clearAll", label: "Clear all options" },
 		];
 		const choice = await choose(items);
 		if (!choice) return;
+		if (choice === "usage") {
+			// `usage` is a task field of its own, not one of the options (which `update` replaces as a whole).
+			await edit([{ op: "update", id: task.id, usage: task.usage === "spare" ? "normal" : "spare" }]);
+			return;
+		}
 		if (choice === "mode") {
 			const gate = gateStatus().gate;
 			const picked = await choose([

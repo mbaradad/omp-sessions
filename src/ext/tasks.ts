@@ -6,7 +6,7 @@
 import * as vscode from "vscode";
 import type { KeptBranch, LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { failureHint, keptBranchText, laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
+import { failureHint, keptBranchText, laneSummary, spareNote, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -229,6 +229,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 			failureHint(t),
 			syncText(syncAttention(t)),
 			t.priority && t.priority !== "normal" ? t.priority : "",
+			t.usage === "spare" ? "◔ spare" : "",
 			retrying,
 			t.subtasks.length ? `${subsDone}/${t.subtasks.length}` : "",
 			t.status === "done" || t.status === "failed" ? fmtAgo(t.finishedAt) : t.status === "running" ? fmtAgo(t.startedAt) : "",
@@ -242,6 +243,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		tip.appendMarkdown(`**${t.title.replace(/[*_`[\]]/g, "\\$&")}**  \n$(pulse) ${t.state}`);
 		if (t.waitReason) tip.appendMarkdown(` — ${t.waitReason}`);
 		if (results.some(Boolean)) tip.appendMarkdown(`  \n$(watch) ${results.filter(Boolean).join(" · ")}${t.attempts ? ` · ${t.attempts} attempt(s)` : ""}`);
+		if (t.usage === "spare") tip.appendMarkdown(`  \n$(pulse) spare: ${spareNote(this.deps.planner.plan, t)}`);
 		if (t.after?.length) tip.appendMarkdown(`  \n$(git-merge) after ${t.after.map(id => titleOf(id) ?? id).join(", ")}`);
 		const opts = t.options;
 		if (opts) {

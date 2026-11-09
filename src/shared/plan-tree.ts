@@ -230,3 +230,39 @@ export function failureHint(task: Pick<TaskView, "status" | "summary">): string 
 	if (/needs the Switchyard permission gate/i.test(task.summary)) return "⚠ permission gate not installed";
 	return "";
 }
+
+/** `anthropic/claude-x` -> `anthropic` (the planner's `providerOf`). */
+function providerOfModel(model: string | undefined): string | undefined {
+	if (!model) return undefined;
+	const i = model.indexOf("/");
+	return i > 0 ? model.slice(0, i) : undefined;
+}
+
+/**
+ * The provider the planner gates a task on: the prefix of the model it will run with (planner defaults < the
+ * queue's defaults < the task's own options). Undefined when no model is known: such a task is gated by the
+ * spend budget only, and `usage: "spare"` has nothing to look at.
+ */
+export function taskProvider(plan: Pick<PlanView, "lanes" | "status"> | undefined, task: Pick<TaskView, "lane" | "options">): string | undefined {
+	const lane = task.lane ? plan?.lanes.find(l => l.id === task.lane) : undefined;
+	return providerOfModel(task.options?.model ?? lane?.defaults?.model ?? plan?.status.defaults?.model);
+}
+
+/** What `usage: "spare"` means for this task right now, for the picker and the tooltip. */
+export function spareNote(plan: Pick<PlanView, "lanes" | "status"> | undefined, task: Pick<TaskView, "lane" | "options">): string {
+	const provider = taskProvider(plan, task);
+	if (!provider) return "no effect yet: the task has no known provider (set a model on it, on its queue, or the planner's default model); only the spend budget gates it";
+	const below = plan?.status.usage.spareBelowPercent;
+	return `starts only while every ${provider} usage window is below ${below ?? "the"}%`;
+}
+
+/** The usage windows the planner reads (`omp usage`), one line each: "anthropic 5h: 62% (resets Thu 14:00)". */
+export function usageLines(status: Pick<PlannerStatus, "usageWindows">, now = new Date()): string[] {
+	return status.usageWindows.map(w => `${w.provider} ${w.window}: ${Math.round(w.usedPercent)}%${w.resetsAt && w.resetsAt > now.getTime() ? ` (resets ${formatStartTime(w.resetsAt, now)})` : ""}`);
+}
+
+/** Why typed text is not a percentage the planner takes (a number above 0, at most 100), or undefined. */
+export function checkPercent(text: string): string | undefined {
+	const t = text.trim();
+	return /^\d+(\.\d+)?$/.test(t) && Number(t) > 0 && Number(t) <= 100 ? undefined : "A number above 0 and at most 100.";
+}
