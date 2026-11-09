@@ -194,10 +194,14 @@ export interface ChatCheckpoints {
 	onDidChange: vscode.Event<{ sessionId: string; added: FileChange[] }>;
 }
 
-/** The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call (`readMode`/`writeMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). */
+/**
+ * The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call
+ * (`readMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). Switch with `setSessionMode(ao, id, mode)`
+ * from `session-mode-ops.ts`, never by writing the file: it also sets omp's plan option and declines stale gate questions.
+ */
 export interface ChatModeGate {
 	read(sessionId: string): PermissionMode | undefined;
-	write(sessionId: string, mode: PermissionMode): void;
+	set(sessionId: string, mode: PermissionMode): Promise<unknown>;
 }
 
 export class ChatPanel implements vscode.Disposable {
@@ -676,10 +680,11 @@ export class ChatPanel implements vscode.Disposable {
 	 * session's mode file on every tool call, so a switch applies at once, mid-turn, with no client open.
 	 * A session without a mode file (started from AO's own UI) runs in AO's mode; the chat can't change it.
 	 */
-	private setMode(mode: PermissionMode): void {
+	private async setMode(mode: PermissionMode): Promise<void> {
 		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
-			this.modes.write(this.sessionId, mode);
+			await this.modes.set(this.sessionId, mode);
 			this.postState();
+			this.schedule();
 			return;
 		}
 		this.post({ type: "notice", level: "warning", text: "This session was not started by Switchyard, so its permission mode is AO's and cannot be switched here. Sessions started from Switchyard switch modes live." });
@@ -999,7 +1004,7 @@ export class ChatPanel implements vscode.Disposable {
 				await this.runCommand(m.name);
 				return;
 			case "setMode":
-				this.setMode(m.mode);
+				await this.setMode(m.mode);
 				return;
 			case "starModel": {
 				const key = `${m.provider}/${m.id}`;

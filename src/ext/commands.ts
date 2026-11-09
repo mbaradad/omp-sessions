@@ -21,7 +21,7 @@ export interface CommandContext {
 	ao(): Promise<AoClient>;
 	post(msg: ToWebview): void;
 	insertText(text: string): void;
-	setMode(mode: PermissionMode): void;
+	setMode(mode: PermissionMode): Promise<void>;
 	/** `/btw`: a side question in a forked side chat; its card appears in the transcript. */
 	askSide(question: string): Promise<void>;
 	/** Runs `!command` in the session folder; `keep` adds its output to the next prompt's context. */
@@ -130,7 +130,7 @@ async function permissionMode(ctx: CommandContext, arg: string): Promise<void> {
 		ctx.post({ type: "notice", level: "warning", text: `Unknown mode "${arg}": use ask, edits, plan or auto.` });
 		return;
 	}
-	if (mode && mode !== ctx.mode) ctx.setMode(mode);
+	if (mode && mode !== ctx.mode) await ctx.setMode(mode);
 }
 
 /** Menu/command actions that need AO round-trips or VS Code UI. */
