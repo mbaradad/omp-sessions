@@ -619,11 +619,19 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 	const { text, context } = splitContext(planned ? full.slice(PLAN_PROMPT_PREFIX.length) : full);
 	const el = h("div", { class: `msg user${m.attribution === "agent" ? " agent-authored" : ""}`, title: timeTitle(m) });
 	const bubble = h("div", { class: "bubble" });
+	// Prompts the planner sends for tasks: the lane's queue task i/n, a free task of the plan, and a follow-up run.
 	const queued = /^\[Task (\d+)\/(\d+) from the queue\] /.exec(text);
-	if (queued) {
+	const task = queued
+		? { head: queued[0], chip: `Queued task ${queued[1]}/${queued[2]}`, trailer: /\n\nWork through this task completely[\s\S]*$/ }
+		: text.startsWith("[Task from the plan] ")
+			? { head: "[Task from the plan] ", chip: "Planned task", trailer: /\n\nWork through this task completely[\s\S]*$/ }
+			: text.startsWith("[Follow-up on your task] ")
+				? { head: "[Follow-up on your task] ", chip: "Follow-up", trailer: /\n\nTake this into account, fix whatever it breaks[\s\S]*$/ }
+				: undefined;
+	if (task) {
 		el.classList.add("queued-task");
-		renderMarkdownInto(bubble, text.slice(queued[0].length).replace(/\n\nWork through this task completely[\s\S]*$/, ""));
-		bubble.prepend(h("div", { class: "task-chip" }, `Queued task ${queued[1]}/${queued[2]}`));
+		renderMarkdownInto(bubble, text.slice(task.head.length).replace(task.trailer, ""));
+		bubble.prepend(h("div", { class: "task-chip" }, task.chip));
 	} else renderMarkdownInto(bubble, text);
 	if (planned) bubble.prepend(h("div", { class: "task-chip", title: "Sent in Plan mode: read-only, file edits refused" }, "Plan mode"));
 	if (context) {
