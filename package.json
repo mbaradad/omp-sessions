@@ -562,6 +562,18 @@
 				"icon": "$(check)"
 			},
 			{
+				"command": "switchyard.tasks.cleanBranches",
+				"title": "Clean Up Kept Branches",
+				"category": "Switchyard",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "switchyard.tasks.copyBranch",
+				"title": "Copy Branch Name",
+				"category": "Switchyard",
+				"icon": "$(copy)"
+			},
+			{
 				"command": "switchyard.tasks.undo",
 				"title": "Undo This Task…",
 				"category": "Switchyard",
@@ -1442,6 +1454,21 @@
 					"group": "1_session@5"
 				},
 				{
+					"command": "switchyard.tasks.cleanBranches",
+					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"group": "inline@1"
+				},
+				{
+					"command": "switchyard.tasks.cleanBranches",
+					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"group": "1_kept@1"
+				},
+				{
+					"command": "switchyard.tasks.copyBranch",
+					"when": "view == omp.tasks && viewItem == tasks.keptBranch",
+					"group": "1_kept@1"
+				},
+				{
 					"command": "switchyard.tasks.undo",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
 					"group": "3_status@6"
@@ -1912,6 +1939,10 @@
 				},
 				{
 					"command": "switchyard.tasks.completeLane",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.copyBranch",
 					"when": "false"
 				},
 				{
