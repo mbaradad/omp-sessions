@@ -143,6 +143,10 @@ interface PlannerConfig {
   repo → AO project session for that repo (registered on first use); AO gives every project session its own
   worktree and branch `ao/<slug>/root`, so parallel tasks never share a checkout. Outside git → standalone
   session (AO scratch dir). (`worktree` and `approvalMode` are no longer task options: unknown option fields are ignored.)
+- **User defaults** (MAPPING D7): for a session the planner *starts*, a model or mode that neither the task, its lane
+  nor `PlannerConfig.defaults` names comes from `<switchyard home>/config.json` (`model`, `mode`; the file
+  `switchyard config set` writes), read at every dispatch; else AO's/omp's default model and mode `auto`. A
+  continued session keeps its own model and mode.
 - **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
   `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
   checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
@@ -169,7 +173,8 @@ interface PlannerConfig {
 | `edit` | `{ops: PlanOp[], rev?: number}` | `{rev, refs: Record<string,string>}` (refs → new ids) |
 | `getQueue` | `{id}` (lane id or AO session id) | `TaskQueue` view of the lane (old shape + `after?` per task) |
 | `queue` | `{id, ops: QueueOp[]}` (old ops + `after`, `requeue`) | same `TaskQueue` view |
-| `scheduler` | `{set?: Partial<PlannerConfig>}` | `PlannerStatus` |
+| `sync` | `{id, rerun?}` (task id or AO session id) | `{task, rerun, edges: EdgeView[]}`: propagates now **and answers when done** (commit the worktree, merge into the children); with `rerun` it queues the "re-run with parent changes" run instead (`edges` = the state at that moment) |
+| `scheduler` | `{set?: Partial<PlannerConfig>, clearLimits?: true \| string[]}` | `PlannerStatus`. `clearLimits`: forget the provider limits learned from failed turns (`true` = all, or the named providers; others stay); held work starts at once. `set.budget` replaces the whole budget object (read-modify-write to change one window) |
 | `status` | – | `PlannerStatus` |
 | `shutdown` | – | `{}` |
 
@@ -178,7 +183,8 @@ the whole batch with a message naming the problem (cycles name the path). `rev` 
 batch when the plan changed since (`error: "stale rev N"`).
 
 ```ts
-interface PlanView { rev: number; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
+interface EdgeView { parent: string; parentSession?: string; child: string; childSession?: string; state: "in-sync"|"pending"|"merged"|"upstream-changed"|"resolving"|"conflict"; files?: string[]; parentHead?: string; childHead?: string; at: number }   // derived from Task.sync
+interface PlanView { rev: number; edges: EdgeView[]; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
 interface LaneView extends Lane { pending: number; running: number; done: number; failed: number; total: number }
 interface PlannerStatus extends PlannerConfig {
   running: number; waiting: number; scheduled: number; held: number; blocked: number; interrupted: number;
@@ -214,7 +220,7 @@ Lane ops (`id` = lane id): `lane.add {id?, title?, session?, priority?, defaults
 `lane.update {id, title?, priority?|null, defaults?}`, `lane.remove {id}` (removes its non-running
 tasks), `lane.pause {id}`, `lane.resume {id}` (autoRun on), `lane.startAt {id, at: number|null}`,
 `lane.requeue {id}` (old `requeueOps`), `lane.retryFailed {id}`, `lane.clearDone {id}`,
-`lane.complete {id, completed: boolean}`.
+`lane.complete {id, completed: boolean}`: the mark clears itself when a task of the lane starts, and when a person types a prompt (not a `/command`) into the lane's session while no planner task runs there (PARKED §5).
 
 Recurring ops: `recur.add {recurring: {title?, rule, task, lane?, skipIfRunning?, enabled?}, ref?}`,
 `recur.update {id, …}`, `recur.remove {id}`, `recur.fire {id}` (add a copy now).
@@ -248,6 +254,12 @@ there; its worktree creation and `omp/` branches are superseded by AO's worktree
 Applies to tasks that run in a git project (AO gives each such session its own worktree). A task with
 other `cwd`/standalone sessions only receives its parents' results.
 
+0. **Explicit branch, followed by HEAD.** Every git task is spawned with an explicit `branch` (roots included:
+   `switchyard/<task id>`, `-2`, `-3`… when an earlier session of the task still has it checked out). Without one
+   AO renames the session branch (`ao/<slug-of-prompt>/root`) shortly after start, which races with the agent's
+   first commit (test-infra: 3 of 8 runs failed to commit; 24/24 clean with an explicit branch). The planner
+   takes the worktree path from AO (`workspacePath`) and reads the branch from the worktree's HEAD whenever it
+   works with it, so a rename later on is followed.
 1. **One worktree per task.** A first-time task is spawned by AO on a branch the planner seeds: its first
    parent's committed head (`switchyard/<task id>`), further parents merged in a temporary worktree. AO
    checks that existing branch out for the session (`spawn.branch`). Roots use AO's own `ao/<slug>/root`.
@@ -303,8 +315,11 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 - `requeue {id, clean: true}`: before the retry is sent, `PlannerOptions.rewind(task)` undoes the earlier attempt's turn
   (files and context). Refused when a later task of the same session exists (undo would rewind it too), when the
   task has no earlier turn, and failed at dispatch with a clear message when the planner has no `rewind` hook.
-- The two hooks are supplied by the process (`main.ts`): they are built on `src/shared/checkpoint-ops.ts`
-  (`turnStatuses` for `undone`; `planUndo` + `runCheckpointCommand` for `rewind`), wired at integration.
+- The two hooks are supplied by the process: `main.ts` passes `...checkpointHooks()` (`src/planner/checkpoint-hooks.ts`,
+  from ao/checkpoints: `turnStatuses` for `undone`, `planUndo` + `runCheckpointCommand` for `rewind`; an undo that
+  would overwrite changes is refused, never forced).
+- The permission mode of a session the planner starts is set through checkpoints' `setSessionMode` (G40), never by
+  writing the mode file.
 
 ## Events (`subscribe {topic: "plan"}`)
 
@@ -330,6 +345,8 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
+- 2026-11-09: wire op `sync {id, rerun?}` (answers when propagation is done) and `PlanView.edges` (EdgeView: parent/child tasks and sessions, state, files, heads, at).
 - 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
 - 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.
 - 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.

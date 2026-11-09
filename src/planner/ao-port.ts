@@ -3,6 +3,7 @@
 // a retryable failure (daemon unreachable, 5xx, a spawn still being committed) from a final one.
 import { AoClient, AoError, DAEMON_UNREACHABLE } from "../ao/client";
 import { type AoSessionMode, spawnSwitchyardSession } from "../ao/spawn";
+import { setSessionMode } from "../shared/session-mode-ops";
 import type { SessionStart } from "./types";
 import type { AoConversation, AoEvent, AoStreamStatus } from "../ao/client";
 
@@ -83,7 +84,9 @@ export interface AoPort {
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
 	/** The git branch and project folder of an existing session (undefined parts: not a git project session). */
-	sessionGit(session: string): Promise<{ repo?: string; branch?: string }>;
+	sessionGit(session: string): Promise<{ repo?: string; branch?: string; workspace?: string }>;
+	/** The folder the session's agent works in (its git worktree); undefined when AO can't say. */
+	workspacePath(session: string): Promise<string | undefined>;
 	/** Folder of an AO project (the repo's main checkout). */
 	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
@@ -146,6 +149,8 @@ export function aoPort(ao: AoClient): AoPort {
 					...(opts.model ? { model: opts.model } : {}),
 					...(opts.thinking ? { thinking: opts.thinking } : {}),
 					...(opts.mode ? { mode: opts.mode as AoSessionMode } : {}),
+					// The mode file is written by checkpoints' setSessionMode only (G40), never by hand.
+					setMode: (sessionId, mode) => setSessionMode(ao, sessionId, mode),
 				});
 				return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}), ...(res.sent?.turnId ? { turn: res.sent.turnId } : {}) };
 			} catch (err) {
@@ -216,7 +221,11 @@ export function aoPort(ao: AoClient): AoPort {
 		async sessionGit(session) {
 			const view = await ao.getSession(session);
 			const repo = view.projectId ? (await ao.listProjects()).find(p => p.id === view.projectId)?.path : undefined;
-			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}) };
+			const workspace = await ao.workspacePath(session).catch(() => undefined);
+			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}), ...(workspace ? { workspace } : {}) };
+		},
+		async workspacePath(session) {
+			return ao.workspacePath(session).catch(() => undefined);
 		},
 		async projectPath(id) {
 			return (await ao.listProjects()).find(p => p.id === id)?.path;

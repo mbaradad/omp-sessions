@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Planner } from "../../src/planner/planner";
 import { FakeAo, byTitle, running, start, tempPlan, until } from "./planner-fake-ao";
 import { loadPlan } from "../../src/planner/store";
 
@@ -264,4 +265,120 @@ test("requeue {clean} without the checkpoints hook fails the dispatch with a cle
 	await until("failed", () => byTitle(p, "only").status === "failed");
 	p.edit([{ op: "requeue", id: byTitle(p, "only").id, clean: true }]);
 	await until("failed again", () => byTitle(p, "only").status === "failed" && (byTitle(p, "only").summary ?? "").includes("clean retry"));
+});
+
+test("someone resumes a dead host: AO fails the stuck turn with 'controller ended before the turn completed'; the task is interrupted, not failed or retried (G39)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "long", options: { retries: 3 } } }]);
+	const s = await until("sent", () => byTitle(p, "long").run?.phase === "sent" && byTitle(p, "long").run?.session);
+	const session = ao.sessions.get(s);
+	assert.ok(session);
+	// A person (or the CLI) resumed the dead agent first; AO ended the turn as failed.
+	const turn = session.conv.turns.find(x => x.state === "running");
+	assert.ok(turn);
+	turn.state = "failed";
+	turn.errorMessage = "controller ended before the turn completed";
+	ao.poke(s, "idle");
+	await until("interrupted", () => byTitle(p, "long").interrupted);
+	assert.equal(byTitle(p, "long").attempts, undefined, "no attempt used, nothing retried");
+	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+});
+
+test("a task with a timeout still notices its turn ending within a moment (a slow re-check must not hold off events and polls)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "timed", options: { timeoutMinutes: 10 } } }]);
+	const s = await until("sent", () => byTitle(p, "timed").run?.phase === "sent" && byTitle(p, "timed").run?.session);
+	// Let at least one check run (it arms the long re-check), then end the turn.
+	await sleep(700);
+	const at = Date.now();
+	ao.finishTurn(s, "completed", "done");
+	await until("done", () => byTitle(p, "timed").status === "done", 10_000);
+	assert.ok(Date.now() - at < 5000, `noticed after ${Date.now() - at} ms`);
+});
+
+test("a new session starts with the user's default model and mode (config.json) when nothing else names one; a continued session and explicit options win", async t => {
+	const ao = new FakeAo();
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, userDefaults: () => ({ model: "anthropic/claude-x", mode: "edits" }) });
+	p.start();
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "plain" } }, { op: "add", task: { title: "explicit", options: { model: "anthropic/other", mode: "plan" } } }, { op: "lane.add", id: "l_00000000ff" }, { op: "add", task: { title: "first", lane: "l_00000000ff" } }, { op: "add", task: { title: "second", lane: "l_00000000ff" } }]);
+	await until("sent", () => ["plain", "explicit", "first"].every(n => byTitle(p, n).run?.phase === "sent"));
+	const body = (title: string) => ao.sessions.get(byTitle(p, title).run?.session as string)?.spawnBody;
+	assert.deepEqual([body("plain")?.model, body("plain")?.mode], ["anthropic/claude-x", "edits"]);
+	assert.deepEqual([body("explicit")?.model, body("explicit")?.mode], ["anthropic/other", "plan"]);
+	ao.finishTurn(byTitle(p, "first").run?.session as string, "completed", "one");
+	await until("second sent", () => byTitle(p, "second").run?.phase === "sent");
+	assert.equal(byTitle(p, "second").run?.via, "send");
+	assert.equal(byTitle(p, "second").run?.settings?.model, undefined, "a continued session keeps its own model");
+});
+
+test("`scheduler {clearLimits}` forgets a provider limit and held work starts; a completed lane is cleared by new work and by a person's prompt (not by a /command)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "held", options: { model: "anthropic/claude-x" } } }]);
+	const s = await until("sent", () => byTitle(p, "held").run?.phase === "sent" && byTitle(p, "held").run?.session);
+	ao.finishTurn(s, "completed", "429 You have reached your usage limit. Your limit resets at 2099-01-01T00:00:00Z. Try again in 9 hours.");
+	await until("held", () => p.state.limits.anthropic && byTitle(p, "held").status === "pending");
+	assert.equal(p.view().tasks.find(x => x.title === "held")?.state, "held");
+	p.setConfig(undefined, ["openai"]);
+	assert.ok(p.state.limits.anthropic, "naming another provider leaves it");
+	p.setConfig(undefined, true);
+	assert.equal(p.state.limits.anthropic, undefined);
+	await until("held task re-dispatched", () => byTitle(p, "held").status === "running");
+
+	// A lane marked completed: new work clears the mark, so does a person's prompt, a /command doesn't.
+	const q = new FakeAo();
+	const p2 = start(tempPlan(t), q);
+	t.after(() => p2.stop());
+	p2.edit([{ op: "lane.add", id: "l_00000000cc" }, { op: "add", task: { title: "one", lane: "l_00000000cc" } }]);
+	const s2 = await until("one sent", () => byTitle(p2, "one").run?.phase === "sent" && byTitle(p2, "one").run?.session);
+	q.finishTurn(s2, "completed", "done");
+	await until("one done", () => byTitle(p2, "one").status === "done");
+	p2.edit([{ op: "lane.complete", id: "l_00000000cc", completed: true }]);
+	assert.equal(p2.state.lanes[0].completed, true);
+	p2.edit([{ op: "add", task: { title: "two", lane: "l_00000000cc" } }]);
+	await until("two running", () => byTitle(p2, "two").status === "running");
+	assert.equal(p2.state.lanes[0].completed, undefined, "a task of the lane started");
+	q.finishTurn(byTitle(p2, "two").run?.session as string, "completed", "done");
+	await until("two done", () => byTitle(p2, "two").status === "done");
+	p2.edit([{ op: "lane.complete", id: "l_00000000cc", completed: true }]);
+	const session = byTitle(p2, "two").session as string;
+	const personSays = (text: string) => {
+		const sess = q.sessions.get(session);
+		assert.ok(sess);
+		sess.conv.messages.push({ turnId: "t-person", role: "user", text, streaming: false });
+		q.poke(session, "idle");
+		q.poke(session, "active");
+	};
+	personSays("/undo");
+	await sleep(300);
+	assert.equal(p2.state.lanes[0].completed, true, "a /command is not a prompt");
+	personSays("one more thing please");
+	await until("cleared by the prompt", () => p2.state.lanes[0].completed === undefined);
+});
+
+test("a turn AO marks completed while its last reply still streams: the summary waits for the final text; a reply that never settles is taken after the grace", async t => {
+	const ao = new FakeAo();
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, settleMs: 1500 });
+	p.start();
+	t.after(() => p.stop());
+	p.setConfig({ maxConcurrent: 0 });
+	p.edit([{ op: "add", task: { title: "races" } }, { op: "add", task: { title: "stuck" } }]);
+	const s1 = await until("races sent", () => byTitle(p, "races").run?.phase === "sent" && byTitle(p, "races").run?.session);
+	const s2 = await until("stuck sent", () => byTitle(p, "stuck").run?.phase === "sent" && byTitle(p, "stuck").run?.session);
+	ao.finishTurnWhileStreaming(s1, "Found three bu");
+	ao.finishTurnWhileStreaming(s2, "never fin");
+	await sleep(500);
+	assert.equal(byTitle(p, "races").status, "running", "not recorded while the reply streams");
+	ao.settleReply(s1, "Found three bugs in parser.ts");
+	await until("races done", () => byTitle(p, "races").status === "done");
+	assert.equal(byTitle(p, "races").summary, "Found three bugs in parser.ts");
+	// A reply that never stops streaming does not hold the task forever.
+	await until("stuck done after the grace", () => byTitle(p, "stuck").status === "done", 8000);
 });

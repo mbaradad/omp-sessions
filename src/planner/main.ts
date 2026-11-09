@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { connectAo } from "./ao-port";
+import { checkpointHooks } from "./checkpoint-hooks";
 import { createApiServer } from "./api";
 import { forgetPipe, listenPath, logPath, pidPath, planPath, plannerDir, recordPipe, socketPath } from "./paths";
 import { switchyardHome } from "../ao/native";
@@ -89,6 +90,8 @@ async function run(): Promise<void> {
 			file: planPath(),
 			initial: loadPlan(planPath()),
 			connect: connectAo,
+			// Undo/redo awareness and clean retries (requeue {clean}) come from the Switchyard checkpoints.
+			...checkpointHooks(),
 			...(process.env.SWITCHYARD_PLANNER_USAGE === "off" ? {} : { usage: () => readOmpUsage() }),
 			log,
 			version: VERSION,

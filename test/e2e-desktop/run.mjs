@@ -196,6 +196,9 @@ try {
 				XDG_CACHE_HOME: path.join(dirs.home, ".cache"),
 				OMP_VSCODE_HOME: dirs.ompHome,
 				SWITCHYARD_HOME: path.join(tmp, "switchyard"),
+				// CONTRACT.md: a test VS Code must not install Switchyard's omp extensions into the shared ~/.omp/agent
+				// (checkpoints' guard honours this; a value inherited from the shell must not turn installs on).
+				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
 				FAKE_OMP_SESSIONS: dirs.fakeSessions,
 				FAKE_OMP_LOG: fakeLog,
 				OMP_E2E_WORKSPACE: dirs.workspace,

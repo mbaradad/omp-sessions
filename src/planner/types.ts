@@ -314,8 +314,23 @@ export interface PlannerStatus extends PlannerConfig {
 	startedAt: number;
 }
 
+/** One graph edge, parent → child, as clients show it (derived from `Task.sync`; the plan view lists every edge). */
+export interface EdgeView {
+	parent: string;
+	parentSession?: string;
+	child: string;
+	childSession?: string;
+	state: EdgeSync["state"];
+	files?: string[];
+	parentHead?: string;
+	childHead?: string;
+	at: number;
+}
+
 export interface PlanView {
 	rev: number;
+	/** Every parent → child edge with a propagation state (only git tasks have any). */
+	edges: EdgeView[];
 	tasks: TaskView[];
 	lanes: LaneView[];
 	recurring: Recurring[];
@@ -444,7 +459,13 @@ export interface PlannerOps {
 	edit: { args: { ops: PlanOp[]; rev?: number }; result: { rev: number; refs: Record<string, string> } };
 	getQueue: { args: { id: string }; result: QueueView };
 	queue: { args: { id: string; ops: QueueOp[] }; result: QueueView };
-	scheduler: { args: { set?: Partial<PlannerConfig> }; result: PlannerStatus };
+	/**
+	 * Propagates now and answers when it is done: commits the task's worktree, merges its branch into its
+	 * children's, and (with `rerun`) runs it once more first with the upstream note. `id`: task id or AO session id.
+	 */
+	sync: { args: { id: string; rerun?: boolean }; result: { task: string; rerun: boolean; edges: EdgeView[] } };
+	/** `clearLimits`: forget the provider limits learned from failed turns (`true`: all, or the named providers); held work may start again. */
+	scheduler: { args: { set?: Partial<PlannerConfig>; clearLimits?: true | string[] }; result: PlannerStatus };
 	status: { args: Record<string, never>; result: PlannerStatus };
 	shutdown: { args: Record<string, never>; result: Record<string, never> };
 }

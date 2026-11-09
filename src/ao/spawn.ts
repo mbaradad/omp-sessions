@@ -29,7 +29,7 @@ export interface SpawnSwitchyardOptions {
 	/** An AO project id; wins over `dir`. */
 	projectId?: string;
 	displayName?: string;
-	/** The git branch AO checks out for the session (an existing local branch not checked out elsewhere, else a new one from the default branch). Project sessions only. */
+	/** The branch the session's worktree is created on (AO default: `ao/<slug>/root`). Needs a project (`dir` in a git repo, or `projectId`). */
 	branch?: string;
 	/** An omp model id (`provider/model`), checked against the session's own choices. */
 	model?: string;
@@ -116,7 +116,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 		clientRequestId,
 		...(projectId && { projectId }),
 		...(options.displayName && { displayName: options.displayName }),
-		...(projectId && options.branch && { branch: options.branch }),
+		...(options.branch && { branch: options.branch }),
 	});
 	const id = spawned.session.id;
 	try {

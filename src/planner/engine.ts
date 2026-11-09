@@ -1128,6 +1128,12 @@ export function startRun(s: PlanState, id: string, run: Omit<TaskRun, "phase" | 
 	delete t.interrupted;
 	delete t.holdUntil;
 	t.run = { ...run, phase: "dispatching", at: now };
+	// The "completed" mark means "nothing more to do here": new work on the lane clears it (PARKED §5).
+	const lane = laneOf(s, t);
+	if (lane?.completed) {
+		delete lane.completed;
+		delete lane.completedAt;
+	}
 	return t;
 }
 
