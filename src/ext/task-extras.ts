@@ -124,7 +124,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		if (await edit([set(time)])) void vscode.window.setStatusBarMessage(`omp: “${name}” starts ${formatStartTime(time)}`, 5000);
 	});
 
-	reg("omp.tasks.setDependencies", async (arg?: unknown) => {
+	reg("switchyard.tasks.setDependencies", async (arg?: unknown) => {
 		if (!isNode(arg) || arg.kind !== "task") return;
 		const plan = deps.planner.plan;
 		if (!plan) return;
@@ -138,7 +138,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		if (picks) await edit([{ op: "after", id: task.id, ids: picks.map(p => p.id) }]);
 	});
 
-	reg("omp.tasks.setPriority", async (arg?: unknown) => {
+	reg("switchyard.tasks.setPriority", async (arg?: unknown) => {
 		if (!isNode(arg) || (arg.kind !== "lane" && arg.kind !== "task")) return;
 		const current = (arg.kind === "lane" ? arg.lane.priority : arg.task.priority) ?? "normal";
 		const pick = await vscode.window.showQuickPick(

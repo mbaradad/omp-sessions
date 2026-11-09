@@ -532,27 +532,27 @@
 				"icon": "$(clock)"
 			},
 			{
-				"command": "omp.tasks.setDependencies",
+				"command": "switchyard.tasks.setDependencies",
 				"title": "Set Dependencies…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-merge)"
 			},
 			{
-				"command": "omp.tasks.setPriority",
+				"command": "switchyard.tasks.setPriority",
 				"title": "Set Priority…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(arrow-up)"
 			},
 			{
-				"command": "omp.tasks.completeLane",
+				"command": "switchyard.tasks.completeLane",
 				"title": "Mark Queue Completed / Reopen",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(check)"
 			},
 			{
-				"command": "omp.tasks.showGraph",
+				"command": "switchyard.tasks.showGraph",
 				"title": "Show Task Graph",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(type-hierarchy)"
 			},
 			{
@@ -928,9 +928,9 @@
 				"icon": "$(debug-pause)"
 			},
 			{
-				"command": "omp.scheduler.setBudget",
+				"command": "switchyard.scheduler.setBudget",
 				"title": "Set Spend Budget for Queued Tasks…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(credit-card)"
 			},
 			{
@@ -1095,12 +1095,12 @@
 					"group": "2_scheduler@2"
 				},
 				{
-					"command": "omp.scheduler.setBudget",
+					"command": "switchyard.scheduler.setBudget",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@3"
 				},
 				{
-					"command": "omp.tasks.showGraph",
+					"command": "switchyard.tasks.showGraph",
 					"when": "view == omp.tasks",
 					"group": "navigation@4"
 				},
@@ -1402,12 +1402,12 @@
 					"group": "1_session@3"
 				},
 				{
-					"command": "omp.tasks.setPriority",
+					"command": "switchyard.tasks.setPriority",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@4"
 				},
 				{
-					"command": "omp.tasks.completeLane",
+					"command": "switchyard.tasks.completeLane",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@5"
 				},
@@ -1432,12 +1432,12 @@
 					"group": "1_edit@5"
 				},
 				{
-					"command": "omp.tasks.setDependencies",
+					"command": "switchyard.tasks.setDependencies",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "1_edit@6"
 				},
 				{
-					"command": "omp.tasks.setPriority",
+					"command": "switchyard.tasks.setPriority",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
 					"group": "1_edit@7"
 				},
@@ -1848,15 +1848,15 @@
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.setDependencies",
+					"command": "switchyard.tasks.setDependencies",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.setPriority",
+					"command": "switchyard.tasks.setPriority",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.completeLane",
+					"command": "switchyard.tasks.completeLane",
 					"when": "false"
 				},
 				{

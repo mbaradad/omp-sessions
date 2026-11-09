@@ -446,7 +446,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	});
 
 	// The "completed" marker of a queue (the old per-session completed mark, now the planner's `lane.complete`).
-	reg("omp.tasks.completeLane", async (arg?: unknown) => {
+	reg("switchyard.tasks.completeLane", async (arg?: unknown) => {
 		const id = laneArg(arg);
 		const lane = id ? deps.planner.plan?.lanes.find(l => l.id === id) : undefined;
 		if (lane) await edit([{ op: "lane.complete", id: lane.id, completed: !lane.completed }]);

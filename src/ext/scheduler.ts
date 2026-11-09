@@ -115,7 +115,7 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			const paused = schedulerSnapshot().paused;
 			if (await set({ paused: !paused })) void vscode.window.showInformationMessage(paused ? "Queued tasks may start again." : "No new queued task will start (running ones finish). Run the command again to resume.");
 		}),
-		vscode.commands.registerCommand("omp.scheduler.setBudget", async () => {
+		vscode.commands.registerCommand("switchyard.scheduler.setBudget", async () => {
 			const current = source?.plan?.status.budget ?? {};
 			const value = Object.entries(current).map(([w, usd]) => `${w} ${usd}`).join(" ");
 			const text = await vscode.window.showInputBox({

@@ -15,7 +15,7 @@ const COMMAND: Record<Extract<FromGraph, { type: "action" }>["action"], string> 
 	openChat: "omp.tasks.openChat",
 	runNow: "omp.tasks.runNow",
 	requeue: "omp.tasks.markPending",
-	dependencies: "omp.tasks.setDependencies",
+	dependencies: "switchyard.tasks.setDependencies",
 	schedule: "omp.tasks.schedule",
 };
 
@@ -83,7 +83,7 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 	};
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("omp.tasks.showGraph", open),
+		vscode.commands.registerCommand("switchyard.tasks.showGraph", open),
 		deps.planner.onDidChange(refresh),
 		{ dispose: deps.aoSessions.onChange(refresh) },
 		{ dispose: () => panel?.dispose() },
