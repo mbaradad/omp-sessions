@@ -4,9 +4,9 @@
 // checkboxes to complete, inline run/pause. Being a regular view, it can be moved to the panel or
 // the secondary side bar.
 import * as vscode from "vscode";
-import type { LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
+import type { KeptBranch, LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
+import { keptBranchText, laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -22,6 +22,9 @@ export type TaskNode =
 	| { kind: "task"; task: TaskView; index: number }
 	| { kind: "subtask"; taskId: string; sub: Subtask; index: number }
 	| { kind: "plan"; sessionId: string }
+	/** `switchyard/*` branches of removed tasks that hold work no other branch has (the planner kept them). */
+	| { kind: "kept"; count: number }
+	| { kind: "keptBranch"; branch: KeptBranch }
 	| { kind: "planItem"; sessionId: string; phaseIndex: number; itemIndex: number; item: TodoItem; phaseName: string };
 
 const MIME = "application/vnd.code.tree.omp.tasks";
@@ -95,6 +98,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				if (queued.has(s.id) || s.state === "stopped" || !this.phases(s.id)) continue;
 				roots.push({ kind: "session", sessionId: s.id });
 			}
+			if (plan?.keptBranches?.length) roots.push({ kind: "kept", count: plan.keptBranches.length });
 			return roots;
 		}
 		switch (node.kind) {
@@ -107,6 +111,8 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 			}
 			case "session":
 				return [{ kind: "plan", sessionId: node.sessionId }];
+			case "kept":
+				return (plan?.keptBranches ?? []).map(branch => ({ kind: "keptBranch" as const, branch }));
 			case "task":
 				return node.task.subtasks.map((sub, index) => ({ kind: "subtask", taskId: node.task.id, sub, index }));
 			case "plan":
@@ -168,6 +174,25 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				item.description = `${done}/${all.length}`;
 				item.tooltip = "omp's own todo list for the current work. Ticking an item sends omp `/todo import` (applied after the running turn, if any).";
 				item.contextValue = "tasks.plan";
+				return item;
+			}
+			case "kept": {
+				const item = new vscode.TreeItem("Kept branches", vscode.TreeItemCollapsibleState.Collapsed);
+				item.id = "tasks:kept";
+				item.iconPath = new vscode.ThemeIcon("git-branch", new vscode.ThemeColor("charts.orange"));
+				item.description = `${node.count}`;
+				item.tooltip = "Branches of removed tasks that hold work no other branch has. The planner never deletes work: merge them somewhere or delete them in git, then Clean Up (it also retries by itself whenever it reconnects).";
+				item.contextValue = "tasks.kept";
+				return item;
+			}
+			case "keptBranch": {
+				const b = node.branch;
+				const item = new vscode.TreeItem(b.branch, vscode.TreeItemCollapsibleState.None);
+				item.id = `tasks:kept:${b.repo}:${b.branch}`;
+				item.iconPath = new vscode.ThemeIcon("git-branch");
+				item.description = keptBranchText(b);
+				item.tooltip = `${b.branch}\nin ${b.repo}${b.tip ? `\ntip ${b.tip.slice(0, 10)}` : ""}\nkept ${new Date(b.at).toLocaleString()}\n\n${keptBranchText(b)}`;
+				item.contextValue = "tasks.keptBranch";
 				return item;
 			}
 			case "planItem": {
@@ -254,6 +279,8 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				const lane = plan?.lanes.find(l => l.session === node.sessionId || l.id === node.sessionId);
 				return lane ? { kind: "lane", lane } : { kind: "session", sessionId: node.sessionId };
 			}
+			case "keptBranch":
+				return { kind: "kept", count: plan?.keptBranches?.length ?? 0 };
 			case "planItem":
 				return { kind: "plan", sessionId: node.sessionId };
 			default:
@@ -397,11 +424,9 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		});
 		if (!text?.trim()) return;
 		const { title, subtasks } = parseTaskInput(text);
-		const ops: PlanOp[] = [];
-		// A new session queue waits for Start (▶), as queues always did; a separate task runs when ready.
-		if (where.lane && !deps.planner.plan?.lanes.some(l => l.id === where.lane)) ops.push({ op: "lane.add", id: where.lane, session: where.lane, autoRun: false });
-		ops.push({ op: "add", task: { title, subtasks, lane: where.lane, options: where.cwd ? { cwd: where.cwd } : undefined } });
-		await edit(ops);
+		// A queue named after an AO session that has none is created by the planner, paused (it waits for Start ▶,
+		// as queues always did); a task in no queue runs when ready.
+		await edit([{ op: "add", task: { title, subtasks, lane: where.lane, options: where.cwd ? { cwd: where.cwd } : undefined } }]);
 	});
 
 	reg("omp.tasks.addSubtask", async (arg?: unknown) => {
@@ -476,6 +501,22 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		}
 		const lane = laneArg(arg);
 		if (lane) await edit([{ op: "lane.clearDone", id: lane }]);
+	});
+
+	// Leftover branches of removed tasks (planner `branch.clean`: retries their deletion; one that a person deleted or merged since leaves the list).
+	reg("switchyard.tasks.cleanBranches", async () => {
+		const before = deps.planner.plan?.keptBranches?.length ?? 0;
+		if (!(await edit([{ op: "branch.clean" }]))) return;
+		// The planner answers before it has finished deleting: wait (a few seconds at most) for the list to shrink.
+		let after = deps.planner.plan?.keptBranches?.length ?? 0;
+		for (let i = 0; i < 8 && after >= before && before > 0; i++) {
+			await new Promise(resolve => setTimeout(resolve, 500));
+			after = deps.planner.plan?.keptBranches?.length ?? after;
+		}
+		void vscode.window.showInformationMessage(after === 0 ? "Switchyard: no kept branches left." : after < before ? `Switchyard: ${before - after} branch(es) cleaned; ${after} still hold work no other branch has.` : `Switchyard: ${after} branch(es) still hold work no other branch has: merge or delete them in git first.`);
+	});
+	reg("switchyard.tasks.copyBranch", async (arg?: unknown) => {
+		if (isNode(arg) && arg.kind === "keptBranch") await vscode.env.clipboard.writeText(arg.branch.branch);
 	});
 
 	// Graph propagation (planner `rerun` / `sync`): the same actions as in the Task Graph, from the tree.

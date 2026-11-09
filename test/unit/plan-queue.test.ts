@@ -10,7 +10,7 @@ function task(id: string, laneId: string | undefined, extra: Partial<TaskView> =
 	return { id, title: `task ${id}`, subtasks: [], status: "pending", createdAt: 5, state: "waiting", lane: laneId, ...extra };
 }
 function plan(lanes: LaneView[], tasks: TaskView[]): PlanView {
-	return { rev: 1, lanes, tasks, recurring: [], edges: [], status: {} as PlanView["status"] };
+	return { rev: 1, lanes, tasks, recurring: [], edges: [], keptBranches: [], status: {} as PlanView["status"] };
 }
 
 describe("queueOf", () => {

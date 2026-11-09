@@ -1,6 +1,6 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
-import type { BudgetCaps, EdgeSync, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
+import type { BudgetCaps, EdgeSync, KeptBranch, LaneView, PlanOp, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
@@ -201,4 +201,20 @@ export function afterUndoOps(undone: readonly TaskView[]): PlanOp[] {
 export function armedLanes(plan: PlanView, tasks: readonly TaskView[], session: string): string[] {
 	const ids = new Set(tasks.flatMap(t => (t.lane ? [t.lane] : [])));
 	return plan.lanes.filter(l => l.autoRun && (ids.has(l.id) || l.session === session)).map(l => l.id);
+}
+
+/**
+ * Whether the task will continue an AO session that exists now (so a permission mode set on it is ignored):
+ * its queue already has a session, or it is a separate task that ran before (a re-run continues its own session),
+ * unless it asks for a fresh context (a new session). Only a hint: the planner decides at dispatch.
+ */
+export function continuesSession(plan: PlanView | undefined, task: Pick<TaskView, "lane" | "session">, freshContext?: boolean): boolean {
+	if (freshContext) return false;
+	if (task.lane) return !!plan?.lanes.find(l => l.id === task.lane)?.session;
+	return !!task.session;
+}
+
+/** One line for a leftover branch of a removed task: whose it was and why it was kept. */
+export function keptBranchText(b: Pick<KeptBranch, "task" | "why">): string {
+	return `of “${b.task}” — ${b.why}`;
 }
