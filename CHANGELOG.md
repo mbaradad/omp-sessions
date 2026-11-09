@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Completed sessions**: *Mark Completed* (Sessions view context menu, the board's ✓ card button or menu, bulk *Complete*) and `switchyard complete <session>` (`uncomplete` reopens; both take `--json` and answer `{id, completed, completedAt?, changed}`) record that a session's work is done. The marker is the planner's (`lane.complete`), so every client sees it, and it is not a stop: the session keeps running and queued work still starts. A person's prompt (not a `/command`) or a queued task starting clears it. `ls --json` and `show --json` report `completed` and `completedAt`; the tree shows a ✓ and can hide completed sessions (*Hide Completed Sessions*); the board has a **Completed** column and a toggle to hide it.
+- **Sort by scheduled start or completion**: `switchyard.sortBy` (*Sort Sessions By…*) gains `scheduled` (next scheduled queue start first, unscheduled last) and `completed` (marked completed first, latest first, then the most recently finished). The Sessions Board gets a **Sort** control (rank, last activity, created, scheduled start, completed, name, cost), remembered with the board's view; a sorted column keeps drops for lane / group / priority changes but not for reordering, and Queued keeps start order.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
