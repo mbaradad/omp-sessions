@@ -285,10 +285,11 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "title": meta.get("title") or "(untitled)",
         "cwd": cwd,
         "cwdLabel": tilde(cwd),
-        "project": os.path.basename(cwd.rstrip("/\\")) or cwd,
+        # AO's project (its id names the repository); the cwd is the session's own worktree.
+        "project": meta.get("project") or os.path.basename(cwd.rstrip("/\\")) or cwd,
         "state": ompsessions.agent_state(info),
         "status": meta.get("status"),
-        "mode": meta.get("permissionMode"),
+        "mode": meta.get("permissionMode") or info.get("mode"),
         "model": meta.get("model"),
         "cost": meta.get("cost") or 0,
         "changedFiles": meta.get("changedFiles") or 0,
@@ -469,20 +470,28 @@ def project_folders(s: Any) -> list[str]:
     return out
 
 
-def git_root(folder: str) -> Optional[str]:
+def git_checkout(folder: str) -> Optional[str]:
+    """The main checkout of the git repository holding `folder`: for an AO session's worktree, the
+    repository it was made from (not the worktree); None outside git."""
     try:
-        r = subprocess.run(["git", "-C", folder, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    root = r.stdout.strip()
-    return os.path.normpath(root) if r.returncode == 0 and root else None
+    lines = r.stdout.split("\n")
+    if r.returncode != 0 or len(lines) < 2 or not lines[1].strip():
+        return None
+    common, top = os.path.normpath(lines[0].strip()), os.path.normpath(lines[1].strip())
+    return os.path.dirname(common) if os.path.basename(common) == ".git" else top
 
 
 def session_project(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]], s: Any) -> str:
     """The project folder of a session: its card's Hermes project folder, else its board's folder, else
-    the deepest project folder holding its cwd (each only when the cwd is inside it), else the git
-    repository holding the cwd, else the cwd."""
+    the deepest project folder holding it (each only when the session is inside it), else its git
+    repository, else its cwd. An AO session runs in its own worktree; it counts as being where the
+    repository it was made from is (the checkout the user has open)."""
     cwd = str((info.get("meta") or {}).get("cwd") or "")
+    checkout = git_checkout(cwd) if cwd else None
+    places = [p for p in (cwd, checkout) if p]
     candidates: list[str] = []
     if card and card.get("project"):
         folder = lane_mod.project_folder(str(card["project"]), s)
@@ -490,11 +499,11 @@ def session_project(info: dict, card: Optional[dict], ref: Optional[tuple[str, s
             candidates.append(os.path.expanduser(folder))
     if ref and s.lane.boards.get(ref[0], {}).get("folder"):
         candidates.append(os.path.expanduser(s.lane.boards[ref[0]]["folder"]))
-    candidates += sorted((p for p in project_folders(s) if _inside(cwd, p)), key=len, reverse=True)
+    candidates += sorted((p for p in project_folders(s) if any(_inside(x, p) for x in places)), key=len, reverse=True)
     for folder in candidates:
-        if os.path.isdir(folder) and _inside(cwd, folder):
+        if os.path.isdir(folder) and any(_inside(x, folder) for x in places):
             return folder
-    return git_root(cwd) or cwd
+    return checkout or cwd
 
 
 def open_project(sid: str, base_url: str) -> dict:

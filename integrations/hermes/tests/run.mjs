@@ -2,7 +2,7 @@
 // Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built omp-sessions
 // (out/cli.js) with the fake omp. Skips when Hermes isn't installed. Not part of `npm test`.
 // HERMES_PYTHON=<python> picks the interpreter (default: the venv of the installed Hermes).
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -50,11 +50,26 @@ if (build.status !== 0) {
 	process.exit(build.status ?? 1);
 }
 
-console.log(`Hermes Python: ${python}`);
-// -I: ignore the user's PYTHONPATH/site; -B: never write bytecode into the Hermes install.
-const res = spawnSync(python, ["-I", "-B", "-m", "unittest", "discover", "-s", path.join(root, "integrations/hermes/tests"), "-p", "test_*.py", "-v"], {
-	cwd: root,
-	stdio: "inherit",
-	env: { ...process.env, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath },
-});
-process.exit(res.status ?? 1);
+// The plugin drives the real omp-sessions CLI, which runs on AO: an isolated `ao daemon` with the
+// scripted fake omp (test/ao-fixture.mjs), never the dev daemon or the real ~/.omp.
+const { aoAvailable, startAoFixture } = await import(path.join(root, "test/ao-fixture.mjs"));
+if (!aoAvailable()) {
+	console.log("test:hermes skipped: ao is not installed (set OMP_TEST_AO_BIN)");
+	process.exit(0);
+}
+const ao = await startAoFixture();
+let status = 1;
+try {
+	console.log(`Hermes Python: ${python} · AO ${ao.baseUrl}`);
+	// -I: ignore the user's PYTHONPATH/site; -B: never write bytecode into the Hermes install. TEST_FILTER=<pattern>: unittest -k.
+	const filter = process.env.TEST_FILTER ? ["-k", process.env.TEST_FILTER] : [];
+	const child = spawn(python, ["-I", "-B", "-m", "unittest", "discover", "-s", path.join(root, "integrations/hermes/tests"), "-p", "test_*.py", "-v", ...filter], {
+		cwd: root,
+		stdio: "inherit",
+		env: { ...process.env, ...ao.stackEnv, OMP_TEST_ROOT: root, OMP_TEST_NODE: process.execPath, OMP_TEST_REPO: ao.scratchRepo("work") },
+	});
+	status = await new Promise(resolve => child.on("exit", code => resolve(code ?? 1)));
+} finally {
+	await ao.stop();
+}
+process.exit(status);

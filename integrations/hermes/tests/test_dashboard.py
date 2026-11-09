@@ -9,6 +9,7 @@ import json
 import sys
 import unittest
 import urllib.parse
+from pathlib import Path
 from unittest import mock
 
 import test_plugin as base
@@ -85,14 +86,15 @@ class DashboardApiTest(unittest.TestCase):
     def test_sessions_carry_state_question_schedule_and_card(self) -> None:
         with kbc.connect_closing(board="dash") as conn:
             card = kb.create_task(conn, title="Ship the dashboard tab", assignee="someone", board="dash")
-        asking = self.post("/sessions", {"prompt": "write dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
+        asking = self.post("/sessions", {"prompt": "bash ls\nwrite dash-q.txt hi", "where": {"kind": "folder", "value": str(WORK)}, "mode": "ask", "title": "asks first", "tags": ["dash-test"]})
+        written = Path(asking["cwd"]) / "dash-q.txt"
         later = self.post("/sessions", {"prompt": "echo later", "title": "later on", "where": {"kind": "folder", "value": str(WORK)}, "when": "at", "at": "+2h", "group": "Dash group"})
         self.assertIn("startAt", later)
         linked = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo linked", "--tag", "hermes:dash", "--tag", f"card:{card}").stdout)
 
         a = until(lambda: self.state_is(asking["id"], "needs_input"), "needs_input")
-        self.assertIn("Allow tool: write", a["question"]["title"])
-        self.assertEqual(a["question"]["kind"], "select")
+        self.assertEqual(a["question"]["title"], "$ ls")
+        self.assertEqual(a["question"]["kind"], "approval")
         self.assertEqual(a["mode"], "ask")
         self.assertEqual(a["project"], WORK.name)
         self.assertIn("dash-test", a["tags"])
@@ -107,14 +109,14 @@ class DashboardApiTest(unittest.TestCase):
 
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
         d = self.get(f"/sessions/{asking['id']}")
-        self.assertEqual(d["question"]["options"][0], "Approve")
+        self.assertEqual(d["question"]["options"][0], "Allow once")
         # An answer names its question: none, or another question's id, answers nothing.
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1"}, status=400)
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": "not-this-one"}, status=400)
         self.assertEqual(self.view(asking["id"])["state"], "needs_input")
-        self.assertFalse((WORK / "dash-q.txt").exists())
+        self.assertFalse(written.exists())
         self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]})
-        until(lambda: (WORK / "dash-q.txt").exists(), "file written after the answer")
+        until(lambda: written.exists(), "file written after the answer")
         until(lambda: self.state_is(asking["id"], "idle"), "idle after the answer")
         err = self.post(f"/sessions/{asking['id']}/answer", {"answer": "1", "question": d["question"]["id"]}, status=400)
         self.assertIn("not waiting", err["error"])
@@ -140,7 +142,7 @@ class DashboardApiTest(unittest.TestCase):
         self.assertTrue(any(f["path"] == str(WORK) for f in places["folders"]))
         self.assertTrue(any(b["slug"] == "proj" and b["folder"] == str(WORK) for b in places["boards"]))
         by_project = self.post("/sessions", {"prompt": "echo by project", "where": {"kind": "project", "value": WORK.name}})
-        self.assertEqual(by_project["cwd"], str(WORK))
+        self.assertTrue(base.same_repo(by_project["cwd"], WORK))
 
     def test_boards_view_and_lane_settings(self) -> None:
         try:
@@ -245,7 +247,8 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(json.loads(request.read_text())["session"], sid)
             window.write_text(json.dumps({"authority": "ssh-remote+ws", "scheme": "vscode", "at": 1}))
             link = self.post(f"/sessions/{sid}/vscode", {})
-            self.assertEqual(link["url"], f"vscode://vscode-remote/ssh-remote+ws{WORK}")
+            # The session's own folder: its AO worktree.
+            self.assertEqual(link["url"], f"vscode://vscode-remote/ssh-remote+ws{base.report(sid)['cwd']}")
             self.assertEqual(link["authority"], "ssh-remote+ws")
             # The redirect page for Hermes Desktop: on the address the request came in on, link in the fragment.
             base_url, _, fragment = link["page"].partition("#")
@@ -263,7 +266,11 @@ class DashboardApiTest(unittest.TestCase):
         repo = WORK / "proj-repo"
         pkg = repo / "pkg"
         pkg.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        # AO makes a project of the repository, which needs a commit on its default branch.
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        (pkg / "README.md").write_text("pkg\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], check=True)
         window = base.OMP_HOME / "vscode-window.json"
         window.unlink(missing_ok=True)
         inside = json.loads(omp_sessions("new", str(pkg), "--detach", "--json", "-p", "echo in a repo").stdout)
@@ -275,7 +282,8 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(urllib.parse.unquote(link["page"].partition("#")[2]), link["url"])
         self.assertEqual(self.post(f"/sessions/{on_board['id']}/project", {})["folder"], str(WORK))
         # Folders the page shows open; anything else is refused.
-        self.assertEqual(self.post("/folders/vscode", {"path": str(pkg)})["folder"], str(pkg))
+        self.assertEqual(self.post("/folders/vscode", {"path": str(repo)})["folder"], str(repo), "an AO project's folder")
+        self.assertIn("error", self.post("/folders/vscode", {"path": str(pkg)}, status=403), "a folder inside a project is not shown")
         self.assertEqual(self.post("/folders/vscode", {"path": str(WORK)})["folder"], str(WORK), "a board folder")
         self.assertIn("error", self.post("/folders/vscode", {"path": str(WORK.parent)}, status=403))
         self.assertIn("error", self.post("/folders/vscode", {"path": "/"}, status=403))
