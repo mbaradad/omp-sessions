@@ -73,7 +73,11 @@ curl -X PATCH http://127.0.0.1:$(jq -r .port ~/.ao/running.json)/api/v1/settings
 
 ### Extra omp arguments
 
-AO starts omp as `omp acp` with a fixed set of flags and has no setting for more. Switchyard adds a small `omp` launcher in `~/.switchyard/bin/` and puts that folder first on the PATH of the AO daemon it starts. For `omp acp` inside an AO session the launcher appends your extra arguments and runs the real omp; for everything else it just runs omp. Set them with `switchyard config set omp.extraArgs --profile work` (machine-wide), in VS Code with *New Session with Options…* or `switchyard new … -- <flags>` (one session; applied by a restart before the first prompt), or per project through the AO project's environment variable `SWITCHYARD_OMP_ARGS`.
+AO starts omp as `omp acp` with a fixed set of flags and has no setting for more. Switchyard installs a small `omp` launcher in `~/.switchyard/bin/` (with the omp extension; not on Windows, and skipped if a file of that name that isn't Switchyard's already exists) and puts that folder first on the PATH of the AO daemon it starts. For `omp acp` inside an AO session the launcher appends your extra arguments and runs the real omp; for everything else, or if anything goes wrong, it just runs omp. Arguments come from three places, applied in this order (later ones come last on the command line):
+
+1. **machine-wide:** `omp.extraArgs` in `~/.switchyard/config.json`, a JSON array: `switchyard config set omp.extraArgs --profile work`;
+2. **per project:** the environment variable `SWITCHYARD_OMP_ARGS` on the AO project (plain words, or a JSON array of strings);
+3. **per session:** the session's `omp-args` file, written by *New Session with Options…* or `switchyard new … -- <flags>` (plain words or a JSON array; applied by a restart before the first prompt).
 
 If the daemon is not one that Switchyard started (the AO desktop app owns it), put `~/.switchyard/bin` first on that daemon's PATH yourself, or the arguments are ignored. `switchyard status` says whether the launcher is in effect.
 
