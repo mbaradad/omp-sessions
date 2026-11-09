@@ -746,8 +746,14 @@ export class AoSessionWatcher {
 			}
 			return files;
 		} catch {
-			// No workspace any more (terminated and released), or a transient failure: keep what was known.
-			return known?.files ?? [];
+			// No workspace any more (terminated and released), or a transient failure (the daemon busy): keep what was
+			// known and try again a few times. Nothing else would: no event follows a settle (seen live: the list was
+			// still empty 45 s after the turn ended, with the file in the manifest).
+			const files = known?.files ?? [];
+			const tries = (sameKey ? known.tries : 0) + 1;
+			this.files.set(view.id, { key, files, readAt: Date.now(), tries, confirmed: tries >= 4, settledAt });
+			if (tries < 4) this.confirmLater(view.id, settleMs);
+			return files;
 		}
 	}
 
