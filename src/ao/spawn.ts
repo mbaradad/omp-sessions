@@ -37,7 +37,11 @@ export interface SpawnSwitchyardOptions {
 	thinking?: string;
 	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). */
 	mode?: AoSessionMode;
-	/** Extra `omp acp` arguments for this session (G34). Needs the Switchyard `omp` shim on the daemon's PATH. No whitespace inside an argument. */
+	/**
+	 * Extra `omp acp` arguments for this session (G34), read by the Switchyard `omp` shim, which must be first on
+	 * the daemon's PATH. Written as plain words when every argument is one word, else as a JSON array of strings
+	 * (the shim reads either; the array needs `node` or `bun` on the daemon's PATH, a word list does not).
+	 */
 	ompArgs?: readonly string[];
 	/** The first message. Without one the session is left ready and waiting. */
 	prompt?: string;
@@ -74,6 +78,11 @@ function choicesOf(options: AoConfigOptions, id: string): string[] | undefined {
 	return option ? (option.choices ?? []).map(c => c.value) : undefined;
 }
 
+/** The `omp-args` file: plain words when no argument has whitespace (no JSON runtime needed), else a JSON array of strings. */
+export function ompArgsFile(args: readonly string[]): string {
+	return args.some(a => /\s/.test(a)) ? `${JSON.stringify(args)}\n` : `${args.join(" ")}\n`;
+}
+
 function writeFileAtomic(file: string, content: string): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	const tmp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
@@ -86,8 +95,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 	const home = options.home ?? switchyardHome();
 	const mode = options.mode ?? "auto";
 	const ompArgs = options.ompArgs ?? [];
-	const bad = ompArgs.find(a => a === "" || /\s/.test(a));
-	if (bad !== undefined) throw new Error(`omp argument ${JSON.stringify(bad)} is empty or contains whitespace: the shim splits the arguments file on whitespace`);
+	if (ompArgs.includes("")) throw new Error("an omp argument is empty");
 
 	// 1. A model no catalog knows would leave a terminated session behind; refuse it before any session exists.
 	if (options.model) {
@@ -121,7 +129,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 
 		// 4. Extra arguments are read when omp launches: write them, restart omp on the same transcript.
 		if (ompArgs.length > 0) {
-			writeFileAtomic(sessionStateFile(id, "omp-args", home), `${ompArgs.join(" ")}\n`);
+			writeFileAtomic(sessionStateFile(id, "omp-args", home), ompArgsFile(ompArgs));
 			await client.exitAgent(id);
 			await client.resumeAgent(id);
 			const deadline = Date.now() + (options.readyTimeoutMs ?? 90_000);

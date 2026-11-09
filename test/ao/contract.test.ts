@@ -4,8 +4,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { after, before, test } from "node:test";
-import { type AoEvent, AoClient, AoError, sessionStateFile } from "../../src/ao/client";
+import { type AoEvent, AoClient, AoError, sessionStateFile, switchyardHome } from "../../src/ao/client";
 import { isolatedHome } from "../../src/ao/daemon";
 import { type AoSessionModel, AoSessionWatcher } from "../../src/ao/model";
 
@@ -51,6 +53,8 @@ function until(id: string, done: (m: AoSessionModel) => boolean, what: string): 
 before(async () => {
 	// CONTRACT.md "Isolated HOME": run through `npm run test:ao`, which sets one up.
 	assert.ok(isolatedHome(), "run this test with an isolated HOME (npm run test:ao), never the real one");
+	// The Switchyard state folder too: the spawn helper writes the mode file there (the real ~/.switchyard is kept empty until cutover).
+	assert.ok(switchyardHome() !== path.join(os.userInfo().homedir, ".switchyard"), `SWITCHYARD_HOME is the real ~/.switchyard: ${switchyardHome()}`);
 	ao = await AoClient.connect();
 	scratchRepo();
 	watcher = new AoSessionWatcher(ao, { query: { active: true } });
@@ -183,6 +187,48 @@ test("spawnSwitchyard (D11): bypass launch, mode file, options, prompt, idempote
 	} finally {
 		await ao.killSession(id).catch(() => undefined);
 		await ao.deleteSession(id).catch(() => undefined);
+	}
+});
+
+test("a crash reads interrupted, a person's Stop stopped: both exit the agent, only a crash leaves work open (G39)", async () => {
+	const start = (displayName: string) => ao.spawnSwitchyard({ dir: REPO, displayName, prompt: "Run the bash command `sleep 40` and then reply DONE." }).then(r => r.session.id);
+	const crashed = await start("src/ao crash");
+	const stopped = await start("src/ao stop");
+	try {
+		// A running turn and a message queued behind it, in both.
+		for (const id of [crashed, stopped]) {
+			await until(id, m => m.conversation?.turns.some(t => t.state === "running") === true, "running a turn");
+			await ao.sendMessage(id, { text: "Reply with exactly: QUEUED" });
+			await until(id, m => m.queue.pending === 1, "one queued message");
+		}
+		// Kill the omp of one (the process in its worktree that runs `acp`); stop the other as a person would.
+		const cwd = watcher.get(crashed)?.cwd;
+		const omp = execFileSync("pgrep", ["-f", "omp"], { encoding: "utf8" }).trim().split("\n").find(pid => {
+			try {
+				return fs.readlinkSync(`/proc/${pid}/cwd`) === cwd && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("acp");
+			} catch {
+				return false;
+			}
+		});
+		assert.ok(omp, `the omp of ${crashed} in ${cwd}`);
+		process.kill(Number(omp), "SIGKILL");
+		await ao.exitAgent(stopped);
+		// Same `exited`; the crash left its turns open, the Stop settled them.
+		const crash = await until(crashed, m => m.state === "interrupted", "interrupted after a crash");
+		assert.deepEqual(crash.conversation?.turns.map(t => t.state), ["running", "queued"]);
+		const stop = await until(stopped, m => m.state === "stopped", "stopped after a person's Stop");
+		assert.ok(stop.conversation?.turns.every(t => t.state === "failed"));
+		assert.equal(stop.view.activity.state, "exited");
+		// Resumed, both are idle agents again (AO fails what was left open).
+		await ao.resumeAgent(crashed);
+		await ao.resumeAgent(stopped);
+		await until(crashed, m => m.state === "idle", "idle after resuming the crash");
+		await until(stopped, m => m.state === "idle", "idle after resuming the Stop");
+	} finally {
+		for (const id of [crashed, stopped]) {
+			await ao.killSession(id).catch(() => undefined);
+			await ao.deleteSession(id).catch(() => undefined);
+		}
 	}
 });
 
