@@ -30,6 +30,7 @@ export type AoMessage = AoSchemas["ConversationMessageResponse"];
 export type AoActivity = AoSchemas["ConversationActivityResponse"];
 export type AoUsage = AoSchemas["ConversationUsagePayload"];
 export type AoTurnSettings = AoSchemas["ConversationTurnSettingsPayload"];
+export type AoConfigOptions = AoSchemas["ConversationConfigOptionsResponse"];
 export type AoWorkspaceManifest = AoSchemas["WorkspaceManifestResponse"];
 export type AoProject = AoSchemas["ProjectSummary"];
 export type AoSpawnRequest = AoSchemas["SpawnSessionRequest"];
