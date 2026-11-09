@@ -479,6 +479,8 @@ async function cmdVscode(args: Args): Promise<number> {
 const WAIT_EXIT: Record<AgentState, number> = { idle: 0, needs_input: 3, stopped: 4, interrupted: 4, scheduled: 5, queued: 124, starting: 124, working: 124 };
 /** A settled state must hold this long, so a prompt that was just sent has time to start. */
 const SETTLE_MS = 3000;
+/** Extra time an unfinished reply (`replyPending`) may hold `wait` after the state settled (foundation's watcher re-reads for about 4.5 s). */
+const REPLY_GRACE_MS = 3000;
 
 /** "90", "90s", "30m", "2h" → ms. */
 function parseDuration(text: string): number | undefined {
@@ -520,7 +522,8 @@ async function waitFor(id: string, timeout: number | undefined, json: boolean, t
 			const now = performance.now();
 			if (SETTLED_STATES[s.state] && !ours) {
 				settledSince ??= now;
-				if (now - settledSince >= SETTLE_MS) break;
+				// AO can flag a turn completed before its last reply is final (the reply may be the previous turn's): hold a little longer, but never forever (a tool-only turn has no reply to wait for).
+				if (now - settledSince >= SETTLE_MS + (s.model.replyPending ? REPLY_GRACE_MS : 0)) break;
 			} else settledSince = undefined;
 			if (now >= deadline) break;
 			const { promise, resolve } = Promise.withResolvers<void>();
