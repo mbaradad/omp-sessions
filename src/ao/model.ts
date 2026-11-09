@@ -236,7 +236,7 @@ export function changedFiles(conversation: AoConversation): AoChangedFile[] {
 export type AoPlannedState = "queued" | "scheduled" | "interrupted";
 
 /**
- * The omp state of an AO session (MAPPING.md D3). Pass its conversation snapshot when there is one
+ * The Switchyard state of an AO session (MAPPING.md D3). Pass its conversation snapshot when there is one
  * (chat sessions) for questions, queue and turns, and the planner's state of its lane when it has one:
  * that wins whenever the session itself is idle or stopped.
  */

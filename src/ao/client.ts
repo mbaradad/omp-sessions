@@ -48,6 +48,8 @@ export type { AoEvent, AoEventSubscription, AoEventType, AoStreamStatus } from "
 export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";
+export type { AoNativeSession } from "./native";
+export { nativeSessionFile, readNativeSession, switchyardHome } from "./native";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
