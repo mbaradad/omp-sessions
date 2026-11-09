@@ -37,7 +37,7 @@ describe("queueOf", () => {
 			attempts: 2,
 			durationMs: 1500,
 			cost: 0.25,
-			options: { model: "anthropic/x", thinking: "high", retries: 3, cwd: "/tmp", project: "p", worktree: "never" },
+			options: { model: "anthropic/x", thinking: "high", retries: 3, cwd: "/tmp", project: "p" },
 		});
 		const [out] = queueOf(plan([lane("s")], [t, task("b", "s", { options: { cwd: "/tmp" } })]), "s").tasks;
 		assert.deepEqual(out, {
