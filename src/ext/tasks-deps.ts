@@ -8,6 +8,7 @@ import { AoClient } from "../ao/client";
 import { type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import { OmpPlans } from "./omp-plan";
 import { PlannerStore } from "./planner-store";
+import { SessionQueues } from "./session-queues";
 
 /** The part of AoSessionWatcher the Tasks view uses. */
 export interface TaskSessions {
@@ -18,6 +19,8 @@ export interface TaskSessions {
 
 export interface TasksDeps {
 	planner: PlannerStore;
+	/** The old per-session queue API (SessionManager.queue/editQueue, the chat panel's strip) on the planner. */
+	queues: SessionQueues;
 	plans: OmpPlans;
 	aoSessions: TaskSessions;
 	/** The AO client (connects on first use). */
@@ -95,5 +98,5 @@ export function createTasksDeps(context: vscode.ExtensionContext): TasksDeps {
 	const plans = new OmpPlans();
 	const sessions = new LateSessions();
 	context.subscriptions.push(planner, plans, sessions);
-	return { planner, plans, aoSessions: sessions, ao: () => sessions.connect() };
+	return { planner, queues: new SessionQueues(planner), plans, aoSessions: sessions, ao: () => sessions.connect() };
 }

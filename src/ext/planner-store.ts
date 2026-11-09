@@ -48,7 +48,9 @@ export class PlannerStore implements vscode.Disposable {
 	/** The old per-session queue ops on a lane (or AO session id): for code ported from the queue model. */
 	async queue(id: string, ops: QueueOp[]): Promise<QueueView> {
 		const client = await this.connect();
-		return client.request("queue", { id, ops });
+		const view = await client.request("queue", { id, ops });
+		await this.refresh(client);
+		return view;
 	}
 
 	async scheduler(set?: Partial<PlannerConfig>): Promise<PlannerStatus> {
