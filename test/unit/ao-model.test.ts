@@ -249,6 +249,24 @@ test("answerFor: single-field questions and typed fields", () => {
 	assert.deepEqual(answerFor(free, "a | b"), { kind: "input", body: { action: "accept", content: { name: "a | b" } } });
 });
 
+test("turns AO imports from omp's history after resume are not new work (G33)", () => {
+	// As ext-chat read them: steered and image prompts come back `recovered` with an acp-history-turn providerTurnId.
+	const history = (id: string) => ({ ...turn(id, "recovered"), providerTurnId: `acp-history-turn:${id}` });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	const after = conversation({ turns: [turn("t0", "completed"), lost, history("h1"), history("h2")] });
+	// Not counted: one finished turn and one lost one, not four.
+	const q = queueOf(after);
+	assert.deepEqual({ pending: q.pending, running: q.running, done: q.done, total: q.total }, { pending: 0, running: 0, done: 2, total: 2 });
+	// A history turn last does not hide the lost turn before it: reason kept; with the agent down it is interrupted.
+	assert.equal(sessionModel(view(), after).exitReason, AO_LOST_TURN_ERROR);
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), after), "interrupted");
+	// Alone, history turns are an idle conversation with nothing to report.
+	const onlyHistory = conversation({ turns: [history("h1")] });
+	assert.equal(agentState(view(), onlyHistory), "idle");
+	assert.equal(sessionModel(view(), onlyHistory).queue.total, 0);
+	assert.equal(sessionModel(view(), onlyHistory).exitReason, undefined);
+});
+
 test("queueOf: queued turns in order with their prompts", () => {
 	const c = conversation({
 		turns: [turn("t1", "completed"), turn("t2", "running"), turn("t4", "queued"), turn("t3", "queued"), turn("t0", "cancelled")],
