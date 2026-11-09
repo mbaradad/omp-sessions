@@ -71,11 +71,13 @@ for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
 }
 // `new` starts sessions in AO's bypass with Switchyard's omp extension gating (D11) and refuses ask/edits/plan
 // without the extension on the machine: the fake omp has no gate, so a stand-in file satisfies that check
-// (the CLI looks where omp does: the fixture's agent dir).
+// (the CLI looks where omp does: the fixture's agent dir). Without it the CLI refuses those modes, by design.
 if (ao.agentDir) {
-	const gate = path.join(ao.agentDir, "extensions", "switchyard", "mode.js");
-	fs.mkdirSync(path.dirname(gate), { recursive: true });
-	fs.writeFileSync(gate, "// test gate\n");
+	// What gateStatus() looks for (src/shared/omp-extension-install.ts): the package lists ./mode.js and the file exists.
+	const dir = path.join(ao.agentDir, "extensions", "switchyard");
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "mode.js"), "// test gate\n");
+	fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: "switchyard", private: true, type: "module", omp: { extensions: ["./mode.js"] } }, null, "\t")}\n`);
 }
 let status = 1;
 try {
