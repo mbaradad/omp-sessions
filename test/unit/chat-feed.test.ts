@@ -39,6 +39,7 @@ const conv = (c: Partial<AoConversation>): AoConversation => ({
 	...c,
 });
 
+const texts = (messages: unknown[]) => messages.map(m => (m as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? "");
 const events = (posts: ToWebview[]) => posts.flatMap(p => (p.type === "event" ? [p.ev] : []));
 const types = (posts: ToWebview[]) => posts.map(p => (p.type === "event" ? p.ev.type : p.type));
 
@@ -240,4 +241,24 @@ test("omp's tool call id comes out of AO's length-prefixed providerItemId", () =
 test("user messages carry their AO turn id (checkpoint restore keys on it)", () => {
 	const [m] = new ChatFeed().reset(conv({ turns: [turn("t1", "completed")], messages: [msg(1, "user", "hi", "t1")] })).messages as Array<{ turnId?: string }>;
 	assert.equal(m.turnId, "t1");
+});
+
+test("turns omp undid and the /undo, /redo commands are left out, and come back when their status clears", () => {
+	const scope = "5ad9fe63-7931-4fa3-9b1d-f57ee07c82ad:root";
+	const page = conv({
+		turns: [turn("t1", "completed"), turn("t2", "completed"), turn("t3", "completed")],
+		messages: [msg(1, "user", "keep me", "t1"), msg(2, "assistant", "ok", "t1"), msg(3, "user", "undone prompt", "t2"), msg(4, "assistant", "done", "t2"), msg(5, "user", "/undo", "t3"), msg(6, "assistant", "Undid 1 prompt", "t3")],
+		activities: [act(7, { turnId: "t2", status: "completed", activityKind: "file_change", providerItemId: `acp:${scope.length}:${scope}8:call_xyz`, detail: { toolKind: "edit", input: {}, files: [] } })],
+	});
+	const feed = new ChatFeed();
+	assert.equal(feed.setTurnStatus(new Map([["t2", "undone"], ["t3", "command"]])), true);
+	assert.deepEqual(texts(feed.reset(page).messages).filter(Boolean), ["keep me", "ok"]);
+	assert.deepEqual(texts(feed.transcript()).filter(Boolean), ["keep me", "ok"]);
+	// Same set again: nothing to re-read. Cleared (a redo): the turns return.
+	assert.equal(feed.setTurnStatus(new Map([["t3", "command"], ["t2", "undone"]])), false);
+	assert.equal(feed.setTurnStatus(new Map([["t3", "command"]])), true);
+	assert.deepEqual(texts(feed.reset(page).messages).filter(Boolean), ["keep me", "ok", "undone prompt", "done"]);
+	// omp's tool call id back to the card the webview shows.
+	assert.equal(feed.activityIdOf("call_xyz"), "a7");
+	assert.equal(feed.activityIdOf("nope"), undefined);
 });

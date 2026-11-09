@@ -9,9 +9,9 @@ import { hermesOrigin } from "../shared/hermes-origin";
 import { appendContext } from "../shared/mentions";
 import type { OrganizeStore } from "../shared/organize";
 import { type PermissionMode, PERMISSION_MODE_INFO, permissionModeOf } from "../shared/permissions";
-import type { QueueOp, SessionMeta, TaskQueue } from "../shared/protocol";
+import type { FileChange, QueueOp, SessionMeta, TaskQueue } from "../shared/protocol";
 import { type PromptSnippet, expandPlaceholders, matchSnippetCommand } from "../shared/snippets";
-import type { FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
+import type { DiffsByPath, FileAttachment, FromWebview, PanelCommand, SlashCommand, SlimState, ToWebview } from "../shared/webview";
 import { expandContextMentions, placeholderValues } from "./chat-context";
 import { ChatFeed, OPEN_LINK, replyFor } from "./chat-feed";
 import { sendResuming } from "./chat-send";
@@ -184,6 +184,25 @@ export interface ChatQueueSource {
 	onDidChange: vscode.Event<unknown>;
 }
 
+/** The part of the checkpoints extension's client the chat uses (`Checkpoints` in `src/ext/checkpoints.ts` on `ao/checkpoints`). Edits are keyed by omp's tool call ids. */
+export interface ChatCheckpoints {
+	undo(sessionId: string, target?: { turnId: string } | { text: string }): Promise<{ prompt?: string } | undefined>;
+	redo(sessionId: string): Promise<unknown>;
+	redoCount(sessionId: string): number;
+	changes(sessionId: string): FileChange[];
+	toolDiffs(sessionId: string, change: FileChange): DiffsByPath;
+	blob(sessionId: string, hash: string | null): Uint8Array | undefined;
+	/** AO turns to leave out: `undone` (omp rewound them) and `command` (/undo, /redo). */
+	turnStatuses(sessionId: string, conversation: AoConversation): ReadonlyMap<string, string>;
+	onDidChange: vscode.Event<{ sessionId: string; added: FileChange[] }>;
+}
+
+/** The session's permission-mode file, which the Switchyard omp extension's gate reads on every tool call (`readMode`/`writeMode` in `src/shared/session-mode.ts` on `ao/checkpoints`). */
+export interface ChatModeGate {
+	read(sessionId: string): PermissionMode | undefined;
+	write(sessionId: string, mode: PermissionMode): void;
+}
+
 export class ChatPanel implements vscode.Disposable {
 	private ao: AoClient | undefined;
 	private stream: AoEventSubscription | undefined;
@@ -228,6 +247,10 @@ export class ChatPanel implements vscode.Disposable {
 		private readonly connect: () => Promise<AoClient>,
 		/** The planner's queue for this chat's session; absent: `sessions.queue/editQueue`. */
 		private readonly tasks?: ChatQueueSource,
+		/** Checkpoints (omp extension: undo/redo with files, recorded edits); absent: those buttons say so. */
+		private readonly checkpoints?: ChatCheckpoints,
+		/** The session's permission-mode file (Switchyard omp extension gate); absent: AO-native modes. */
+		private readonly modes?: ChatModeGate,
 	) {
 		surface.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out"), vscode.Uri.joinPath(extensionUri, "media")] };
 		surface.webview.html = this.html();
@@ -243,6 +266,7 @@ export class ChatPanel implements vscode.Disposable {
 			}),
 			{ dispose: () => this.stream?.close() },
 			...(tasks ? [tasks.onDidChange(() => void this.postQueue())] : []),
+			...(checkpoints ? [checkpoints.onDidChange(e => e.sessionId === sessionId && this.onCheckpoints(e.added))] : []),
 		);
 		const cwd = this.meta?.cwd;
 		if (cwd) {
@@ -268,6 +292,8 @@ export class ChatPanel implements vscode.Disposable {
 	/** omp's permission mode: plan is omp's `mode` option; the others follow the approval mode AO launched omp with. */
 	private get mode(): PermissionMode | undefined {
 		const conv = this.feed.conversation;
+		const gated = this.modes?.read(this.sessionId);
+		if (gated) return gated;
 		if (!conv) return undefined;
 		if (this.option("mode")?.currentValue === "plan") return "plan";
 		switch (conv.settings.approvalMode) {
@@ -410,7 +436,9 @@ export class ChatPanel implements vscode.Disposable {
 			more = older.hasMoreBefore;
 		}
 		if (this.disposed) return;
+		if (this.checkpoints) this.feed.setTurnStatus(this.checkpoints.turnStatuses(this.sessionId, merged));
 		const snap = this.feed.reset(merged);
+		const view = this.checkpointView();
 		this.loaded = true;
 		await this.refreshOptions(ao);
 		this.serverCommands = await this.skills(ao);
@@ -430,14 +458,14 @@ export class ChatPanel implements vscode.Disposable {
 			pendingUi: snap.pendingUi,
 			state: this.state,
 			commands: mergeCommands(this.serverCommands, this.snippets),
-			changes: [],
-			diffs: snap.diffs,
+			changes: view.changes,
+			diffs: { ...view.diffs, ...snap.diffs },
 			connected: this.streamOpen,
 			home: os.homedir(),
 			queue: await this.queueView(),
 		});
 		for (const m of snap.live) this.postFeed(m);
-		this.post({ type: "checkpoints", redo: 0 });
+		this.post({ type: "checkpoints", redo: this.checkpoints?.redoCount(this.sessionId) ?? 0 });
 		this.postOrigin(true);
 	}
 
@@ -458,6 +486,10 @@ export class ChatPanel implements vscode.Disposable {
 				this.post({ type: "commands", commands: mergeCommands(this.serverCommands, this.snippets) });
 			}
 		}
+		// omp undid or redid a prompt (or ran /undo, /redo): the turns to hide changed, so show the new conversation.
+		const cp = this.checkpoints;
+		const full = this.feed.full();
+		if (cp && full && this.feed.setTurnStatus(cp.turnStatuses(this.sessionId, full))) this.schedule(true);
 		this.postState();
 	}
 
@@ -539,6 +571,75 @@ export class ChatPanel implements vscode.Disposable {
 		if (queue) this.post({ type: "queue", queue });
 	}
 
+	// ---------- checkpoints (omp extension) ----------
+
+	private unavailable(what: string): void {
+		this.post({ type: "notice", level: "warning", text: `${what} needs the Switchyard checkpoints extension, which is not loaded in this window.` });
+	}
+
+	/** The recorded edits of this session, keyed by the chat's tool card ids (AO activity ids) instead of omp's tool call ids. */
+	private checkpointView(): { changes: FileChange[]; diffs: Record<string, DiffsByPath> } {
+		const out: { changes: FileChange[]; diffs: Record<string, DiffsByPath> } = { changes: [], diffs: {} };
+		const cp = this.checkpoints;
+		if (!cp) return out;
+		for (const c of cp.changes(this.sessionId)) {
+			const card = this.feed.activityIdOf(c.toolCallId);
+			if (!card) continue;
+			out.changes.push({ ...c, toolCallId: card });
+			out.diffs[card] = cp.toolDiffs(this.sessionId, c);
+		}
+		return out;
+	}
+
+	/** New edits were recorded, or an undo/redo changed the state: show them, and re-read the conversation (hidden turns changed). */
+	private onCheckpoints(added: FileChange[]): void {
+		const cp = this.checkpoints;
+		if (!cp) return;
+		for (const c of added) {
+			const card = this.feed.activityIdOf(c.toolCallId);
+			if (card) this.post({ type: "change", change: { ...c, toolCallId: card }, diffs: cp.toolDiffs(this.sessionId, c) });
+		}
+		this.post({ type: "checkpoints", redo: cp.redoCount(this.sessionId) });
+		this.schedule();
+	}
+
+	/** Undoes the last prompt (or the one named): omp rewinds the conversation and restores the files; the prompt text returns to the composer. */
+	private async undo(target?: { turnId: string } | { text: string }): Promise<void> {
+		if (!this.checkpoints) return this.unavailable("Undo");
+		const done = await this.checkpoints.undo(this.sessionId, target);
+		if (done?.prompt) this.insertText(done.prompt);
+	}
+
+	/** Restores one file to its content right before the given tool call. */
+	private async revertFile(cardId: string, file: string): Promise<void> {
+		const cp = this.checkpoints;
+		if (!cp) return this.unavailable("Revert");
+		const ompId = this.feed.toolCallIdOf(cardId);
+		const changes = cp.changes(this.sessionId);
+		const change = changes.find(c => c.toolCallId === ompId);
+		const entry = change?.files.find(f => f.path === file);
+		if (!change || !entry) return;
+		const name = path.relative(this.meta?.cwd ?? "", file) || file;
+		const later = changes.some(c => c.timestamp > change.timestamp && c.files.some(f => f.path === file));
+		const ok = await vscode.window.showWarningMessage(
+			`Revert ${name} to its content before this edit?`,
+			{ modal: true, detail: later ? "Later edits to this file in this session will be undone too." : entry.before === null ? "The file did not exist before; it will be deleted." : undefined },
+			"Revert",
+		);
+		if (ok !== "Revert") return;
+		const uri = vscode.Uri.file(file);
+		if (entry.before === null) await vscode.workspace.fs.delete(uri, { useTrash: true });
+		else {
+			const content = cp.blob(this.sessionId, entry.before);
+			if (!content) {
+				this.post({ type: "notice", level: "warning", text: `The snapshot of ${name} before that edit is gone; nothing reverted.` });
+				return;
+			}
+			await vscode.workspace.fs.writeFile(uri, content);
+		}
+		this.post({ type: "notice", level: "info", markdown: true, text: `Reverted \`${name}\` to before that ${change.toolName}.` });
+	}
+
 	private async postModels(): Promise<void> {
 		await this.refreshOptions(await this.client());
 		this.post({
@@ -564,6 +665,12 @@ export class ChatPanel implements vscode.Disposable {
 	private async setMode(mode: PermissionMode): Promise<void> {
 		const conv = this.feed.conversation;
 		if (!conv || this.switchingMode) return;
+		if (this.modes && this.modes.read(this.sessionId) !== undefined) {
+			// A Switchyard session: the omp extension's gate reads the mode file on every tool call, so this is live.
+			this.modes.write(this.sessionId, mode);
+			this.postState();
+			return;
+		}
 		if (mode === "plan") {
 			await this.setOption("mode", "plan");
 			return;
@@ -931,8 +1038,11 @@ export class ChatPanel implements vscode.Disposable {
 			}
 			case "restoreCheckpoint":
 			case "rewindTo":
+				// Both rewind to before that prompt (files and conversation) and put its text back in the composer.
+				await this.undo(m.turnId ? { turnId: m.turnId } : { text: m.text });
+				return;
 			case "revertFile":
-				this.post({ type: "notice", level: "warning", text: "Checkpoints (restore, edit & resend, revert) are not available on AO yet." });
+				await this.revertFile(m.toolCallId, m.path);
 				return;
 		}
 	}
@@ -966,8 +1076,11 @@ export class ChatPanel implements vscode.Disposable {
 				await vscode.commands.executeCommand("omp.reviewChanges", this.sessionId);
 				return;
 			case "undoTurn":
+				await this.undo();
+				return;
 			case "redoTurn":
-				this.post({ type: "notice", level: "warning", text: "Undo and redo of a turn are not available on AO yet." });
+				if (!this.checkpoints) return this.unavailable("Redo");
+				await this.checkpoints.redo(this.sessionId);
 				return;
 			case "openHermesCard":
 				await vscode.commands.executeCommand("omp.hermes.openCard", this.sessionId);

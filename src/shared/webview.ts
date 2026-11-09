@@ -138,12 +138,12 @@ export type FromWebview =
 	/** Insert prompt snippet `name` (without the `p:` prefix) with its placeholders expanded. */
 	| { type: "expandSnippet"; name: string }
 	/** Rewind the conversation to the user message with this text (edit & resend). */
-	| { type: "rewindTo"; text: string }
+	| { type: "rewindTo"; text: string; turnId?: string }
 	/** Restore one file to its content before a given tool call. */
 	| { type: "revertFile"; toolCallId: string; path: string }
 	| { type: "queueOp"; ops: QueueOp[] }
 	| { type: "focusTasks" }
 	| { type: "setMode"; mode: PermissionMode }
 	/** Restore the checkpoint before the prompt with this text: files and conversation. */
-	| { type: "restoreCheckpoint"; text: string }
+	| { type: "restoreCheckpoint"; text: string; turnId?: string }
 	| { type: "starModel"; provider: string; id: string };

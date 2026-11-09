@@ -650,8 +650,8 @@ function renderUser(m: Record<string, unknown>): HTMLElement {
 		h(
 			"div",
 			{ class: "msg-actions" },
-			userAuthored ? h("button", { class: "icon-btn", title: "Restore checkpoint: revert the file edits made since this prompt and rewind the conversation to before it (/redo brings them back)", onclick: () => post({ type: "restoreCheckpoint", text: full }) }, icon("undo")) : "",
-			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text: full }) }, icon("edit")) : "",
+			userAuthored ? h("button", { class: "icon-btn", title: "Restore checkpoint: revert the file edits made since this prompt and rewind the conversation to before it (/redo brings them back)", onclick: () => post({ type: "restoreCheckpoint", text: full, turnId: str(m.turnId) || undefined }) }, icon("undo")) : "",
+			userAuthored ? h("button", { class: "icon-btn", title: "Edit & resend from here (rewinds the conversation)", onclick: () => post({ type: "rewindTo", text: full, turnId: str(m.turnId) || undefined }) }, icon("edit")) : "",
 			copyButton(() => text, "Copy message"),
 			shortTime(m) ? h("span", { class: "msg-meta" }, shortTime(m)) : "",
 		),

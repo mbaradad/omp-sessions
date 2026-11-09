@@ -238,6 +238,7 @@ export class ChatFeed {
 	private shown = new Map<string, Shown>();
 	private pending = new Map<string, PendingRequest>();
 	private noticedTurns = new Set<string>();
+	private hidden = new Set<string>();
 	private busy = false;
 	private conv: AoConversation | undefined;
 
@@ -268,6 +269,7 @@ export class ChatFeed {
 			}
 		}
 		for (const t of this.turns.values()) {
+			if (this.hidden.has(t.id)) continue;
 			const n = this.turnNotice(t);
 			if (n) {
 				messages.push({ role: "notice", level: n.level, message: n.text });
@@ -337,12 +339,37 @@ export class ChatFeed {
 		return [...this.turns.values()].some(t => t.state === "running") || this.conv?.controller === "busy";
 	}
 
+	/** The conversation as merged so far, with every row (for matching turns to omp's prompts, and for the transcript). */
+	full(): AoConversation | undefined {
+		if (!this.conv) return undefined;
+		const rows = [...this.rows.values()];
+		return { ...this.conv, turns: [...this.turns.values()], messages: rows.filter(r => r.kind === "message"), activities: rows.filter(r => r.kind === "activity") };
+	}
+
 	/** The whole transcript as omp-shaped messages (export, copy), without touching what the webview was sent. */
 	transcript(): unknown[] {
-		if (!this.conv) return [];
-		const rows = [...this.rows.values()];
+		const full = this.full();
+		if (!full) return [];
 		const copy = new ChatFeed();
-		return copy.reset({ ...this.conv, turns: [...this.turns.values()], messages: rows.filter(r => r.kind === "message"), activities: rows.filter(r => r.kind === "activity") }).messages;
+		copy.hidden = this.hidden;
+		return copy.reset(full).messages;
+	}
+
+	/**
+	 * Turns to leave out of the conversation: the ones omp undid (`undone`) and the /undo, /redo
+	 * commands (`command`). Returns whether the set changed, in which case the caller re-reads everything.
+	 */
+	setTurnStatus(statuses: ReadonlyMap<string, string>): boolean {
+		const next = new Set(statuses.keys());
+		const same = next.size === this.hidden.size && [...next].every(id => this.hidden.has(id));
+		this.hidden = next;
+		return !same;
+	}
+
+	/** The activity row (a tool card's id in the webview) of omp's tool call id. */
+	activityIdOf(ompToolCallId: string): string | undefined {
+		for (const r of this.rows.values()) if (r.kind === "activity" && isTool(r) && ompItemId(r.providerItemId) === ompToolCallId) return r.id;
+		return undefined;
 	}
 
 	/** omp's own tool call id of a tool row (what omp's extension hooks see), or undefined for other rows. */
@@ -409,6 +436,7 @@ export class ChatFeed {
 
 	/** A queued prompt shows as a queue chip, and one withdrawn before it ran not at all. */
 	private visible(r: Row): boolean {
+		if (r.turnId && this.hidden.has(r.turnId)) return false;
 		if (r.kind !== "message" || r.role !== "user" || !r.turnId) return true;
 		const t = this.turns.get(r.turnId);
 		return !(t && (t.state === "queued" || (t.state === "cancelled" && !t.startedAt)));
