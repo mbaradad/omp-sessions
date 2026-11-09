@@ -1120,7 +1120,7 @@ async function cmdSched(args: Args): Promise<void> {
 			set = { paused: false };
 			break;
 		case "stop-when-done":
-			throw new UsageError("sched stop-when-done is gone: AO hibernates a chat that has been idle for 90 s, so a finished queue costs nothing (MAPPING, data migration: stopWhenQueueDone dropped)");
+			throw new UsageError("sched stop-when-done is gone: the planner has no per-queue stop. A finished queue frees its omp process only when AO's chat hibernation is on (it hibernates a chat nobody views after 90 s; off by default on a headless daemon: start AO with hibernation on). MAPPING: stopWhenQueueDone dropped");
 		case "budget": {
 			// budget <hour|day|week> <usd|off>: a cap on what planner-dispatched work may spend in a rolling window.
 			if (arg === undefined) break;
