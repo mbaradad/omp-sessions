@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import switchyardCheckpoints from "../../src/omp-extension/checkpoints";
+import { undoneTurns } from "../../src/shared/checkpoint-ops";
 import { type CheckpointPrompt, type FileChange, type SessionEntryLike, aoCheckpointDir, isPromptEntry, messageText, ompToolCallId, planRestore, readChanges, readState, redoStack, turnStatuses } from "../../src/shared/checkpoints";
 
 // ---------- a fake omp: a session tree with omp's navigation rules, and the extension hooks ----------
@@ -321,4 +322,16 @@ test("an AO tool activity's providerItemId yields omp's tool call id", () => {
 	assert.equal(ompToolCallId("acp:6:a:b:é5:x:y:z"), "x:y:z", "lengths are UTF-8 bytes; parts may hold colons");
 	assert.equal(ompToolCallId("ao-plan-1"), "ao-plan-1");
 	assert.equal(ompToolCallId("acp:99:short"), "acp:99:short", "malformed stays as is");
+});
+
+test("undoneTurns names the AO turns of undone prompts, for the model's changed files", async () => {
+	const { omp } = setup();
+	await omp.start();
+	await omp.turn("kept", [["k.txt", "k"]]);
+	await omp.turn("dropped", [["d.txt", "d"]]);
+	await omp.command("/undo");
+	const now = Date.now();
+	const message = (turnId: string, text: string) => ({ kind: "message", role: "user", turnId, text });
+	const conversation = { turns: [{ id: "t1", requestedAt: new Date(now).toISOString() }, { id: "t2", requestedAt: new Date(now).toISOString() }, { id: "t3", requestedAt: new Date(now).toISOString() }], messages: [message("t1", "kept"), message("t2", "dropped"), message("t3", "/undo")] };
+	assert.deepEqual([...(undoneTurns("proj-1", conversation as never) ?? [])], ["t2"]);
 });

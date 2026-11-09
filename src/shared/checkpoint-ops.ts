@@ -19,6 +19,7 @@ import {
 	planRestore,
 	readChanges,
 	readState,
+	turnStatuses,
 } from "./checkpoints";
 
 /** Which prompt to undo: the AO turn that sent it, or its text (clients that render omp's transcript). */
@@ -123,4 +124,17 @@ export function turnChanges(sessionId: string, conversation: AoConversation, tur
 	const dir = aoCheckpointDir(sessionId);
 	const prompt = matchTurns(aoTurns(conversation), readState(dir)?.prompts ?? []).get(turnId);
 	return prompt ? readChanges(dir).filter(c => c.prompt === prompt.id) : [];
+}
+
+/**
+ * AO turns omp's `/undo` rewound: the value for `AoWatcherOptions.undoneTurns`, so a session's changed
+ * files (src/ao/model.ts `changedFiles`) leave out edits that were undone. Undefined when the session has
+ * no checkpoint state or nothing was undone.
+ */
+export function undoneTurns(sessionId: string, conversation: AoConversation): ReadonlySet<string> | undefined {
+	const state = readState(aoCheckpointDir(sessionId));
+	if (!state || state.prompts.every(p => p.active)) return undefined;
+	const undone = new Set<string>();
+	for (const [turnId, status] of turnStatuses(aoTurns(conversation), state.prompts)) if (status === "undone") undone.add(turnId);
+	return undone.size ? undone : undefined;
 }

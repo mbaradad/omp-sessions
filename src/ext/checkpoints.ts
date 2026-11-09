@@ -9,8 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { AoClient, AoConversation } from "../ao/client";
-import { switchyardHome } from "../ao/native";
+import { type AoClient, type AoConversation, switchyardHome } from "../ao/client";
 import { type UndoTarget, interruptAndWait, isBusy, planRedo, planUndo, runCheckpointCommand } from "../shared/checkpoint-ops";
 import {
 	type CheckpointResult,
