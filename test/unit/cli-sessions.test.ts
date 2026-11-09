@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView } from "../../src/ao/client";
 import { sessionModel } from "../../src/ao/model";
 import type { PlanView } from "../../src/planner/types";
-import { edgesOfRef, graphEdges, laneSummaries, tasksOfRef } from "../../src/cli/plan";
+import { edgesOfRef, graphEdges, laneSummaries, tasksOfRef, worstEdgeState } from "../../src/cli/plan";
 import { ConversationFollower } from "../../src/cli/render";
 import { type Session, filterSessions, plannedState, resolveSession } from "../../src/cli/sessions";
 import { setColor } from "../../src/cli/term";
@@ -170,4 +170,8 @@ test("graphEdges: one edge per parent a task has propagation state for; refs nam
 	assert.deepEqual(tasksOfRef(view, "t").length, 3, "a unique-enough id prefix");
 	assert.equal(edgesOfRef(view, "repo-1").length, 1, "as the parent");
 	assert.equal(edgesOfRef(view, "repo-3").length, 0);
+	// The child's session carries its worst incoming edge (a free task's session has no lane of its own).
+	assert.deepEqual(laneSummaries(view).get("repo-2")?.upstream, { state: "conflict", edges: [{ parent: "repo-1", state: "conflict", files: ["x.txt"] }] });
+	assert.equal(laneSummaries(view).get("repo-3")?.upstream, undefined);
+	assert.equal(worstEdgeState([{ state: "merged" }, { state: "upstream-changed" }, { state: "in-sync" }]), "upstream-changed");
 });

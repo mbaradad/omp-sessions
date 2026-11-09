@@ -78,6 +78,15 @@ export interface LaneSummary {
 	waitUntil?: number;
 	/** Marked completed (epoch ms of the mark; the marker lives on the lane, PARKED §5). */
 	completed?: number;
+	/** The worst state of its incoming graph edges, and each edge (a task in a git project that waits for other tasks). */
+	upstream?: { state: string; edges: Array<{ parent: string; state: string; files?: string[] }> };
+}
+
+const EDGE_RANK = ["conflict", "resolving", "upstream-changed", "pending", "merged", "in-sync"];
+
+/** The state that needs the most attention among edges: conflict, resolving, upstream-changed, pending, merged, in-sync. */
+export function worstEdgeState(edges: readonly { state: string }[]): string {
+	return [...edges].sort((a, b) => (EDGE_RANK.indexOf(a.state) + 1 || 99) - (EDGE_RANK.indexOf(b.state) + 1 || 99))[0]?.state ?? "in-sync";
 }
 
 /** Every lane that continues an AO session, by session id. */
@@ -98,6 +107,14 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		if (next?.state === "held" && next.waitReason) summary.waitReason = next.waitReason;
 		if (next?.waitUntil !== undefined) summary.waitUntil = next.waitUntil;
 		if (lane.completed) summary.completed = lane.completedAt ?? 0;
+		out.set(session, summary);
+	}
+	// How far the parents' changes reached each session (graph propagation); a free task's session has no lane.
+	const byChild = new Map<string, GraphEdge[]>();
+	for (const e of graphEdges(plan)) if (e.childSession) byChild.set(e.childSession, [...(byChild.get(e.childSession) ?? []), e]);
+	for (const [session, edges] of byChild) {
+		const summary = out.get(session) ?? { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
+		summary.upstream = { state: worstEdgeState(edges), edges: edges.map(e => ({ parent: e.parentSession ?? e.parent, state: e.state, ...(e.files && { files: e.files }) })) };
 		out.set(session, summary);
 	}
 	return out;

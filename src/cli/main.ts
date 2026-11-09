@@ -385,6 +385,7 @@ function printReport(r: CliReport): void {
 		process.stdout.write(c.dim(`answer: omp-sessions answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
 	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
+	if (r.upstream && r.upstream.state !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstream.state] ?? c.dim)(`upstream ${r.upstream.state}`)} ${c.dim(r.upstream.edges.map(e => `${e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstream.state === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: omp-sessions plan sync ${r.id} --rerun`) : ""}\n`);
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
 }

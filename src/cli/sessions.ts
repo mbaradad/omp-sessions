@@ -242,7 +242,7 @@ export function queueSummary(s: Session): AoReportQueue {
  * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
  * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number };
+export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: NonNullable<LaneSummary["upstream"]> };
 
 /**
  * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
@@ -254,6 +254,7 @@ export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFil
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
+	if (s.lane?.upstream) report.upstream = s.lane.upstream;
 	return report;
 }
 
@@ -293,6 +294,7 @@ export function infoJson(s: Session, order: number) {
 		...(report.completedAt && { completedAt: report.completedAt }),
 		...(report.waitReason && { waitReason: report.waitReason }),
 		...(report.waitUntil !== undefined && { waitUntil: report.waitUntil }),
+		...(report.upstream && { upstream: report.upstream }),
 	};
 }
 
