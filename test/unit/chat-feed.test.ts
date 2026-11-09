@@ -228,6 +228,8 @@ test("omp's tool call id comes out of AO's length-prefixed providerItemId", () =
 	assert.equal(ompItemId(`acp:${scope.length}:${scope}30:toolu_01565r5DkQEvc7c58Pw3C2Sj`), "toolu_01565r5DkQEvc7c58Pw3C2Sj");
 	// An id that itself contains colons stays whole.
 	assert.equal(ompItemId(`acp:${scope.length}:${scope}7:a:b:c:d`), "a:b:c:d");
+	// Lengths are UTF-8 bytes: "é" is two.
+	assert.equal(ompItemId(`acp:${scope.length}:${scope}2:é`), "é");
 	assert.equal(ompItemId("steer:54308f5f-7e01-4f43-9b77-bb7dc23c49bc"), undefined);
 	assert.equal(ompItemId(`acp:${scope.length}:${scope}9:short`), undefined);
 	const edit = act(2, { activityKind: "file_change", status: "completed", providerItemId: `acp:${scope.length}:${scope}8:call_abc`, detail: { toolKind: "edit", input: {} } });

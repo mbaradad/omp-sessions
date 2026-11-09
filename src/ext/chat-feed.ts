@@ -37,13 +37,23 @@ function isTool(a: AoActivity): boolean {
  * (`acp:41:<conversation uuid>:root30:toolu_01…`). Undefined for anything else (steers, approvals, malformed).
  */
 export function ompItemId(providerItemId: string | undefined): string | undefined {
-	const m = /^acp:(\d+):/.exec(providerItemId ?? "");
-	if (!providerItemId || !m) return undefined;
-	const rest = providerItemId.slice(m[0].length + Number(m[1]));
-	const n = /^(\d+):/.exec(rest);
-	if (!n) return undefined;
-	const id = rest.slice(n[0].length);
-	return id.length === Number(n[1]) ? id : undefined;
+	if (!providerItemId?.startsWith("acp:")) return undefined;
+	// The lengths count UTF-8 bytes, so walk the bytes.
+	const bytes = Buffer.from(providerItemId, "utf8");
+	let at = 4;
+	const part = (): Buffer | undefined => {
+		let colon = bytes.indexOf(0x3a, at);
+		if (colon < 0 || colon === at || !/^\d+$/.test(bytes.toString("latin1", at, colon))) return undefined;
+		const len = Number(bytes.toString("latin1", at, colon));
+		at = colon + 1;
+		if (at + len > bytes.length) return undefined;
+		const out = bytes.subarray(at, at + len);
+		at += len;
+		return out;
+	};
+	if (!part()) return undefined;
+	const id = part();
+	return id && at === bytes.length ? id.toString("utf8") : undefined;
 }
 
 /** omp's tool name for an ACP tool activity: AO keeps only ACP's kind and omp's raw arguments. */
