@@ -218,6 +218,14 @@ Recurring ops: `recur.add {recurring: {title?, rule, task, lane?, skipIfRunning?
 
 ### Compatibility (`queue` / `getQueue`)
 
+A lane is addressed by its id **or by its AO session id** (`getQueue`, `queue`, `plan {lane}`): the lane's
+`session` is set when its first task is *dispatched* (the spawn answers), not when it ends. `QueueView`
+and `LaneView` carry `state` / `waitReason` / `waitUntil` of the lane's next open task (first pending or
+running): `running`, `waiting`, `scheduled` (start time in the future, `waitUntil`), `paused`, `held`,
+`blocked`, `interrupted`; absent when nothing is left. `new --task` = `lane.add` + `add` (returns the lane
+id); until `session` is set the lane's `state` is what a client reports for it. `stopWhenQueueDone` is
+dropped (AO hibernates idle chats, G28); `PlannerStatus` has no such field.
+
 `queue {id, ops}` accepts the old `QueueOp`s on lane `id` and maps them: `add/update/remove/move/
 subtask ops/setOptions/duplicate` → task ops; `run {id?}` → `run` (or `lane.resume`); `autoRun {value}`
 → `lane.pause`/`lane.resume`; `schedule {at}` → `lane.startAt`; `retryFailed`, `clearDone` → lane ops;
@@ -274,6 +282,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: lanes resolve by session id; `lane.session` set at dispatch; `state`/`waitUntil` on `LaneView` and `QueueView`.
 - 2026-11-09: draft v1.
 - 2026-11-09: implemented on `ao/planner`. `status.usage` is `usageWindows`; worktree and approval
   rules spelled out; usage windows come from `omp usage`, not AO.

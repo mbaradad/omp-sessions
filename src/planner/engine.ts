@@ -1009,11 +1009,20 @@ export function evaluate(s: PlanState, ctx: ReadinessContext): Evaluation {
 	return { views: s.tasks.map(t => views.get(t.id) as TaskView), dispatch, holdUntil };
 }
 
-export function laneViews(s: PlanState): LaneView[] {
+export function laneViews(s: PlanState, views: readonly TaskView[] = []): LaneView[] {
 	return s.lanes.map(l => {
 		const tasks = s.tasks.filter(t => t.lane === l.id);
 		const count = (st: TaskStatus) => tasks.filter(t => t.status === st).length;
-		return { ...l, pending: count("pending"), running: count("running"), done: count("done"), failed: count("failed"), total: tasks.length };
+		const head = views.find(v => v.lane === l.id && (v.status === "pending" || v.status === "running"));
+		return {
+			...l,
+			...(head ? { state: head.state, ...(head.waitReason ? { waitReason: head.waitReason } : {}), ...(head.waitUntil ? { waitUntil: head.waitUntil } : {}) } : {}),
+			pending: count("pending"),
+			running: count("running"),
+			done: count("done"),
+			failed: count("failed"),
+			total: tasks.length,
+		};
 	});
 }
 

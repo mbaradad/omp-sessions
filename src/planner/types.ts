@@ -265,6 +265,10 @@ export interface TaskView extends Omit<Task, "run" | "holdUntil"> {
 }
 
 export interface LaneView extends Lane {
+	/** State of the lane's next open task (first pending or running); absent when nothing is left. */
+	state?: TaskState;
+	waitReason?: string;
+	waitUntil?: number;
 	pending: number;
 	running: number;
 	done: number;
@@ -388,6 +392,10 @@ export interface QueueView {
 	autoRun: boolean;
 	startAt?: number;
 	session?: string;
+	/** State of the next open task (see LaneView.state): queued/scheduled/paused/held/waiting/interrupted/running. */
+	state?: TaskState;
+	waitReason?: string;
+	waitUntil?: number;
 }
 
 /** Old QueueOp, plus `after` (PARKED §1) and `requeue` (PARKED §3). */
