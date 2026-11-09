@@ -79,7 +79,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	context.subscriptions.push(ao, sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
-	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
+	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "switchyard-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
 		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, () => ao.client(), undefined, checkpoints, modes);
 		panels.set(id, panel);

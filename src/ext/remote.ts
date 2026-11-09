@@ -127,7 +127,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 	const showPanel = (ao: AoClient, status: PairingStatus) => {
 		if (!panel) {
 			const created = vscode.window.createWebviewPanel("switchyard.remote", "Connect Phone", vscode.ViewColumn.Active, { enableScripts: true });
-			created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
+			created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "switchyard-color.svg");
 			created.onDidDispose(() => {
 				if (panel !== created) return;
 				panel = undefined;

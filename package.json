@@ -84,7 +84,7 @@
 				{
 					"id": "switchyard",
 					"title": "Switchyard",
-					"icon": "media/omp.svg"
+					"icon": "media/switchyard.svg"
 				}
 			]
 		},
@@ -93,13 +93,13 @@
 				{
 					"id": "switchyard.sessions",
 					"name": "Sessions",
-					"icon": "media/omp.svg"
+					"icon": "media/switchyard.svg"
 				},
 				{
 					"type": "webview",
 					"id": "switchyard.chatView",
 					"name": "Chat",
-					"icon": "media/omp.svg"
+					"icon": "media/switchyard.svg"
 				},
 				{
 					"id": "switchyard.tasks",

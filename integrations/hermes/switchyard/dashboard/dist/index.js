@@ -283,7 +283,7 @@
         ),
         h(
           "linearGradient",
-          { id: "omps-logo-glyph", x1: 0, y1: 0, x2: 1, y2: 1 },
+          { id: "omps-logo-glyph", x1: 0, y1: 0, x2: 1, y2: 0 },
           h("stop", { offset: 0, stopColor: "#f06ccb" }),
           h("stop", { offset: 0.5, stopColor: "#b07bff" }),
           h("stop", { offset: 1, stopColor: "#6fe0ec" })
@@ -292,7 +292,15 @@
       h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-tile)" }),
       h("rect", { x: 2, y: 2, width: 60, height: 60, rx: 15, fill: "url(#omps-logo-glow)" }),
       h("rect", { x: 2.5, y: 2.5, width: 59, height: 59, rx: 14.5, fill: "none", stroke: "rgba(255,255,255,0.16)" }),
-      h("path", { d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z", fill: "url(#omps-logo-glyph)", transform: "translate(3.2 0.6) scale(0.9)" })
+      h("path", {
+        d: "M2.5 12H8M8 12C11 12 12 5 16 5H21.5M8 12H21.5M8 12C11 12 12 19 16 19H21.5",
+        fill: "none",
+        stroke: "url(#omps-logo-glyph)",
+        strokeWidth: 2.6,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        transform: "translate(8 8) scale(2)"
+      })
     );
   }
 
