@@ -172,7 +172,7 @@ describe("AO views", () => {
 			await settle(2000);
 			shot("4c-board-upstream-changed");
 			assert.equal(await api.sessions.rerunWithParentChanges(id), 1);
-			assert.deepEqual(edits, [{ op: "requeue", id: "t1" }]);
+			assert.deepEqual(edits, [{ op: "rerun", id: "t1" }]);
 		} finally {
 			sub.dispose();
 			changed.dispose();

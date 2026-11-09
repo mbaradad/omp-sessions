@@ -225,12 +225,12 @@ export class SessionManager implements vscode.Disposable {
 		return manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
 	}
 
-	/** Re-runs the session's tasks on top of their parents' current work (propagation states `upstream-changed` and `conflict`); resolves with how many. */
+	/** Re-runs the session's tasks on top of their parents' current work (propagation states `upstream-changed` and `conflict`): the planner's `rerun` op (only the upstream note, in the task's own session; on a conflict edge it asks the agent to merge). Resolves with how many. */
 	async rerunWithParentChanges(id: string): Promise<number> {
 		const source = this.planSource;
 		if (!source) throw new Error("the planner is not connected");
 		const tasks = rerunTaskIds(source.plan, id);
-		if (tasks.length) await source.edit(tasks.map(task => ({ op: "requeue", id: task })));
+		if (tasks.length) await source.edit(tasks.map(task => ({ op: "rerun", id: task })));
 		return tasks.length;
 	}
 

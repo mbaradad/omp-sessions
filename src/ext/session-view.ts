@@ -212,7 +212,7 @@ export function withQueue(meta: SessionMeta, queue: SessionMeta["queue"], base: 
 
 /**
  * "Re-run with parent changes": the session's tasks whose parent changes were merged without re-running them
- * (`upstream-changed`) or could not be merged (`conflict`). The planner's `requeue` runs each again in its own
+ * (`upstream-changed`) or could not be merged (`conflict`). The planner's `rerun` runs each once more in its own
  * session, on top of its parents' current work.
  */
 export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): string[] {
