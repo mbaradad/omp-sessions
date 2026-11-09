@@ -141,6 +141,15 @@ export class FakeAo implements AoPort {
 		this.resumed.push(session);
 	}
 
+	/** What the config asks for (set by a test) and how often the planner applied it. */
+	hibernation: { enabled: boolean; changed: boolean } | undefined;
+	hibernationCalls = 0;
+
+	async applyHibernation() {
+		this.hibernationCalls++;
+		return this.hibernation;
+	}
+
 	async models() {
 		return this.modelIds;
 	}
@@ -156,6 +165,11 @@ export class FakeAo implements AoPort {
 		assert.ok(s, `no session ${session}`);
 		s.exited = true;
 		this.event(session, "exited");
+	}
+
+	/** The event stream reopens, as after a daemon restart. */
+	reopen(): void {
+		this.handlers?.onOpen(true);
 	}
 
 	/** The host died and no event told anyone (a missed SSE event). */

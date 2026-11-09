@@ -302,6 +302,14 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## Chat hibernation (G28)
+
+AO keeps `chatHibernationEnabled` in memory only (false after every daemon boot). When `<switchyard home>/config.json`
+has `"hibernation": "on"` (or `"off"`), the planner applies it through `AoClient.applyChatHibernation()` on every
+(re)connect to AO's event stream (writing only when AO differs); with the key absent it leaves AO alone. A failure
+is logged and never stops the planner. A send to a hibernated session returns `queued` and runs after the wake:
+the planner follows the turn as for any other.
+
 ## Checkpoints (undo/redo with files)
 
 - `Task.turn`: the AO turn id of the task's latest run, kept after it finishes (key for "this task's changes" and

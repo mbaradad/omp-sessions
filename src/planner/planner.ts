@@ -158,6 +158,11 @@ export class Planner {
 					// Events may have been missed while the stream was down: look at everything again.
 					void this.refreshActivity();
 					this.refreshUndone();
+					// AO keeps the hibernation flag in memory only: put it back on every (re)connect when the user asked for it.
+					void this.ao?.applyHibernation().then(
+						r => r?.changed && this.log("chat hibernation turned", r.enabled ? "on" : "off"),
+						err => this.log("applying chat hibernation failed", String(err)),
+					);
 					this.poll();
 					this.emit();
 				},

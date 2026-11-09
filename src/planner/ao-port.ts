@@ -74,6 +74,8 @@ export interface AoPort {
 	interrupt(session: string): Promise<void>;
 	/** Brings back the agent of an `exited` session (host died or stopped); the transcript continues. */
 	resumeAgent(session: string): Promise<void>;
+	/** Applies the opt-in `hibernation` setting of config.json (G28); AO forgets it on every daemon boot. Returns what it did, undefined when the user set nothing. */
+	applyHibernation(): Promise<{ enabled: boolean; changed: boolean } | undefined>;
 	/** omp model ids AO knows (`provider/id`); empty when AO can't say. */
 	models(): Promise<string[]>;
 	restore(session: string): Promise<void>;
@@ -174,6 +176,9 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async resumeAgent(session) {
 			await ao.resumeAgent(session);
+		},
+		async applyHibernation() {
+			return ao.applyChatHibernation();
 		},
 		async models() {
 			const { data } = await ao.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } });

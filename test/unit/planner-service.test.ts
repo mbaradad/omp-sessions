@@ -436,3 +436,16 @@ test("a scheduled start that passed while the planner was down fires at boot", a
 	await until("fires at boot", () => byTitle(p, "due").run?.phase === "sent");
 	assert.equal(p.state.lanes[0].startAt, undefined);
 });
+
+test("the hibernation setting is applied on every (re)connect to AO, and an AO that refuses doesn't stop the planner (G28)", async t => {
+	const ao = new FakeAo();
+	ao.hibernation = { enabled: true, changed: true };
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	await until("applied on connect", () => ao.hibernationCalls >= 1);
+	// The stream reopens (the daemon restarted and forgot the flag): applied again.
+	ao.reopen();
+	await until("applied again", () => ao.hibernationCalls >= 2);
+	p.edit([{ op: "add", task: { title: "still works" } }]);
+	await until("dispatches", () => byTitle(p, "still works").run?.phase === "sent");
+});
