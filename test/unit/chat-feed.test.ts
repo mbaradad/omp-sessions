@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoTurn } from "../../src/ao/client";
-import { ChatFeed, replyFor, toolNameOf, toolResultOf } from "../../src/ext/chat-feed";
+import { ChatFeed, ompItemId, replyFor, toolNameOf, toolResultOf } from "../../src/ext/chat-feed";
 import type { ToWebview } from "../../src/shared/webview";
 
 const T = "2026-11-09T15:00:00Z";
@@ -220,4 +220,24 @@ test("steers show as the user's words; failures and interrupts as notices", () =
 		{ role: "notice", level: "warning", message: "Interrupted" },
 		{ role: "notice", level: "error", message: "⚠ model overloaded" },
 	]);
+});
+
+test("omp's tool call id comes out of AO's length-prefixed providerItemId", () => {
+	const scope = "5ad9fe63-7931-4fa3-9b1d-f57ee07c82ad:root";
+	assert.equal(ompItemId(`acp:${scope.length}:${scope}30:toolu_01565r5DkQEvc7c58Pw3C2Sj`), "toolu_01565r5DkQEvc7c58Pw3C2Sj");
+	// An id that itself contains colons stays whole.
+	assert.equal(ompItemId(`acp:${scope.length}:${scope}7:a:b:c:d`), "a:b:c:d");
+	assert.equal(ompItemId("steer:54308f5f-7e01-4f43-9b77-bb7dc23c49bc"), undefined);
+	assert.equal(ompItemId(`acp:${scope.length}:${scope}9:short`), undefined);
+	const edit = act(2, { activityKind: "file_change", status: "completed", providerItemId: `acp:${scope.length}:${scope}8:call_abc`, detail: { toolKind: "edit", input: {} } });
+	const thought = act(3, { activityKind: "reasoning", providerItemId: `acp:${scope.length}:${scope}36:1d1745e1-3a4a-479a-a1d0-396ec840ff43`, detail: { text: "x" } });
+	const feed = new ChatFeed();
+	feed.reset(conv({ turns: [turn("t1", "completed")], activities: [edit, thought] }));
+	assert.equal(feed.toolCallIdOf("a2"), "call_abc");
+	assert.equal(feed.toolCallIdOf("a3"), undefined);
+});
+
+test("user messages carry their AO turn id (checkpoint restore keys on it)", () => {
+	const [m] = new ChatFeed().reset(conv({ turns: [turn("t1", "completed")], messages: [msg(1, "user", "hi", "t1")] })).messages as Array<{ turnId?: string }>;
+	assert.equal(m.turnId, "t1");
 });

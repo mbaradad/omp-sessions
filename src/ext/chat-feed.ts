@@ -32,6 +32,20 @@ function isTool(a: AoActivity): boolean {
 	return !!TOOL_KINDS[a.activityKind] || (a.activityKind === "reasoning" && !!rec(a.detail)?.toolKind);
 }
 
+/**
+ * The id inside AO's ACP `providerItemId`: `acp:<len>:<scope><len>:<id>`, each part length-prefixed
+ * (`acp:41:<conversation uuid>:root30:toolu_01…`). Undefined for anything else (steers, approvals, malformed).
+ */
+export function ompItemId(providerItemId: string | undefined): string | undefined {
+	const m = /^acp:(\d+):/.exec(providerItemId ?? "");
+	if (!providerItemId || !m) return undefined;
+	const rest = providerItemId.slice(m[0].length + Number(m[1]));
+	const n = /^(\d+):/.exec(rest);
+	if (!n) return undefined;
+	const id = rest.slice(n[0].length);
+	return id.length === Number(n[1]) ? id : undefined;
+}
+
 /** omp's tool name for an ACP tool activity: AO keeps only ACP's kind and omp's raw arguments. */
 export function toolNameOf(a: AoActivity): string {
 	const d = rec(a.detail) ?? {};
@@ -331,6 +345,12 @@ export class ChatFeed {
 		return copy.reset({ ...this.conv, turns: [...this.turns.values()], messages: rows.filter(r => r.kind === "message"), activities: rows.filter(r => r.kind === "activity") }).messages;
 	}
 
+	/** omp's own tool call id of a tool row (what omp's extension hooks see), or undefined for other rows. */
+	toolCallIdOf(activityId: string): string | undefined {
+		const r = this.rows.get(activityId);
+		return r?.kind === "activity" && isTool(r) ? ompItemId(r.providerItemId) : undefined;
+	}
+
 	/** Old and new texts of the files a file_change activity edited (AO drops them past its patch cap). */
 	fileTexts(toolCallId: string): Array<{ path: string; oldText: string; newText: string }> {
 		const r = this.rows.get(toolCallId);
@@ -456,7 +476,7 @@ export class ChatFeed {
 		const ts = ms(m.createdAt);
 		if (m.role === "user") {
 			const images = (m.content ?? []).filter(c => c.type === "image").map(c => ({ type: "image", mimeType: c.mimeType }));
-			const message = { role: "user", content: [{ type: "text", text: m.text }, ...images], timestamp: ts, ...(m.origin !== "human" && { attribution: "agent" }) };
+			const message = { role: "user", content: [{ type: "text", text: m.text }, ...images], timestamp: ts, ...(m.turnId && { turnId: m.turnId }), ...(m.origin !== "human" && { attribution: "agent" }) };
 			return [{ kind: "message", id: m.id, message }];
 		}
 		const message = { role: "assistant", content: [{ type: "text", text: m.text }], timestamp: ts };
