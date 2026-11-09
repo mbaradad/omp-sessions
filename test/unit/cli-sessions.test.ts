@@ -7,7 +7,7 @@ import { sessionModel } from "../../src/ao/model";
 import type { PlanView } from "../../src/planner/types";
 import { edgesOfRef, graphEdges, laneSummaries, tasksOfRef, worstEdgeState } from "../../src/cli/plan";
 import { ConversationFollower } from "../../src/cli/render";
-import { type Session, filterSessions, plannedState, resolveSession } from "../../src/cli/sessions";
+import { type Session, filterSessions, plannedState, reportOf, resolveSession } from "../../src/cli/sessions";
 import { setColor } from "../../src/cli/term";
 
 setColor(false);
@@ -114,6 +114,7 @@ const plan = (tasks: Array<Partial<PlanView["tasks"][number]>>, lane: Partial<Pl
 		tasks: tasks.map((t, i) => ({ id: `t${i}`, title: `t${i}`, subtasks: [], status: "pending", createdAt: 0, lane: "repo-1", state: "waiting", ...t })),
 		lanes: [{ id: "repo-1", autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1, ...lane }],
 		recurring: [],
+		edges: [],
 		status: {} as PlanView["status"],
 	}) as PlanView;
 
@@ -174,4 +175,23 @@ test("graphEdges: one edge per parent a task has propagation state for; refs nam
 	assert.deepEqual(laneSummaries(view).get("repo-2")?.upstream, { state: "conflict", edges: graphEdges(view) });
 	assert.equal(laneSummaries(view).get("repo-3")?.upstream, undefined);
 	assert.equal(worstEdgeState([{ state: "merged" }, { state: "upstream-changed" }, { state: "in-sync" }]), "upstream-changed");
+});
+
+test("reportOf: the changed-file count of a graph child says it includes what its parents merged in (G43); a free session says nothing", () => {
+	const lane = { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
+	const edge = { parent: "t1", child: "t2", state: "merged", at: 1 };
+	const child = reportOf(session("repo-2", "Child", { lane: { ...lane, upstream: { state: "merged", edges: [edge] } } }));
+	assert.equal(child.changedFilesIncludeUpstream, true);
+	assert.equal(child.upstreamState, "merged");
+	assert.equal(reportOf(session("repo-1", "Free", { lane })).changedFilesIncludeUpstream, undefined);
+});
+
+test("reportOf: a reply AO has not finalized is left out (replyPending) instead of the previous turn's text; a final one is reported", () => {
+	const base = session("repo-1", "Task");
+	const final = reportOf({ ...base, model: { ...base.model, reply: "done: v2" } });
+	assert.equal(final.reply, "done: v2");
+	assert.equal(final.replyPending, undefined);
+	const pending = reportOf({ ...base, model: { ...base.model, reply: "done: v1 (the turn before)", replyPending: true } });
+	assert.equal(pending.reply, undefined, "never the previous turn's text as this turn's result");
+	assert.equal(pending.replyPending, true);
 });

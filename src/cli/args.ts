@@ -3,22 +3,26 @@
 export class UsageError extends Error {}
 
 /** Flags that take a value; everything else is boolean. */
-const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after", "usage", "worktree"]);
+const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after", "usage", "worktree", "session"]);
 const MULTI_FLAGS = new Set(["sub", "tag", "profile", "after"]);
 const SHORT: Record<string, string> = { p: "prompt", a: "all", f: "follow", y: "yes", n: "lines", t: "title", m: "model", h: "help", w: "wait", d: "detach" };
 
 export interface Args {
 	_: string[];
+	/** The words after a bare `--` (also in `_`). */
+	dashes: string[];
 	flags: Map<string, string | true>;
 	multi: Map<string, string[]>;
 }
 
 export function parseArgs(argv: readonly string[]): Args {
-	const out: Args = { _: [], flags: new Map(), multi: new Map() };
+	const out: Args = { _: [], dashes: [], flags: new Map(), multi: new Map() };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--") {
-			out._.push(...argv.slice(i + 1));
+			// Positional from here on; `dashes` also keeps them apart (`new <dir> -- <omp flags>`).
+			out.dashes = argv.slice(i + 1);
+			out._.push(...out.dashes);
 			break;
 		}
 		let name: string | undefined;
