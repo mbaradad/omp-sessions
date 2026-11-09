@@ -9,5 +9,5 @@
 		"skipLibCheck": true,
 		"types": ["node", "vscode"]
 	},
-	"include": ["src", "test/unit", "test/host", "test/ao", "integrations/hermes/ui"]
+	"include": ["src", "test/unit", "test/host", "test/ao", "test/integration", "test/ao-fixture.d.mts", "integrations/hermes/ui"]
 }
