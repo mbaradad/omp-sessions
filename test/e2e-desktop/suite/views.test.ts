@@ -381,6 +381,13 @@ describe("AO views", () => {
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 	});
 
+	it("the runtime copy holds what the planner service installs the omp gate and shim from, beside planner.js", async () => {
+		const runtime = path.join(process.env.SWITCHYARD_HOME ?? "", "runtime");
+		await waitFor("runtime copy", () => fs.existsSync(path.join(runtime, "omp-shim", "omp")), 20_000);
+		for (const f of ["planner.js", "cli.js", path.join("omp-extension", "mode.js"), path.join("omp-extension", "checkpoints.js")]) assert.ok(fs.existsSync(path.join(runtime, f)), f);
+		assert.ok(fs.statSync(path.join(runtime, "omp-shim", "omp")).mode & 0o111, "the shim stays executable");
+	});
+
 	it("the usage dashboard opens (cost from AO conversations, transcripts by workspace)", async () => {
 		await vscode.commands.executeCommand("omp.dashboard");
 		await settle(5000);
