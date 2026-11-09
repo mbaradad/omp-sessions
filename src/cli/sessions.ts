@@ -316,15 +316,19 @@ export async function livePlanMode(client: AoClient, sessionId: string): Promise
 	}
 }
 
+/** AO caches a workspace manifest for 3 s (foundation: manifestCacheMs): a read right after a turn may predate the edit. */
+const MANIFEST_CACHE_MS = 3000;
+const MANIFEST_RETRY_MS = 500;
+
 /**
  * Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say.
  * `expectFiles`: the conversation shows file edits, so an empty or failed read is a manifest that has not caught up
- * (it is computed in the background): read it again a few times before believing it.
+ * (a stale cached one, or still being computed): read it again until AO's cache has expired before believing it.
  */
 export async function changedFileCount(client: AoClient, sessionId: string, expectFiles = false): Promise<number | undefined> {
 	let last: number | undefined;
-	for (let attempt = 0; attempt < (expectFiles ? 5 : 1); attempt++) {
-		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 400));
+	for (let attempt = 0; attempt <= (expectFiles ? Math.ceil(MANIFEST_CACHE_MS / MANIFEST_RETRY_MS) + 1 : 0); attempt++) {
+		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, MANIFEST_RETRY_MS));
 		try {
 			last = changedFiles(await client.workspaceManifest(sessionId)).length;
 			if (last > 0 || !expectFiles) return last;
