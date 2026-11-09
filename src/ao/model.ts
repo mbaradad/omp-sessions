@@ -15,9 +15,9 @@ export { approvalModeFor, permissionModeOf, planModeOf, reportQuestion, sessionR
  * work for the session. `scheduled`: the planner starts it later (AO has no start times).
  * `starting`: the session is being provisioned or its agent connects. `working`: a turn runs, or
  * queued turns continue on their own. `needs_input`: an approval or question waits for an answer.
- * `interrupted`: the agent died while a turn ran (AO failed it with AO_LOST_TURN_ERROR), or the
- * planner's task was cut short. `idle`: done for now. `stopped`: terminated, failed to start, or its
- * agent exited.
+ * `interrupted`: the agent died with work left open (a running or queued turn, or a question waiting: a
+ * person's Stop settles all of them, a crash does not), or the planner's task was cut short. `idle`:
+ * done for now. `stopped`: terminated, failed to start, or its agent exited with nothing left open.
  */
 export type AoAgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
@@ -308,19 +308,25 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	if (view.provisionState === "provisioning") return "starting";
 	if (conversation) {
 		const running = conversation.turns.some(t => t.state === "running");
+		const queued = conversation.turns.some(t => t.state === "queued");
 		const pending = pendingActivities(conversation).length > 0;
-		// The agent died mid-turn (omp crashed or was killed): AO stops the controller and reports it
-		// exited, and either keeps the turn (and any question) open for a replacement agent or fails it
-		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
-		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
-		const down = conversation.controller === "stopped" || view.activity.state === "exited";
-		if (down && (running || pending || lostTurn(realTurns(conversation).at(-1)))) return "interrupted";
+		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
+		const hibernated = conversation.controller === "hibernated" || !!view.hibernatedAt;
+		// The agent is down (G39): AO stops the controller and reports it exited, after a crash exactly as
+		// after a person's Stop. What tells them apart is the work left open (checked live, omp killed with
+		// SIGKILL vs `exit-agent`, each with a running turn and a queued message): a Stop settles every
+		// turn at once (failed: "Request cancelled", "controller ended before the turn completed"); a
+		// crash leaves the running and queued turns open, and any question pending, with no error until
+		// the agent is resumed. Nothing continues and nobody can answer meanwhile (`resume-agent`; a
+		// message is refused). An agent that is coming back, or one AO hibernated on purpose, is not down.
+		const down = !connecting && !hibernated && (conversation.controller === "stopped" || view.activity.state === "exited");
+		if (down && (running || queued || pending)) return "interrupted";
 		if (pending) return "needs_input";
 		if (running) return "working";
-		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
-		if (conversation.turns.some(t => t.state === "queued")) {
+		if (queued) {
 			if (connecting) return "starting";
-			return conversation.controller === "hibernated" || conversation.controller === "stopped" ? "queued" : "working";
+			// A hibernated session's queued message wakes it; otherwise the connected agent takes it next.
+			return hibernated ? "queued" : "working";
 		}
 		if (connecting) return "starting";
 		// Busy with no turn: compaction, a steer being applied.
@@ -344,12 +350,12 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	}
 }
 
-/** AO's reason for turns its controller still owned when it ended (SettleOrphanedConversationTurns). */
+/**
+ * What AO writes on the turns its controller still owned when it ended. It is what a person's Stop
+ * (`exit-agent`) leaves behind at once, and what a crash leaves only after the next `resume-agent`
+ * (checked live), so it says nothing about *why* the agent went down: it is the exit reason, not a state.
+ */
 export const AO_LOST_TURN_ERROR = "controller ended before the turn completed";
-
-function lostTurn(turn: AoTurn | undefined): boolean {
-	return turn?.state === "failed" && turn.errorMessage === AO_LOST_TURN_ERROR;
-}
 
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
@@ -493,6 +499,8 @@ export interface AoWatcherOptions {
 	changedFiles?: boolean;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
+	/** How long after a session settles its changed files are read once more (the first read can be stale). Default 1500 ms. */
+	settleMs?: number;
 }
 
 /**
@@ -506,7 +514,8 @@ export class AoSessionWatcher {
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly cwds = new Map<string, string>();
-	private readonly files = new Map<string, { key: string; files: AoChangedFile[] }>();
+	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean }>();
+	private readonly confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -596,6 +605,8 @@ export class AoSessionWatcher {
 		this.closed = true;
 		this.subscription?.close();
 		for (const t of this.timers.values()) clearTimeout(t);
+		for (const t of this.confirmTimers.values()) clearTimeout(t);
+		this.confirmTimers.clear();
 		this.timers.clear();
 		this.listeners.clear();
 		this.statusListeners.clear();
@@ -623,20 +634,51 @@ export class AoSessionWatcher {
 
 	/**
 	 * Files change only while the agent works, which adds conversation items or settles turns: the
-	 * manifest (a git diff on the daemon) is read again only when those moved.
+	 * manifest (a git diff on the daemon) is read again only when those moved. The read made at the instant
+	 * a turn settles can be stale (AO answered without the file the turn had just written, and no event
+	 * follows to correct it: seen live), so a session that just settled is read once more `settleMs`
+	 * later, and a read AO flags `stale` or `refreshing` is not trusted either, up to a few tries.
 	 */
 	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
 		const key = conversation ? `${conversation.latestSequence}|${conversation.turns.map(t => `${t.id}:${t.state}`).join(",")}` : view.updatedAt;
+		const open = conversation?.turns.some(t => t.state === "running" || t.state === "queued") === true;
+		const settleMs = this.options.settleMs ?? 1_500;
 		const known = this.files.get(view.id);
-		if (known?.key === key) return known.files;
+		if (known?.key === key) {
+			if (known.confirmed) return known.files;
+			const wait = known.readAt + settleMs - Date.now();
+			if (wait > 0) {
+				this.confirmLater(view.id, wait);
+				return known.files;
+			}
+		}
 		try {
-			const files = changedFiles(await this.client.workspaceManifest(view.id));
-			this.files.set(view.id, { key, files });
+			const manifest = await this.client.workspaceManifest(view.id);
+			const files = changedFiles(manifest);
+			const tries = known?.key === key ? known.tries + 1 : 1;
+			const unsure = manifest.stale || manifest.refreshing;
+			// A session that just changed into a settled state is read once more; an open one is read on every event anyway.
+			const settling = !open && known !== undefined && known.key !== key;
+			const confirmed = tries >= 4 || (known?.key === key ? !unsure : !settling && !unsure);
+			this.files.set(view.id, { key, files, readAt: Date.now(), tries, confirmed });
+			if (!confirmed) this.confirmLater(view.id, settleMs);
 			return files;
 		} catch {
 			// No workspace any more (terminated and released), or a transient failure: keep what was known.
 			return known?.files ?? [];
 		}
+	}
+
+	/** Refreshes the session after `ms`, once: the delayed second read of its changed files. */
+	private confirmLater(sessionId: string, ms: number): void {
+		if (this.closed || this.confirmTimers.has(sessionId)) return;
+		this.confirmTimers.set(
+			sessionId,
+			setTimeout(() => {
+				this.confirmTimers.delete(sessionId);
+				void this.refresh(sessionId).catch(() => undefined);
+			}, ms),
+		);
 	}
 
 	/** A session's workspace never moves: read it once (a failed read is retried on the next build). */
