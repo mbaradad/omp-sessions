@@ -247,6 +247,8 @@ export function agentState(view: AoSessionView, conversation?: AoConversation): 
 		if (last?.state === "recovered") return "interrupted";
 		return "idle";
 	}
+	// AO's status folds both "blocked" (a pending decision) and "waiting_input" (an empty prompt
+	// awaiting the next instruction) into needs_input; only the first waits on an answer.
 	switch (view.activity.state) {
 		case "active":
 			return "working";
@@ -254,11 +256,9 @@ export function agentState(view: AoSessionView, conversation?: AoConversation): 
 			return "needs_input";
 		case "exited":
 			return "stopped";
+		default:
+			return "idle";
 	}
-	if (view.status === "exited") return "stopped";
-	if (view.status === "needs_input") return "needs_input";
-	if (view.status === "working") return "working";
-	return "idle";
 }
 
 /** Why a session stopped or its last turn failed, when AO says. */

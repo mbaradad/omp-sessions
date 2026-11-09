@@ -53,29 +53,28 @@ export class SseParser {
 	private id: string | undefined;
 	private retry: number | undefined;
 	private seenBom = false;
+	/** The previous chunk ended in CR: an LF starting this one belongs to it. */
+	private afterCr = false;
 
 	feed(chunk: string): SseFrame[] {
 		if (!this.seenBom && chunk.length > 0) {
 			this.seenBom = true;
 			if (chunk.charCodeAt(0) === 0xfeff) chunk = chunk.slice(1);
 		}
+		if (this.afterCr && chunk.startsWith("\n")) chunk = chunk.slice(1);
+		this.afterCr = false;
 		this.buffer += chunk;
 		const frames: SseFrame[] = [];
 		let start = 0;
 		for (;;) {
 			const cr = this.buffer.indexOf("\r", start);
 			const lf = this.buffer.indexOf("\n", start);
-			let end: number;
-			let next: number;
 			if (cr === -1 && lf === -1) break;
-			if (cr !== -1 && (lf === -1 || cr < lf)) {
-				// A lone CR at the end of the buffer may be the first half of CRLF: wait for more.
-				if (cr === this.buffer.length - 1) break;
-				end = cr;
-				next = this.buffer[cr + 1] === "\n" ? cr + 2 : cr + 1;
-			} else {
-				end = lf;
-				next = lf + 1;
+			const end = cr !== -1 && (lf === -1 || cr < lf) ? cr : lf;
+			let next = end + 1;
+			if (end === cr) {
+				if (next === this.buffer.length) this.afterCr = true;
+				else if (this.buffer[next] === "\n") next++;
 			}
 			const frame = this.line(this.buffer.slice(start, end));
 			if (frame) frames.push(frame);
