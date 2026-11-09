@@ -132,8 +132,8 @@ export function registerServer(api: OmpApi): ServerControl {
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
 		const next: SwitchyardConfig = {};
-		if (extraArgs !== undefined) next.omp = extraArgs.length ? { extraArgs } : undefined;
-		else if (cleared.extraArgs) next.omp = undefined;
+		if (extraArgs !== undefined) next.omp = { extraArgs: extraArgs.length ? extraArgs : undefined };
+		else if (cleared.extraArgs) next.omp = { extraArgs: undefined };
 		if (service !== undefined) next.service = service ? "on" : "off";
 		else if (cleared.service) next.service = undefined;
 		if (!Object.keys(next).length) return;
