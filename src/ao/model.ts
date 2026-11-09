@@ -227,29 +227,36 @@ export function questionsOf(conversation: AoConversation): AoQuestion[] {
 	return pendingActivities(conversation).map(questionOf);
 }
 
-/** The newest assistant text, clipped at `max` characters. */
-export function lastReply(conversation: AoConversation, max = REPLY_MAX): string | undefined {
-	for (let i = conversation.messages.length - 1; i >= 0; i--) {
-		const m = conversation.messages[i];
-		if (m.role === "assistant" && m.text.trim()) return m.text.length > max ? `${m.text.slice(0, max)}\n… (clipped)` : m.text;
-	}
-	return undefined;
-}
-
-const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
-
 /** providerTurnId of a turn AO imported from omp's recorded history after exit-agent + resume-agent (G33). */
 const HISTORY_TURN_PREFIX = "acp-history-turn:";
 
 /**
  * The turns that ran in this conversation: those AO replays from omp's history on resume (prompts
- * already recorded, steered or with images, come back as `recovered` turns whose providerTurnId starts
- * with `acp-history-turn:`) are not new work. They are not counted in the queue, and are never "the
- * last turn" that decides interrupted or the exit reason.
+ * already recorded, steered or with images; after a compaction, an assistant-only copy of the last
+ * reply before it; each restart adds it again) come back as `recovered` turns whose providerTurnId
+ * starts with `acp-history-turn:`. They are not new work: not counted in the queue, never "the last
+ * turn" that decides interrupted or the exit reason, and their messages are never "the last reply".
  */
 export function realTurns(conversation: AoConversation): AoTurn[] {
 	return conversation.turns.filter(t => !t.providerTurnId?.startsWith(HISTORY_TURN_PREFIX));
 }
+
+/**
+ * The newest assistant text, clipped at `max` characters. A replayed history turn is appended with a
+ * later sequence than the replies that followed the text it repeats, so its messages are skipped:
+ * otherwise an older reply would shadow the real last one.
+ */
+export function lastReply(conversation: AoConversation, max = REPLY_MAX): string | undefined {
+	const replayed = new Set(conversation.turns.filter(t => t.providerTurnId?.startsWith(HISTORY_TURN_PREFIX)).map(t => t.id));
+	for (let i = conversation.messages.length - 1; i >= 0; i--) {
+		const m = conversation.messages[i];
+		if (m.role !== "assistant" || !m.text.trim() || (m.turnId !== undefined && replayed.has(m.turnId))) continue;
+		return m.text.length > max ? `${m.text.slice(0, max)}\n… (clipped)` : m.text;
+	}
+	return undefined;
+}
+
+const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
 export function queueOf(conversation: AoConversation): AoQueue {
 	const textOf = new Map<string, string>();

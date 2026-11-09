@@ -35,9 +35,13 @@ const serverJs = path.join(outDir, "server.js");
 const cliJs = path.join(outDir, "cli.js");
 if (selected.includes("host")) {
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/host/main.ts")], outfile: hostJs, format: "cjs" });
-	// Next to host.js: the server launches the host.js beside it, the CLI starts that server.
+	// Next to host.js: the server launches the host.js beside it.
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/server/main.ts")], outfile: serverJs, format: "cjs" });
+}
+if (selected.includes("integration")) {
+	// The CLI starts the planner.js beside it.
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/cli/main.ts")], outfile: cliJs, format: "cjs" });
+	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/planner/main.ts")], outfile: path.join(outDir, "planner.js"), format: "cjs", define: { PLANNER_VERSION: JSON.stringify("test") } });
 }
 // The planner process test/planner-fixture.mjs starts (any suite may; the integration suite does).
 const plannerJs = path.join(outDir, "planner.js");
