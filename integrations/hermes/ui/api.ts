@@ -17,6 +17,25 @@ export interface Host {
 	css?: string;
 	/** Opens an "Open in VS Code" link: the dashboard (a browser) opens `url`; Desktop opens only web links, so `page`. */
 	openVscode(link: VscodeLink): Promise<void>;
+	/** The AO dashboard tab's frame: the same-origin URL of the backend's /ao/ proxy (the browser's Hermes
+	 *  sign-in cookie reaches it). Absent where a frame can't sign in: Desktop (its bearer token stays in its
+	 *  main process) and a dashboard in Hermes's legacy session-token mode (a frame can't send the header). */
+	aoFrame?: string;
+	/** Why the AO dashboard tab has no frame. */
+	aoNote?: string;
+	/** Opens a web page in the system browser (Desktop: the AO dashboard's landing page from GET /ao-page). */
+	openPage?(page: string): Promise<void>;
+}
+
+/** GET /ao/switchyard-ao-dashboard/status: the Switchyard server's AO dashboard (proxied by the backend). */
+export interface AoDashboardStatus {
+	/** AO's web UI is installed (`switchyard dashboard install`). */
+	installed: boolean;
+	version: string | null;
+	source: string | null;
+	/** AO's daemon answers. */
+	daemon: boolean;
+	port: number;
 }
 
 /** POST /sessions/<id>/vscode: the request is recorded on omp's machine; these links bring up VS Code. */

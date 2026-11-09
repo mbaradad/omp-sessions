@@ -1,6 +1,8 @@
 // The Switchyard page, written once for both hosts (the Hermes dashboard tab and the Hermes
-// Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph.
+// Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph,
+// and the AO dashboard (Agent Orchestrator's own web UI).
 import { type ArchiveDone, errorMessage, type Host, type Overview, type Session, type Started } from "./api";
+import { AoDashboardPanel } from "./ao";
 import { type CardAction, SessionBoard } from "./board";
 import { BoardsPanel } from "./boards";
 import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
@@ -16,7 +18,7 @@ import { openInVscode } from "./vscode";
 const SESSIONS_MS = 4000;
 const OVERVIEW_MS = 10_000;
 
-type View = "sessions" | "boards" | "graph";
+type View = "sessions" | "boards" | "graph" | "ao";
 
 /** Runs `fn` now and every `every` ms while the page is visible (and right away when it shows again). */
 function usePoll(fn: () => Promise<void>, every: number): void {
@@ -266,6 +268,8 @@ export function createPage(host: Host): () => ReactElement {
 			main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
 		} else if (view === "graph") {
 			main = h(GraphPanel, { host, onOpenSession: setSelected });
+		} else if (view === "ao") {
+			main = h(AoDashboardPanel, { host });
 		} else if (notInstalled) {
 			main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
 		} else if (!sessions) {
@@ -307,7 +311,7 @@ export function createPage(host: Host): () => ReactElement {
 
 		return h(
 			"div",
-			{ className: cx("omps", `omps-host-${host.kind}`, selected && view !== "boards" && "has-drawer") },
+			{ className: cx("omps", `omps-host-${host.kind}`, selected && view !== "boards" && view !== "ao" && "has-drawer") },
 			host.css ? h("style", null, host.css) : null,
 			h(
 				"header",
@@ -322,6 +326,7 @@ export function createPage(host: Host): () => ReactElement {
 						{ value: "sessions", label: "Sessions" },
 						{ value: "boards", label: "Boards" },
 						{ value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
+						{ value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on omp's machine" },
 					],
 				}),
 				h("span", { className: "omps-grow" }),
@@ -349,7 +354,7 @@ export function createPage(host: Host): () => ReactElement {
 					})
 				: null,
 			h("div", { className: "omps-body" }, main),
-			selected && view !== "boards"
+			selected && view !== "boards" && view !== "ao"
 				? h(DetailPanel, { key: selected, host, id: selected, summary: all.find(s => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() })
 				: null,
 			creating ? h(NewSessionDialog, { host, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null,

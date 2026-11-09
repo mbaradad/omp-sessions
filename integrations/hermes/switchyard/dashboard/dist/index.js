@@ -418,6 +418,87 @@
     }, []);
   }
 
+  // integrations/hermes/ui/ao.ts
+  var STATUS = "/ao/switchyard-ao-dashboard/status";
+  var INSTALL = "switchyard dashboard install";
+  function AoDashboardPanel(p) {
+    const { host } = p;
+    const [probe, setProbe] = useState(null);
+    const [opening, setOpening] = useState(false);
+    const [note, setNote] = useState(null);
+    const [frameKey, setFrameKey] = useState(0);
+    const check = async () => {
+      setProbe(null);
+      try {
+        setProbe({ status: await host.request(STATUS) });
+      } catch (err) {
+        const message = errorMessage(err);
+        setProbe({ error: message, down: /not running on 127\.0\.0\.1/.test(message) });
+      }
+    };
+    useEffect(() => {
+      void check();
+    }, []);
+    const openBrowser = async () => {
+      if (!host.openPage) return;
+      setNote(null);
+      setOpening(true);
+      try {
+        const { page } = await host.request("/ao-page");
+        await host.openPage(page);
+        setNote("Opened in your browser. Sign in to this Hermes there if it asks.");
+      } catch (err) {
+        setNote(errorMessage(err));
+      } finally {
+        setOpening(false);
+      }
+    };
+    const checkAgain = h(Button, { label: "Check again", icon: "refresh", onClick: () => void check() });
+    if (!probe) return h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Checking the AO dashboard…");
+    if ("error" in probe) {
+      return probe.down ? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on omp's machine.`, action: checkAgain }) : h(ErrorBox, { message: probe.error, onRetry: () => void check() });
+    }
+    const { status } = probe;
+    if (!status.installed) {
+      return h(Empty, {
+        icon: "terminal",
+        title: "AO dashboard not installed",
+        body: h("span", null, "Run ", h("code", null, INSTALL), " on omp's machine: it fetches Agent Orchestrator's web UI from AO's release."),
+        action: checkAgain
+      });
+    }
+    const daemon = status.daemon ? null : h("span", { className: "omps-stale omps-ao-warn" }, icon("alert", 12), "AO's daemon is not answering: the dashboard shows no live data until it is back.");
+    const version = h("span", { className: "omps-muted omps-total" }, `AO dashboard${status.version ? ` ${status.version}` : ""} · port ${status.port}`);
+    if (!host.aoFrame) {
+      return h(
+        "div",
+        { className: "omps-ao" },
+        h(Empty, {
+          icon: "external",
+          title: "AO dashboard",
+          body: host.aoNote,
+          action: host.openPage ? h(Button, { kind: "brand", icon: "external", label: "Open in browser", busy: opening, onClick: () => void openBrowser() }) : checkAgain
+        }),
+        note ? h("div", { className: "omps-notice omps-ao-note" }, icon("external", 12), note) : null,
+        h("div", { className: "omps-ao-foot" }, version, daemon)
+      );
+    }
+    return h(
+      "div",
+      { className: "omps-ao" },
+      h(
+        "div",
+        { className: "omps-filters omps-ao-bar" },
+        version,
+        daemon,
+        h("span", { className: "omps-grow" }),
+        h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Reload", onClick: () => setFrameKey(frameKey + 1) }),
+        h("a", { className: "omps-btn omps-btn-sm omps-btn-default", href: host.aoFrame, target: "_blank", rel: "noopener" }, icon("external", 13), h("span", null, "Open in new window"))
+      ),
+      h("iframe", { key: frameKey, className: "omps-ao-frame", src: host.aoFrame, title: "AO dashboard", allow: "clipboard-read; clipboard-write" })
+    );
+  }
+
   // integrations/hermes/ui/queue.ts
   var AT_PRESETS = [
     { label: "+30m", at: () => "+30m" },
@@ -2507,6 +2588,8 @@ omp session: ${session}` : ""}`),
         main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
       } else if (view === "graph") {
         main = h(GraphPanel, { host, onOpenSession: setSelected });
+      } else if (view === "ao") {
+        main = h(AoDashboardPanel, { host });
       } else if (notInstalled) {
         main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
       } else if (!sessions) {
@@ -2547,7 +2630,7 @@ omp session: ${session}` : ""}`),
       }
       return h(
         "div",
-        { className: cx("omps", `omps-host-${host.kind}`, selected && view !== "boards" && "has-drawer") },
+        { className: cx("omps", `omps-host-${host.kind}`, selected && view !== "boards" && view !== "ao" && "has-drawer") },
         host.css ? h("style", null, host.css) : null,
         h(
           "header",
@@ -2561,7 +2644,8 @@ omp session: ${session}` : ""}`),
             options: [
               { value: "sessions", label: "Sessions" },
               { value: "boards", label: "Boards" },
-              { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" }
+              { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
+              { value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on omp's machine" }
             ]
           }),
           h("span", { className: "omps-grow" }),
@@ -2587,7 +2671,7 @@ omp session: ${session}` : ""}`),
           ]
         }) : null,
         h("div", { className: "omps-body" }, main),
-        selected && view !== "boards" ? h(DetailPanel, { key: selected, host, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
+        selected && view !== "boards" && view !== "ao" ? h(DetailPanel, { key: selected, host, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
         creating ? h(NewSessionDialog, { host, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null
       );
     };
@@ -2597,6 +2681,9 @@ omp session: ${session}` : ""}`),
   var BASE = "/api/plugins/switchyard";
   var sdk = window.__HERMES_PLUGIN_SDK__;
   var registry = window.__HERMES_PLUGINS__;
+  var basePath = window.__HERMES_BASE_PATH__ ?? "";
+  var prefix = (basePath && !basePath.startsWith("/") ? `/${basePath}` : basePath).replace(/\/+$/, "");
+  var cookieAuth = window.__HERMES_AUTH_REQUIRED__ !== false;
   if (sdk && registry) {
     registry.register(
       "switchyard",
@@ -2610,7 +2697,9 @@ omp session: ${session}` : ""}`),
         // The browser asks before handing vscode:// to VS Code; the page stays.
         openVscode: async (link) => {
           window.location.href = link.url;
-        }
+        },
+        aoFrame: cookieAuth ? `${prefix}${BASE}/ao/` : void 0,
+        aoNote: cookieAuth ? void 0 : "This Hermes dashboard runs without sign-in (legacy session-token mode): its requests carry a token header that an embedded page can't send. Open the address switchyard dashboard url prints in a browser on omp's machine, or turn on the dashboard's sign-in."
       })
     );
   }

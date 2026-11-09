@@ -4,9 +4,14 @@ kanban board. Shares test_plugin's temp homes (it sets them up on import)."""
 
 from __future__ import annotations
 
+import http.server
 import importlib.util
 import json
+import os
+import socket
 import sys
+import tempfile
+import threading
 import time
 import unittest
 import urllib.parse
@@ -483,6 +488,221 @@ class PureDashboardTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         if "hermes_plugins.switchyard" not in sys.modules:
             base.PluginManager().discover_and_load()
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class FakeAoServer(http.server.ThreadingHTTPServer):
+    """Stands in for the Switchyard server's AO dashboard: echoes what it got, redirects, streams SSE."""
+
+    daemon_threads = True
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), FakeAoHandler)
+        self.stream_closed = threading.Event()
+
+
+class FakeAoHandler(http.server.BaseHTTPRequestHandler):
+    server: FakeAoServer
+
+    def log_message(self, *_: object) -> None:
+        pass
+
+    def reply(self, status: int, body: bytes, headers: list[tuple[str, str]] = []) -> None:
+        self.send_response(status)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def handle_any(self) -> None:
+        path, _, query = self.path.partition("?")
+        if path == "/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                self.wfile.write(b"data: one\n\n")
+                self.wfile.flush()
+                for _ in range(200):  # pings until the proxy closes the stream (or 20 s)
+                    time.sleep(0.1)
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+            except OSError:
+                self.server.stream_closed.set()
+            return
+        if path == "/go":
+            return self.reply(302, b"", [("Location", f"http://127.0.0.1:{self.server.server_port}/echo?x=1")])
+        if path == "/go-root":
+            return self.reply(302, b"", [("Location", "/other")])
+        if path == "/switchyard-ao-dashboard/status":
+            return self.reply(200, json.dumps({"installed": True, "version": "1.2.3", "source": "test", "daemon": True, "port": self.server.server_port}).encode(), [("Content-Type", "application/json")])
+        length = int(self.headers.get("Content-Length") or 0)
+        got = {
+            "method": self.command,
+            "path": path,
+            "query": query,
+            "headers": [[k.lower(), v] for k, v in self.headers.items()],
+            "body": self.rfile.read(length).decode() if length else "",
+        }
+        status = 418 if path == "/teapot" else 200
+        extra = [("Content-Type", "application/json"), ("Set-Cookie", "ao=1; Path=/"), ("Connection", "X-Private"), ("X-Private", "hop"), ("Keep-Alive", "timeout=5"), ("X-Upstream", "yes")]
+        self.reply(status, json.dumps(got).encode(), extra)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = handle_any
+
+
+class AoDashboardProxyTest(unittest.TestCase):
+    """/ao/…: the proxy to the Switchyard server's AO dashboard, against a fake AO server."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.api = sys.modules.get("hermes_dashboard_plugin_switchyard") or load_api()
+        cls.upstream = FakeAoServer()
+        threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
+        cls.port = cls.upstream.server_port
+        cls.home = Path(tempfile.mkdtemp(prefix="omp-ao-dashboard-"))
+        (cls.home / "config.json").write_text(json.dumps({"dashboardPort": cls.port}))
+        cls.env = mock.patch.dict(os.environ, SWITCHYARD_HOME=str(cls.home))
+        cls.env.start()
+        cls.app = FastAPI()
+        cls.app.include_router(cls.api.router, prefix="/api/plugins/switchyard")
+        cls.client = TestClient(cls.app)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.env.stop()
+        cls.upstream.shutdown()
+        cls.upstream.server_close()
+
+    def ao(self, method: str, path: str, **kw: object):
+        return self.client.request(method, f"/api/plugins/switchyard/ao{path}", follow_redirects=False, **kw)
+
+    def test_port_comes_from_switchyard_config(self) -> None:
+        cases = [(None, 3012), ({}, 3012), ({"dashboardPort": 4567}, 4567), ({"dashboardPort": "4567"}, 3012), ({"dashboardPort": True}, 3012), ({"dashboardPort": 70000}, 3012), ({"dashboard": "on", "dashboardPort": 4000}, 4000), ({"dashboard": "off", "dashboardPort": 4000}, None), ([1], 3012)]
+        for config, port in cases:
+            with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, SWITCHYARD_HOME=home):
+                if config is not None:
+                    Path(home, "config.json").write_text(json.dumps(config))
+                self.assertEqual(self.api.ao_dashboard_port(), port, config)
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, SWITCHYARD_HOME=home):
+            Path(home, "config.json").write_text("{not json")
+            self.assertEqual(self.api.ao_dashboard_port(), 3012)
+            Path(home, "config.json").write_text(json.dumps({"dashboard": "off"}))
+            r = self.ao("GET", "/")
+            self.assertEqual(r.status_code, 404)
+            self.assertIn('"dashboard": "off"', r.json()["error"])
+
+    def test_forwards_the_request_without_the_browsers_origin_or_credentials(self) -> None:
+        r = self.ao(
+            "GET",
+            "/assets/a%2Fb.js?x=1&y=%2F",
+            headers={
+                "Accept": "application/json",
+                "X-Keep": "yes",
+                "Origin": "https://hermes.example",
+                "Referer": "https://hermes.example/switchyard",
+                "Cookie": "hermes_session=secret",
+                "Authorization": "Bearer secret",
+                "X-Hermes-Session-Token": "secret",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "X-Forwarded-For": "10.0.0.1",
+                "X-Forwarded-Proto": "https",
+                "Forwarded": "for=10.0.0.1",
+                "Connection": "keep-alive, X-Drop",
+                "X-Drop": "hop",
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        got = r.json()
+        self.assertEqual((got["method"], got["path"], got["query"]), ("GET", "/assets/a%2Fb.js", "x=1&y=%2F"))
+        headers = dict(got["headers"])
+        self.assertEqual(headers["host"], f"127.0.0.1:{self.port}")
+        self.assertEqual(headers["accept"], "application/json")
+        self.assertEqual(headers["x-keep"], "yes")
+        for name in ("origin", "referer", "cookie", "authorization", "x-hermes-session-token", "sec-fetch-site", "sec-fetch-mode", "x-forwarded-for", "x-forwarded-proto", "forwarded", "x-drop"):
+            self.assertNotIn(name, headers)
+        # Back: AO's status and headers, minus hop-by-hop ones and cookies (they would be Hermes's origin's).
+        self.assertEqual(r.headers["x-upstream"], "yes")
+        for name in ("set-cookie", "x-private", "keep-alive"):
+            self.assertNotIn(name, r.headers)
+        self.assertEqual(self.ao("GET", "/teapot").status_code, 418)
+        head = self.ao("HEAD", "/echo")
+        self.assertEqual((head.status_code, head.content), (200, b""))
+
+    def test_writes_carry_their_body_and_refuse_other_pages(self) -> None:
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            r = self.ao(method, "/api/v1/things", json={"n": 1}, headers={"Sec-Fetch-Site": "same-origin"})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual((r.json()["method"], json.loads(r.json()["body"])), (method, {"n": 1}))
+        for site in ("cross-site", "same-site"):
+            r = self.ao("POST", "/api/v1/things", json={}, headers={"Sec-Fetch-Site": site})
+            self.assertEqual(r.status_code, 403, site)
+            self.assertIn("own page", r.json()["error"])
+        # A page load from elsewhere (a link, the landing page) is no write.
+        self.assertEqual(self.ao("GET", "/", headers={"Sec-Fetch-Site": "cross-site"}).status_code, 200)
+
+    def test_ao_without_slash_redirects_relative(self) -> None:
+        r = self.ao("GET", "")
+        self.assertEqual((r.status_code, r.headers["location"]), (307, "ao/"))
+        self.assertEqual(self.ao("GET", "?a=1").headers["location"], "ao/?a=1")
+
+    def test_redirects_stay_under_the_proxy(self) -> None:
+        self.assertEqual(self.ao("GET", "/go").headers["location"], "/api/plugins/switchyard/ao/echo?x=1")
+        self.assertEqual(self.ao("GET", "/go-root").headers["location"], "/api/plugins/switchyard/ao/other")
+        r = self.ao("GET", "/go-root", headers={"X-Forwarded-Prefix": "/hermes"})
+        self.assertEqual(r.headers["location"], "/hermes/api/plugins/switchyard/ao/other")
+
+    def test_nothing_listening_is_502(self) -> None:
+        port = free_port()
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, SWITCHYARD_HOME=home):
+            Path(home, "config.json").write_text(json.dumps({"dashboardPort": port}))
+            r = self.ao("GET", "/switchyard-ao-dashboard/status")
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.json()["error"], f"AO dashboard server not running on 127.0.0.1:{port} (switchyard server start)")
+
+    def test_status_and_landing_page(self) -> None:
+        self.assertEqual(self.ao("GET", "/switchyard-ao-dashboard/status").json()["version"], "1.2.3")
+        scope = self.api.plugin_page("ao-dashboard.html", "")  # "/dashboard-plugins/[@profile/]switchyard/ao-dashboard.html"
+        r = self.client.get("/api/plugins/switchyard/ao-page")
+        self.assertEqual(r.json(), {"page": f"http://testserver{scope}", "port": self.port})
+        r = self.client.get("/api/plugins/switchyard/ao-page", headers={"X-Forwarded-Prefix": "/hermes/"})
+        self.assertEqual(r.json()["page"], f"http://testserver/hermes{scope}")
+        self.assertTrue(scope.endswith("/switchyard/ao-dashboard.html"))
+        html = (base.PLUGIN_SRC / "dashboard" / "ao-dashboard.html").read_text()
+        for needle in ("/api/plugins/switchyard/ao/", "switchyard-ao-dashboard/status", "?next=${encodeURIComponent(location.pathname + location.search)}"):
+            self.assertIn(needle, html)
+
+    def test_streams_unbuffered_and_closes_upstream_when_the_browser_leaves(self) -> None:
+        import uvicorn
+
+        port = free_port()
+        server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=port, log_level="warning", lifespan="off"))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        try:
+            until(lambda: server.started, "uvicorn started", timeout=10, every=0.05)
+            self.upstream.stream_closed.clear()
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                s.sendall(b"GET /api/plugins/switchyard/ao/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n")
+                got = b""
+                while b"data: one" not in got:  # AO keeps the stream open: the first event must arrive on its own
+                    chunk = s.recv(4096)
+                    self.assertTrue(chunk, f"stream ended early: {got!r}")
+                    got += chunk
+                self.assertIn(b"text/event-stream", got)
+                self.assertFalse(self.upstream.stream_closed.is_set())
+            until(lambda: self.upstream.stream_closed.is_set(), "upstream stream closed after the browser left", timeout=10)
+        finally:
+            server.should_exit = True
+            thread.join(10)
 
 
 if __name__ == "__main__":

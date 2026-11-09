@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!-- Switchyard: opens the AO dashboard (AO's web UI, proxied at /api/plugins/switchyard/ao/) in a
+     browser. Hermes Desktop can't embed it (its bearer token stays in its main process), so its
+     "Open in browser" opens this page. Served without sign-in: it holds no data and goes only to this
+     Hermes's own sign-in page or to the proxy, both on this origin under this page's path prefix. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Opening the AO dashboard…</title>
+<style>
+	:root { color-scheme: light dark; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+	body { max-width: 34rem; margin: 18vh auto; padding: 0 1.5rem; }
+	h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 .5rem; }
+	p { margin: .5rem 0; opacity: .8; }
+	a.button { display: inline-block; margin-top: 1rem; padding: .5rem 1rem; border-radius: 6px; background: #0066b8; color: #fff; text-decoration: none; font-weight: 500; }
+	code { font-size: .85em; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1 id="title">Opening the AO dashboard…</h1>
+<p id="hint">Checking that you are signed in to Hermes.</p>
+<p><a class="button" id="retry" href="" hidden>Try again</a></p>
+<script>
+	// The dashboard's path prefix (a reverse proxy may mount Hermes under one): what precedes /dashboard-plugins/.
+	const at = location.pathname.indexOf("/dashboard-plugins/");
+	const prefix = at > 0 ? location.pathname.slice(0, at) : "";
+	const proxy = `${prefix}/api/plugins/switchyard/ao/`;
+	// One sign-in round trip at most: back from /login and still refused means the cookie doesn't reach the API.
+	const LOGIN_KEY = "switchyard.aoDashboard.login";
+	const show = (title, hint) => {
+		document.title = title;
+		document.getElementById("title").textContent = title;
+		document.getElementById("hint").textContent = hint;
+		document.getElementById("retry").hidden = false;
+	};
+	const recentLogin = () => {
+		try {
+			return Date.now() - Number(sessionStorage.getItem(LOGIN_KEY) || 0) < 60_000;
+		} catch {
+			return false;
+		}
+	};
+	(async () => {
+		let res;
+		let body = {};
+		try {
+			res = await fetch(`${proxy}switchyard-ao-dashboard/status`, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+			body = await res.json().catch(() => ({}));
+		} catch {
+			show("Hermes did not answer", "Check that the Hermes dashboard is running and reachable from this browser.");
+			return;
+		}
+		if (res.status === 401) {
+			if (typeof body.login_url === "string" && !recentLogin()) {
+				try {
+					sessionStorage.setItem(LOGIN_KEY, String(Date.now()));
+				} catch {
+					/* private mode: no loop guard, the next refusal still lands here */
+				}
+				// Hermes's own sign-in page (its login_url, with its prefix), back here afterwards.
+				location.replace(`${body.login_url.split("?")[0]}?next=${encodeURIComponent(location.pathname + location.search)}`);
+				return;
+			}
+			show(
+				"Hermes refused the request",
+				typeof body.login_url === "string"
+					? "Sign-in did not open the AO dashboard. Sign in to the Hermes dashboard in this browser, then try again."
+					: "This Hermes signs its pages with a session token, which a browser link cannot carry. Open the AO dashboard tab on the Switchyard page of the Hermes dashboard, or the address `switchyard dashboard url` prints, in a browser on omp's machine.",
+			);
+			return;
+		}
+		try {
+			sessionStorage.removeItem(LOGIN_KEY);
+		} catch {
+			/* nothing to clear */
+		}
+		if (res.ok && body.installed === false) {
+			show("AO dashboard not installed", "Run `switchyard dashboard install` on omp's machine, then try again.");
+		} else if (res.ok) {
+			location.replace(proxy);
+		} else {
+			const detail = typeof body.error === "string" ? body.error : typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`;
+			show(res.status === 502 ? "AO dashboard server not running" : "AO dashboard unavailable", res.status === 404 && detail === "Not Found" ? "The Switchyard plugin's backend is not running in this Hermes: enable the plugin (hermes plugins enable switchyard) and restart Hermes." : detail);
+		}
+	})();
+</script>
+</body>
+</html>

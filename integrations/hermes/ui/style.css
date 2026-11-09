@@ -449,6 +449,16 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- AO dashboard ---------- */
+.omps-ao { display: flex; flex-direction: column; gap: 10px; }
+.omps-ao-bar { margin-bottom: 0; }
+.omps-ao-bar a.omps-btn { text-decoration: none; }
+.omps-ao .omps-stale { margin: 0; }
+.omps-ao-note, .omps-ao-foot { justify-content: center; margin: 0; }
+.omps-ao-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* The dashboard's page scrolls; the frame takes the window's height below the header and strip. */
+.omps-ao-frame { display: block; width: 100%; height: calc(100vh - 200px); min-height: 480px; border: 1px solid var(--o-border); border-radius: var(--o-radius); background: var(--o-bg); }
+
 /* ---------- graph view ---------- */
 .omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
 .omps-graph-panel .omps-filters { margin-bottom: 0; }
