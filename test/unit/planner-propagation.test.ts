@@ -113,7 +113,7 @@ test("a later change to the parent: the working child merges after its turn and 
 	const prompts = ao.sessions.get(bSession)?.conv.messages.filter(m => m.role === "user").map(m => m.text) ?? [];
 	assert.equal(prompts.length, 2);
 	assert.match(prompts[1], /Upstream task "A" changed/);
-	assert.match(prompts[1], /Changed files: x\.txt/);
+	assert.match(prompts[1], /Changed files: M x\.txt/);
 	assert.equal(merges(repo, byTitle(p, "B").git?.branch as string), 1);
 	assert.equal(merges(repo, byTitle(p, "C").git?.branch as string), 1);
 });
@@ -210,4 +210,102 @@ test("two tasks starting in the same new folder register its project once", asyn
 	]);
 	await until("both sent", () => sent(p, "one") && sent(p, "two"));
 	assert.equal(ao.created, 2);
+});
+
+test("every propagation step is an event; `rerun` runs a finished child once more with only the upstream note and settles the edge", async t => {
+	const rig = await graph(t);
+	const { ao, p } = rig;
+	const a = byTitle(p, "A");
+	const steps: string[] = [];
+	p.onChange(c => {
+		if (!c.sync) return;
+		const title = byTitle(p, "A").id === c.sync.child ? "A" : p.state.tasks.find(x => x.id === c.sync?.child)?.title;
+		steps.push(`${title}:${c.sync.from ?? "-"}>${c.sync.to}`);
+	});
+	const bSession = sent(p, "B") as string;
+	const cSession = sent(p, "C") as string;
+	ao.finishTurn(cSession, "completed", "C done");
+	await until("C done", () => byTitle(p, "C").status === "done");
+	await reRunA(rig, "A2\n");
+	await until("C marked", () => byTitle(p, "C").sync?.[a.id]?.state === "upstream-changed");
+	assert.deepEqual(steps.filter(s => s.startsWith("C:")), ["C:in-sync>pending", "C:pending>upstream-changed"]);
+	assert.deepEqual(steps.filter(s => s.startsWith("B:")), ["B:in-sync>pending"]);
+	// B is still working; finish it so the test ends clean, then re-run C on demand.
+	ao.finishTurn(bSession, "completed", "B done");
+	p.edit([{ op: "rerun", id: byTitle(p, "C").id }]);
+	await until("C re-run sent", () => byTitle(p, "C").status === "running" && byTitle(p, "C").run?.via === "send" && sent(p, "C"));
+	const prompt = ao.sessions.get(cSession)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /^\[Follow-up on your task\] C/);
+	assert.match(prompt, /Upstream task "A" changed/);
+	assert.doesNotMatch(prompt, /Results of the tasks/, "not the whole task again");
+	ao.finishTurn(cSession, "completed", "C rechecked");
+	await until("edge settled", () => byTitle(p, "C").sync?.[a.id]?.state === "merged");
+	assert.equal(byTitle(p, "C").status, "done");
+	assert.ok(steps.includes("C:upstream-changed>merged"));
+});
+
+test("a child in a session a client spawned earlier gets its parent's work merged in before the prompt; sessions stand for tasks in after/sync", async t => {
+	const repo = scratchRepo(t);
+	const ao = new FakeAo(repo);
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "A", options: { cwd: repo } } }]);
+	const aSession = await sentSession(p, "A");
+	write(ao, aSession, "x.txt", "A1\n");
+	ao.finishTurn(aSession, "completed", "A edited x.txt");
+	await until("A done", () => byTitle(p, "A").status === "done");
+	// The CLI's `new --task`: the session exists (idle, from the default branch) before the task does.
+	const { session } = await ao.spawn({ harness: "omp", projectId: "p", clientRequestId: "pre-spawned" });
+	assert.equal(fs.readFileSync(path.join(ao.worktreeOf(session), "x.txt"), "utf8"), "base\n");
+	await p.queue(session, [{ op: "add", title: "C" }, { op: "after", ids: [aSession] }, { op: "autoRun", value: true }]);
+	assert.deepEqual(byTitle(p, "C").after, [byTitle(p, "A").id], "a session id names the task that ran in it");
+	await until("C sent", () => sent(p, "C"));
+	const c = byTitle(p, "C");
+	assert.equal(read(ao, session, "x.txt"), "A1\n");
+	assert.equal(c.git?.branch, ao.sessions.get(session)?.branch);
+	assert.equal(c.sync?.[byTitle(p, "A").id]?.state, "merged");
+	const prompt = ao.sessions.get(session)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /Upstream task "A" changed/);
+	assert.match(prompt, /### A\nA edited x\.txt/);
+	assert.equal(merges(repo, c.git?.branch as string), 1);
+	ao.finishTurn(session, "completed", "C done");
+	await until("C done", () => byTitle(p, "C").status === "done");
+	// Later changes to A reach C as for any child; `sync` takes the session id too.
+	p.edit([{ op: "update", id: aSession, notes: "again" }, { op: "requeue", id: aSession }]);
+	await sentSession(p, "A");
+	write(ao, aSession, "x.txt", "A2\n");
+	ao.finishTurn(aSession, "completed", "A again");
+	await until("C marked", () => byTitle(p, "C").sync?.[byTitle(p, "A").id]?.state === "upstream-changed");
+	assert.equal(read(ao, session, "x.txt"), "A2\n");
+});
+
+test("`rerun` on a conflict edge asks the agent to merge (edge resolving) and settles it", async t => {
+	const rig = await graph(t);
+	const { ao, p } = rig;
+	const a = byTitle(p, "A");
+	const bSession = sent(p, "B") as string;
+	write(ao, bSession, "x.txt", "B-version\n");
+	ao.finishTurn(bSession, "completed", "B edited x.txt");
+	await until("B done", () => byTitle(p, "B").status === "done");
+	await reRunA(rig, "A2\n");
+	await until("B resolve run", () => byTitle(p, "B").status === "running" && sent(p, "B"));
+	ao.finishTurn(bSession, "completed", "could not");
+	await until("edge conflict", () => byTitle(p, "B").sync?.[a.id]?.state === "conflict");
+	p.edit([{ op: "rerun", id: bSession }]);
+	assert.equal(byTitle(p, "B").sync?.[a.id]?.state, "resolving");
+	await until("B asked again", () => byTitle(p, "B").status === "running" && byTitle(p, "B").run?.via === "send" && sent(p, "B"));
+	const prompt = ao.sessions.get(bSession)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /^\[Follow-up on your task\] B/);
+	assert.match(prompt, /conflicts with yours in x\.txt/);
+	const wt = ao.worktreeOf(bSession);
+	try {
+		git(wt, "merge", "--no-edit", a.git?.branch as string);
+	} catch {
+		/* conflicts expected */
+	}
+	fs.writeFileSync(path.join(wt, "x.txt"), "A2+B\n");
+	git(wt, "add", "-A");
+	git(wt, "commit", "-qm", "resolve");
+	ao.finishTurn(bSession, "completed", "resolved");
+	await until("edge merged", () => byTitle(p, "B").sync?.[a.id]?.state === "merged");
 });

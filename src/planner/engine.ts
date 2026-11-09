@@ -10,7 +10,6 @@ import * as crypto from "node:crypto";
 import { type Hold, type TurnError, type UsageContext, holdFor, isLimitError, normalizeBudget, providerOf, recordLimit } from "./usage";
 import { nextOccurrence, normalizeRule } from "./when";
 import {
-	APPROVAL_MODES,
 	type EdgeSync,
 	type Lane,
 	type LaneView,
@@ -20,6 +19,7 @@ import {
 	PRIORITIES,
 	type Priority,
 	type Recurring,
+	type SessionStart,
 	type Subtask,
 	type Task,
 	type TaskInput,
@@ -28,6 +28,7 @@ import {
 	type TaskState,
 	type TaskStatus,
 	type TaskView,
+	PERMISSION_MODES,
 	THINKING_LEVELS,
 } from "./types";
 
@@ -101,8 +102,7 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	if (timeout !== undefined && timeout > 0) out.timeoutMinutes = Math.min(MAX_TIMEOUT_MINUTES, timeout);
 	if (typeof r.cwd === "string" && r.cwd.trim()) out.cwd = r.cwd.trim();
 	if (typeof r.project === "string" && r.project.trim()) out.project = r.project.trim();
-	if (r.worktree === "auto" || r.worktree === "always" || r.worktree === "never") out.worktree = r.worktree;
-	if (typeof r.approvalMode === "string" && (APPROVAL_MODES as readonly string[]).includes(r.approvalMode)) out.approvalMode = r.approvalMode as TaskOptions["approvalMode"];
+	if (typeof r.mode === "string" && (PERMISSION_MODES as readonly string[]).includes(r.mode)) out.mode = r.mode as TaskOptions["mode"];
 	return Object.keys(out).length ? out : undefined;
 }
 
@@ -164,7 +164,7 @@ function normalizeRun(raw: unknown): TaskRun | undefined {
 	if (typeof r.turn === "string") run.turn = r.turn;
 	if (typeof r.provider === "string") run.provider = r.provider;
 	const spawn = rec(r.spawn);
-	if (spawn) run.spawn = spawn;
+	if (spawn && typeof spawn.displayName === "string") run.spawn = spawn as unknown as SessionStart;
 	if (typeof r.repo === "string") run.repo = r.repo;
 	for (const k of ["settings", "restore"] as const) {
 		const v = rec(r[k]);
@@ -236,6 +236,8 @@ export function normalizeState(raw: unknown): PlanState {
 		if (typeof tr.session === "string" && tr.session) task.session = tr.session;
 		if (typeof tr.recur === "string" && tr.recur) task.recur = tr.recur;
 		if (typeof tr.turn === "string" && tr.turn) task.turn = tr.turn;
+		if (tr.undone === true) task.undone = true;
+		if (tr.clean === true) task.clean = true;
 		if (typeof tr.followUp === "string" && tr.followUp) task.followUp = tr.followUp.slice(0, MAX_NOTES);
 		if (tr.followUpOnly === true && task.followUp) task.followUpOnly = true;
 		const git = rec(tr.git);
@@ -307,7 +309,7 @@ export function effectivePriority(state: PlanState, task: Task): Priority {
  */
 function resolved(byId: Map<string, Task>, id: string): boolean {
 	const t = byId.get(id);
-	return !!t && (t.status === "skipped" || (t.status === "done" && (!t.git || !!t.git.head)));
+	return !!t && (t.status === "skipped" || (t.status === "done" && !t.undone && (!t.git || !!t.git.head)));
 }
 
 /** The AO session a run continues: the lane's, else the task's own from an earlier run; none with fresh context. */
@@ -367,6 +369,21 @@ function resetRun(t: Task): void {
 	delete t.followUpOnly;
 }
 
+/** The follow-up that asks a child agent to merge a conflicting parent branch itself. */
+export function resolveNote(parent: Task, files: string[]): string {
+	return [
+		`Upstream task "${parent.title}" changed and its branch ${parent.git?.branch} conflicts with yours${files.length ? ` in ${files.join(", ")}` : ""}.`,
+		`Merge it into your branch: run \`git merge ${parent.git?.branch}\`, resolve the conflicts keeping both sides' intent, and commit the merge. Then re-check your work against it.`,
+	].join("\n");
+}
+
+/** Back to pending for one more run in its own session: just the follow-up note, not the whole task again. */
+export function requeueForFollowUp(t: Task): void {
+	t.status = "pending";
+	t.followUpOnly = true;
+	for (const k of ["startedAt", "finishedAt", "attempts", "interrupted", "holdUntil", "paused"] as const) delete t[k];
+}
+
 /** Positions of `lane`'s tasks (or of free tasks) in the plan array. */
 function memberIndexes(state: PlanState, lane: string | undefined): number[] {
 	const out: number[] = [];
@@ -422,9 +439,21 @@ function makeTask(state: PlanState, input: TaskInput, now: number, refs: Record<
 	return task;
 }
 
-function resolveRefs(ids: string[], refs: Record<string, string>): string[] {
+/**
+ * A task by id, or by AO session id: the task running in that session, else the one that ran in it last.
+ * (Clients that only know sessions name tasks this way, e.g. `after` and `sync`.)
+ */
+export function taskByRef(s: PlanState, ref: string): Task | undefined {
+	const exact = s.tasks.find(t => t.id === ref);
+	if (exact) return exact;
+	const inSession = s.tasks.filter(t => t.session === ref || t.run?.session === ref);
+	const recency = (t: Task) => t.finishedAt ?? t.startedAt ?? t.createdAt;
+	return inSession.find(t => t.status === "running") ?? inSession.sort((a, b) => recency(b) - recency(a))[0];
+}
+
+function resolveRefs(s: PlanState, ids: string[], refs: Record<string, string>): string[] {
 	return ids.map(id => {
-		if (!id.startsWith("@")) return id;
+		if (!id.startsWith("@")) return taskByRef(s, id)?.id ?? id;
 		const r = refs[id.slice(1)];
 		if (!r) fail(`unknown ref ${id} (refs name tasks added earlier in the same edit)`);
 		return r;
@@ -456,7 +485,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 	if (!Array.isArray(ops)) fail("ops must be a list");
 	const task = (id: unknown): Task => {
 		const key = typeof id === "string" && id.startsWith("@") ? refs[id.slice(1)] : id;
-		const t = s.tasks.find(x => x.id === key);
+		const t = typeof key === "string" ? taskByRef(s, key) : undefined;
 		if (!t) fail(`unknown task ${String(id)}`);
 		return t;
 	};
@@ -482,7 +511,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "add": {
 				const t = makeTask(s, o.task, now, refs);
 				insertAt(s, t, finite(o.index));
-				if (o.task.after) setAfter(s, t, resolveRefs(normalizeIds(o.task.after), refs));
+				if (o.task.after) setAfter(s, t, resolveRefs(s, normalizeIds(o.task.after), refs));
 				if (typeof o.ref === "string" && o.ref) refs[o.ref] = t.id;
 				break;
 			}
@@ -535,7 +564,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 				break;
 			}
 			case "after":
-				setAfter(s, task(o.id), resolveRefs(normalizeIds(o.ids), refs));
+				setAfter(s, task(o.id), resolveRefs(s, normalizeIds(o.ids), refs));
 				break;
 			case "run": {
 				const t = task(o.id);
@@ -561,9 +590,18 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "requeue": {
 				const t = task(o.id);
 				notRunning(t, "requeue");
+				if (o.clean) {
+					if (!t.turn || !t.session) fail(`"${t.title}" has no earlier attempt to undo`);
+					// Undoing a turn rewinds every later prompt of the session too.
+					const later = s.tasks.find(x => x !== t && x.session === t.session && x.turn && (x.finishedAt ?? x.startedAt ?? 0) > (t.finishedAt ?? t.startedAt ?? 0));
+					if (later) fail(`undoing "${t.title}" would rewind the later task "${later.title}" in the same session; requeue without clean, or only the last task of a session`);
+				}
 				t.status = "pending";
 				resetRun(t);
 				delete t.paused;
+				delete t.undone;
+				if (o.clean) t.clean = true;
+				else delete t.clean;
 				const l = laneOf(s, t);
 				if (l && !l.startAt) l.autoRun = true;
 				break;
@@ -769,6 +807,25 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "recur.remove": {
 				const r = recurring(o.id);
 				s.recurring = s.recurring.filter(x => x !== r);
+				break;
+			}
+			case "rerun": {
+				// "Re-run with parent changes": the task runs once more in its own session with only the upstream note.
+				const t = task(o.id);
+				notRunning(t, "re-run");
+				const changed = (t.after ?? []).map(id => s.tasks.find(x => x.id === id)).filter((p): p is Task => !!p && t.sync?.[p.id]?.state !== undefined && t.sync[p.id].state !== "in-sync");
+				// A conflicting edge is not merged: the run asks the agent to merge it, and the edge is `resolving` until that run ends.
+				const notes: string[] = [];
+				for (const p of changed) {
+					const edge = t.sync?.[p.id];
+					if (edge?.state === "conflict") {
+						notes.push(resolveNote(p, edge.files ?? []));
+						edge.state = "resolving";
+						edge.at = now;
+					} else if (edge?.state !== "resolving") notes.push(`Upstream task "${p.title}" changed; its branch ${p.git?.branch ?? ""} is merged into your worktree.\nRe-check your work against it.`);
+				}
+				if (!t.followUp) t.followUp = notes.length ? notes.join("\n\n") : "Upstream tasks changed. Re-check your work against them.";
+				requeueForFollowUp(t);
 				break;
 			}
 			case "sync":
@@ -1131,6 +1188,8 @@ export function finishRun(s: PlanState, id: string, outcome: Outcome, now: numbe
 			if (run?.provider) delete s.limits[run.provider];
 			delete t.followUp;
 			delete t.followUpOnly;
+			// A run that saw the merged upstream work settles the edges marked as changed behind its back.
+			for (const edge of Object.values(t.sync ?? {})) if (edge.state === "upstream-changed") edge.state = "merged";
 			return t;
 		case "interrupted":
 		case "lost": {

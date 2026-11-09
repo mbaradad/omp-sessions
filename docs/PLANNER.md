@@ -30,7 +30,10 @@ Same wire as the old server (`src/shared/server-protocol.ts`), so `ServerClient`
 `ensurePlanner(script)` connects, or starts the planner (installed service for this home, else detached)
 and waits for it. Env: `SWITCHYARD_PLANNER_STDERR=1` (log to stderr too), `SWITCHYARD_PLANNER_USAGE=off`
 (no `omp usage` poll), `SWITCHYARD_PLANNER_OMP` (omp binary), `SWITCHYARD_PLANNER_RETRY_BASE_MS`; AO is found
-as `src/ao` does (`AO_RUN_FILE`, `AO_PORT`).
+as `src/ao` does (`AO_RUN_FILE`, `AO_PORT`). Knobs for process tests: `SWITCHYARD_PLANNER_POLL_MS` (periodic
+check of running tasks and a scheduling pass; default 10 s), `SWITCHYARD_PLANNER_USAGE_EVERY_MS` (default 5 min),
+`SWITCHYARD_PLANNER_CLOCK_FILE` (test clock: the planner's `now` is real time plus the milliseconds in that file,
+re-read every 100 ms; the planner sees the jump on its next periodic pass).
 
 ## Model
 
@@ -46,8 +49,7 @@ interface TaskOptions {               // superset of QueueTaskOptions
   timeoutMinutes?: number;            // interrupt the turn → failed (or retried)
   cwd?: string;                       // folder to work in (planner maps it to an AO project)
   project?: string;                   // AO project id (wins over cwd)
-  worktree?: "auto" | "always" | "never";   // see "Worktrees" below
-  approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
+  mode?: "ask" | "edits" | "plan" | "auto";   // permission mode of a session the planner starts (default auto); enforced by the Switchyard omp extension's gate
 }
 
 interface Task {                      // superset of QueueTask: same names, same meaning
@@ -137,25 +139,26 @@ interface PlannerConfig {
 - **Session lanes**: a lane whose id is an AO session id (`queue` op on a session) continues that
   session; tasks dispatch only while it has no turn running. A free task that runs again (requeue, `run`)
   continues its own session unless `freshContext` is set or AO no longer has it (then a new session starts).
-- **Worktrees**: `cwd` inside a git repo → AO project session for that repo (registered on first use);
-  AO gives every project session its own worktree and branch `ao/<slug>/root`, so parallel tasks never
-  share a checkout (`auto` and `always` behave the same). `always` outside git fails the dispatch;
-  `never` in a git folder fails it too (AO can't run in the checkout itself). Outside git → standalone
-  session (AO scratch dir).
-- **Approvals**: sessions the planner spawns start in `bypass-permissions` (MAPPING D11: an unattended
-  task can't wait for an approval) unless `approvalMode` says otherwise (task, lane `defaults` or planner
-  `defaults`). A task whose agent does ask (approval or question) stays `running`, and AO shows the session
-  as needing input until a person answers through AO.
-- **Dispatch sequence** (MAPPING D11, idempotent step by step; each step is written to the plan first):
-  check the model against AO's list (unknown → the task fails at once, no session is left behind), spawn
-  with no prompt (`clientRequestId`), set `thinking` through the session's config options, send the task
-  as a message (`clientMessageId`). A continued session first gets `resume-agent` when it reads `exited`,
-  and model/thinking are put back after the turn. A `CHAT_CONTROLLER_NOT_READY` on send resumes the agent
-  and sends once more.
+- **Worktrees** (user decision Q1): every git task runs in an AO worktree, there is no option: `cwd` inside a git
+  repo → AO project session for that repo (registered on first use); AO gives every project session its own
+  worktree and branch `ao/<slug>/root`, so parallel tasks never share a checkout. Outside git → standalone
+  session (AO scratch dir). (`worktree` and `approvalMode` are no longer task options: unknown option fields are ignored.)
+- **Dispatch of a new session = MAPPING D11, `src/ao/spawn.ts`** (one idempotent call keyed by the task's
+  `clientRequestId`/`clientMessageId`, so a replay after a crash finds the same session and turn): the model is
+  checked against AO's catalog first (unknown → the task fails at once, nothing is created); spawn in AO's
+  `bypass-permissions` with no prompt; the session's own options are checked and set (model, then thinking);
+  the permission mode is set (`options.mode`, default `auto`; the mode file is written before the first
+  message); the task goes out as a message. A refusal (unknown model or thinking level) fails the task and
+  removes the session. A task whose agent then asks (a mode `ask`, or a question) stays `running`, and AO shows
+  the session as needing input until a person answers through AO.
+- **Continued sessions** (lane or re-run): `resume-agent` first when the session reads `exited`; model and
+  thinking are set before the prompt and put back after the turn; `mode` applies to new sessions only. A
+  `CHAT_CONTROLLER_NOT_READY` on send resumes the agent and sends once more.
 - **Limit replies and dead hosts**: omp reports a provider limit it gave up retrying as a *completed* turn
   whose reply is the error (G35); a short reply that opens like a provider limit error holds the provider
-  (until the stated reset, else backoff) and the task goes back to pending without using an attempt. A turn
-  still `running` in a session that reads `exited` (host died, G39) ends the run as `interrupted`.
+  (until the stated reset, else backoff) and the task goes back to pending without using an attempt. Any other provider error omp ends as a completed reply (`Error: …`, a status code and JSON body, "No API key found", …; heuristic on
+  short replies) fails the run and the retry rules apply. A turn still `running` in a session that reads `exited` (host died, G39) ends the
+  run as `interrupted`: noticed from AO's events, and by asking AO every 10 s when none came.
 
 ## Operations
 
@@ -235,6 +238,13 @@ lanes**; a lane counts as finished when all its tasks are done/skipped) and `req
 
 ## Graph propagation (GRAPH-PROPAGATION.md)
 
+**AO check (done).** Stock AO has no base-ref field and cannot run a session in a given worktree, but its spawn
+field `branch` checks out an existing local branch (`gitworktree.addWorktree`; a branch checked out in another
+worktree is refused). So the planner creates `switchyard/<task id>` at the parent's head and spawns on it
+(GAPS G43, verified live with real omp). No fork. Git operations are `src/planner/git.ts`; the generic
+helpers of `omp/worktrees` `worktree-git.ts` (`parseNameStatus`, `ChangedFile`, `conflictedFiles`) are ported
+there; its worktree creation and `omp/` branches are superseded by AO's worktrees.
+
 Applies to tasks that run in a git project (AO gives each such session its own worktree). A task with
 other `cwd`/standalone sessions only receives its parents' results.
 
@@ -258,13 +268,50 @@ other `cwd`/standalone sessions only receives its parents' results.
    idempotent (a merge whose target is already an ancestor is done), so a restart finishes a pending
    propagation exactly once; edges record `before`/`after` SHAs (undo by hand with `git reset`).
 
+**Sessions as task refs.** Wherever an op takes a task id (`after`, `sync`, `rerun`, `update`, …) an AO session
+id works too: it stands for the task running in that session, else the one that ran in it last. A client
+that only knows sessions needs no lookup.
+
+**Sessions that exist before their task** (`new --task` spawns the session first, then `queue {id: session}`):
+the branch can't be seeded, so before the prompt goes out the planner records the session's branch as the
+task's and *merges* each done git parent's committed head into that worktree (edge `merged`, the upstream
+note leads the prompt; a conflict gives the `resolving` edge and the resolve note). Put `after` in the same
+`queue` call as the `add` (it applies to tasks added earlier in the call) and arm the lane after it.
+
+**Ops.** `sync {id}`: commit what the task's worktree holds now and propagate to its children (also done
+automatically when a finished task's session goes idle after somebody worked in it). `rerun {id}`
+("Re-run with parent changes"): the task runs once more in its own session with only the upstream note
+(`followUpOnly`); when that run completes its `upstream-changed` edges become `merged`. `requeue`/`run`
+instead run the whole task again (and leave edges as they are). On a `conflict` edge `rerun` asks the agent to merge
+the parent's branch itself and sets the edge `resolving`; the run's end settles it to `merged` or back to `conflict`.
+
+**Events** (`subscribe {topic:"plan"}`): every edge transition is `{event:"sync", child, parent, from?, to, edge}`
+(`from` absent for a new edge); the plan snapshot carries the edges in `TaskView.sync`.
+
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
+
+## Checkpoints (undo/redo with files)
+
+- `Task.turn`: the AO turn id of the task's latest run, kept after it finishes (key for "this task's changes" and
+  "undo this task"); `Task.session` is its session.
+- `/undo` and `/redo` are human turns in AO. They are never task turns (the planner finds its own turn by its
+  `clientMessageId`), and activity that is just `/undo`/`/redo` does not trigger a branch sync.
+- `Task.undone` / `TaskView.undone`: a person undid the finished task's turn, so its work is gone; the task keeps
+  its `done` status (no automatic re-run) but stops satisfying `after` for dependents that have not started
+  (they show `blocked`). Redoing clears it. Set by the planner when `PlannerOptions.undone(task)` says so; asked
+  on activity in the task's session for tasks others still wait on.
+- `requeue {id, clean: true}`: before the retry is sent, `PlannerOptions.rewind(task)` undoes the earlier attempt's turn
+  (files and context). Refused when a later task of the same session exists (undo would rewind it too), when the
+  task has no earlier turn, and failed at dispatch with a clear message when the planner has no `rewind` hook.
+- The two hooks are supplied by the process (`main.ts`): they are built on `src/shared/checkpoint-ops.ts`
+  (`turnStatuses` for `undone`; `planUndo` + `runCheckpointCommand` for `rewind`), wired at integration.
 
 ## Events (`subscribe {topic: "plan"}`)
 
 - `{id, event: "plan", plan: PlanView}`: first right after subscribing, then after every change
   (coalesced, ≤ 5/s).
 - `{id, event: "task", task: TaskView, from: TaskStatus}`: each status transition (for sounds/notifications).
+- `{id, event: "sync", child, parent, from?, to, edge}`: each graph propagation step (see "Graph propagation").
 
 ## Usage gating (auto-scheduling)
 
@@ -274,14 +321,18 @@ from `omp/autosched` `limits.ts`); (2) usage windows from `omp usage --json`, po
 reports account windows only for Claude/Codex accounts, never for omp sessions; with several accounts on
 one provider the one with most room counts; tier-scoped windows are ignored); (3) spend of
 planner-dispatched tasks (difference of AO's conversation `usage.cost` before/after the turn) against
-`budget`. The provider of a task is the prefix of its effective `model`; a task without a model is gated
-by the budget only. A task is `held` while its provider is limited, any of its windows is ≥
+`budget`. The provider of a task is the prefix of its effective `model`; a task without a model (none on the task,
+its lane or `PlannerConfig.defaults`) has no known provider and is gated by the budget only: set `defaults.model`
+to gate such tasks (and `usage: "spare"` ones) on a provider. A task is `held` while its provider is limited, any of its windows is ≥
 `holdAtPercent`, or a budget cap is reached; a `usage: "spare"` task also waits until every window of
 its provider is < `spareBelowPercent`. `waitUntil` is the earliest known reset. `OMP_PLANNER_USAGE=off`
 disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: user decisions: no `worktree`/`approvalMode` task options (every git task runs in an AO worktree); new sessions start through `src/ao/spawn.ts` (D11) with `options.mode`.
+- 2026-11-09: checkpoints: `Task.turn` kept, `undone`, `requeue {clean}`, hooks `undone`/`rewind`; `/undo`/`/redo` ignored for sync.
+- 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.
 - 2026-11-09: lanes resolve by session id; `lane.session` set at dispatch; `state`/`waitUntil` on `LaneView` and `QueueView`.
 - 2026-11-09: draft v1.
 - 2026-11-09: implemented on `ao/planner`. `status.usage` is `usageWindows`; worktree and approval

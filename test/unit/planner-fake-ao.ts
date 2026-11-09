@@ -9,8 +9,8 @@ import * as path from "node:path";
 import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AoError } from "../../src/ao/client";
-import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
-import { Planner } from "../../src/planner/planner";
+import { type AoConversationInfo, type AoPort, type AoStreamHandlers, type AoTurnInfo, DispatchRefused, type StartSession } from "../../src/planner/ao-port";
+import { Planner, type PlannerOptions } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
 
@@ -97,6 +97,18 @@ export class FakeAo implements AoPort {
 		return { session: id, ...(created?.branch ? { branch: created.branch } : {}) };
 	}
 
+	/** The D11 sequence as the port sees it: spawn (idempotent in the key), then the prompt (idempotent in the key). */
+	async startSession(opts: StartSession) {
+		if (this.modelIds.length && opts.model && !this.modelIds.includes(opts.model)) throw new DispatchRefused(`Unknown omp model "${opts.model}"`);
+		const { prompt, key, ...rest } = opts;
+		const res = await this.spawn({ ...rest, harness: "omp", approvalMode: "bypass-permissions", clientRequestId: key });
+		const s = this.sessions.get(res.session);
+		assert.ok(s);
+		let turn = s.conv.messages.find(m => m.clientMessageId === key)?.turnId;
+		if (!turn) turn = this.turn(s, prompt, key);
+		return { ...res, turn };
+	}
+
 	async send(session: string, text: string, clientMessageId: string) {
 		const s = this.sessions.get(session);
 		assert.ok(s && !s.terminated && !s.exited, `send to ${session}: terminated or exited`);
@@ -133,12 +145,24 @@ export class FakeAo implements AoPort {
 		return this.modelIds;
 	}
 
+	/** An AO event for the session with the given activity (someone chatted: active, then idle). */
+	poke(session: string, activity: string): void {
+		this.event(session, activity);
+	}
+
 	/** Simulates the chat host dying mid-turn: the turn stays running, the session reads exited. */
 	killHost(session: string): void {
 		const s = this.sessions.get(session);
 		assert.ok(s, `no session ${session}`);
 		s.exited = true;
 		this.event(session, "exited");
+	}
+
+	/** The host died and no event told anyone (a missed SSE event). */
+	killHostSilently(session: string): void {
+		const s = this.sessions.get(session);
+		assert.ok(s, `no session ${session}`);
+		s.exited = true;
 	}
 
 	async restore(session: string) {
@@ -166,6 +190,11 @@ export class FakeAo implements AoPort {
 		if (this.registered.has(cwd)) throw new AoError("A project at this path is already registered (/api/v1/projects)", 409, "PROJECT_ALREADY_REGISTERED");
 		this.registered.add(cwd);
 		return "p";
+	}
+
+	async sessionGit(session: string) {
+		const s = this.sessions.get(session);
+		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch } : {};
 	}
 
 	async projectPath(id: string) {
@@ -218,8 +247,8 @@ export function tempPlan(t: TestContext): string {
 	return path.join(dir, "plan.json");
 }
 
-export function start(file: string, ao: FakeAo): Planner {
-	const p = new Planner({ file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50 });
+export function start(file: string, ao: FakeAo, hooks: Pick<PlannerOptions, "undone" | "rewind"> = {}): Planner {
+	const p = new Planner({ ...hooks, file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
 	p.start();
 	return p;
 }

@@ -14,6 +14,7 @@
 //   mid-propagation finishes it exactly once.
 import * as fs from "node:fs";
 import { abortMerge, changesBetween, commitAll, git, isAncestor, merge, mergeInProgress, revParse, seedBranch, withRepoLock, worktreeOf } from "./git";
+import { requeueForFollowUp, resolveNote } from "./engine";
 import type { EdgeSync, PlanState, Task } from "./types";
 
 export interface PropagationHost {
@@ -99,6 +100,32 @@ export class Propagation {
 		}
 		this.host.log("seeded", t.id, branch, "from", heads.map(h => `${h.branch}@${h.head.slice(0, 8)}`).join(", "), conflicts.length ? `(${conflicts.length} conflicted)` : "");
 		return { branch, sync, ...(notes.length ? { followUp: notes.join("\n\n") } : {}) };
+	}
+
+	/**
+	 * A task that runs in a session that already exists (a client spawned it, or its lane continues it):
+	 * records the session's branch as the task's and merges its parents' committed work into that worktree
+	 * before the prompt goes out (a branch can't be seeded any more, so the parents are merged in).
+	 */
+	prepareExisting(t: Task, repo: string, branch: string): Promise<void> {
+		return this.serial(async () => {
+			const parents = this.gitParents(t, repo);
+			const live = this.task(t.id);
+			if (!parents.length || !live) return;
+			if (!live.git) {
+				this.host.commit(s => {
+					const x = s.tasks.find(y => y.id === t.id);
+					if (x) x.git = { repo, branch };
+				});
+			} else if (live.git.branch !== branch) return;
+			for (const p of parents) {
+				const head = p.git?.head as string;
+				const edge = this.task(t.id)?.sync?.[p.id];
+				if (edge?.head === head && (edge.state === "in-sync" || edge.state === "merged" || edge.state === "upstream-changed")) continue;
+				this.setEdge(t.id, p.id, { ...edge, state: "pending", pendingHead: head, at: this.host.now() });
+			}
+			await this.applyPending(t.id);
+		});
 	}
 
 	/** After AO created the session: records the task's branch and worktree. */
@@ -285,13 +312,6 @@ export class Propagation {
 	}
 }
 
-/** Back to pending for one more run in its own session (the follow-up or the merge resolution). */
-function requeueForFollowUp(t: Task): void {
-	t.status = "pending";
-	t.followUpOnly = true;
-	for (const k of ["startedAt", "finishedAt", "attempts", "interrupted", "holdUntil", "paused"] as const) delete t[k];
-}
-
 function upstreamNote(parent: Task, changes: { subjects: string[]; files: string[] }): string {
 	const lines = [`Upstream task "${parent.title}" changed. Its branch ${parent.git?.branch} is merged into your worktree.`];
 	if (changes.subjects.length) lines.push(`Commits: ${changes.subjects.slice(0, 10).join("; ")}`);
@@ -301,9 +321,3 @@ function upstreamNote(parent: Task, changes: { subjects: string[]; files: string
 	return lines.join("\n");
 }
 
-function resolveNote(parent: Task, files: string[]): string {
-	return [
-		`Upstream task "${parent.title}" changed and its branch ${parent.git?.branch} conflicts with yours${files.length ? ` in ${files.join(", ")}` : ""}.`,
-		`Merge it into your branch: run \`git merge ${parent.git?.branch}\`, resolve the conflicts keeping both sides' intent, and commit the merge. Then re-check your work against it.`,
-	].join("\n");
-}

@@ -13,15 +13,14 @@ import { aoPort } from "../../src/planner/ao-port";
 import { Planner } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
 import type { Task } from "../../src/planner/types";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
 let client: AoClient;
 let repo: string;
 let projectId: string;
 let dir: string;
+let previousHome: string | undefined;
 
 before(async () => {
 	if (skip) return;
@@ -30,12 +29,17 @@ before(async () => {
 	repo = ao.scratchRepo();
 	projectId = await ao.createProject(repo);
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-it-"));
+	// The start sequence (src/ao/spawn.ts) writes each session's mode file under the Switchyard home of this process.
+	previousHome = process.env.SWITCHYARD_HOME;
+	process.env.SWITCHYARD_HOME = path.join(dir, "switchyard-home");
 });
 
 /** Every planner a test started: stopped after the file even when an assertion failed. */
 const planners: Planner[] = [];
 
 after(async () => {
+	if (previousHome === undefined) delete process.env.SWITCHYARD_HOME;
+	else process.env.SWITCHYARD_HOME = previousHome;
 	for (const p of planners) p.stop();
 	await ao?.stop();
 	if (dir) fs.rmSync(dir, { recursive: true, force: true });

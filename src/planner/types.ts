@@ -8,9 +8,9 @@ export type Priority = (typeof PRIORITIES)[number];
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
 /** What omp accepts for its `thinking` option over ACP (`minimal` is read as `low`, see normalizeOptions). */
 export const THINKING_LEVELS = ["off", "auto", "low", "medium", "high", "xhigh", "max"] as const;
-export const APPROVAL_MODES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
-export type ApprovalMode = (typeof APPROVAL_MODES)[number];
-export type WorktreeMode = "auto" | "always" | "never";
+/** The permission modes the Switchyard omp extension's gate enforces (AO itself always runs the session in bypass). */
+export const PERMISSION_MODES = ["ask", "edits", "plan", "auto"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export interface Subtask {
 	id: string;
@@ -33,8 +33,19 @@ export interface TaskOptions {
 	cwd?: string;
 	/** AO project id; wins over cwd. */
 	project?: string;
-	worktree?: WorktreeMode;
-	approvalMode?: ApprovalMode;
+	/** Permission mode of a session the planner starts (default `auto`: the gate lets everything through). Unattended work that asks will wait for a person. */
+	mode?: PermissionMode;
+}
+
+/** What a new AO session starts with (the `spawn` of a TaskRun; MAPPING D11). */
+export interface SessionStart {
+	displayName: string;
+	projectId?: string;
+	/** An existing local branch AO checks out (graph propagation seeds one at the parent's head). */
+	branch?: string;
+	model?: string;
+	thinking?: string;
+	mode?: PermissionMode;
 }
 
 /**
@@ -49,7 +60,7 @@ export interface TaskRun {
 	/** `spawn`: a new AO session; `send`: a message to the lane's session. */
 	via: "spawn" | "send";
 	/** Exact spawn body (replayed verbatim after a restart; AO answers a replay with the same session). */
-	spawn?: Record<string, unknown>;
+	spawn?: SessionStart;
 	/** The git repo (AO project folder) a spawned session works in: its branch is recorded once AO answers. */
 	repo?: string;
 	/** AO session (known up front for `send`, after the spawn otherwise). */
@@ -114,8 +125,12 @@ export interface Task {
 	holdUntil?: number;
 	/** In-flight dispatch (status running). */
 	run?: TaskRun;
-	/** AO turn id of the latest run (link from the task to the chat). */
+	/** AO turn id of the latest run (link task → chat; the key for "this task's changes" and "undo this task"). */
 	turn?: string;
+	/** A person undid this task's turn in AO (checkpoints): its work is gone, so it no longer satisfies `after`. */
+	undone?: boolean;
+	/** The next run starts from before the previous attempt: that turn is undone first (`requeue {clean}`). */
+	clean?: boolean;
 	/** The task's git branch and worktree (AO project sessions), for graph propagation. */
 	git?: TaskGit;
 	/** Propagation state of each parent edge (parent task id → state). */
@@ -333,7 +348,8 @@ export type PlanOp =
 	| { op: "move"; id: string; index: number }
 	| { op: "after"; id: string; ids: string[] }
 	| { op: "run"; id: string }
-	| { op: "requeue"; id: string }
+	/** `clean`: before it runs again, undo the failed attempt's turn (files and context) through the checkpoints extension. */
+	| { op: "requeue"; id: string; clean?: boolean }
 	| { op: "pause"; id: string }
 	| { op: "resume"; id: string }
 	| { op: "abort"; id: string }
@@ -359,7 +375,9 @@ export type PlanOp =
 	| { op: "recur.remove"; id: string }
 	| { op: "recur.fire"; id: string }
 	/** Re-checks the task's branch now and propagates new commits to its children (GRAPH-PROPAGATION.md). */
-	| { op: "sync"; id: string };
+	| { op: "sync"; id: string }
+	/** "Re-run with parent changes": one more run in the task's own session with only the upstream note. */
+	| { op: "rerun"; id: string };
 
 // ---------- compatibility with the old per-session queue ----------
 
@@ -441,4 +459,16 @@ export interface PlannerRequest {
 
 export type PlannerResponse = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
-export type PlannerEvent = { id: number; event: "plan"; plan: PlanView } | { id: number; event: "task"; task: TaskView; from: TaskStatus };
+/** One step of graph propagation: `child`'s edge to `parent` moved from `from` (absent: new edge) to `to`. */
+export interface SyncChange {
+	child: string;
+	parent: string;
+	from?: EdgeSync["state"];
+	to: EdgeSync["state"];
+	edge: EdgeSync;
+}
+
+export type PlannerEvent =
+	| { id: number; event: "plan"; plan: PlanView }
+	| { id: number; event: "task"; task: TaskView; from: TaskStatus }
+	| ({ id: number; event: "sync" } & SyncChange);

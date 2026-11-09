@@ -2,7 +2,18 @@
 // implementation on src/ao (the only HTTP client to AO). Errors are AoErrors; `transientAoError` tells
 // a retryable failure (daemon unreachable, 5xx, a spawn still being committed) from a final one.
 import { AoClient, AoError, DAEMON_UNREACHABLE } from "../ao/client";
+import { type AoSessionMode, spawnSwitchyardSession } from "../ao/spawn";
+import type { SessionStart } from "./types";
 import type { AoConversation, AoEvent, AoStreamStatus } from "../ao/client";
+
+export interface StartSession extends SessionStart {
+	/** Idempotency key for the spawn and the prompt. */
+	key: string;
+	prompt: string;
+}
+
+/** AO or the session refused what the task asked for (an unknown model or thinking level): not worth retrying. */
+export class DispatchRefused extends Error {}
 
 export interface AoTurnInfo {
 	id: string;
@@ -46,8 +57,14 @@ export interface AoStreamHandlers {
 
 export interface AoPort {
 	readonly url: string;
-	/** `branch`: the git branch AO checked out for the session (project sessions). */
-	spawn(body: Record<string, unknown>): Promise<{ session: string; branch?: string }>;
+	/**
+	 * Starts a session the Switchyard way (MAPPING D11, src/ao/spawn.ts): spawn without a prompt, model and
+	 * thinking through the session's options, the permission mode, then the prompt. Idempotent in `key`
+	 * (clientRequestId and clientMessageId): a replay after a crash returns the same session and turn.
+	 * `branch`: the git branch AO checked out for the session (project sessions). Throws DispatchRefused
+	 * for what retrying can't fix (unknown model or thinking level).
+	 */
+	startSession(opts: StartSession): Promise<{ session: string; branch?: string; turn?: string }>;
 	send(session: string, text: string, clientMessageId: string): Promise<{ turn?: string }>;
 	conversation(session: string): Promise<AoConversationInfo>;
 	/** Undefined when AO doesn't know the session (deleted). */
@@ -65,6 +82,8 @@ export interface AoPort {
 	setThinking(session: string, level: string): Promise<string | undefined>;
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
+	/** The git branch and project folder of an existing session (undefined parts: not a git project session). */
+	sessionGit(session: string): Promise<{ repo?: string; branch?: string }>;
 	/** Folder of an AO project (the repo's main checkout). */
 	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
@@ -72,6 +91,7 @@ export interface AoPort {
 
 /** Worth retrying later: AO unreachable, a server error, or a spawn AO is still committing. */
 export function transientAoError(err: unknown): boolean {
+	if (err instanceof DispatchRefused) return false;
 	if (!(err instanceof AoError)) return true;
 	return err.code === DAEMON_UNREACHABLE || err.status === 0 || err.status >= 500 || err.status === 429 || err.code === "CLIENT_REQUEST_INCOMPLETE";
 }
@@ -114,9 +134,25 @@ export function aoPort(ao: AoClient): AoPort {
 		get url() {
 			return ao.baseUrl;
 		},
-		async spawn(body) {
-			const res = await ao.spawnSession(body as Parameters<AoClient["spawnSession"]>[0]);
-			return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}) };
+		async startSession(opts) {
+			try {
+				const res = await spawnSwitchyardSession(ao, {
+					displayName: opts.displayName,
+					prompt: opts.prompt,
+					clientRequestId: opts.key,
+					clientMessageId: opts.key,
+					...(opts.projectId ? { projectId: opts.projectId } : {}),
+					...(opts.branch ? { branch: opts.branch } : {}),
+					...(opts.model ? { model: opts.model } : {}),
+					...(opts.thinking ? { thinking: opts.thinking } : {}),
+					...(opts.mode ? { mode: opts.mode as AoSessionMode } : {}),
+				});
+				return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}), ...(res.sent?.turnId ? { turn: res.sent.turnId } : {}) };
+			} catch (err) {
+				// AO's own errors keep their status (retried or not by transientAoError); the helper's plain errors are refusals.
+				if (err instanceof AoError || !(err instanceof Error) || /did not come back/.test(err.message)) throw err;
+				throw new DispatchRefused(err.message);
+			}
 		},
 		async send(session, text, clientMessageId) {
 			const attempt = () => ao.sendMessage(session, { text, clientMessageId });
@@ -177,6 +213,11 @@ export function aoPort(ao: AoClient): AoPort {
 			if (!response.ok) throw new AoError(`thinking level ${level}: ${JSON.stringify(error)}`, response.status, `HTTP_${response.status}`);
 			return previous || undefined;
 		},
+		async sessionGit(session) {
+			const view = await ao.getSession(session);
+			const repo = view.projectId ? (await ao.listProjects()).find(p => p.id === view.projectId)?.path : undefined;
+			return { ...(repo ? { repo } : {}), ...(view.branch ? { branch: view.branch } : {}) };
+		},
 		async projectPath(id) {
 			return (await ao.listProjects()).find(p => p.id === id)?.path;
 		},
@@ -190,6 +231,8 @@ export function aoPort(ao: AoClient): AoPort {
 				onStatus: (s: AoStreamStatus) => {
 					if (s.state === "open") handlers.onOpen(s.reset);
 					else if (s.state === "retrying") handlers.onDown(s.error);
+					// Events were skipped (pruned or replaced log): the planner re-checks every running task, as after a reset.
+					else if (s.state === "gap") handlers.onOpen(true);
 				},
 			});
 		},

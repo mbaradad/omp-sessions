@@ -28,6 +28,28 @@ function log(...parts: unknown[]): void {
 	if (process.env.SWITCHYARD_PLANNER_STDERR) process.stderr.write(line);
 }
 
+/**
+ * Test clock: the planner's `now` is real time plus the number of milliseconds in `file` (re-read at most
+ * every 100 ms; missing or unreadable = 0). Lets process tests move start times and recurring schedules
+ * into the past without waiting; the planner notices on its next periodic pass (SWITCHYARD_PLANNER_POLL_MS).
+ */
+function fileClock(file: string): () => number {
+	let offset = 0;
+	let readAt = 0;
+	return () => {
+		const real = Date.now();
+		if (real - readAt > 100) {
+			readAt = real;
+			try {
+				offset = Number(fs.readFileSync(file, "utf8").trim()) || 0;
+			} catch {
+				offset = 0;
+			}
+		}
+		return real + offset;
+	};
+}
+
 function canConnect(target: string): Promise<boolean> {
 	const { promise, resolve } = Promise.withResolvers<boolean>();
 	const sock = net.createConnection(target);
@@ -71,6 +93,9 @@ async function run(): Promise<void> {
 			log,
 			version: VERSION,
 			...(process.env.SWITCHYARD_PLANNER_RETRY_BASE_MS ? { retryBaseMs: Number(process.env.SWITCHYARD_PLANNER_RETRY_BASE_MS) } : {}),
+			...(process.env.SWITCHYARD_PLANNER_POLL_MS ? { pollMs: Number(process.env.SWITCHYARD_PLANNER_POLL_MS) } : {}),
+			...(process.env.SWITCHYARD_PLANNER_USAGE_EVERY_MS ? { usageEveryMs: Number(process.env.SWITCHYARD_PLANNER_USAGE_EVERY_MS) } : {}),
+			...(process.env.SWITCHYARD_PLANNER_CLOCK_FILE ? { now: fileClock(process.env.SWITCHYARD_PLANNER_CLOCK_FILE) } : {}),
 		});
 	} catch (err) {
 		log("cannot start:", String(err));
