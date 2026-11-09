@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
+import { laneQueue, launchFlags, metaOf, priorityOps, rerunTaskIds, splitArgs, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -42,6 +42,11 @@ test("statusOf: the five view statuses; queued/scheduled/interrupted read as idl
 	assert.equal(statusOf("needs_input"), "waiting");
 	assert.equal(statusOf("stopped"), "stopped");
 	for (const s of ["idle", "queued", "scheduled", "interrupted"] as const) assert.equal(statusOf(s), "idle");
+});
+
+test("splitArgs: whitespace separates arguments", () => {
+	assert.deepEqual(splitArgs("  --plan-yolo\t--advisor \n--profile work "), ["--plan-yolo", "--advisor", "--profile", "work"]);
+	assert.deepEqual(splitArgs(" "), []);
 });
 
 test("launchFlags: model, thinking and mode are session settings; every other flag is an extra omp argument", () => {

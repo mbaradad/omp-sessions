@@ -1956,7 +1956,7 @@
 					},
 					"default": [],
 					"scope": "machine",
-					"description": "Extra omp CLI arguments for new sessions on this machine, from any client, e.g. [\"--model\", \"opus\"]. Can't be set per workspace."
+					"description": "Extra omp CLI arguments for every omp session on this machine, from any client, e.g. [\"--profile\", \"work\"]. Mirrored to ~/.switchyard/config.json and applied by the Switchyard omp shim when AO launches omp. Can't be set per workspace."
 				},
 				"omp.sendWhileBusy": {
 					"type": "string",

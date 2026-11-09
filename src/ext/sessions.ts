@@ -4,7 +4,8 @@ import * as vscode from "vscode";
 import { AoError, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
 import type { PlanOp, PlanView } from "../planner/types";
-import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
+import { findOmp, sendToHost } from "../shared/launch";
+import { readSwitchyardConfig } from "../shared/switchyard-config";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
 import { readMode } from "../shared/session-mode";
@@ -310,8 +311,8 @@ export class SessionManager implements vscode.Disposable {
 		}
 		const flags = launchFlags(opts.ompArgs ?? []);
 		if (flags.ignored.length) this.ao.log.warn(`omp flags AO owns, ignored: ${flags.ignored.join(" ")}`);
-		// Precedence: this launch, then the defaults (launcher.json: Set Default Model / Mode).
-		const defaults = readLauncherSettings();
+		// Precedence: this launch, then the defaults (config.json: Set Default Model / Mode).
+		const defaults = readSwitchyardConfig();
 		const prompt = (opts.prompt ?? opts.goal)?.trim();
 		const model = opts.model ?? flags.model ?? defaults.model;
 		const title = opts.title?.trim().slice(0, 100);

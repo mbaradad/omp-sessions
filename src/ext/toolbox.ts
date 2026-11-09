@@ -23,7 +23,6 @@ import {
 	shellKind,
 	slugify,
 	stripAnsi,
-	withModel,
 } from "./toolbox-core";
 
 const OUTPUT_SCHEME = "omp-output";
@@ -381,7 +380,7 @@ export function registerToolbox(api: OmpApi): void {
 				label: "$(add) New Session with This Model",
 				run: async () => {
 					const cwd = await api.pickFolder();
-					if (cwd) await api.launchAndOpen({ cwd, ompArgs: withModel(vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [], selector) });
+					if (cwd) await api.launchAndOpen({ cwd, model: selector });
 				},
 			},
 			{

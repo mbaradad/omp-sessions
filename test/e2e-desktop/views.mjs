@@ -154,10 +154,11 @@ const aoEnv = {
 	AO_DATA_DIR: path.join(dirs.ao, "data"),
 	AO_RUN_FILE: path.join(dirs.ao, "running.json"),
 };
-const daemonPath = [path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
+// The Switchyard omp shim goes first, as the unit `ao-daemon` of the extension would have it (G34).
+const daemonPath = [path.join(repo, "src", "omp-shim"), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
 const ao = findAo();
 const daemonLog = fs.openSync(path.join(dirs.ao, "daemon.log"), "a");
-const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
+const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
 const baseUrl = `http://127.0.0.1:${port}`;
 
 try {

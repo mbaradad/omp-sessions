@@ -75,6 +75,11 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 	};
 }
 
+/** Splits a flags line on whitespace (the omp shim reads a session's flags the same way, so no argument can contain a space). */
+export function splitArgs(line: string): string[] {
+	return line.split(/\s+/).filter(Boolean);
+}
+
 /**
  * Splits old-style launch arguments: model, thinking level and mode are session settings (the spawn helper
  * applies them); every other flag is an extra `omp acp` argument for the session (G34, the omp shim). A

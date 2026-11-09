@@ -12,7 +12,7 @@ import { type AoClient, defaultRunFile, ensureDaemon, findDaemon, stopDaemon } f
 import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
-import { readLauncherSettings, writeLauncherSettings } from "../shared/launch";
+import { type SwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
 import { ensurePlanner, stopPlanner } from "../planner/client";
@@ -114,22 +114,23 @@ export function registerServer(api: OmpApi): ServerControl {
 
 	/**
 	 * Mirrors the user's own `omp.extraArgs`/`omp.server.installService` (never a workspace's: they apply to every
-	 * session on this machine) into launcher.json. A key the user hasn't set keeps launcher.json's value (the CLI's
+	 * session on this machine) into ~/.switchyard/config.json (`omp.extraArgs`, which the omp shim reads, and `service`). A key the user hasn't set keeps config.json's value (the CLI's
 	 * `config set` may have set it), unless `cleared` lists it (the user just removed the setting).
 	 */
 	const syncLauncher = (cleared: { extraArgs?: boolean; service?: boolean } = {}) => {
 		const cfg = vscode.workspace.getConfiguration("omp");
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
-		const next = readLauncherSettings();
-		if (extraArgs !== undefined) next.extraArgs = extraArgs;
-		else if (cleared.extraArgs) next.extraArgs = [];
+		const next: SwitchyardConfig = {};
+		if (extraArgs !== undefined) next.omp = extraArgs.length ? { extraArgs } : undefined;
+		else if (cleared.extraArgs) next.omp = undefined;
 		if (service !== undefined) next.service = service ? "on" : "off";
 		else if (cleared.service) next.service = undefined;
+		if (!Object.keys(next).length) return;
 		try {
-			writeLauncherSettings(next);
+			writeSwitchyardConfig(next);
 		} catch (err) {
-			ao.log.warn(`could not write launcher settings: ${String(err)}`);
+			ao.log.warn(`could not write ~/.switchyard/config.json: ${String(err)}`);
 		}
 	};
 	syncLauncher();

@@ -10,7 +10,8 @@ import * as vscode from "vscode";
 import type { AoClient } from "../../../src/ao/client";
 import type { OmpApi } from "../../../src/ext/api";
 import type { Node } from "../../../src/ext/tree";
-import { writeLauncherSettings } from "../../../src/shared/launch";
+import { readMode } from "../../../src/shared/session-mode";
+import { writeSwitchyardConfig } from "../../../src/shared/switchyard-config";
 import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairing";
 import type { SessionMeta } from "../../../src/shared/protocol";
 
@@ -188,26 +189,27 @@ describe("AO views", () => {
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 	});
 
-	it("Set Permission Mode: Auto restarts the idle agent with AO bypass-permissions; Plan is omp's live mode option", async () => {
-		await vscode.commands.executeCommand("omp.setPermissionMode", id, "auto");
-		const conv = await ao.getConversation(id, { limit: 1 });
-		assert.equal(conv.settings.approvalMode, "bypass-permissions");
-		await waitFor("auto mode", () => meta()?.permissionMode === "auto", 60_000);
+	it("Set Permission Mode: the gate's mode file is rewritten live, and Plan is also omp's mode option; AO stays bypass-permissions", async () => {
+		await vscode.commands.executeCommand("omp.setPermissionMode", id, "ask");
+		await waitFor("ask mode", () => meta()?.permissionMode === "ask", 60_000);
+		assert.equal(readMode(id), "ask");
+		assert.equal((await ao.getConversation(id, { limit: 1 })).settings.approvalMode, "bypass-permissions");
 		await vscode.commands.executeCommand("omp.setPermissionMode", id, "plan");
 		const { data } = await ao.api.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId: id } } });
 		const mode = (data as { options?: Array<{ id: string; currentValue?: string }> } | undefined)?.options?.find(o => o.id === "mode");
 		assert.equal(mode?.currentValue, "plan", JSON.stringify(data));
 	});
 
-	it("the default permission mode applies to new sessions (AO approvalMode at spawn)", async () => {
-		writeLauncherSettings({ mode: "edits" });
+	it("the default permission mode applies to new sessions (the gate's mode file; AO runs them as bypass-permissions)", async () => {
+		writeSwitchyardConfig({ mode: "edits" });
 		const before = new Set(api.sessions.all().map(m => m.id));
 		await vscode.commands.executeCommand("omp.newSession", REPO);
 		const other = await waitFor("second session", () => api.sessions.all().find(m => !before.has(m.id)));
 		await waitFor("second session idle", () => api.sessions.get(other.id)?.status === "idle");
-		assert.equal((await ao.getConversation(other.id, { limit: 1 })).settings.approvalMode, "accept-edits");
+		assert.equal((await ao.getConversation(other.id, { limit: 1 })).settings.approvalMode, "bypass-permissions");
+		assert.equal(readMode(other.id), "edits");
 		assert.equal(api.sessions.get(other.id)?.permissionMode, "edits");
-		writeLauncherSettings({ mode: undefined });
+		writeSwitchyardConfig({ mode: undefined });
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 		await api.sessions.remove(other.id);
 		await waitFor("second session removed", () => !api.sessions.get(other.id), 30_000);
@@ -229,6 +231,19 @@ describe("AO views", () => {
 				await api.sessions.stop(m).catch(() => undefined);
 				await api.sessions.remove(m).catch(() => undefined);
 			}
+		}
+	});
+
+	it("extra omp flags of a launch reach omp acp through the shim (restart before the first message)", async () => {
+		const flagged = await api.sessions.launch({ cwd: REPO, title: "flags", ompArgs: ["--advisor"] });
+		try {
+			await waitFor("flagged session idle", () => api.sessions.get(flagged)?.status === "idle", 120_000);
+			assert.equal(fs.readFileSync(path.join(process.env.SWITCHYARD_HOME ?? "", "sessions", flagged, "omp-args"), "utf8").trim(), "--advisor");
+			const processes = execFileSync("ps", ["-eo", "args"], { encoding: "utf8" });
+			assert.match(processes, /\bacp\b.*--advisor/);
+		} finally {
+			await api.sessions.stop(flagged).catch(() => undefined);
+			await api.sessions.remove(flagged).catch(() => undefined);
 		}
 	});
 

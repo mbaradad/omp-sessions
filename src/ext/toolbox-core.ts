@@ -137,21 +137,6 @@ export function modelDetail(m: ModelInfo): string {
 	return parts.join(" · ");
 }
 
-/** `omp.extraArgs` with any `--model`/`-m` choice replaced by `selector`. */
-export function withModel(extraArgs: readonly string[], selector: string): string[] {
-	const out: string[] = [];
-	for (let i = 0; i < extraArgs.length; i++) {
-		const a = extraArgs[i];
-		if (a === "--model" || a === "-m") {
-			i++;
-			continue;
-		}
-		if (a.startsWith("--model=")) continue;
-		out.push(a);
-	}
-	return [...out, "--model", selector];
-}
-
 // ---------- command center ----------
 
 export const GROUPS = ["Sessions", "Chat", "Tasks", "Review & git", "omp account & tools", "Help"] as const;
