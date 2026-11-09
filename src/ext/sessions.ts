@@ -7,7 +7,8 @@ import type { PlanOp, PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
-import { type FileChange, type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
+import { type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
+import { type FileChange, aoCheckpointDir, liveChanges } from "../shared/checkpoints";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
@@ -290,23 +291,9 @@ export class SessionManager implements vscode.Disposable {
 		return vscode.workspace.getConfiguration("omp").get<boolean>("notifyAllSessions", false) || this.inWorkspace(meta);
 	}
 
+	/** The session's edits still in effect, as the Switchyard omp extension recorded them. */
 	changes(id: string): FileChange[] {
-		let raw = "";
-		try {
-			raw = fs.readFileSync(path.join(sessionDir(id), "changes.jsonl"), "utf8");
-		} catch {
-			return [];
-		}
-		const out: FileChange[] = [];
-		for (const line of raw.split("\n")) {
-			if (!line) continue;
-			try {
-				out.push(JSON.parse(line) as FileChange);
-			} catch {
-				/* torn write */
-			}
-		}
-		return out;
+		return liveChanges(aoCheckpointDir(id));
 	}
 
 	/**

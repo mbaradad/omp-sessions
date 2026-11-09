@@ -1,0 +1,87 @@
+#!/bin/sh
+# switchyard-omp-shim: Switchyard's `omp`, placed first on the AO daemon's PATH (GAPS.md G34).
+# AO launches omp sessions as `omp acp` with a fixed argument list; this adds the extra omp flags
+# Switchyard keeps per machine, project and session, then runs the real omp. It acts only for
+# `omp acp` with AO_SESSION_ID set (an AO session) and for everything else is a plain pass-through.
+# Any problem (no JSON runtime, unreadable or malformed settings) means no extra flags, never a
+# failed launch.
+#
+# Extra flags, appended in this order (omp keeps the last of a repeated flag):
+#   1. machine:  $SWITCHYARD_HOME/config.json   {"omp": {"extraArgs": ["--profile", "work"]}}
+#   2. project:  $SWITCHYARD_OMP_ARGS           words, or a JSON array of strings (the project's env in AO)
+#   3. session:  $SWITCHYARD_HOME/sessions/$AO_SESSION_ID/omp-args   words, or a JSON array of strings
+# $SWITCHYARD_HOME defaults to ~/.switchyard. Needs `node` or `bun` to read JSON; without one only
+# plain-word values of 2 and 3 apply. SWITCHYARD_REAL_OMP names the real omp (default: the first
+# `omp` on PATH that is not a copy of this shim).
+
+set -f # no globbing of PATH entries or flag words
+self_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)
+
+find_real() {
+	old_ifs=$IFS
+	IFS=:
+	for dir in $PATH; do
+		[ -n "$dir" ] || continue
+		resolved=$(cd "$dir" 2>/dev/null && pwd -P) || continue
+		[ "$resolved" = "$self_dir" ] && continue
+		if [ -f "$dir/omp" ] && [ -x "$dir/omp" ]; then
+			# Another copy of this shim (listed twice on PATH) is not the real omp.
+			dd if="$dir/omp" bs=400 count=1 2>/dev/null | grep -aq switchyard-omp-shim && continue
+			printf '%s\n' "$dir/omp"
+			IFS=$old_ifs
+			return 0
+		fi
+	done
+	IFS=$old_ifs
+	return 1
+}
+
+real=${SWITCHYARD_REAL_OMP:-$(find_real)}
+if [ -z "$real" ]; then
+	echo "switchyard omp shim: no other omp on PATH" >&2
+	exit 127
+fi
+
+if [ "$1" = acp ] && [ -n "$AO_SESSION_ID" ]; then
+	runtime=$(command -v node || command -v bun || true)
+	extra=
+	if [ -n "$runtime" ]; then
+		js=$(cat <<'JS'
+const fs = require("fs"), path = require("path");
+const home = process.env.SWITCHYARD_HOME || path.join(process.env.HOME || "", ".switchyard");
+const strings = v => (Array.isArray(v) && v.every(x => typeof x === "string") ? v : undefined);
+const words = text => {
+	const t = text.trim();
+	if (!t) return [];
+	if (t[0] === "[") {
+		const a = strings(JSON.parse(t));
+		if (!a) throw new Error("not an array of strings");
+		return a;
+	}
+	return t.split(/\s+/);
+};
+const attempt = f => { try { return f(); } catch { return []; } };
+const out = [];
+out.push(...attempt(() => strings(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"))?.omp?.extraArgs) ?? []));
+out.push(...attempt(() => words(process.env.SWITCHYARD_OMP_ARGS || "")));
+const id = process.env.AO_SESSION_ID || "";
+if (/^[A-Za-z0-9._-]+$/.test(id) && id !== "." && id !== "..") out.push(...attempt(() => words(fs.readFileSync(path.join(home, "sessions", id, "omp-args"), "utf8"))));
+process.stdout.write(out.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(" "));
+JS
+)
+		extra=$("$runtime" -e "$js" 2>/dev/null) || extra=
+	else
+		home=${SWITCHYARD_HOME:-$HOME/.switchyard}
+		file="$home/sessions/$AO_SESSION_ID/omp-args"
+		words=$SWITCHYARD_OMP_ARGS
+		[ -f "$file" ] && words="$words $(cat "$file" 2>/dev/null)"
+		case $words in *'['*) words= ;; esac
+		for w in $words; do extra="$extra '$w'"; done
+	fi
+	# Only a value that parses as shell words is used; anything else is dropped.
+	if [ -n "$extra" ] && (eval "set -- $extra") >/dev/null 2>&1; then
+		eval "set -- \"\$@\" $extra"
+	fi
+fi
+
+exec "$real" "$@"

@@ -3,22 +3,30 @@
 // touches the dev daemon (port 3001, ~/.ao) or the real ~/.omp. See RUNTIME.md ("Second isolated
 // instance") in the migration notes.
 //
-//   import { startAoFixture, aoAvailable } from "../ao-fixture.mjs";
-//   const ao = await startAoFixture();            // throws if `ao` is missing; check aoAvailable() to skip
+//   import { skipWithoutAo, startAoFixture } from "../ao-fixture.mjs";
+//   test("...", { skip: skipWithoutAo }, ...)      // skips when no `ao` binary is installed
+//   const ao = await startAoFixture();            // throws if `ao` is missing
 //   await fetch(`${ao.baseUrl}/api/v1/sessions`);  // loopback API: no auth (credentials.headers is {})
 //   const projectId = await ao.createProject(ao.scratchRepo());
 //   ...
 //   await ao.stop();                              // daemon, its detached chat hosts and the temp dir
 //
-// Options: { aoBin, realOmp, env, fakeOmpEnv, readyTimeoutMs, keep }
-//   aoBin        ao executable (default $OMP_TEST_AO_BIN, else `ao` on PATH)
-//   realOmp      run the real omp from PATH with the real HOME instead of the fake (smoke tests)
+// ISOLATION (CONTRACT.md "Isolated HOME"), always, no switch: the daemon, its chat hosts and omp run with
+// HOME, XDG_*, SWITCHYARD_HOME and OMP_VSCODE_HOME under the fixture root, and the fixture refuses to start
+// if an override (opts.env) points any of them elsewhere. `ao.stackEnv` carries the same variables, so a
+// CLI, planner or Hermes process started with it stays isolated too. Never run `install CLI/skill/service`
+// outside such an env.
+// Options: { aoBin, realOmp, env, fakeOmpEnv, pathPrepend, readyTimeoutMs, keep }
+//   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
+//   realOmp      run the real omp (from PATH) instead of the fake, for smoke tests. Still isolated: HOME is
+//                the fixture's, with home/.omp/agent linked to the real agent dir (the login lives there)
 //   env          extra daemon env (e.g. AO_* overrides)
 //   fakeOmpEnv   extra env for the fake (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...)
-//   keep         leave the temp dir after stop (default $OMP_TEST_KEEP_AO=1), for post-mortems
+//   pathPrepend  dirs put first on the daemon's PATH (in front of the fake `omp`): an `omp` shim goes here
+//   keep         leave the temp dir after stop (default $SWITCHYARD_TEST_KEEP_AO=1), for post-mortems
 //
-// Env read here: OMP_TEST_AO_BIN, OMP_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs sets it),
-// OMP_TEST_KEEP_AO=1.
+// Env read here: SWITCHYARD_TEST_AO_BIN, SWITCHYARD_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs
+// sets it), SWITCHYARD_TEST_KEEP_AO=1.
 
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -30,7 +38,7 @@ import { fileURLToPath } from "node:url";
 
 /** The ao executable the fixture runs, or undefined when there is none. */
 export function aoBinary() {
-	if (process.env.OMP_TEST_AO_BIN) return process.env.OMP_TEST_AO_BIN;
+	if (process.env.SWITCHYARD_TEST_AO_BIN) return process.env.SWITCHYARD_TEST_AO_BIN;
 	const names = process.platform === "win32" ? ["ao.exe", "ao.cmd", "ao"] : ["ao"];
 	for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
 		for (const n of names) {
@@ -49,16 +57,59 @@ export function aoAvailable() {
 	return aoBinary() !== undefined;
 }
 
+/** node:test `skip` value for tests that need the daemon: false, or why they skip. */
+export const skipWithoutAo = aoAvailable() ? false : "ao not installed (set SWITCHYARD_TEST_AO_BIN)";
+
 /** test/fake-omp-acp.mjs: from the env test/run.mjs sets, beside this module (when not bundled), or from the cwd upwards. */
 export function fakeOmpAcpPath() {
-	if (process.env.OMP_TEST_FAKE_OMP_ACP) return process.env.OMP_TEST_FAKE_OMP_ACP;
+	if (process.env.SWITCHYARD_TEST_FAKE_OMP_ACP) return process.env.SWITCHYARD_TEST_FAKE_OMP_ACP;
 	const beside = new URL("./fake-omp-acp.mjs", import.meta.url);
 	if (beside.protocol === "file:" && fs.existsSync(beside)) return fileURLToPath(beside);
 	for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
 		const p = path.join(dir, "test", "fake-omp-acp.mjs");
 		if (fs.existsSync(p)) return p;
-		if (path.dirname(dir) === dir) throw new Error("test/fake-omp-acp.mjs not found: set OMP_TEST_FAKE_OMP_ACP");
+		if (path.dirname(dir) === dir) throw new Error("test/fake-omp-acp.mjs not found: set SWITCHYARD_TEST_FAKE_OMP_ACP");
 	}
+}
+
+/**
+ * Removes a temp tree. A process that was just stopped (or a child of AO's cleanup) can still write into it
+ * for a moment ("ENOTEMPTY"), so it retries; a tree that stays busy is left in /tmp, never failing a test.
+ */
+export async function removeTree(dir) {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (err) {
+			if (attempt >= 20) {
+				console.warn(`ao-fixture: could not remove ${dir}: ${err.message}`);
+				return;
+			}
+			await sleep(100);
+		}
+	}
+}
+
+/** The user's real home (from the password database: HOME may already be an isolated one). */
+function realHome() {
+	return fs.realpathSync(os.userInfo().homedir);
+}
+
+/**
+ * Refuses to start a daemon that could touch the user's real state: HOME, the XDG dirs and the
+ * Switchyard state dirs must all lie under the fixture root (opts.env could have overridden them).
+ */
+function assertIsolated(env, root, real) {
+	const inside = p => {
+		const rel = path.relative(fs.realpathSync(root), path.resolve(p));
+		return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+	};
+	for (const key of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
+		const value = env[key];
+		if (!value || !inside(fs.existsSync(value) ? fs.realpathSync(value) : value)) throw new Error(`ao-fixture: ${key}=${value} is not under the fixture root ${root}: tests never run against the real HOME (${real})`);
+	}
+	if (path.resolve(env.HOME) === real) throw new Error(`ao-fixture: HOME is the real home ${real}`);
 }
 
 function freePort() {
@@ -76,12 +127,30 @@ function freePort() {
 /** Detached chat hosts (`ao chat-host <session> <dataDir> ...`, own process group) of one daemon, or of one of its sessions. */
 function chatHostPids(dataDir, sessionId) {
 	if (process.platform === "win32") return [];
-	const r = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" });
-	const marker = sessionId ? ` chat-host ${sessionId} ${dataDir} ` : ` ${dataDir} `;
+	const matches = argv => {
+		const i = argv.indexOf("chat-host");
+		return i >= 0 && argv[i + 2] === dataDir && (!sessionId || argv[i + 1] === sessionId);
+	};
 	const pids = [];
+	if (fs.existsSync("/proc/self/cmdline")) {
+		// /proc, not `ps`: chat host command lines carry whole system prompts, and a few dozen of them
+		// overflow spawnSync's output buffer (ENOBUFS → a truncated list → hosts left behind).
+		for (const entry of fs.readdirSync("/proc")) {
+			if (!/^\d+$/.test(entry)) continue;
+			let argv;
+			try {
+				argv = fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");
+			} catch {
+				continue;
+			}
+			if (matches(argv)) pids.push(Number(entry));
+		}
+		return pids;
+	}
+	const r = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 	for (const line of (r.stdout ?? "").split("\n")) {
 		const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-		if (m && / chat-host /.test(m[2]) && m[2].includes(marker)) pids.push(Number(m[1]));
+		if (m && matches(m[2].split(" "))) pids.push(Number(m[1]));
 	}
 	return pids;
 }
@@ -126,7 +195,7 @@ function gitIn(cwd, ...args) {
  */
 export async function startAoFixture(opts = {}) {
 	const aoBin = opts.aoBin ?? aoBinary();
-	if (!aoBin) throw new Error("ao not found: install it (see RUNTIME.md) or set OMP_TEST_AO_BIN");
+	if (!aoBin) throw new Error("ao not found: install it (see RUNTIME.md) or set SWITCHYARD_TEST_AO_BIN");
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "ao-fixture-"));
 	const dataDir = path.join(root, "data");
 	const runFile = path.join(root, "running.json");
@@ -134,29 +203,50 @@ export async function startAoFixture(opts = {}) {
 	const home = path.join(root, "home");
 	const agentDir = path.join(root, "omp-agent");
 	const fakeOmpLog = path.join(root, "fake-omp.log");
+	const usageFile = path.join(root, "omp-usage.json");
+	const rulesFile = path.join(root, "omp-rules.json");
 	const binDir = path.join(root, "bin");
 	for (const d of [dataDir, home, agentDir, binDir]) fs.mkdirSync(d, { recursive: true });
 
 	// The daemon inherits nothing AO-specific from a test run that itself happens to be an AO session.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_")));
-	if (!opts.realOmp) {
+	// CONTRACT.md "Isolated HOME": every run, fake or real omp, gets its own HOME, XDG dirs and Switchyard
+	// state dirs under the fixture root. There is no switch for the real HOME.
+	const isolation = {
+		HOME: home,
+		USERPROFILE: home,
+		XDG_CONFIG_HOME: path.join(home, ".config"),
+		XDG_DATA_HOME: path.join(home, ".local", "share"),
+		XDG_STATE_HOME: path.join(home, ".local", "state"),
+		XDG_CACHE_HOME: path.join(home, ".cache"),
+		SWITCHYARD_HOME: path.join(root, "switchyard"),
+		OMP_VSCODE_HOME: path.join(root, "omp-vscode"),
+	};
+	for (const d of [isolation.XDG_CONFIG_HOME, isolation.XDG_DATA_HOME, isolation.XDG_STATE_HOME, isolation.XDG_CACHE_HOME, isolation.SWITCHYARD_HOME, isolation.OMP_VSCODE_HOME]) fs.mkdirSync(d, { recursive: true });
+	fs.writeFileSync(path.join(home, ".gitconfig"), "[user]\n\tname = ao-fixture\n\temail = ao-fixture@localhost\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
+	Object.assign(env, isolation);
+	if (opts.realOmp) {
+		// Real omp needs the real login, which lives in ~/.omp/agent/agent.db (SQLite): share the whole
+		// agent dir through a link. Nothing of ours may install into it during the migration.
+		if (!env.PI_CODING_AGENT_DIR) {
+			fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
+			fs.symlinkSync(path.join(realHome(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
+		}
+	} else {
 		const fake = fakeOmpAcpPath();
 		if (process.platform === "win32") fs.writeFileSync(path.join(binDir, "omp.cmd"), `@"${process.execPath}" "${fake}" %*\r\n`);
 		else fs.writeFileSync(path.join(binDir, "omp"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
-		fs.writeFileSync(path.join(home, ".gitconfig"), "[user]\n\tname = ao-fixture\n\temail = ao-fixture@localhost\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
 		Object.assign(env, {
 			PATH: [binDir, ...(env.PATH ?? "").split(path.delimiter)].join(path.delimiter),
-			HOME: home,
-			USERPROFILE: home,
-			XDG_CONFIG_HOME: path.join(home, ".config"),
-			XDG_DATA_HOME: path.join(home, ".local", "share"),
-			XDG_STATE_HOME: path.join(home, ".local", "state"),
-			XDG_CACHE_HOME: path.join(home, ".cache"),
 			PI_CODING_AGENT_DIR: agentDir,
 			FAKE_OMP_LOG: fakeOmpLog,
+			FAKE_OMP_USAGE: usageFile,
+			FAKE_OMP_RULES: rulesFile,
 			...opts.fakeOmpEnv,
 		});
 	}
+	// Dirs first on the daemon's PATH, before the fake: how an `omp` shim (G34) is put in front of the omp it wraps.
+	if (opts.pathPrepend?.length) env.PATH = [...opts.pathPrepend, env.PATH ?? ""].join(path.delimiter);
 	Object.assign(env, {
 		AO_DATA_DIR: dataDir,
 		AO_RUN_FILE: runFile,
@@ -171,29 +261,58 @@ export async function startAoFixture(opts = {}) {
 		AO_CLOUD_OFFERING: "off",
 		...opts.env,
 	});
+	try {
+		assertIsolated(env, root, realHome());
+	} catch (err) {
+		await removeTree(root);
+		throw err;
+	}
 
-	const keep = opts.keep ?? process.env.OMP_TEST_KEEP_AO === "1";
+	const keep = opts.keep ?? process.env.SWITCHYARD_TEST_KEEP_AO === "1";
 	const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
+	/** Spawns `ao daemon` on `port`: the child once /readyz answers, else the reason and log tail. */
+	async function launch(port) {
+		const log = fs.openSync(logFile, "a");
+		const proc = spawn(aoBin, ["daemon"], { cwd: root, env: { ...env, AO_PORT: String(port) }, stdio: ["ignore", log, log] });
+		fs.closeSync(log);
+		const exited = new Promise(r => proc.once("exit", (code, signal) => r({ code, signal })));
+		proc.once("error", () => {});
+		const ready = await waitReady(`http://127.0.0.1:${port}`, exited, readyTimeoutMs, { pid: proc.pid, dataDir });
+		if (ready === true) return { proc };
+		killGroup(proc.pid, "SIGKILL");
+		return { failed: ready, tail: fs.readFileSync(logFile, "utf8").split("\n").slice(-40).join("\n") };
+	}
+	/** SIGTERM (SIGKILL after 10 s); detached chat hosts keep running, as with a real daemon stop. */
+	async function stopDaemon(proc) {
+		if (proc.exitCode !== null || proc.signalCode !== null) return;
+		const exited = new Promise(r => proc.once("exit", r));
+		proc.kill("SIGTERM");
+		if ((await Promise.race([exited.then(() => true), sleep(10_000).then(() => false)])) === false) {
+			proc.kill("SIGKILL");
+			await exited;
+		}
+	}
 	let child;
 	let port;
-	let baseUrl;
 	// A port free a moment ago can be taken before the daemon binds it: retry with another.
 	for (let attempt = 1; ; attempt++) {
 		port = opts.env?.AO_PORT ? Number(opts.env.AO_PORT) : await freePort();
-		baseUrl = `http://127.0.0.1:${port}`;
-		const log = fs.openSync(logFile, "a");
-		child = spawn(aoBin, ["daemon"], { cwd: root, env: { ...env, AO_PORT: String(port) }, stdio: ["ignore", log, log] });
-		fs.closeSync(log);
-		const exited = new Promise(r => child.once("exit", (code, signal) => r({ code, signal })));
-		child.once("error", () => {});
-		const ready = await waitReady(baseUrl, exited, readyTimeoutMs);
-		if (ready === true) break;
-		killGroup(child.pid, "SIGKILL");
-		const tail = fs.readFileSync(logFile, "utf8").split("\n").slice(-40).join("\n");
-		if (ready === "exited" && attempt < 3 && /address already in use|bind/i.test(tail)) continue;
-		if (!keep) fs.rmSync(root, { recursive: true, force: true });
-		throw new Error(`ao daemon ${ready === "exited" ? "exited" : "not ready"} (${aoBin}, port ${port}); log tail:\n${tail}`);
+		const r = await launch(port);
+		if (r.proc) {
+			child = r.proc;
+			break;
+		}
+		if (r.failed === "exited" && attempt < 3 && /address already in use|bind/i.test(r.tail)) continue;
+		if (!keep) await removeTree(root);
+		throw new Error(`ao daemon ${r.failed === "exited" ? "exited" : "not ready"} (${aoBin}, port ${port}); log tail:\n${r.tail}`);
 	}
+	const baseUrl = `http://127.0.0.1:${port}`;
+	const clientEnv = { AO_PORT: String(port), AO_DATA_DIR: dataDir, AO_RUN_FILE: runFile };
+	/** What a process needs to run the same omp AO runs: the isolated HOME/XDG/state dirs, and the fake with its store, log and usage file. */
+	const ompEnv = {
+		...isolation,
+		...(opts.realOmp ? (opts.pathPrepend?.length ? { PATH: env.PATH } : {}) : Object.fromEntries(["PATH", "PI_CODING_AGENT_DIR", "FAKE_OMP_LOG", "FAKE_OMP_USAGE", "FAKE_OMP_RULES", ...Object.keys(opts.fakeOmpEnv ?? {})].map(k => [k, env[k]]))),
+	};
 
 	const fx = {
 		baseUrl,
@@ -201,15 +320,40 @@ export async function startAoFixture(opts = {}) {
 		/** The loopback API has no auth; native clients must not send an Origin header. */
 		credentials: { token: null, headers: {} },
 		/** Env that makes `ao` and AO clients find this daemon instead of the dev one. */
-		clientEnv: { AO_PORT: String(port), AO_DATA_DIR: dataDir, AO_RUN_FILE: runFile },
+		clientEnv,
+		/** The omp AO runs: the fake's wrapper in the fixture's bin dir (or `omp` from PATH with realOmp). */
+		ompBin: opts.realOmp ? "omp" : path.join(binDir, process.platform === "win32" ? "omp.cmd" : "omp"),
+		ompEnv,
+		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack (isolated HOME included). */
+		stackEnv: { ...ompEnv, ...clientEnv },
 		root,
 		dataDir,
 		runFile,
 		logFile,
-		home: opts.realOmp ? os.homedir() : home,
+		home,
 		agentDir: opts.realOmp ? undefined : agentDir,
 		fakeOmpLog: opts.realOmp ? undefined : fakeOmpLog,
-		pid: child.pid,
+		usageFile: opts.realOmp ? undefined : usageFile,
+		get pid() {
+			return child.pid;
+		},
+		/** What the fake's `omp usage --json` reports from now on: [{provider, id, label?, usedPercent, resetsAt?}]. */
+		setUsage(windows) {
+			if (opts.realOmp) throw new Error("setUsage needs the fake omp");
+			const tmp = `${usageFile}.${process.pid}.tmp`;
+			fs.writeFileSync(tmp, JSON.stringify(windows));
+			fs.renameSync(tmp, usageFile);
+		},
+		/**
+		 * Scripts for prompts the test doesn't write (a planner's follow-ups, resolve tasks): the first rule
+		 * whose `match` regex matches a prompt runs its `script` instead, `$1`… = the groups.
+		 */
+		setFakeRules(rules) {
+			if (opts.realOmp) throw new Error("setFakeRules needs the fake omp");
+			const tmp = `${rulesFile}.${process.pid}.tmp`;
+			fs.writeFileSync(tmp, JSON.stringify(rules));
+			fs.renameSync(tmp, rulesFile);
+		},
 		/** JSON request against the daemon; throws on non-2xx with the response body. */
 		async api(method, urlPath, body) {
 			const res = await fetch(`${baseUrl}${urlPath}`, {
@@ -237,14 +381,21 @@ export async function startAoFixture(opts = {}) {
 			await fx.api("PUT", `/api/v1/projects/${encodeURIComponent(project.id)}/config`, { config: { defaultBranch: "main", worker: { agent: "omp" } } });
 			return project.id;
 		},
-		/** Every frame the fake omp processes exchanged with AO so far ({mono,pid,dir:"in"|"out"|"argv",msg}). */
-		fakeOmpFrames() {
+		/**
+		 * Every frame the fake omp processes exchanged so far ({mono,pid,dir:"in"|"out"|"argv",msg}).
+		 * Leaves out AO's own background chats (title generation, run in `<data>/background-tasks/`)
+		 * unless `includeBackground`.
+		 */
+		fakeOmpFrames({ includeBackground = false } = {}) {
 			if (!fx.fakeOmpLog || !fs.existsSync(fx.fakeOmpLog)) return [];
-			return fs
+			const frames = fs
 				.readFileSync(fx.fakeOmpLog, "utf8")
 				.split("\n")
 				.filter(Boolean)
 				.map(l => JSON.parse(l));
+			if (includeBackground) return frames;
+			const background = new Set(frames.filter(f => f.msg?.method === "session/new" && /[/\\]background-tasks[/\\]/.test(f.msg.params?.cwd ?? "")).map(f => f.pid));
+			return frames.filter(f => !background.has(f.pid));
 		},
 		daemonLog() {
 			return fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
@@ -259,24 +410,38 @@ export async function startAoFixture(opts = {}) {
 			killGroup(child.pid, "SIGKILL");
 			for (const pid of chatHostPids(dataDir)) killGroup(pid, "SIGKILL");
 		},
+		/**
+		 * Restarts the daemon on the same port and data dir, like `systemctl restart`: chat hosts (and
+		 * running turns) survive and are reattached. `{ kill: true }` SIGKILLs it instead of a clean stop.
+		 */
+		async restart({ kill = false } = {}) {
+			if (kill) {
+				const exited = new Promise(r => child.once("exit", r));
+				child.kill("SIGKILL");
+				if (child.exitCode === null && child.signalCode === null) await exited;
+			} else await stopDaemon(child);
+			// The old daemon may hold the port a moment after it exits.
+			for (let attempt = 1; ; attempt++) {
+				const r = await launch(port);
+				if (r.proc) {
+					child = r.proc;
+					return;
+				}
+				if (r.failed !== "exited" || attempt >= 20) throw new Error(`ao daemon restart failed (port ${port}); log tail:\n${r.tail}`);
+				await sleep(250);
+			}
+		},
 		/** Stops the daemon (SIGTERM, then SIGKILL after 10 s), its chat hosts and their omp, and removes the temp dir. */
 		async stop() {
 			if (!live.delete(fx)) return;
-			if (child.exitCode === null && child.signalCode === null) {
-				const exited = new Promise(r => child.once("exit", r));
-				child.kill("SIGTERM");
-				if ((await Promise.race([exited.then(() => true), sleep(10_000).then(() => false)])) === false) {
-					child.kill("SIGKILL");
-					await exited;
-				}
-			}
+			await stopDaemon(child);
 			// Chat hosts are setsid'd: their process group holds the omp they run.
 			const hosts = chatHostPids(dataDir);
 			for (const pid of hosts) killGroup(pid, "SIGTERM");
 			const deadline = Date.now() + 5000;
 			while (hosts.some(alive) && Date.now() < deadline) await sleep(50);
 			for (const pid of hosts) killGroup(pid, "SIGKILL");
-			if (!keep) fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+			if (!keep) await removeTree(root);
 		},
 	};
 	live.add(fx);
@@ -284,8 +449,12 @@ export async function startAoFixture(opts = {}) {
 	return fx;
 }
 
-/** true when /readyz answers ready, "exited" when the daemon died, "timeout" otherwise. */
-async function waitReady(baseUrl, exited, timeoutMs) {
+/**
+ * true when /readyz answers ready *from the daemon we spawned* (its pid and `workingDirectory` = our data
+ * dir; another daemon on a busy port would also answer ready, and a test would silently run against it),
+ * "exited" when ours died, "timeout" otherwise.
+ */
+async function waitReady(baseUrl, exited, timeoutMs, expect) {
 	let dead = false;
 	exited.then(() => (dead = true));
 	const deadline = Date.now() + timeoutMs;
@@ -293,12 +462,17 @@ async function waitReady(baseUrl, exited, timeoutMs) {
 		if (dead) return "exited";
 		try {
 			const res = await fetch(`${baseUrl}/readyz`, { signal: AbortSignal.timeout(1000) });
-			if (res.ok && (await res.json()).status === "ready") return true;
+			if (res.ok) {
+				const body = await res.json();
+				if (body.status === "ready" && body.pid === expect.pid && sameDir(body.workingDirectory, expect.dataDir)) return true;
+			}
 		} catch {}
 		await sleep(100);
 	}
 	return dead ? "exited" : "timeout";
 }
+
+const sameDir = (a, b) => typeof a === "string" && path.resolve(a) === path.resolve(b);
 
 /**
  * node:test helper: one fixture for the calling test file (or describe block), started in

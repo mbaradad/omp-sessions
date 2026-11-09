@@ -1,7 +1,7 @@
 // Test runner: bundles the session host and the TypeScript tests with esbuild into .test-out/,
 // then runs them with `node --test`. Usage: node test/run.mjs [unit|host|integration|ao]...
 // No suite named: unit and host. `integration` runs test/integration/ against an isolated AO daemon
-// started per test file by test/ao-fixture.mjs (skips when `ao` is missing; OMP_TEST_AO_BIN picks one).
+// started per test file by test/ao-fixture.mjs (skips when `ao` is missing; SWITCHYARD_TEST_AO_BIN picks one).
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -39,6 +39,11 @@ if (selected.includes("host")) {
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/server/main.ts")], outfile: serverJs, format: "cjs" });
 	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/cli/main.ts")], outfile: cliJs, format: "cjs" });
 }
+// The planner process test/planner-fixture.mjs starts (any suite may; the integration suite does).
+const plannerJs = path.join(outDir, "planner.js");
+if (selected.includes("integration") && fs.existsSync(path.join(root, "src/planner/main.ts"))) {
+	await esbuild.build({ ...common, entryPoints: [path.join(root, "src/planner/main.ts")], outfile: plannerJs, format: "cjs", define: { PLANNER_VERSION: '"test"' } });
+}
 
 // Windows can't start a script by its shebang: there omp is an npm `.cmd` shim, and so is the fake.
 let fakeOmp = path.join(root, "test", "fake-omp.mjs");
@@ -60,7 +65,9 @@ const res = spawnSync(process.execPath, ["--enable-source-maps", "--test", "--te
 		OMP_TEST_CLI_JS: cliJs,
 		OMP_TEST_FAKE_OMP: fakeOmp,
 		// test/ao-fixture.mjs puts this first on the AO daemon's PATH as `omp` (any suite may start the fixture).
-		OMP_TEST_FAKE_OMP_ACP: path.join(root, "test", "fake-omp-acp.mjs"),
+		SWITCHYARD_TEST_FAKE_OMP_ACP: path.join(root, "test", "fake-omp-acp.mjs"),
+		// Prebuilt for test/planner-fixture.mjs (it builds its own when this file is absent).
+		...(fs.existsSync(plannerJs) ? { SWITCHYARD_TEST_PLANNER_JS: plannerJs } : {}),
 	},
 });
 process.exit(res.status ?? 1);

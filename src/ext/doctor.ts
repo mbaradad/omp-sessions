@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, findDaemon } from "../ao/client";
 import { PlannerClient } from "../planner/client";
+import { aoCheckpointDir } from "../shared/checkpoints";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { hostAlive as hostIsAlive } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
@@ -114,7 +115,7 @@ async function gatherSnapshots(): Promise<SessionFacts[]> {
 		ids.map(async (id): Promise<SessionFacts | undefined> => {
 			const meta = readMetaFile(id);
 			if (!meta) return undefined;
-			return { meta, hostAlive: meta.status !== "stopped" && hostIsAlive(meta), blobBytes: await dirBytes(path.join(sessionDir(id), "blobs")) };
+			return { meta, hostAlive: meta.status !== "stopped" && hostIsAlive(meta), blobBytes: await dirBytes(path.join(aoCheckpointDir(id), "blobs")) };
 		}),
 	);
 	return facts.filter((f): f is SessionFacts => !!f);
@@ -397,7 +398,7 @@ export function registerDoctor(api: OmpApi): void {
 			const now = readMetaFile(s.meta.id);
 			if (!now || (now.status !== "stopped" && hostIsAlive(now))) continue;
 			try {
-				fs.rmSync(path.join(sessionDir(s.meta.id), "blobs"), { recursive: true, force: true });
+				fs.rmSync(path.join(aoCheckpointDir(s.meta.id), "blobs"), { recursive: true, force: true });
 				freed += s.blobBytes;
 			} catch {
 				/* in use or permissions: leave it */

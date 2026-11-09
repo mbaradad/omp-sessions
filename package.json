@@ -254,6 +254,18 @@
 				"icon": "$(diff-multiple)"
 			},
 			{
+				"command": "switchyard.undo",
+				"title": "Undo Last Prompt (Conversation and Files)",
+				"category": "Switchyard",
+				"icon": "$(discard)"
+			},
+			{
+				"command": "switchyard.redo",
+				"title": "Redo (Conversation and Files)",
+				"category": "Switchyard",
+				"icon": "$(redo)"
+			},
+			{
 				"command": "omp.openSession",
 				"title": "Open Session…",
 				"category": "omp",
@@ -1415,6 +1427,16 @@
 					"command": "omp.reviewChanges",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@0"
+				},
+				{
+					"command": "switchyard.undo",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@1"
+				},
+				{
+					"command": "switchyard.redo",
+					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"group": "1_session@2"
 				},
 				{
 					"command": "omp.setPermissionMode",
