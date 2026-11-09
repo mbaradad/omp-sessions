@@ -22,6 +22,7 @@ import { attach } from "./attach";
 import { ensureBundles, extensionReport, installBundles, shippedBundles, uninstallBundles } from "./extension";
 import { modeProblem } from "./gate";
 import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
+import { MIGRATE_HELP, cmdMigrate } from "./migrate";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
@@ -1783,6 +1784,9 @@ ${c.bold("Omp extension")}  ${c.dim("(permission modes, /undo and the todo mirro
   omp-extension install|uninstall copy them into omp's agent folder and ~/.switchyard/bin (new and status do it
                                   by themselves unless: config set omp-extension off)
 
+${c.bold("Migration")}  ${c.dim("(from omp Sessions to Switchyard on AO)")}
+${MIGRATE_HELP}
+
   --no-color, NO_COLOR=1          plain output
   --                              everything after it is text, not flags (e.g. answer . -- --yes)
 `;
@@ -1860,6 +1864,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	skill: { flags: ["dir", "force"], run: cmdSkill },
 	hermes: { flags: ["force", "profile", "all-profiles", "json"], run: cmdHermes },
 	"omp-extension": { flags: ["json"], run: cmdOmpExtension },
+	migrate: { flags: ["apply", "json"], run: cmdMigrate },
 };
 
 async function main(argv: string[]): Promise<number> {
