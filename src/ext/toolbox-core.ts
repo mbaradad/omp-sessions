@@ -137,28 +137,12 @@ export function modelDetail(m: ModelInfo): string {
 	return parts.join(" · ");
 }
 
-/** `omp.extraArgs` with any `--model`/`-m` choice replaced by `selector`. */
-export function withModel(extraArgs: readonly string[], selector: string): string[] {
-	const out: string[] = [];
-	for (let i = 0; i < extraArgs.length; i++) {
-		const a = extraArgs[i];
-		if (a === "--model" || a === "-m") {
-			i++;
-			continue;
-		}
-		if (a.startsWith("--model=")) continue;
-		out.push(a);
-	}
-	return [...out, "--model", selector];
-}
-
 // ---------- command center ----------
 
 export const GROUPS = ["Sessions", "Chat", "Tasks", "Review & git", "omp account & tools", "Help"] as const;
 export type CommandGroup = (typeof GROUPS)[number];
 
 const EXPLICIT: Record<string, CommandGroup> = {
-	"omp.showLog": "Sessions",
 	"omp.refresh": "Sessions",
 	"omp.toggleGrouping": "Sessions",
 	"omp.exportHtml": "Sessions",
@@ -167,7 +151,6 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.setPermissionMode": "Sessions",
 	"omp.importClaude": "Sessions",
 	"omp.importCodex": "Sessions",
-	"omp.resumeFromHistory": "Sessions",
 	"omp.remote.connectPhone": "Sessions",
 	"omp.remote.disable": "Sessions",
 	"omp.remote.rotateToken": "Sessions",
@@ -182,6 +165,7 @@ const EXPLICIT: Record<string, CommandGroup> = {
 	"omp.cleanse": "Review & git",
 	"omp.gitUi": "Review & git",
 	"omp.commitInTerminal": "Review & git",
+	"switchyard.setDependencies": "Sessions",
 	"omp.openConfig": "Help",
 	"omp.openDocs": "Help",
 	"omp.keyboardShortcuts": "Help",

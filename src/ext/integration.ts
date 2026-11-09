@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { diffTexts } from "../shared/diff";
 import type { SessionMeta } from "../shared/protocol";
 import { EMPTY_BLOB, aoCheckpointDir, blobFile } from "../shared/checkpoints";
+import { inCheckout } from "./checkout";
 import type { SnapshotProvider } from "./diff";
 import type { ChatPanel } from "./panel";
 import { plain } from "./plain";
@@ -132,11 +133,10 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		}
 		const panel = await panelFor(doc.uri);
 		if (!panel) return;
-		const cwd = panel.meta?.cwd;
 		const span = diagnostics.reduce((acc, d) => acc.union(d.range), diagnostics[0].range);
-		const where = `${sessionPath(doc.uri.fsPath, cwd)}:${span.start.line + 1}`;
-		const text = `Fix ${diagnostics.length === 1 ? "this problem" : "these problems"} in ${where}:\n${diagnostics.map(describeDiagnostic).join("\n")}\n\n${snippet(doc, span, cwd)}`;
-		await panel.sendPrompt(text);
+		const where = `${doc.uri.fsPath}:${span.start.line + 1}`;
+		const text = `Fix ${diagnostics.length === 1 ? "this problem" : "these problems"} in ${where}:\n${diagnostics.map(describeDiagnostic).join("\n")}\n\n${snippet(doc, span, undefined)}`;
+		await panel.sendPrompt(inCheckout(text, doc.uri.fsPath));
 	});
 
 	reg("omp.explainSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
@@ -144,7 +144,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		if (!target || target.range.isEmpty) return;
 		const panel = await panelFor(target.doc.uri);
 		if (!panel) return;
-		await panel.sendPrompt(`Explain this code:\n${selectionRef(target.doc, target.range, panel.meta?.cwd)}`);
+		await panel.sendPrompt(inCheckout(`Explain this code:\n${selectionRef(target.doc, target.range, undefined)}`, target.doc.uri.fsPath));
 	});
 
 	reg("omp.askAboutSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
@@ -153,7 +153,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		const panel = await panelFor(target.doc.uri);
 		if (!panel) return;
 		panel.reveal();
-		panel.insertText(`${selectionRef(target.doc, target.range, panel.meta?.cwd)}\n`);
+		panel.insertText(`${selectionRef(target.doc, target.range, undefined)}\n`);
 		panel.focusComposer();
 	});
 
@@ -170,7 +170,6 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		if (uris.length === 0) return;
 		const panel = await panelFor(uris[0]);
 		if (!panel) return;
-		const cwd = panel.meta?.cwd;
 		const refs = await Promise.all(
 			uris.map(async u => {
 				let dir = false;
@@ -179,7 +178,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 				} catch {
 					/* treat as file */
 				}
-				const p = sessionPath(u.fsPath, cwd);
+				const p = u.fsPath;
 				return `@${dir && !p.endsWith("/") ? `${p}/` : p}`;
 			}),
 		);

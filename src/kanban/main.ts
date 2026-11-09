@@ -1,11 +1,16 @@
 // Sessions board webview: columns per mode, cards, drag & drop, keyboard moves, filters, swimlanes.
+import { playSound, unlockAudioOnGesture } from "../shared/completion-sound";
 import { plainExcerpt } from "../shared/excerpt";
+import type { SyncState } from "../shared/protocol";
 import {
 	BOARD_MODES,
+	BOARD_SORTS,
+	BOARD_SORT_LABEL,
 	type BoardCard,
 	type BoardColumn,
 	type BoardData,
 	type BoardMode,
+	type BoardSort,
 	type BoardSection,
 	type CardUpdate,
 	type DropTarget,
@@ -13,11 +18,14 @@ import {
 	type OrgColor,
 	PRIORITIES,
 	PRIORITY_LABEL,
+	SYNC_LABEL,
 	type Priority,
 	type SchedulerInfo,
+	type StatusKey,
 	type ToBoard,
 	adjacentTarget,
 	buildColumns,
+	canRerunWithParent,
 	cyclePriority,
 	filterCards,
 	findCard,
@@ -26,6 +34,7 @@ import {
 	statusKey,
 	stepTarget,
 } from "./board";
+import { GRAPH_METRICS, dependencyGraph, layoutGraph, waitsForLabel } from "./graph";
 
 interface VsCodeApi {
 	postMessage(msg: FromBoard): void;
@@ -40,10 +49,15 @@ const post = (msg: FromBoard): void => vscode.postMessage(msg);
 
 interface ViewState {
 	mode: BoardMode;
+	/** Card order inside every column (`rank` = manual order). */
+	sort: BoardSort;
 	filter: string;
 	showArchived: boolean;
 	showStopped: boolean;
+	showCompleted: boolean;
 	swimlanes: boolean;
+	/** Dependency graph instead of the columns. */
+	graph: boolean;
 	/** Collapsed sub-group sections and swimlanes. */
 	collapsed: string[];
 }
@@ -53,10 +67,13 @@ function loadState(): ViewState {
 	const s: Record<string, unknown> = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...raw } : {};
 	return {
 		mode: BOARD_MODES.find(m => m === s.mode) ?? "status",
+		sort: BOARD_SORTS.find(x => x === s.sort) ?? "rank",
 		filter: typeof s.filter === "string" ? s.filter : "",
 		showArchived: s.showArchived === true,
 		showStopped: s.showStopped !== false,
+		showCompleted: s.showCompleted !== false,
 		swimlanes: s.swimlanes === true,
+		graph: s.graph === true,
 		collapsed: Array.isArray(s.collapsed) ? s.collapsed.filter((x): x is string => typeof x === "string") : [],
 	};
 }
@@ -96,6 +113,7 @@ const ICONS: Record<string, string> = {
 	chat: '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	stop: '<rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/>',
 	play: '<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor"/>',
+	rerun: '<path d="M13 8a5 5 0 11-1.6-3.7M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
 	archive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	unarchive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M8 12V8.5M6.5 10 8 8.5 9.5 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 	palette: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="6.3" r="1" fill="currentColor"/><circle cx="9.8" cy="6.3" r="1" fill="currentColor"/><circle cx="6.5" cy="10" r="1" fill="currentColor"/>',
@@ -108,6 +126,7 @@ const ICONS: Record<string, string> = {
 	check: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
 	circle: '<circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
 	clock: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.2l2 1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+	link: '<path d="M7 9a2.5 2.5 0 003.5 0l2.5-2.5a2.5 2.5 0 00-3.5-3.5L8.8 3.7M9 7a2.5 2.5 0 00-3.5 0L3 9.5A2.5 2.5 0 006.5 13l.7-.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
 	expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
 	folder: '<path d="M1.5 4h4.5l1.5 1.5h7v7h-13z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
 	"p-urgent": '<rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="currentColor"/><path d="M8 4.5v4.3" stroke="var(--vscode-editor-background)" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r="1.05" fill="var(--vscode-editor-background)"/>',
@@ -156,7 +175,7 @@ function closeMenu(): void {
 	menuEl?.remove();
 	menuEl = undefined;
 }
-function showMenu(anchor: HTMLElement, items: MenuItem[]): void {
+function showMenu(anchor: HTMLElement | SVGElement, items: MenuItem[]): void {
 	closeMenu();
 	const menu = el("div", "menu");
 	menu.setAttribute("role", "menu");
@@ -197,18 +216,31 @@ window.addEventListener("blur", closeMenu);
 const priorityIcon = (p: Priority) => icon(`p-${p}`, `prio prio-${p}`);
 const swatch = (c: OrgColor | null) => el("span", `swatch ${c ? `c-${c}` : "none"}`);
 
-function priorityMenu(anchor: HTMLElement, ids: string[]): void {
+function priorityMenu(anchor: HTMLElement | SVGElement, ids: string[]): void {
 	const current = ids.length === 1 ? data.cards.find(c => c.id === ids[0])?.priority : undefined;
 	showMenu(
 		anchor,
 		PRIORITIES.map(p => ({ label: PRIORITY_LABEL[p], icon: priorityIcon(p), checked: p === current, run: () => setPriority(ids, p) })),
 	);
 }
-function colorMenu(anchor: HTMLElement, ids: string[]): void {
+function colorMenu(anchor: HTMLElement | SVGElement, ids: string[]): void {
 	const current = ids.length === 1 ? (data.cards.find(c => c.id === ids[0])?.color ?? null) : undefined;
 	showMenu(anchor, [
 		...COLORS.map(c => ({ label: c[0].toUpperCase() + c.slice(1), icon: swatch(c), checked: c === current, run: () => setColor(ids, c) })),
 		{ label: "No color", icon: swatch(null), checked: current === null, run: () => setColor(ids, null) },
+	]);
+}
+/** Per-session menu: right-click or the context-menu key on a card or graph node. */
+function cardMenu(anchor: HTMLElement | SVGElement, id: string): void {
+	const card = data.cards.find(c => c.id === id);
+	showMenu(anchor, [
+		{ label: "Open chat", run: () => post({ type: "open", id }) },
+		{ label: "Dependencies…", icon: icon("link"), run: () => post({ type: "setDeps", id }) },
+		{ label: "Priority…", run: () => priorityMenu(anchor, targets(id)) },
+		{ label: "Color…", run: () => colorMenu(anchor, targets(id)) },
+		...(card && canRerunWithParent(card) ? [{ label: "Re-run with parent changes", run: () => post({ type: "rerunWithParent", ids: targets(id) }) }] : []),
+		card?.archived ? { label: "Unarchive", run: () => setArchived(targets(id), false) } : { label: "Archive", run: () => setArchived(targets(id), true) },
+		card?.status === "stopped" ? { label: "Resume", run: () => post({ type: "resume", ids: targets(id) }) } : { label: "Stop", run: () => post({ type: "stop", ids: targets(id) }) },
 	]);
 }
 
@@ -255,6 +287,18 @@ function setArchived(ids: string[], archived: boolean): void {
 	post({ type: "setArchived", ids, archived });
 	render();
 }
+function setCompleted(ids: string[], completed: boolean): void {
+	const now = Date.now();
+	for (const id of ids)
+		patchLocal(id, c => {
+			if (completed && !c.completed) c.completedAt = now;
+			if (!completed) c.completedAt = undefined;
+			c.completed = completed;
+		});
+	if (!view.showCompleted && completed) for (const id of ids) selected.delete(id);
+	post({ type: "setCompleted", ids, completed });
+	render();
+}
 /** The cards an action on `id` applies to: the selection when `id` is part of it. */
 function targets(id: string): string[] {
 	return selected.has(id) ? orderedSelection() : [id];
@@ -271,7 +315,7 @@ function rowOf(id: string): { key: string; columns: BoardColumn[] } | undefined 
 function moveCards(ids: string[], target: DropTarget | undefined, columns: BoardColumn[]): void {
 	if (!target) return;
 	const updates = planDrop(view.mode, columns, ids, target);
-	if (updates) applyUpdates(updates);
+	if (updates?.length) applyUpdates(updates);
 }
 
 // ---------- header ----------
@@ -325,21 +369,39 @@ function renderHeader(cardCount: number): void {
 	modes.setAttribute("role", "tablist");
 	for (const m of BOARD_MODES) {
 		const label = m === "status" ? "Status" : m === "lane" ? "Lanes" : m === "group" ? "Groups" : "Priority";
-		const b = button(`seg${view.mode === m ? " active" : ""}`, `Columns by ${label.toLowerCase()}`, [label], () => {
+		const b = button(`seg${view.mode === m && !view.graph ? " active" : ""}`, `Columns by ${label.toLowerCase()}`, [label], () => {
 			view.mode = m;
+			view.graph = false;
 			saveState();
 			render();
 		});
 		b.setAttribute("role", "tab");
-		b.setAttribute("aria-selected", String(view.mode === m));
+		b.setAttribute("aria-selected", String(view.mode === m && !view.graph));
 		modes.append(b);
 	}
+	const sortSelect = el("select", "sort");
+	sortSelect.title = "Card order in every column (Rank = your drag & drop order)";
+	sortSelect.setAttribute("aria-label", "Sort cards by");
+	for (const s of BOARD_SORTS) {
+		const option = el("option", "", BOARD_SORT_LABEL[s]);
+		option.value = s;
+		option.selected = view.sort === s;
+		sortSelect.append(option);
+	}
+	sortSelect.addEventListener("change", () => {
+		view.sort = BOARD_SORTS.find(s => s === sortSelect.value) ?? "rank";
+		saveState();
+		render();
+	});
+	const sortControl = el("label", "sort-control", "Sort", sortSelect);
 	const toggles = el(
 		"div",
 		"toggles",
 		toggle("Stopped", "Show stopped sessions", () => view.showStopped, v => (view.showStopped = v)),
+		toggle("Completed", "Show sessions marked completed", () => view.showCompleted, v => (view.showCompleted = v)),
 		toggle("Archived", "Show archived sessions", () => view.showArchived, v => (view.showArchived = v)),
 		toggle("Swimlanes", "One row per project", () => view.swimlanes, v => (view.swimlanes = v)),
+		toggle("Graph", "Show session dependencies as a graph", () => view.graph, v => (view.graph = v)),
 	);
 	const right = el("div", "right");
 	if (scheduler) {
@@ -357,7 +419,7 @@ function renderHeader(cardCount: number): void {
 		button("icon-btn", "Toggle full width (maximize editor group)", [icon("expand")], () => post({ type: "maximize" })),
 		button("primary", "New session", [icon("plus"), "New"], () => post({ type: "newSession" })),
 	);
-	const children: Node[] = [modes, filterInput, toggles, right];
+	const children: Node[] = [modes, filterInput, sortControl, toggles, right];
 	if (selected.size) {
 		const ids = () => orderedSelection();
 		const bulk = el(
@@ -368,6 +430,8 @@ function renderHeader(cardCount: number): void {
 			button("ghost", "Set color", ["Color"], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : boardEl, ids())),
 			button("ghost", "Archive", ["Archive"], () => setArchived(ids(), true)),
 			button("ghost", "Unarchive", ["Unarchive"], () => setArchived(ids(), false)),
+			button("ghost", "Mark completed", ["Complete"], () => setCompleted(ids(), true)),
+			button("ghost", "Reopen (not completed)", ["Reopen"], () => setCompleted(ids(), false)),
 			button("ghost", "Stop", ["Stop"], () => post({ type: "stop", ids: ids() })),
 			button("ghost", "Resume", ["Resume"], () => post({ type: "resume", ids: ids() })),
 			button("ghost", "Clear selection (Esc)", ["Clear"], () => {
@@ -388,30 +452,47 @@ function statusPill(c: BoardCard): HTMLElement {
 	const key = statusKey(c);
 	if (key === "working") return el("span", "pill working", el("span", "spinner"), c.status === "starting" ? "Starting" : "Working");
 	if (key === "waiting") return el("span", "pill waiting", icon("bell"), "Needs input");
-	if (key === "queued") return el("span", "pill queued", icon("clock"), `Queued #${c.waiting?.position ?? "?"}`);
+	if (key === "queued") {
+		const pill = el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : "Queued");
+		if (c.queue?.waitReason) pill.title = `${c.queue.state ?? "waiting"}: ${c.queue.waitReason}`;
+		return pill;
+	}
 	if (key === "stopped") return el("span", "pill stopped", icon("circle"), "Stopped");
+	if (key === "completed") return el("span", "pill completed", icon("check"), "Completed");
 	return el("span", "pill idle", icon("check"), "Idle");
 }
 
 function renderCard(c: BoardCard, row: string): HTMLElement {
-	const card = el("div", `card${c.color ? ` c-${c.color}` : ""}${selected.has(c.id) ? " selected" : ""}${c.archived ? " archived" : ""}${c.status === "stopped" ? " stopped" : ""}`);
+	const card = el("div", `card${c.color ? ` c-${c.color}` : ""}${selected.has(c.id) ? " selected" : ""}${c.archived ? " archived" : ""}${c.status === "stopped" ? " stopped" : ""}${c.completed ? " completed" : ""}`);
 	card.dataset.id = c.id;
 	card.dataset.row = row;
 	card.tabIndex = c.id === focusedId ? 0 : -1;
 	card.draggable = true;
 	card.setAttribute("role", "listitem");
-	card.setAttribute("aria-label", `${c.title}, ${PRIORITY_LABEL[c.priority]} priority, ${statusKey(c)}`);
+	card.setAttribute("aria-label", `${c.title}, ${PRIORITY_LABEL[c.priority]} priority, ${statusKey(c)}${c.completed ? ", completed" : ""}`);
 	card.setAttribute("aria-selected", String(selected.has(c.id)));
 
 	const prio = button(`prio-btn prio-${c.priority}`, `Priority: ${PRIORITY_LABEL[c.priority]} (P to cycle)`, [priorityIcon(c.priority)], ev => priorityMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id)));
 	const title = el("span", "title", c.title);
-	const top = el("div", "card-top", prio, title, c.pinned ? icon("pin", "pinned") : null, c.unread ? el("span", "unread-dot") : null);
+	const top = el("div", "card-top", prio, title, c.completed ? icon("check", "done-mark") : null, c.pinned ? icon("pin", "pinned") : null, c.unread ? el("span", "unread-dot") : null);
 	if (c.unread) title.title = "New activity";
 
 	const meta = el("div", "card-meta", statusPill(c), el("span", "project", icon("folder"), c.project));
 	meta.title = c.cwd;
+	if (c.sync && c.sync.state !== "in-sync") {
+		const sync = el("span", `pill sync sync-${c.sync.state}`, icon(c.sync.state === "conflict" ? "bell" : "clock"), SYNC_LABEL[c.sync.state]);
+		const from = c.sync.parents.map(id => data.cards.find(x => x.id === id)?.title ?? id.slice(0, 8));
+		sync.title = [`${SYNC_LABEL[c.sync.state]}${from.length ? ` (from ${from.join(", ")})` : ""}`, ...(c.sync.files?.length ? [`Conflicts: ${c.sync.files.join(", ")}`] : [])].join("\n");
+		meta.append(sync);
+	}
 
 	const parts: Node[] = [top, meta];
+	const waits = waitsForLabel(c, data.cards);
+	if (waits) {
+		const badge = el("div", "deps-badge", icon("link"), el("span", "deps-text", waits.text));
+		badge.title = waits.tooltip;
+		parts.push(badge);
+	}
 	if (c.lastText) parts.push(el("div", "excerpt", plainExcerpt(c.lastText)));
 
 	const foot = el("div", "card-foot");
@@ -437,8 +518,10 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		"div",
 		"actions",
 		button("icon-btn", "Open chat (Enter)", [icon("chat")], () => post({ type: "open", id: c.id })),
+		canRerunWithParent(c) ? button("icon-btn", "Re-run with parent changes", [icon("rerun")], () => post({ type: "rerunWithParent", ids: targets(c.id) })) : null,
 		stopped ? button("icon-btn", "Resume", [icon("play")], () => post({ type: "resume", ids: targets(c.id) })) : button("icon-btn", "Stop", [icon("stop")], () => post({ type: "stop", ids: targets(c.id) })),
 		button("icon-btn", "Color…", [icon("palette")], ev => colorMenu(ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card, targets(c.id))),
+		c.completed ? button("icon-btn done-btn on", "Completed — click to reopen", [icon("check")], () => setCompleted(targets(c.id), false)) : button("icon-btn done-btn", "Mark completed", [icon("check")], () => setCompleted(targets(c.id), true)),
 		c.archived ? button("icon-btn", "Unarchive", [icon("unarchive")], () => setArchived(targets(c.id), false)) : button("icon-btn", "Archive", [icon("archive")], () => setArchived(targets(c.id), true)),
 	);
 	card.append(el("div", "card-body", ...parts), actions);
@@ -532,6 +615,7 @@ function columnHeader(col: BoardColumn, index: number, total: number, count: num
 	}
 	const head = el("div", `col-head${col.color ? ` c-${col.color}` : ""}${col.queued ? " queued" : ""}`, col.color ? el("span", `dot c-${col.color}`) : statusDot(col), title, el("span", "badge", String(count)), laneHeaderControls(col, index, total));
 	if (col.queued) head.title = "Sessions waiting for a global concurrency slot, in start order. Reorder to change who starts next.";
+	else if (col.sorted) head.title = `Sorted by ${BOARD_SORT_LABEL[view.sort].toLowerCase()}: dropping here changes ${view.mode === "status" ? "nothing" : `the ${view.mode}`}, not the order (Sort: Rank to reorder).`;
 	else if (!col.droppable && view.mode === "status") head.title = "Status columns follow the sessions; reorder within a column only.";
 	return head;
 }
@@ -545,20 +629,122 @@ function statusDot(col: BoardColumn): HTMLElement | null {
 	return null;
 }
 
+// ---------- dependency graph ----------
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, ...children: Array<Node | string>): SVGElementTagNameMap[K] {
+	const e = document.createElementNS(SVG_NS, tag);
+	for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+	e.append(...children);
+	return e;
+}
+
+const GRAPH_STATE: Record<StatusKey, string> = { working: "working", waiting: "needs input", queued: "queued", idle: "idle", completed: "completed", stopped: "stopped" };
+
+const EDGE_KINDS = ["pending", "changed", "conflict", "merged"] as const;
+type EdgeKind = (typeof EDGE_KINDS)[number];
+
+/** How an arrow reads: the parent's changes in the child (propagation), else whether the child still waits for it. */
+function edgeKind(state: SyncState | undefined, blocked: boolean): EdgeKind | undefined {
+	if (state === "conflict" || state === "resolving") return "conflict";
+	if (state === "upstream-changed") return "changed";
+	if (state === "pending") return "pending";
+	if (state === "merged") return "merged";
+	return blocked ? "pending" : undefined;
+}
+
+/** Sessions with dependencies as a left-to-right DAG: arrows run from a dependency to the session waiting for it. */
+function renderGraph(visible: BoardCard[]): HTMLElement {
+	if (!loaded) return el("div", "graph", el("div", "notice", "Loading sessions…"));
+	const { nodes, edges } = dependencyGraph(visible);
+	if (!nodes.length) {
+		const hint = data.cards.some(c => c.after?.length) ? "No sessions with dependencies match the filter." : "No dependencies yet — right-click a card → Dependencies…";
+		return el("div", "graph", el("div", "notice", hint));
+	}
+	const { nodeWidth: w, nodeHeight: h } = GRAPH_METRICS;
+	const pad = 16;
+	const layout = layoutGraph(
+		nodes.map(n => n.id),
+		edges,
+	);
+	const width = layout.width + 2 * pad;
+	const height = layout.height + 2 * pad;
+	const root = svgEl("svg", { class: "graph-svg", width, height, viewBox: `${-pad} ${-pad} ${width} ${height}`, role: "group", "aria-label": "Session dependencies" });
+	const defs = svgEl("defs", {});
+	for (const id of ["graph-arrow", ...EDGE_KINDS.map(k => `graph-arrow-${k}`)]) defs.append(svgEl("marker", { id, class: id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" }, svgEl("path", { d: "M0 0L10 5L0 10z" })));
+	root.append(defs);
+
+	const byId = new Map(nodes.map(n => [n.id, n]));
+	const edgeLayer = svgEl("g", { class: "graph-edges" });
+	for (const r of layout.routes) {
+		// Horizontal tangents at every point: smooth S-curves between layers, straight runs through virtual slots.
+		const d = r.points
+			.map((q, i) => {
+				if (i === 0) return `M${q.x} ${q.y}`;
+				const p = r.points[i - 1];
+				const dx = Math.max(30, Math.abs(q.x - p.x) / 2);
+				return `C${p.x + dx} ${p.y} ${q.x - dx} ${q.y} ${q.x} ${q.y}`;
+			})
+			.join("");
+		const to = byId.get(r.to);
+		const kind = edgeKind(to?.sync?.edges?.[r.from], to?.blockedBy?.includes(r.from) === true);
+		const path = svgEl("path", { class: `gedge${kind ? ` ${kind}` : ""}`, d, "marker-end": `url(#${kind ? `graph-arrow-${kind}` : "graph-arrow"})` });
+		path.dataset.from = r.from;
+		path.dataset.to = r.to;
+		edgeLayer.append(path);
+	}
+
+	const nodeLayer = svgEl("g", { class: "graph-nodes" });
+	const maxChars = Math.floor((w - 22) / 7);
+	for (const c of nodes) {
+		const p = layout.positions.get(c.id);
+		if (!p) continue;
+		const key = statusKey(c);
+		const blocked = (c.blockedBy?.length ?? 0) > 0;
+		const waits = waitsForLabel(c, data.cards);
+		const title = c.title.length > maxChars ? `${c.title.slice(0, maxChars - 1)}…` : c.title;
+		const state = `${GRAPH_STATE[key]}${blocked ? ` · blocked by ${c.blockedBy?.length}` : ""}`;
+		const g = svgEl(
+			"g",
+			{ class: `gnode s-${key}${blocked ? " blocked" : ""}`, transform: `translate(${p.x} ${p.y})`, tabindex: 0, role: "button", "aria-label": `${c.title}, ${state}` },
+			svgEl("title", {}, [c.title, `${c.project} · ${state}`, waits?.tooltip].filter(Boolean).join("\n")),
+			svgEl("rect", { class: "gnode-box", width: w, height: h, rx: 6 }),
+			svgEl("rect", { class: "gnode-stripe", width: 4, height: h - 12, x: 4, y: 6, rx: 2 }),
+			svgEl("text", { class: "gnode-title", x: 14, y: 20 }, title),
+			svgEl("text", { class: "gnode-state", x: 14, y: 37 }, state),
+		);
+		g.dataset.node = c.id;
+		nodeLayer.append(g);
+	}
+	root.append(edgeLayer, nodeLayer);
+	return el("div", "graph", root);
+}
+
 function render(): void {
 	if (dragging) {
 		renderPending = true;
 		return;
 	}
 	renderPending = false;
-	const visible = filterCards(data.cards, { text: view.filter, showArchived: view.showArchived, showStopped: view.showStopped });
+	const visible = filterCards(data.cards, { text: view.filter, showArchived: view.showArchived, showStopped: view.showStopped, showCompleted: view.showCompleted });
 	for (const id of [...selected]) if (!visible.some(c => c.id === id)) selected.delete(id);
+	if (view.graph) {
+		rows = [];
+		renderHeader(visible.length);
+		const focusedNode = document.activeElement instanceof SVGElement ? document.activeElement.dataset.node : undefined;
+		const { scrollTop, scrollLeft } = boardEl;
+		boardEl.replaceChildren(renderGraph(visible));
+		boardEl.scrollTop = scrollTop;
+		boardEl.scrollLeft = scrollLeft;
+		if (focusedNode) boardEl.querySelector<SVGElement>(`.gnode[data-node="${CSS.escape(focusedNode)}"]`)?.focus({ preventScroll: true });
+		return;
+	}
 	const lanesData = { lanes: data.lanes, groups: data.groups };
-	const all = buildColumns(view.mode, lanesData, visible);
-	// Stopped column is noise while stopped sessions are hidden.
-	const keep = (c: BoardColumn) => !(view.mode === "status" && c.value === "stopped" && !view.showStopped);
+	const all = buildColumns(view.mode, lanesData, visible, view.sort);
+	// Stopped / Completed columns are noise while those sessions are hidden.
+	const keep = (c: BoardColumn) => !(view.mode === "status" && ((c.value === "stopped" && !view.showStopped) || (c.value === "completed" && !view.showCompleted)));
 	rows = view.swimlanes
-		? projectsOf(visible).map(p => ({ key: `swim:${p}`, title: p, columns: buildColumns(view.mode, lanesData, visible.filter(c => c.project === p)).filter(keep) }))
+		? projectsOf(visible).map(p => ({ key: `swim:${p}`, title: p, columns: buildColumns(view.mode, lanesData, visible.filter(c => c.project === p), view.sort).filter(keep) }))
 		: [{ key: "", title: "", columns: all.filter(keep) }];
 	const columns = all.filter(keep);
 	renderHeader(visible.length);
@@ -641,6 +827,11 @@ function focusCard(id: string | undefined): void {
 let anchorId: string | undefined;
 boardEl.addEventListener("click", ev => {
 	const target = ev.target instanceof Element ? ev.target : null;
+	const node = target?.closest<SVGElement>(".gnode")?.dataset.node;
+	if (node) {
+		post({ type: "open", id: node });
+		return;
+	}
 	const card = target?.closest<HTMLElement>(".card");
 	if (!card?.dataset.id) {
 		if (target === boardEl || target?.classList.contains("grid")) {
@@ -674,6 +865,14 @@ boardEl.addEventListener("click", ev => {
 	anchorId = id;
 	focusedId = id;
 	post({ type: "open", id });
+});
+
+boardEl.addEventListener("contextmenu", ev => {
+	const item = ev.target instanceof Element ? ev.target.closest<HTMLElement | SVGElement>(".card, .gnode") : null;
+	const id = item?.dataset.id ?? item?.dataset.node;
+	if (!item || !id) return;
+	ev.preventDefault();
+	cardMenu(item, id);
 });
 
 // ---------- drag & drop ----------
@@ -800,6 +999,17 @@ document.addEventListener("keydown", ev => {
 		render();
 		return;
 	}
+	if (active instanceof SVGElement && active.dataset.node) {
+		const node = active.dataset.node;
+		if (ev.key === "Enter" || ev.key === " ") {
+			ev.preventDefault();
+			post({ type: "open", id: node });
+		} else if (ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey)) {
+			ev.preventDefault();
+			cardMenu(active, node);
+		}
+		return;
+	}
 	const id = active instanceof HTMLElement && active.classList.contains("card") ? active.dataset.id : undefined;
 	if (!id) {
 		if (ev.key.startsWith("Arrow") && focusedId) {
@@ -860,15 +1070,7 @@ document.addEventListener("keydown", ev => {
 		if (card) setPriority(targets(id), cyclePriority(card.priority, ev.shiftKey ? -1 : 1));
 	} else if (ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey)) {
 		ev.preventDefault();
-		const anchor = cardEl(id) ?? boardEl;
-		const card = data.cards.find(c => c.id === id);
-		showMenu(anchor, [
-			{ label: "Open chat", run: () => post({ type: "open", id }) },
-			{ label: "Priority…", run: () => priorityMenu(anchor, targets(id)) },
-			{ label: "Color…", run: () => colorMenu(anchor, targets(id)) },
-			card?.archived ? { label: "Unarchive", run: () => setArchived(targets(id), false) } : { label: "Archive", run: () => setArchived(targets(id), true) },
-			card?.status === "stopped" ? { label: "Resume", run: () => post({ type: "resume", ids: targets(id) }) } : { label: "Stop", run: () => post({ type: "stop", ids: targets(id) }) },
-		]);
+		cardMenu(cardEl(id) ?? boardEl, id);
 	}
 });
 
@@ -884,6 +1086,7 @@ boardEl.addEventListener("focusin", ev => {
 
 // ---------- extension messages ----------
 
+unlockAudioOnGesture();
 window.addEventListener("message", (ev: MessageEvent<ToBoard>) => {
 	const msg = ev.data;
 	if (msg.type === "data") {
@@ -895,6 +1098,8 @@ window.addEventListener("message", (ev: MessageEvent<ToBoard>) => {
 	} else if (msg.type === "focusFilter") {
 		filterInput.focus();
 		filterInput.select();
+	} else if (msg.type === "sound") {
+		playSound(msg.variant, msg.volume);
 	}
 });
 

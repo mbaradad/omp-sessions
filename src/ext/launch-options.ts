@@ -1,18 +1,20 @@
-// "New Session with Options…": the omp CLI flags that shape a session, as a short wizard; and the omp
-// Sessions default model (launcher.json `model`, shared with `omp-sessions config set model` and Hermes).
+// "New Session with Options…": model, thinking, permission mode and a first prompt for the AO spawn; and
+// the omp Sessions defaults for new sessions (`model`/`mode` in ~/.switchyard/config.json, shared with the CLI's `config set`).
 import * as vscode from "vscode";
-import { readLauncherSettings, writeLauncherSettings } from "../shared/launch";
+import { THINKING_LEVELS } from "../planner/types";
 import { type ModelList, listModels } from "../shared/models";
-import { PERMISSION_MODE_INFO } from "../shared/permissions";
+import { PERMISSION_MODE_INFO, type PermissionMode } from "../shared/permissions";
+import { readSwitchyardConfig, writeSwitchyardConfig } from "../shared/switchyard-config";
 import { pickPermissionMode } from "./permissions";
 import { plain } from "./plain";
+import { splitArgs } from "./session-view";
 
 /** omp's chat models (shared/models.ts) with the omp Sessions default marked; no models when omp can't list them. */
 export async function loadModels(cwd: string): Promise<ModelList> {
 	try {
 		return await listModels(cwd);
 	} catch {
-		return { models: [], default: readLauncherSettings().model ?? null, ompDefault: null };
+		return { models: [], default: readSwitchyardConfig().model ?? null, ompDefault: null };
 	}
 }
 
@@ -46,46 +48,43 @@ export async function chooseDefaultModel(cwd: string): Promise<void> {
 	const pick = await done.promise;
 	qp.dispose();
 	if (!pick) return;
-	writeLauncherSettings({ model: pick.selector ?? undefined });
+	writeSwitchyardConfig({ model: pick.selector ?? undefined });
 	void vscode.window.showInformationMessage(plain(pick.selector ? `New omp sessions start with ${pick.selector} unless another model is picked.` : "New omp sessions start with omp's own default model."));
 }
 
 /** `omp.setDefaultMode`: the permission mode new sessions start in when they ask for none, for every client. */
 export async function chooseDefaultMode(): Promise<void> {
-	const current = readLauncherSettings().mode;
+	const current = readSwitchyardConfig().mode;
 	const mode = await pickPermissionMode(current, "Default permission mode for new omp sessions (VS Code, omp-sessions, phone, Hermes)", "omp's tools.approvalMode, else Auto");
 	if (mode === undefined) return;
-	writeLauncherSettings({ mode: mode ?? undefined });
+	writeSwitchyardConfig({ mode: mode ?? undefined });
 	void vscode.window.showInformationMessage(mode ? `New omp sessions start in ${PERMISSION_MODE_INFO[mode].label} mode unless another mode is picked.` : "New omp sessions start in omp's tools.approvalMode (Auto when unset).");
 }
 
-/** Shell-like split honoring single/double quotes. */
-export function splitArgs(text: string): string[] {
-	const out: string[] = [];
-	for (const m of text.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3]);
-	return out;
+/** What the wizard picked; absent fields keep the defaults. */
+export interface LaunchChoices {
+	model?: string;
+	effort?: string;
+	mode?: PermissionMode;
+	/** Extra `omp acp` flags for this session (G34: `--plan-yolo`, `--advisor`, …), on top of `omp.extraArgs`. */
+	ompArgs?: string[];
+	prompt?: string;
 }
 
-const FLAGS = [
-	{ label: "Plan first", description: "--plan-yolo: read-only plan, auto-approved, then implement", flag: "--plan-yolo" },
-	{ label: "Advisor", description: "--advisor: passive reviewer that injects notes each turn", flag: "--advisor" },
-	{ label: "Prewalk", description: "--prewalk: switch to a cheaper model once the plan exists", flag: "--prewalk" },
-	{ label: "No LSP", description: "--no-lsp", flag: "--no-lsp" },
-	{ label: "No extensions", description: "--no-extensions", flag: "--no-extensions" },
-	{ label: "No skills", description: "--no-skills", flag: "--no-skills" },
-	{ label: "No rules", description: "--no-rules", flag: "--no-rules" },
-];
-
-export async function askLaunchOptions(cwd: string): Promise<{ ompArgs: string[]; goal?: string } | undefined> {
-	const args: string[] = [];
-	const step = (n: number) => `New omp session (${n}/6)`;
+/**
+ * Asks for model, thinking, permission mode, extra omp flags (applied by the Switchyard omp shim: the
+ * session restarts once before its first message) and a first prompt.
+ */
+export async function askLaunchOptions(cwd: string): Promise<LaunchChoices | undefined> {
+	const out: LaunchChoices = {};
+	const step = (n: number) => `New omp session (${n}/5)`;
 
 	const modelPick = vscode.window.createQuickPick<vscode.QuickPickItem & { selector?: string }>();
 	modelPick.title = step(1);
 	modelPick.placeholder = "Model";
 	modelPick.matchOnDescription = true;
 	modelPick.busy = true;
-	modelPick.items = [{ label: "$(settings) Default model", description: defaultModelLabel({ default: readLauncherSettings().model ?? null, ompDefault: null }) }];
+	modelPick.items = [{ label: "$(settings) Default model", description: defaultModelLabel({ default: readSwitchyardConfig().model ?? null, ompDefault: null }) }];
 	modelPick.show();
 	void loadModels(cwd).then(list => {
 		modelPick.items = [
@@ -100,34 +99,31 @@ export async function askLaunchOptions(cwd: string): Promise<{ ompArgs: string[]
 	const model = await picked.promise;
 	modelPick.dispose();
 	if (!model) return undefined;
-	if (model.selector) args.push("--model", model.selector);
+	if (model.selector) out.model = model.selector;
 
 	const thinking = await vscode.window.showQuickPick(
-		["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
+		["default", ...THINKING_LEVELS].map(l => ({ label: l === "default" ? "$(settings) Default thinking" : l, value: l })),
 		{ title: step(2), placeHolder: "Thinking level" },
 	);
 	if (!thinking) return undefined;
-	if (thinking.value !== "default") args.push("--thinking", thinking.value);
+	if (thinking.value !== "default") out.effort = thinking.value;
 
-	const mode = await pickPermissionMode(undefined, step(3), "from omp's tools.approvalMode");
+	const defaultMode = readSwitchyardConfig().mode;
+	const mode = await pickPermissionMode(undefined, step(3), defaultMode ? `the default, ${PERMISSION_MODE_INFO[defaultMode].label}` : "omp's tools.approvalMode");
 	if (mode === undefined) return undefined;
-	if (mode) args.push("--approval-mode", mode);
+	if (mode) out.mode = mode;
 
-	const flags = await vscode.window.showQuickPick(FLAGS, { title: step(4), placeHolder: "Options (Enter to continue)", canPickMany: true });
-	if (!flags) return undefined;
-	for (const f of flags) args.push(f.flag);
-
-	const goal = await vscode.window.showInputBox({ title: step(5), prompt: "Goal objective (optional) — omp keeps working until it is achieved", ignoreFocusOut: true });
-	if (goal === undefined) return undefined;
-
-	const defaults = vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? [];
-	const extra = await vscode.window.showInputBox({
-		title: step(6),
-		prompt: "Extra omp arguments (e.g. --tools read,grep --max-time 1h --add-dir ../lib)",
-		value: defaults.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(" "),
+	const flags = await vscode.window.showInputBox({
+		title: step(4),
+		prompt: "Extra omp flags for this session (optional), e.g. --plan-yolo --advisor. The session restarts once to apply them; omp.extraArgs applies on top.",
 		ignoreFocusOut: true,
+		validateInput: v => (splitArgs(v).some(a => /^--(model|thinking|approval-mode)\b/.test(a)) ? "Pick the model, thinking level and mode in the steps before this one." : undefined),
 	});
-	if (extra === undefined) return undefined;
-	args.push(...splitArgs(extra));
-	return { ompArgs: args, goal: goal.trim() || undefined };
+	if (flags === undefined) return undefined;
+	if (flags.trim()) out.ompArgs = splitArgs(flags);
+
+	const prompt = await vscode.window.showInputBox({ title: step(5), prompt: "First prompt (optional): the session starts working on it right away", ignoreFocusOut: true });
+	if (prompt === undefined) return undefined;
+	if (prompt.trim()) out.prompt = prompt.trim();
+	return out;
 }

@@ -1,6 +1,4 @@
-// Permission modes in VS Code: the picker and the "omp: Set Permission Mode…" command.
 import * as vscode from "vscode";
-import { sessionPermissionMode, setSessionPermissionMode } from "../shared/launch";
 import { PERMISSION_MODES, PERMISSION_MODE_INFO, type PermissionMode, isPermissionMode } from "../shared/permissions";
 import type { OmpApi } from "./api";
 import { plain } from "./plain";
@@ -23,17 +21,17 @@ export async function pickPermissionMode(current: PermissionMode | undefined, ti
 export function registerPermissions(api: OmpApi): void {
 	api.context.subscriptions.push(
 		vscode.commands.registerCommand("omp.setPermissionMode", async (arg?: unknown, modeArg?: unknown) => {
-			const id = api.idFrom(arg) ?? (await api.pickSession("Set the permission mode of which session?"));
+			const id = api.idFrom(arg) ?? (await api.pickSession("Set the permission mode of which session?", m => m.status !== "stopped"));
 			const meta = id ? api.sessions.get(id) : undefined;
 			if (!meta) return;
-			const mode = isPermissionMode(modeArg) ? modeArg : await pickPermissionMode(sessionPermissionMode(meta), `Permission mode · ${meta.title}`);
+			const mode = isPermissionMode(modeArg) ? modeArg : await pickPermissionMode(meta.permissionMode, `Permission mode · ${meta.title}`);
 			if (!mode) return;
-			if (!(await setSessionPermissionMode(meta, mode))) {
-				void vscode.window.showWarningMessage(plain(`"${meta.title}" runs an older session host without permission modes. Restart it (omp: Upgrade Session Host) to switch modes live.`));
-				return;
+			try {
+				await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: ${PERMISSION_MODE_INFO[mode].label} mode for "${meta.title}"` }, () => api.sessions.setMode(meta.id, mode));
+			} catch (err) {
+				void vscode.window.showWarningMessage(plain(`Could not switch "${meta.title}" to ${PERMISSION_MODE_INFO[mode].label}: ${err instanceof Error ? err.message : String(err)}.`));
 			}
 			api.refreshTree();
-			if (meta.status === "stopped") void vscode.window.showInformationMessage(plain(`"${meta.title}" resumes in ${PERMISSION_MODE_INFO[mode].label} mode.`));
 		}),
 	);
 }

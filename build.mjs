@@ -8,6 +8,8 @@ const common = { bundle: true, sourcemap: !production, minify: production, logLe
 const builds = [
 	{ ...common, entryPoints: ["src/host/main.ts"], outfile: "out/host.js", platform: "node", format: "cjs" },
 	{ ...common, entryPoints: ["src/ext/extension.ts"], outfile: "out/extension.js", platform: "node", format: "cjs", external: ["vscode"] },
+	{ ...common, entryPoints: ["src/graph/main.ts"], outfile: "out/graph.js", platform: "browser", format: "iife" },
+	{ ...common, entryPoints: ["src/graph/style.css"], outfile: "out/graph.css" },
 	{ ...common, entryPoints: ["src/webview/main.ts"], outfile: "out/webview.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/webview/style.css"], outfile: "out/webview.css" },
 	{ ...common, entryPoints: ["src/bridge/mcp.ts"], outfile: "out/mcp.js", platform: "node", format: "cjs" },

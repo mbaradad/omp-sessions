@@ -58,7 +58,7 @@
 	"capabilities": {
 		"untrustedWorkspaces": {
 			"supported": false,
-			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts the binary named by the workspace-overridable `omp.path`/`omp.extraArgs` settings. Trust the folder to use it."
+			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts sessions through the AO daemon. Trust the folder to use it."
 		},
 		"virtualWorkspaces": {
 			"supported": false,
@@ -109,7 +109,7 @@
 		"viewsWelcome": [
 			{
 				"view": "omp.sessions",
-				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\n[Resume an omp transcript](command:omp.resumeFromHistory)\nSessions keep running on this machine when VS Code disconnects."
+				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\nSessions keep running on this machine when VS Code disconnects."
 			},
 			{
 				"view": "omp.tasks",
@@ -129,6 +129,12 @@
 				"category": "omp"
 			},
 			{
+				"command": "omp.testSound",
+				"title": "Test Completion Sound",
+				"category": "omp",
+				"icon": "$(unmute)"
+			},
+			{
 				"command": "omp.reportIssue",
 				"title": "Report Issue…",
 				"category": "omp",
@@ -141,26 +147,9 @@
 				"icon": "$(cloud-download)"
 			},
 			{
-				"command": "omp.setOmpPath",
-				"title": "Set omp Executable Path…",
-				"category": "omp"
-			},
-			{
 				"command": "omp.showOmpMissing",
 				"title": "omp Is Not Installed",
 				"category": "omp"
-			},
-			{
-				"command": "omp.upgradeSession",
-				"title": "Upgrade Session Host",
-				"category": "omp",
-				"icon": "$(sync)"
-			},
-			{
-				"command": "omp.upgradeAllSessions",
-				"title": "Upgrade All Session Hosts",
-				"category": "omp",
-				"icon": "$(sync)"
 			},
 			{
 				"command": "omp.cleanUpSnapshots",
@@ -188,7 +177,7 @@
 			},
 			{
 				"command": "omp.newWorktreeSession",
-				"title": "New Session in Git Worktree…",
+				"title": "New Session on Branch…",
 				"category": "omp",
 				"icon": "$(git-branch)"
 			},
@@ -227,12 +216,6 @@
 				"title": "Open Sessions Board",
 				"category": "omp",
 				"icon": "$(layout)"
-			},
-			{
-				"command": "omp.sessionSettings",
-				"title": "Session Settings…",
-				"category": "omp",
-				"icon": "$(settings-gear)"
 			},
 			{
 				"command": "omp.setPermissionMode",
@@ -324,6 +307,12 @@
 				"icon": "$(edit)"
 			},
 			{
+				"command": "switchyard.setDependencies",
+				"title": "Dependencies…",
+				"category": "omp",
+				"icon": "$(type-hierarchy)"
+			},
+			{
 				"command": "omp.showChanges",
 				"title": "Show Changed Files…",
 				"category": "omp",
@@ -335,21 +324,9 @@
 				"category": "omp"
 			},
 			{
-				"command": "omp.resumeFromHistory",
-				"title": "Resume omp Transcript in Background…",
-				"category": "omp",
-				"icon": "$(history)"
-			},
-			{
 				"command": "omp.sendSelection",
 				"title": "Send Selection to omp",
 				"category": "omp"
-			},
-			{
-				"command": "omp.showLog",
-				"title": "Show Session Host Log",
-				"category": "omp",
-				"icon": "$(output)"
 			},
 			{
 				"command": "omp.refresh",
@@ -539,9 +516,51 @@
 			},
 			{
 				"command": "omp.tasks.schedule",
-				"title": "Schedule Queue Start…",
+				"title": "Schedule Start…",
 				"category": "omp",
 				"icon": "$(clock)"
+			},
+			{
+				"command": "switchyard.tasks.setDependencies",
+				"title": "Set Dependencies…",
+				"category": "Switchyard",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "switchyard.tasks.setPriority",
+				"title": "Set Priority…",
+				"category": "Switchyard",
+				"icon": "$(arrow-up)"
+			},
+			{
+				"command": "switchyard.tasks.completeLane",
+				"title": "Mark Queue Completed / Reopen",
+				"category": "Switchyard",
+				"icon": "$(check)"
+			},
+			{
+				"command": "switchyard.tasks.undo",
+				"title": "Undo This Task…",
+				"category": "Switchyard",
+				"icon": "$(discard)"
+			},
+			{
+				"command": "switchyard.tasks.rerun",
+				"title": "Re-run with Parent Changes",
+				"category": "Switchyard",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "switchyard.tasks.sync",
+				"title": "Sync Branch (propagate to dependent tasks)",
+				"category": "Switchyard",
+				"icon": "$(sync)"
+			},
+			{
+				"command": "switchyard.tasks.showGraph",
+				"title": "Show Task Graph",
+				"category": "Switchyard",
+				"icon": "$(type-hierarchy)"
 			},
 			{
 				"command": "omp.editWithOmp",
@@ -760,6 +779,18 @@
 				"icon": "$(archive)"
 			},
 			{
+				"command": "omp.organize.hideCompleted",
+				"title": "Hide Completed Sessions",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
+				"command": "omp.organize.showCompleted",
+				"title": "Show Completed Sessions",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
 				"command": "omp.organize.newGroup",
 				"title": "New Group…",
 				"category": "omp",
@@ -824,6 +855,18 @@
 				"title": "Unarchive",
 				"category": "omp",
 				"icon": "$(archive)"
+			},
+			{
+				"command": "omp.markCompleted",
+				"title": "Mark Completed",
+				"category": "omp",
+				"icon": "$(pass)"
+			},
+			{
+				"command": "omp.markNotCompleted",
+				"title": "Mark Not Completed",
+				"category": "omp",
+				"icon": "$(circle-large-outline)"
 			},
 			{
 				"command": "omp.organize.moveUp",
@@ -916,9 +959,10 @@
 				"icon": "$(debug-pause)"
 			},
 			{
-				"command": "omp.doctor.markStopped",
-				"title": "Mark Session Stopped",
-				"category": "omp"
+				"command": "switchyard.scheduler.setBudget",
+				"title": "Set Spend Budget for Queued Tasks…",
+				"category": "Switchyard",
+				"icon": "$(credit-card)"
 			},
 			{
 				"command": "omp.installCli",
@@ -928,30 +972,30 @@
 			},
 			{
 				"command": "omp.server.start",
-				"title": "Start omp-sessions Server",
+				"title": "Start Planner and AO Daemon",
 				"category": "omp",
 				"icon": "$(play)"
 			},
 			{
 				"command": "omp.server.restart",
-				"title": "Restart omp-sessions Server",
+				"title": "Restart Planner",
 				"category": "omp",
 				"icon": "$(debug-restart)"
 			},
 			{
 				"command": "omp.server.showLog",
-				"title": "Show omp-sessions Server Log",
+				"title": "Show Planner or AO Daemon Log",
 				"category": "omp",
 				"icon": "$(output)"
 			},
 			{
 				"command": "omp.server.install",
-				"title": "Install omp-sessions Login Service",
+				"title": "Install Planner and AO Daemon Login Services",
 				"category": "omp"
 			},
 			{
 				"command": "omp.server.statusInTerminal",
-				"title": "Show omp-sessions Status in Terminal",
+				"title": "Show Status in Terminal",
 				"category": "omp",
 				"icon": "$(terminal)"
 			},
@@ -1062,6 +1106,16 @@
 					"group": "2_view@3"
 				},
 				{
+					"command": "omp.organize.hideCompleted",
+					"when": "view == omp.sessions && !omp.sessions.hideCompleted",
+					"group": "2_view@3"
+				},
+				{
+					"command": "omp.organize.showCompleted",
+					"when": "view == omp.sessions && omp.sessions.hideCompleted",
+					"group": "2_view@3"
+				},
+				{
 					"command": "omp.organize.newGroup",
 					"when": "view == omp.sessions",
 					"group": "2_view@4"
@@ -1075,6 +1129,16 @@
 					"command": "omp.scheduler.togglePause",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@2"
+				},
+				{
+					"command": "switchyard.scheduler.setBudget",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@3"
+				},
+				{
+					"command": "switchyard.tasks.showGraph",
+					"when": "view == omp.tasks",
+					"group": "navigation@4"
 				},
 				{
 					"command": "omp.doctor",
@@ -1115,11 +1179,6 @@
 					"command": "omp.newSession",
 					"when": "view == omp.sessions",
 					"group": "navigation@1"
-				},
-				{
-					"command": "omp.resumeFromHistory",
-					"when": "view == omp.sessions",
-					"group": "navigation@2"
 				},
 				{
 					"command": "omp.refresh",
@@ -1234,6 +1293,16 @@
 					"group": "3_organize@9"
 				},
 				{
+					"command": "omp.markCompleted",
+					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.completed)/",
+					"group": "3_organize@10"
+				},
+				{
+					"command": "omp.markNotCompleted",
+					"when": "view == omp.sessions && viewItem =~ /^session.*\\.completed/",
+					"group": "3_organize@10"
+				},
+				{
 					"command": "omp.organize.moveUp",
 					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "4_order@1"
@@ -1292,11 +1361,6 @@
 					"command": "omp.organize.deleteGroup",
 					"when": "view == omp.sessions && viewItem == orgGroup",
 					"group": "9_delete@1"
-				},
-				{
-					"command": "omp.upgradeSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
-					"group": "2_lifecycle@9"
 				},
 				{
 					"command": "omp.newWorktreeSession",
@@ -1372,6 +1436,61 @@
 					"command": "omp.tasks.retryFailed",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "1_session@3"
+				},
+				{
+					"command": "switchyard.tasks.setPriority",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"group": "1_session@4"
+				},
+				{
+					"command": "switchyard.tasks.completeLane",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"group": "1_session@5"
+				},
+				{
+					"command": "switchyard.tasks.undo",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"group": "3_status@6"
+				},
+				{
+					"command": "switchyard.tasks.rerun",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"group": "3_status@4"
+				},
+				{
+					"command": "switchyard.tasks.sync",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "3_status@5"
+				},
+				{
+					"command": "omp.tasks.add",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(free|ompSession)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "omp.tasks.openChat",
+					"when": "view == omp.tasks && viewItem == tasks.ompSession",
+					"group": "inline@3"
+				},
+				{
+					"command": "omp.tasks.clearDone",
+					"when": "view == omp.tasks && viewItem == tasks.free",
+					"group": "1_session@1"
+				},
+				{
+					"command": "omp.tasks.schedule",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"group": "1_edit@5"
+				},
+				{
+					"command": "switchyard.tasks.setDependencies",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "1_edit@6"
+				},
+				{
+					"command": "switchyard.tasks.setPriority",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"group": "1_edit@7"
 				},
 				{
 					"command": "omp.tasks.runNow",
@@ -1489,11 +1608,6 @@
 					"group": "1_session@2"
 				},
 				{
-					"command": "omp.sessionSettings",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "1_session@9"
-				},
-				{
 					"command": "omp.setPermissionMode",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@8"
@@ -1509,7 +1623,7 @@
 					"group": "1_session@2"
 				},
 				{
-					"command": "omp.showLog",
+					"command": "switchyard.setDependencies",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@3"
 				},
@@ -1726,8 +1840,12 @@
 					"when": "omp.sessions.showArchived"
 				},
 				{
-					"command": "omp.doctor.markStopped",
-					"when": "false"
+					"command": "omp.organize.hideCompleted",
+					"when": "!omp.sessions.hideCompleted"
+				},
+				{
+					"command": "omp.organize.showCompleted",
+					"when": "omp.sessions.hideCompleted"
 				},
 				{
 					"command": "omp.tasks.addSubtask",
@@ -1787,6 +1905,30 @@
 				},
 				{
 					"command": "omp.tasks.schedule",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.setDependencies",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.setPriority",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.completeLane",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.undo",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.rerun",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.sync",
 					"when": "false"
 				},
 				{
@@ -1883,12 +2025,24 @@
 			{
 				"id": "omp.gettingStarted",
 				"title": "omp: background coding agent",
-				"description": "Run omp sessions that keep working while VS Code is closed, review their changes, and queue work.",
+				"description": "Run omp sessions on Agent Orchestrator: they keep working while VS Code is closed, each in its own git worktree; review their changes, queue work, follow them from your phone.",
 				"steps": [
+					{
+						"id": "daemon",
+						"title": "Agent Orchestrator runs the sessions",
+						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:omp.server.start)",
+						"media": {
+							"markdown": "media/walkthrough/daemon.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.server.start",
+							"onCommand:omp.newSession"
+						]
+					},
 					{
 						"id": "start",
 						"title": "Start a background session",
-						"description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)",
+						"description": "Sessions survive VS Code, sleep and SSH drops, each in its own git worktree.\n[Start a session](command:omp.newSession)",
 						"media": {
 							"markdown": "media/walkthrough/start.md"
 						},
@@ -1943,6 +2097,17 @@
 							"onCommand:omp.addToChat",
 							"onCommand:omp.scm.commit"
 						]
+					},
+					{
+						"id": "phone",
+						"title": "Follow sessions from your phone",
+						"description": "Pair the Orchestrator mobile app with this machine.\n[Connect Phone](command:omp.remote.connectPhone)",
+						"media": {
+							"markdown": "media/walkthrough/phone.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.remote.connectPhone"
+						]
 					}
 				]
 			}
@@ -1990,12 +2155,6 @@
 					"minimum": 0,
 					"markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
 				},
-				"omp.path": {
-					"type": "string",
-					"default": "",
-					"scope": "machine",
-					"markdownDescription": "Path to the omp executable on the machine omp runs on: an absolute path, `~/…`, or a command name on PATH. Every omp session on that machine uses it (VS Code, `omp-sessions`, the phone app, Hermes); it can't be set per workspace. Empty: search PATH, ~/.local/bin, ~/.bun/bin."
-				},
 				"omp.extraArgs": {
 					"type": "array",
 					"items": {
@@ -2003,7 +2162,13 @@
 					},
 					"default": [],
 					"scope": "machine",
-					"description": "Extra omp CLI arguments for new sessions on this machine, from any client, e.g. [\"--model\", \"opus\"]. Can't be set per workspace."
+					"description": "Extra omp CLI arguments for every omp session on this machine, from any client, e.g. [\"--profile\", \"work\"]. Mirrored to ~/.switchyard/config.json and applied by the Switchyard omp shim when AO launches omp. Can't be set per workspace."
+				},
+				"omp.vscodeTools": {
+					"type": "boolean",
+					"default": true,
+					"scope": "machine",
+					"markdownDescription": "Lets omp sessions started in a terminal read your open VS Code windows' language data (diagnostics, symbols, definitions, references, implementations, call hierarchy, hover and signature docs, the active editor's file and selection: **read-only**) through the VS Code bridge. Off: sessions start without the VS Code tools, and the bridge's local socket is not served. Can't be set per workspace."
 				},
 				"omp.sendWhileBusy": {
 					"type": "string",
@@ -2066,7 +2231,9 @@
 						"priority",
 						"name",
 						"created",
-						"cost"
+						"cost",
+						"scheduled",
+						"completed"
 					],
 					"default": "auto",
 					"enumDescriptions": [
@@ -2076,20 +2243,22 @@
 						"Urgent → low, then last activity.",
 						"Alphabetical.",
 						"Newest first.",
-						"Most expensive first."
+						"Most expensive first.",
+						"Next scheduled queue start first; unscheduled sessions last.",
+						"Marked completed first (latest first), then the most recently finished."
 					],
 					"description": "How sessions are sorted within each group of the Sessions view."
 				},
 				"omp.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Start the per-user `omp-sessions` server when VS Code opens (clients also start it whenever they need it; it keeps running until `omp-sessions server stop`). It starts stopped sessions whose task queue has work when a concurrency slot is free, stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command, the phone app and Hermes."
+					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **omp: Start Planner and AO Daemon** starts both."
 				},
 				"omp.server.installService": {
 					"type": "boolean",
 					"default": true,
 					"scope": "machine",
-					"markdownDescription": "Install the `omp-sessions` server as a user service (systemd user unit, launchd agent) the first time it starts, so it comes back after a crash or reboot. Off: the server still starts on demand but not at login. Same as `omp-sessions config set service on|off`; removing an installed service is `omp-sessions server uninstall` (the install notice's **Turn Off** does both). Never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
+					"markdownDescription": "Run the planner and the AO daemon as user services the first time they start (systemd user units, a launchd agent for the planner), so they come back after a crash or reboot. Off: they still start on demand but not at login; AO then runs as a detached process. The planner service is never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
 				},
 				"omp.sessionScope": {
 					"type": "string",
@@ -2118,6 +2287,57 @@
 					"type": "boolean",
 					"default": false,
 					"markdownDescription": "Notify about every omp session on this machine, including those started from `omp-sessions`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
+				},
+				"omp.sound.completion": {
+					"type": "string",
+					"enum": [
+						"None",
+						"Two-note comfort",
+						"Glass ping",
+						"Soft marimba",
+						"Tri-tone message",
+						"Airy whoosh",
+						"Discovery cluster",
+						"Systems online",
+						"IBM terminal",
+						"Modem chirp",
+						"Wind chimes",
+						"Singing bowl",
+						"Harp lift",
+						"Sonar ping",
+						"Music box"
+					],
+					"default": "Two-note comfort",
+					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open omp chat or the Sessions Board, on the computer you run VS Code on, for the sessions `omp.notifyAllSessions` covers; with several omp chats or windows open only one plays it. Listen to them all with **omp: Test Completion Sound**."
+				},
+				"omp.sound.input": {
+					"type": "string",
+					"enum": [
+						"None",
+						"Two-note comfort",
+						"Glass ping",
+						"Soft marimba",
+						"Tri-tone message",
+						"Airy whoosh",
+						"Discovery cluster",
+						"Systems online",
+						"IBM terminal",
+						"Modem chirp",
+						"Wind chimes",
+						"Singing bowl",
+						"Harp lift",
+						"Sonar ping",
+						"Music box"
+					],
+					"default": "Glass ping",
+					"markdownDescription": "Sound when a session needs input (a question or approval); **None**: silent. Same rules as `omp.sound.completion`."
+				},
+				"omp.sound.volume": {
+					"type": "number",
+					"default": 1,
+					"minimum": 0,
+					"maximum": 1,
+					"markdownDescription": "Volume of the session sounds, 0–1 (1: Hermes Desktop's level, 0: silent)."
 				},
 				"omp.showChangeDecorations": {
 					"type": "boolean",
@@ -2205,6 +2425,7 @@
 		"install-local": "npm run package && sh scripts/install-local.sh",
 		"publish:ovsx": "npx --yes ovsx publish --no-dependencies",
 		"test:e2e:desktop": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/run.mjs",
+		"test:e2e:views": "tsc --noEmit -p test/e2e-desktop && node test/e2e-desktop/views.mjs",
 		"test": "node test/run.mjs",
 		"test:unit": "node test/run.mjs unit",
 		"test:host": "node test/run.mjs host",

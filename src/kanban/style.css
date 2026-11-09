@@ -39,6 +39,15 @@ input {
 	border-radius: 5px;
 	padding: 3px 8px;
 }
+select {
+	font: inherit;
+	color: var(--vscode-dropdown-foreground, inherit);
+	background: var(--vscode-dropdown-background);
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+	border-radius: 5px;
+	padding: 2px 6px;
+}
+.sort-control { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-descriptionForeground); }
 
 /* ---------- header ---------- */
 .bar {
@@ -153,6 +162,9 @@ input {
 .card.selected { box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
 .card.archived { opacity: 0.55; }
 .card.stopped { border-left-color: var(--c-gray); }
+.card.completed .title { color: var(--vscode-descriptionForeground); }
+.done-mark { color: var(--c-green); display: inline-flex; }
+.done-btn.on { color: var(--c-green); }
 .card.dragging { opacity: 0.4; }
 .card-top { display: flex; align-items: center; gap: 5px; }
 .card-top .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -163,7 +175,7 @@ input {
 .prio-low { color: var(--c-gray); }
 .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-badge-background); flex-shrink: 0; }
 .pinned { color: var(--c-gray); display: inline-flex; }
-.card-meta { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--vscode-descriptionForeground); }
+.card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px; color: var(--vscode-descriptionForeground); }
 .project { display: inline-flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill {
 	display: inline-flex;
@@ -176,9 +188,14 @@ input {
 	color: var(--vscode-badge-foreground);
 }
 .pill.working { background: transparent; color: var(--c-blue); border: 1px solid var(--c-blue); }
+.pill.sync { font-size: 0.85em; }
+.pill.sync-conflict { background: transparent; color: var(--c-red, var(--vscode-errorForeground)); border: 1px solid currentColor; }
+.pill.sync-upstream-changed, .pill.sync-pending, .pill.sync-resolving { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
+.pill.sync-merged { background: transparent; color: var(--c-green, var(--vscode-descriptionForeground)); border: 1px solid currentColor; }
 .pill.waiting, .pill.queued { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.idle { background: transparent; color: var(--c-green); border: 1px solid var(--c-green); }
 .pill.stopped { background: transparent; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); }
+.pill.completed { background: transparent; color: var(--c-green); border: 1px solid var(--c-green); }
 .spinner {
 	width: 10px;
 	height: 10px;
@@ -206,6 +223,19 @@ input {
 .spacer { flex: 1; }
 .cost { font-variant-numeric: tabular-nums; }
 .when { white-space: nowrap; }
+.deps-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	margin-top: 5px;
+	padding: 0 7px 0 4px;
+	border: 1px dashed var(--c-yellow);
+	border-radius: 8px;
+	color: var(--c-yellow);
+	font-size: 11px;
+}
+.deps-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .actions {
 	position: absolute;
 	top: 4px;
@@ -232,6 +262,32 @@ input {
 	font-size: 12px;
 	pointer-events: none;
 }
+
+/* ---------- dependency graph ---------- */
+.graph { padding: 10px; }
+.graph-svg { display: block; overflow: visible; font-family: var(--vscode-font-family); }
+.gedge { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1.4; opacity: 0.8; }
+.gedge.pending { stroke: var(--c-yellow); stroke-dasharray: 5 4; opacity: 1; }
+.gedge.changed { stroke: var(--c-orange); opacity: 1; }
+.gedge.conflict { stroke: var(--c-red); stroke-width: 2; opacity: 1; }
+.gedge.merged { stroke: var(--c-green); opacity: 1; }
+.graph-arrow path { fill: var(--vscode-descriptionForeground); }
+.graph-arrow-pending path { fill: var(--c-yellow); }
+.graph-arrow-changed path { fill: var(--c-orange); }
+.graph-arrow-conflict path { fill: var(--c-red); }
+.graph-arrow-merged path { fill: var(--c-green); }
+.gnode { cursor: pointer; outline: none; --s: var(--vscode-panel-border); }
+.gnode-box { fill: var(--vscode-sideBar-background, var(--vscode-editor-background)); stroke: var(--s); stroke-width: 1.2; }
+.gnode-stripe { fill: var(--s); }
+.gnode:hover .gnode-box, .gnode:focus-visible .gnode-box { stroke: var(--vscode-focusBorder); stroke-width: 2; }
+.gnode.s-working { --s: var(--c-blue); }
+.gnode.s-waiting, .gnode.s-queued { --s: var(--c-yellow); }
+.gnode.s-idle { --s: var(--c-green); }
+.gnode.s-stopped { --s: var(--c-gray); }
+.gnode.blocked .gnode-box { stroke-dasharray: 5 3; }
+.gnode-title { fill: var(--vscode-foreground); font-size: 12px; font-weight: 600; }
+.gnode-state { fill: var(--vscode-descriptionForeground); font-size: 11px; }
+.gnode.blocked .gnode-state { fill: var(--c-yellow); }
 
 /* ---------- menus ---------- */
 .menu {

@@ -5,10 +5,13 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { effectiveColor, effectiveRank } from "../shared/organize";
-import { MAX_CONCURRENT, readScheduler, writeScheduler } from "../shared/scheduler";
 import type { BoardData, BoardCard, FromBoard, ToBoard } from "../kanban/board";
 import type { OmpApi } from "./api";
+import { finishedAt, scheduledStart } from "../shared/session-sort";
+import { plain } from "./plain";
+import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
+import { addSoundSink } from "./sounds";
 
 let panel: vscode.WebviewPanel | undefined;
 
@@ -30,11 +33,13 @@ function buildData(api: OmpApi): BoardData {
 			id: m.id,
 			title: m.title,
 			cwd: m.cwd,
-			project: path.basename(m.cwd) || m.cwd,
+			// AO runs project sessions in worktrees named after the session: name the repository instead.
+			project: path.basename(projectRoot(m.cwd).root) || m.cwd,
 			status: m.status,
 			lastText: m.lastText,
 			cost: m.cost,
 			queue: m.queue,
+			sync: m.queue?.sync,
 			waiting: m.queue?.waiting,
 			createdAt: m.createdAt,
 			updatedAt: m.updatedAt,
@@ -47,6 +52,12 @@ function buildData(api: OmpApi): BoardData {
 			tags: e.tags ?? [],
 			lane: e.lane,
 			group: e.groupId,
+			startAt: scheduledStart(m.queue),
+			completed: m.queue?.completed === true,
+			completedAt: m.queue?.completedAt,
+			finishedAt: finishedAt(m.status, m.updatedAt),
+			...(m.queue?.after && { after: m.queue.after }),
+			...(m.queue?.blockedBy && { blockedBy: m.queue.blockedBy }),
 		};
 	});
 	return { cards, lanes: store.lanes(), groups: store.data.groups };
@@ -55,6 +66,9 @@ function buildData(api: OmpApi): BoardData {
 /** Board "apply": one store write for all lane/group/priority/rank patches of a move. */
 function apply(api: OmpApi, updates: FromBoard): void {
 	if (updates.type !== "apply") return;
+	for (const u of updates.updates) {
+		if (u.patch.priority !== undefined) void api.sessions.setPriority([u.id], u.patch.priority).catch(err => api.ao.log.warn(`planner priority: ${String(err)}`));
+	}
 	api.organize.update(d => {
 		for (const u of updates.updates) {
 			const e = d.sessions[u.id] ?? {};
@@ -77,19 +91,6 @@ function apply(api: OmpApi, updates: FromBoard): void {
 	});
 }
 
-async function setConcurrency(api: OmpApi, max?: number): Promise<void> {
-	const cfg = readScheduler();
-	const value =
-		max ??
-		(await vscode.window.showInputBox({
-			prompt: "Max concurrent queued tasks (0 = unlimited)",
-			value: String(cfg.maxConcurrent),
-			validateInput: v => (v.trim() === "" || !/^\d+$/.test(v.trim()) ? "Digits only" : undefined),
-		}));
-	if (value === undefined) return;
-	writeScheduler({ ...cfg, maxConcurrent: Math.max(0, Math.min(MAX_CONCURRENT, typeof value === "number" ? value : Number(value.trim()))) });
-}
-
 async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 	const store = api.organize;
 	switch (msg.type) {
@@ -99,23 +100,41 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 		case "open":
 			api.openPanel(msg.id);
 			break;
+		case "setDeps":
+			await vscode.commands.executeCommand("switchyard.setDependencies", msg.id);
+			break;
 		case "stop":
 			for (const id of msg.ids) await vscode.commands.executeCommand("omp.stopSession", id);
 			break;
 		case "resume":
 			for (const id of msg.ids) await vscode.commands.executeCommand("omp.resumeSession", id);
 			break;
+		case "rerunWithParent":
+			for (const id of msg.ids) {
+				try {
+					const n = await api.sessions.rerunWithParentChanges(id);
+					if (n === 0) void vscode.window.showInformationMessage(`“${api.sessions.get(id)?.title ?? id}” has no parent changes to re-run with.`);
+				} catch (err) {
+					void vscode.window.showWarningMessage(`Could not re-run with parent changes: ${err instanceof Error ? err.message : String(err)}`);
+					break;
+				}
+			}
+			break;
 		case "apply":
 			apply(api, msg);
 			break;
 		case "setPriority":
 			store.setPriority(msg.ids, msg.priority);
+			void api.sessions.setPriority(msg.ids, msg.priority).catch(err => api.ao.log.warn(`planner priority: ${String(err)}`));
 			break;
 		case "setColor":
 			store.setColor(msg.ids, msg.color ?? undefined);
 			break;
 		case "setArchived":
 			store.setArchived(msg.ids, msg.archived);
+			break;
+		case "setCompleted":
+			await api.sessions.setCompleted(msg.ids, msg.completed).catch(err => vscode.window.showWarningMessage(plain(`Could not ${msg.completed ? "mark completed" : "reopen"}: ${err instanceof Error ? err.message : String(err)}`)));
 			break;
 		case "addLane":
 			store.createLane(msg.name);
@@ -137,7 +156,7 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			store.deleteLane(msg.id);
 			break;
 		case "concurrency":
-			await setConcurrency(api, msg.max);
+			await vscode.commands.executeCommand("omp.scheduler.setConcurrency", msg.max);
 			break;
 		case "newSession": {
 			const cwd = await api.pickFolder();
@@ -166,9 +185,17 @@ function openBoard(api: OmpApi): void {
 			localResourceRoots: [vscode.Uri.joinPath(api.context.extensionUri, "out")],
 		},
 	);
-	panel.webview.html = html(api, panel.webview);
-	panel.webview.onDidReceiveMessage(m => void handle(api, m as FromBoard));
-	panel.onDidDispose(() => {
+	const board = panel;
+	board.webview.html = html(api, board.webview);
+	board.webview.onDidReceiveMessage(m => void handle(api, m as FromBoard));
+	const sound = addSoundSink({
+		get visible() {
+			return board.visible;
+		},
+		post: msg => board.webview.postMessage(msg),
+	});
+	board.onDidDispose(() => {
+		sound.dispose();
 		panel = undefined;
 	});
 	refresh(api);

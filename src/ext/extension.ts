@@ -1,11 +1,8 @@
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { AoClient } from "../ao/client";
-import { type LaunchOptions, sendToHost } from "../shared/launch";
 import { OrganizeStore, organizeFile } from "../shared/organize";
-import { type SessionMeta, sessionDir } from "../shared/protocol";
+import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import { registerAgentSkill } from "./agent-skill";
 import { type PermissionMode, readMode } from "../shared/session-mode";
@@ -24,15 +21,19 @@ import { askLaunchOptions, chooseDefaultMode, chooseDefaultModel } from "./launc
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { registerOmpExtensions } from "./omp-extension";
 import { plain } from "./plain";
-import { OmpMissingError, SessionManager, listOmpHistory } from "./sessions";
+import { AoConnection } from "./ao-connection";
+import { inCheckout } from "./checkout";
+import { type NewSessionOptions, SessionManager, projectRoot } from "./sessions";
+import { registerDependencies } from "./dependencies";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
 import { registerRemote } from "./remote";
 import { registerServer } from "./server";
-import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
+import { createTasksDeps } from "./tasks-deps";
 import { type Node, SessionTree } from "./tree";
+import { addChatSoundSink, registerSounds } from "./sounds";
 import { registerToolbox } from "./toolbox";
 import { registerVscodeOpen } from "./vscode-open";
 import { registerWorktrees } from "./worktree";
@@ -50,14 +51,15 @@ function idFrom(arg: unknown): string | undefined {
 	return undefined;
 }
 
-export function activate(context: vscode.ExtensionContext): void {
-	const hostScript = vscode.Uri.joinPath(context.extensionUri, "out", "host.js").fsPath;
-	const sessions = new SessionManager(hostScript);
+/** Returns the feature API (the e2e suite reads the views' state through it). */
+export function activate(context: vscode.ExtensionContext): OmpApi {
+	const ao = new AoConnection();
+	const sessions = new SessionManager(ao, String(context.extension.packageJSON.version ?? "unknown"));
 	const snapshots = new SnapshotProvider();
-	// Checkpoints send `/undo` and `/redo` through AO; `connectAo` (below) connects on first use.
-	const checkpoints = new Checkpoints(() => connectAo());
+	// Checkpoints send `/undo` and `/redo` through AO; the AO connection connects on first use.
+	const checkpoints = new Checkpoints(() => ao.client());
 	// The permission-mode gate (Switchyard omp extension): a switch rewrites the session's mode file.
-	const modes = { read: readMode, set: (id: string, mode: PermissionMode) => connectAo().then(ao => setSessionMode(ao, id, mode)) };
+	const modes = { read: readMode, set: (id: string, mode: PermissionMode) => ao.client().then(client => setSessionMode(client, id, mode)) };
 	// Sessions that finished or asked something while their chat was not in view.
 	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
 	const setUnread = (id: string, value: boolean) => {
@@ -74,22 +76,14 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push({ dispose: () => organizeWatch.dispose() });
 	const tree = new SessionTree(sessions, id => unread.has(id), organize);
 	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
-	context.subscriptions.push(sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
-
-	// ---------- AO (the chat reads and drives sessions through it) ----------
-	let ao: Promise<AoClient> | undefined;
-	const connectAo = (): Promise<AoClient> =>
-		(ao ??= AoClient.connect().catch((err: unknown) => {
-			// Retried on the next ask: the daemon may start later.
-			ao = undefined;
-			throw err;
-		}));
+	context.subscriptions.push(ao, sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
 	const chatIcon = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 	function adopt(id: string, webviewPanel: vscode.WebviewPanel): ChatPanel {
-		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo, undefined, checkpoints, modes);
+		const panel = new ChatPanel(id, panelSurface(webviewPanel, chatIcon), sessions, snapshots, context.extensionUri, context.globalState, organize, () => ao.client(), undefined, checkpoints, modes);
 		panels.set(id, panel);
+		addChatSoundSink(panel);
 		lastActive = panel;
 		webviewPanel.onDidChangeViewState(e => {
 			if (e.webviewPanel.active) lastActive = panel;
@@ -123,12 +117,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		if (sideChat?.sessionId !== id) {
 			sideChat?.dispose();
-			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, connectAo, undefined, checkpoints, modes);
+			const chat = new ChatPanel(id, viewSurface(sideView), sessions, snapshots, context.extensionUri, context.globalState, organize, () => ao.client(), undefined, checkpoints, modes);
 			chat.onDidDispose(() => {
 				if (sideChat === chat) sideChat = undefined;
 				if (lastActive === chat) lastActive = undefined;
 			});
 			sideChat = chat;
+			addChatSoundSink(chat);
 		}
 		setUnread(id, false);
 		lastActive = sideChat;
@@ -220,22 +215,15 @@ export function activate(context: vscode.ExtensionContext): void {
 		return chosen?.[0]?.fsPath;
 	}
 
-	async function launchAndOpen(opts: LaunchOptions): Promise<ChatPanel | undefined> {
+	async function launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined> {
 		let id: string;
 		try {
-			id = sessions.launch(opts);
+			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "omp: resuming the session" : "omp: starting a session in AO" }, () => sessions.launch(opts));
 		} catch (err) {
-			// A missing omp gets the doctor's install/set-path notification instead.
-			if (!(err instanceof OmpMissingError)) void vscode.window.showErrorMessage(plain(String((err as Error).message ?? err)));
-			return undefined;
-		}
-		const ok = await sessions.waitForSocket(id);
-		sessions.refresh();
-		if (!ok) {
-			const reason = sessions.get(id)?.exitReason;
-			void vscode.window.showErrorMessage(plain(`omp session did not start${reason ? `: ${reason}` : ""}.`), "Open log").then(a => {
-				if (a) void vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(id), "host.log")));
+			void vscode.window.showErrorMessage(plain(`omp session did not start: ${err instanceof Error ? err.message : String(err)}`), "Show AO Log").then(a => {
+				if (a) ao.log.show();
 			});
+			return undefined;
 		}
 		return openPanel(id);
 	}
@@ -260,7 +248,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			const rel = path.relative(parent, child);
 			return !rel.startsWith("..") && !path.isAbsolute(rel);
 		};
-		const related = (m: SessionMeta | undefined): m is SessionMeta => !!m && (!cwdHint || within(cwdHint, m.cwd) || within(m.cwd, cwdHint));
+		// A session runs in AO's worktree of its project: it belongs where its project's checkout is.
+		const related = (m: SessionMeta | undefined): m is SessionMeta => !!m && (!cwdHint || within(cwdHint, m.cwd) || within(m.cwd, cwdHint) || within(cwdHint, projectRoot(m.cwd).root) || within(projectRoot(m.cwd).root, cwdHint));
 		if (lastActive && related(lastActive.meta)) return lastActive;
 		const open = [...panels.values()].find(p => related(p.meta) && p.meta.status !== "stopped");
 		if (open) return open;
@@ -272,6 +261,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	// ---------- commands ----------
 	const reg = (name: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(name, fn));
+	/** Runs a session action on AO; a failure becomes an error message (with the AO log one click away). */
+	const act = async (what: string, fn: () => Promise<void>): Promise<boolean> => {
+		try {
+			await fn();
+			return true;
+		} catch (err) {
+			void vscode.window.showErrorMessage(plain(`Could not ${what}: ${err instanceof Error ? err.message : String(err)}`), "Show AO Log").then(a => a && ao.log.show());
+			return false;
+		}
+	};
 
 	reg("omp.newSession", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
@@ -318,16 +317,10 @@ export function activate(context: vscode.ExtensionContext): void {
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta || meta.status === "stopped") return;
 		if (meta.status === "working") {
-			const ok = await vscode.window.showWarningMessage(`"${meta.title}" is working. Stop it?`, { modal: true, detail: "The omp process exits; the transcript is kept and can be resumed." }, "Stop");
+			const ok = await vscode.window.showWarningMessage(`"${meta.title}" is working. Stop it?`, { modal: true, detail: "The omp agent exits; the session and its transcript stay and can be resumed." }, "Stop");
 			if (ok !== "Stop") return;
 		}
-		if (!(await sendToHost(meta, { t: "stop" }))) {
-			try {
-				process.kill(meta.pid, "SIGTERM");
-			} catch {
-				/* already gone */
-			}
-		}
+		await act(`stop "${meta.title}"`, () => sessions.stop(meta.id));
 	});
 
 	reg("omp.resumeSession", async (arg?: unknown) => {
@@ -338,7 +331,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			openPanel(meta.id);
 			return;
 		}
-		await launchAndOpen({ cwd: meta.cwd, id: meta.id });
+		if (await act(`resume "${meta.title}"`, () => sessions.resume(meta.id))) openPanel(meta.id);
 	});
 
 	reg("omp.deleteSession", async (arg?: unknown) => {
@@ -350,13 +343,13 @@ export function activate(context: vscode.ExtensionContext): void {
 			return;
 		}
 		const ok = await vscode.window.showWarningMessage(
-			`Remove "${meta.title}" from the list?`,
-			{ modal: true, detail: "Deletes the session's omp Sessions record and file snapshots. The omp transcript stays in ~/.omp/agent/sessions." },
+			`Remove "${meta.title}"?`,
+			{ modal: true, detail: "Deletes the session from AO, with its worktree when it has no uncommitted changes. The omp transcript stays in ~/.omp/agent/sessions." },
 			"Remove",
 		);
 		if (ok !== "Remove") return;
 		panels.get(meta.id)?.dispose();
-		sessions.remove(meta.id);
+		await act(`remove "${meta.title}"`, () => sessions.remove(meta.id));
 	});
 
 	reg("omp.renameSession", async (arg?: unknown) => {
@@ -365,18 +358,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!meta) return;
 		const title = (await vscode.window.showInputBox({ prompt: "Session title", value: meta.title }))?.trim();
 		if (!title || title === meta.title) return;
-		if (meta.status !== "stopped") await sendToHost(meta, { t: "rename", title });
-		else {
-			const file = path.join(sessionDir(meta.id), "meta.json");
-			fs.writeFileSync(file, JSON.stringify({ ...meta, title, updatedAt: Date.now() }, null, 1));
-			sessions.refresh();
-		}
+		await act("rename the session", () => sessions.rename(meta.id, title));
 	});
 
 	/** A session's display name: from the Sessions list, else AO's; the id when neither answers. */
 	const titleOf = async (id: string) =>
 		sessions.get(id)?.title ??
-		(await connectAo()
+		(await ao.client()
 			.then(ao => ao.getSession(id))
 			.then(
 				view => view.displayName || id,
@@ -425,21 +413,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		return id ? checkpoints.redo(id) : undefined;
 	});
 
-	reg("omp.resumeFromHistory", async (arg?: unknown) => {
-		const cwd = await pickFolder(arg);
-		if (!cwd) return;
-		const history = await listOmpHistory(cwd);
-		if (history.length === 0) {
-			void vscode.window.showInformationMessage(plain(`No omp transcripts recorded for ${cwd}.`));
-			return;
-		}
-		const pick = await vscode.window.showQuickPick(
-			history.slice(0, 200).map(h => ({ label: h.title, description: `${new Date(h.mtime).toLocaleString()}${h.archived ? " · archived by omp gc (restored on resume)" : ""}`, detail: path.basename(h.file), entry: h })),
-			{ placeHolder: "Resume an omp transcript in the background", matchOnDetail: true },
-		);
-		if (pick) await launchAndOpen({ cwd, resumeFile: pick.entry.file, title: pick.entry.title.slice(0, 80) });
-	});
-
 	reg("omp.sendSelection", async () => {
 		const editor = vscode.window.activeTextEditor;
 		if (!editor) return;
@@ -481,7 +454,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			void vscode.window.showInformationMessage("Start an omp session for this repository first.");
 			return;
 		}
-		await panel.sendPrompt(prompt);
+		const root = repoRoot(arg);
+		await panel.sendPrompt(root ? inCheckout(prompt, root) : prompt);
 	};
 	reg(
 		"omp.scm.commit",
@@ -497,14 +471,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		tree.refresh();
 	});
 
-	reg("omp.showLog", async (arg?: unknown) => {
-		const id = idFrom(arg) ?? (await pickSession("Show log of which session?"));
-		const meta = id ? sessions.get(id) : undefined;
-		if (meta) await vscode.window.showTextDocument(vscode.Uri.file(path.join(sessionDir(meta.id), "host.log")));
-	});
-
 	const api: OmpApi = {
 		context,
+		ao,
 		sessions,
 		snapshots,
 		openPanel,
@@ -521,20 +490,38 @@ export function activate(context: vscode.ExtensionContext): void {
 		sessionsView: treeView,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
-	registerTasks(api);
+	// One planner connection per window: the Tasks view, the session queues and the views' plan summaries share it.
+	const taskSession = (m: SessionMeta) => ({ id: m.id, title: m.title, state: m.status });
+	const tasksDeps = createTasksDeps(context, {
+		ao: () => ao.client(),
+		sessions: {
+			get: id => {
+				const m = sessions.get(id);
+				return m && taskSession(m);
+			},
+			all: () => sessions.all().map(taskSession),
+			onChange: listener => {
+				const sub = sessions.onDidChange(listener);
+				return () => sub.dispose();
+			},
+		},
+	});
+	context.subscriptions.push(sessions.usePlan(tasksDeps.planner), sessions.useQueues(tasksDeps.queues));
+	registerTasks(api, tasksDeps);
 	// Feature modules: one `register*(api)` line each.
 	const server = registerServer(api);
-	registerScheduler(api);
+	registerScheduler(api, tasksDeps.planner);
 	registerOrganize(api);
 	registerWorktrees(api);
-	registerDoctor(api, server);
+	registerDependencies(api);
+	registerDoctor(api);
 	registerEditorPlus(api);
 	registerToolbox(api);
 	registerDashboard(api);
+	registerSounds(api);
 	registerChatContext(api);
 	registerBoard(api);
 	registerBridge(api);
-	registerSessionConfig(api);
 	registerPermissions(api);
 	registerAgentSkill(api);
 	registerOmpExtensions(api);
@@ -552,7 +539,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		const working = local.filter(m => m.status === "working" || m.status === "starting").length;
 		const waiting = local.filter(m => m.status === "waiting").length;
 		const idle = local.length - working - waiting;
-		if (local.length === 0) {
+		if (!ao.connected) {
+			status.text = "$(hubot) omp $(debug-disconnect)";
+			status.tooltip = `The AO daemon isn't reachable${ao.mayStart() ? "" : " (omp.server.autoStart is off)"}. Click to start it.${COMMAND_CENTER_HINT}`;
+			status.command = "omp.server.start";
+		} else if (local.length === 0) {
 			status.text = "$(hubot) omp";
 			status.tooltip = `No omp sessions running${sessions.scope() === "all" ? "" : " for this workspace"}. Click to open one.${COMMAND_CENTER_HINT}`;
 			status.command = "omp.focus";
@@ -571,6 +562,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	sessions.onDidChange(updateStatus);
 	updateStatus();
 	context.subscriptions.push(
+		ao.onDidConnect(updateStatus),
 		vscode.workspace.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration("omp.sessionScope")) updateStatus();
 		}),
@@ -591,7 +583,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!sessions.notifies(meta)) return;
 			if (attended) return;
 			let message: string | undefined;
-			if (meta.status === "waiting") message = `omp needs your input: ${meta.title}`;
+			// A merge conflict is needs-input too, but the Tasks view toasts it with the files and the graph (ext-tasks): not twice.
+			if (meta.status === "waiting") message = meta.queue?.sync?.state === "conflict" ? undefined : `omp needs your input: ${meta.title}`;
 			else if (meta.status === "idle" && from === "working") message = `omp finished: ${meta.title}`;
 			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `omp session exited (${meta.exitReason}): ${meta.title}`;
 			if (!message) return;
@@ -600,6 +593,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			});
 		}),
 	);
+	return api;
 }
 
 /**

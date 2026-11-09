@@ -1,18 +1,17 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { HOST_CRASHED, isOutdated } from "../shared/health";
+import { SYNC_LABEL } from "../kanban/board";
 import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin";
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
-import { sessionSettingsChip } from "../shared/session-config";
 import { agentState } from "../shared/session-report";
 import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
 import { headOf } from "./worktree-git";
 
-/** Layout nodes (projects, custom groups, sections, sessions; see shared/organize-view) plus changed files. */
-export type Node = ViewNode | { kind: "file"; sessionId: string; cwd: string; file: string; op: string; count: number };
+/** Layout nodes (projects, custom groups, sections, sessions; see shared/organize-view) plus changed files (AO per-turn diffs: lines added/deleted). */
+export type Node = ViewNode | { kind: "file"; sessionId: string; cwd: string; file: string; op: string; additions: number; deletions: number };
 
 /** Container nodes (everything with children computed by the layout). */
 export type ContainerNode = Exclude<Node, { kind: "session" } | { kind: "file" }>;
@@ -86,6 +85,8 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 	showArchived = false;
 	/** Whether stopped sessions are hidden; unread ones stay until looked at (organize.ts). */
 	hideFinished = false;
+	/** Whether sessions marked completed are hidden (organize.ts). */
+	hideCompleted = false;
 	/** Stopped sessions the last render hid because of `hideFinished`. */
 	hiddenFinished = 0;
 	/** Root nodes the last render produced. */
@@ -153,7 +154,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (node.kind === "file") {
 			const item = new vscode.TreeItem(vscode.Uri.file(node.file), vscode.TreeItemCollapsibleState.None);
 			const dir = path.relative(node.cwd, path.dirname(node.file));
-			item.description = `${dir.startsWith("..") ? path.dirname(node.file) : dir || "."} · ${node.op}${node.count > 1 ? ` ×${node.count}` : ""}`;
+			item.description = `${dir.startsWith("..") ? path.dirname(node.file) : dir || "."} · ${node.op}${node.additions || node.deletions ? ` +${node.additions} −${node.deletions}` : ""}`;
 			item.tooltip = `${node.file}\nClick to diff against the content before the session touched it.`;
 			item.command = { command: "omp.openSessionFileDiff", title: "Open diff", arguments: [node.sessionId, node.file] };
 			item.contextValue = "file";
@@ -169,8 +170,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const worktree = projectRoot(m.cwd).worktree;
 		const branch = worktree && headOf(worktree.gitDir);
 		const where = worktree ? `⎇ ${branch ?? path.basename(worktree.root)}` : node.project ? path.relative(node.project, m.cwd) : inWs ? "" : path.basename(m.cwd);
-		const outdated = isOutdated(m, this.sessions.version);
-		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], outdated ? "⟳ update available" : "", where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
+		item.description = [unread ? "● new" : "", STATUS_LABEL[m.status], where, relTime(m.updatedAt)].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
@@ -178,11 +178,18 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.model) tip.appendMarkdown(`$(hubot) ${m.model}  \n`);
 		if (m.changedFiles) tip.appendMarkdown(`$(diff) ${m.changedFiles} file(s) changed  \n`);
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
-		if (outdated) tip.appendMarkdown(`$(sync) host ${m.hostVersion ?? "(old)"} ≠ extension ${this.sessions.version}: run **omp: Upgrade Session Host** when idle  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
-		if (m.status === "stopped" && m.exitReason === HOST_CRASHED && m.ompSessionFile) tip.appendMarkdown("$(debug-restart) Interrupted by a host crash: Resume asks omp to continue  \n");
-		const settingsChip = sessionSettingsChip(m.id);
-		if (settingsChip) tip.appendMarkdown(`$(settings-gear) ${settingsChip.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.waitReason) tip.appendMarkdown(`$(clock) ${m.queue.state ?? "waiting"}: ${m.queue.waitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		if (m.queue?.sync) {
+			const from = m.queue.sync.parents.map(id => this.sessions.get(id)?.title ?? id.slice(0, 8)).join(", ");
+			const files = m.queue.sync.files?.length ? ` in ${m.queue.sync.files.slice(0, 5).join(", ")}${m.queue.sync.files.length > 5 ? ", …" : ""}` : "";
+			tip.appendMarkdown(`$(git-merge) ${SYNC_LABEL[m.queue.sync.state]}${from ? ` — from ${from.replace(/[*_`[\]]/g, "\\$&")}` : ""}${files.replace(/[*_`[\]]/g, "\\$&")}  \n`);
+		}
+		if (m.queue?.after?.length) {
+			const names = m.queue.after.map(id => `“${(this.sessions.get(id)?.title ?? `${id.slice(0, 8)} (deleted)`).replace(/[*_`[\]]/g, "\\$&")}”`);
+			tip.appendMarkdown(`$(type-hierarchy) Queued tasks wait for ${names.join(", ")} to finish  \n`);
+		}
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
 		item.contextValue = `${m.status === "stopped" ? "session.stopped" : "session.running"}${worktree ? ".worktree" : ""}`;
@@ -212,6 +219,10 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const color = effectiveColor(data, m.id);
 		const failed = m.status === "stopped" && !!m.exitCode;
 		if (color && !failed) item.iconPath = new vscode.ThemeIcon(STATUS_SHAPE[m.status], orgThemeColor(color));
+		// Completed shows while nothing happens in the session (activity icons win).
+		const completed = m.queue?.completed === true;
+		if (completed && (m.status === "idle" || m.status === "stopped") && !failed) item.iconPath = new vscode.ThemeIcon("pass-filled", orgThemeColor(color) ?? new vscode.ThemeColor("charts.green"));
+		if (completed) item.description = ["✓ completed", item.description].filter(Boolean).join(" · ");
 		const origin = hermesOrigin(e?.tags);
 		const plainTags = origin ? (e?.tags ?? []).filter(t => !isHermesTag(t, origin)) : (e?.tags ?? []);
 		if (origin || plainTags.length) item.description = [item.description, origin ? originLabel(origin) : "", plainTags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" · ");
@@ -227,10 +238,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				color ? `$(symbol-color) ${color}${e?.color ? "" : " (from group)"}` : "",
 				e?.pinned ? "$(pinned) pinned" : "",
 				e?.archived ? "$(archive) archived" : "",
+				completed ? `$(pass) completed${m.queue?.completedAt ? ` ${new Date(m.queue.completedAt).toLocaleString()}` : ""}` : "",
 			].filter(Boolean);
 			if (lines.length) item.tooltip.appendMarkdown(`\n\n${lines.join("  \n")}`);
 		}
-		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
+		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${completed ? ".completed" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
 	}
 
 	/** Session ids shown next to `node` in its container (display order). */
@@ -283,7 +295,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		return walk(this.layout, undefined) ?? undefined;
 	}
 
-	getChildren(node?: Node): Node[] {
+	getChildren(node?: Node): Node[] | Promise<Node[]> {
 		if (!node) {
 			const cfg = vscode.workspace.getConfiguration("omp");
 			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
@@ -297,6 +309,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 				sortBy: isSortMode(sortBy) ? sortBy : "auto",
 				filter: this.filter,
 				showArchived: this.showArchived,
+				hideCompleted: this.hideCompleted,
 				visible: m => {
 					if (!this.sessions.inScope(m)) return false;
 					// Finished = nothing ahead: scheduled, queued and interrupted sessions stay (their meta.queue is kept current).
@@ -316,20 +329,13 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 			return this.layout;
 		}
 		if (node.kind !== "session" && node.kind !== "file") return node.children;
-		if (node.kind === "session") {
-			const byFile = new Map<string, { op: string; count: number }>();
-			for (const c of this.sessions.changes(node.meta.id)) {
-				for (const f of c.files) {
-					const prev = byFile.get(f.path);
-					if (!prev) byFile.set(f.path, { op: f.op, count: 1 });
-					else {
-						prev.count++;
-						if (f.op === "delete") prev.op = prev.op === "create" ? "created+deleted" : "delete";
-					}
-				}
-			}
-			return [...byFile].map(([file, v]) => ({ kind: "file", sessionId: node.meta.id, cwd: node.meta.cwd, file, op: v.op, count: v.count }));
-		}
+		if (node.kind === "session") return this.fileNodes(node.meta);
 		return [];
+	}
+
+	/** The files a session changed in its worktree (AO `workspace/files`); none when AO can't say (e.g. a released workspace). */
+	private async fileNodes({ id, cwd }: SessionMeta): Promise<Node[]> {
+		const files = await this.sessions.workspaceFiles(id).catch(() => []);
+		return files.map(f => ({ kind: "file", sessionId: id, cwd, file: path.resolve(cwd, f.path), op: f.status === "added" ? "create" : f.status === "deleted" ? "delete" : f.status === "renamed" ? "rename" : "update", additions: f.additions, deletions: f.deletions }));
 	}
 }

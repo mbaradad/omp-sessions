@@ -16,7 +16,6 @@ import {
 	shellKind,
 	slugify,
 	stripAnsi,
-	withModel,
 } from "../../src/ext/toolbox-core";
 
 test("shellKind: recognizes shells by executable name on any platform", () => {
@@ -113,11 +112,6 @@ test("parseModels: keeps valid entries, derives selector, rejects other shapes",
 	assert.equal(modelDetail(models[1]), "");
 	assert.throws(() => parseModels("[]"));
 	assert.throws(() => parseModels("not json"));
-});
-
-test("withModel: replaces any previous model choice in extra args", () => {
-	assert.deepEqual(withModel([], "a/b"), ["--model", "a/b"]);
-	assert.deepEqual(withModel(["--thinking", "high", "--model", "old", "-m", "old2", "--model=old3", "--no-lsp"], "a/b"), ["--thinking", "high", "--no-lsp", "--model", "a/b"]);
 });
 
 test("commandGroup: explicit ids and keyword fallbacks", () => {

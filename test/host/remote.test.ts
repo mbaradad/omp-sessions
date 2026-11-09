@@ -147,9 +147,12 @@ before(async () => {
 	fs.mkdirSync(cwd, { recursive: true });
 	fs.mkdirSync(path.join(home, "sessions"), { recursive: true });
 	fs.writeFileSync(path.join(home, "launcher.json"), JSON.stringify({ ompPath: FAKE_OMP }));
+	// The models route finds omp on PATH (no omp.path any more): the fake is `omp` in a folder put first.
+	fs.mkdirSync(path.join(home, "bin"));
+	fs.symlinkSync(FAKE_OMP, path.join(home, "bin", "omp"));
 	writeRemote({ enabled: true });
 	process.env.OMP_VSCODE_HOME = home;
-	server = spawn(process.execPath, [SERVER_JS], { env: { ...process.env, OMP_VSCODE_HOME: home, FAKE_OMP_SESSIONS: path.join(home, "fake-sessions") }, stdio: "ignore" });
+	server = spawn(process.execPath, [SERVER_JS], { env: { ...process.env, OMP_VSCODE_HOME: home, PATH: `${path.join(home, "bin")}${path.delimiter}${process.env.PATH ?? ""}`, FAKE_OMP_SESSIONS: path.join(home, "fake-sessions") }, stdio: "ignore" });
 	let status: RemoteStatus | undefined;
 	for (const deadline = Date.now() + 15000; !status?.listening; await sleep(50)) {
 		if (Date.now() > deadline) throw new Error("timed out waiting for the remote listener");

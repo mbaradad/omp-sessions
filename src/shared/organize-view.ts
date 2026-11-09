@@ -4,11 +4,13 @@
 import * as path from "node:path";
 import { type OrgData, type OrgGroup, childGroups, effectiveColor, effectiveRank, groupPath, priorityIndex } from "./organize";
 import type { SessionMeta, SessionStatus } from "./protocol";
+import { finishedAt, scheduledStart, sortBy } from "./session-sort";
 
 export const GROUP_MODES = ["project", "group", "status", "none"] as const;
 export type GroupMode = (typeof GROUP_MODES)[number];
-export const SORT_MODES = ["auto", "manual", "activity", "priority", "name", "created", "cost"] as const;
+export const SORT_MODES = ["auto", "manual", "activity", "priority", "name", "created", "cost", "scheduled", "completed"] as const;
 export type SortMode = (typeof SORT_MODES)[number];
+/** Every mode but `auto` is a session-sort.ts ordering. */
 export type ResolvedSort = Exclude<SortMode, "auto">;
 
 export type StatusBucket = "waiting" | "working" | "idle" | "stopped";
@@ -48,18 +50,21 @@ export function statusBucket(s: SessionStatus): StatusBucket {
 }
 
 export function sortSessions(list: readonly SessionMeta[], sort: ResolvedSort, data: OrgData): SessionMeta[] {
-	const recent = (a: SessionMeta, b: SessionMeta) => b.updatedAt - a.updatedAt;
-	const rank = (m: SessionMeta) => effectiveRank(data.sessions[m.id], m.createdAt);
-	const prio = (m: SessionMeta) => priorityIndex(data.sessions[m.id]?.priority);
-	const cmp: Record<ResolvedSort, (a: SessionMeta, b: SessionMeta) => number> = {
-		manual: (a, b) => rank(a) - rank(b) || recent(a, b),
-		activity: recent,
-		priority: (a, b) => prio(a) - prio(b) || recent(a, b),
-		name: (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" }) || recent(a, b),
-		created: (a, b) => b.createdAt - a.createdAt,
-		cost: (a, b) => (b.cost ?? 0) - (a.cost ?? 0) || recent(a, b),
-	};
-	return [...list].sort(cmp[sort]);
+	return sortBy(list, sort, m => {
+		const e = data.sessions[m.id];
+		return {
+			title: m.title,
+			createdAt: m.createdAt,
+			updatedAt: m.updatedAt,
+			cost: m.cost,
+			rank: effectiveRank(e, m.createdAt),
+			priority: priorityIndex(e?.priority),
+			startAt: scheduledStart(m.queue),
+			completed: m.queue?.completed === true,
+			completedAt: m.queue?.completedAt,
+			finishedAt: finishedAt(m.status, m.updatedAt),
+		};
+	});
 }
 
 /** Text a filter query is matched against. */
@@ -73,6 +78,7 @@ export function sessionHaystack(m: SessionMeta, data: OrgData, projectName: stri
 	if (e?.priority) parts.push(e.priority);
 	if (e?.pinned) parts.push("pinned");
 	if (e?.archived) parts.push("archived");
+	if (m.queue?.completed) parts.push("completed");
 	return parts.join("\n").toLowerCase();
 }
 
@@ -89,6 +95,8 @@ export interface ViewInput {
 	sortBy: SortMode;
 	filter: string;
 	showArchived: boolean;
+	/** Hide sessions marked completed (organize.ts). */
+	hideCompleted?: boolean;
 	/** Listed at all in this window (`omp.sessionScope`, hidden finished sessions). */
 	visible(m: SessionMeta): boolean;
 	inWorkspace(m: SessionMeta): boolean;
@@ -110,6 +118,7 @@ export function buildView(input: ViewInput): ViewNode[] {
 	const shown = input.sessions.filter(m => {
 		if (!input.visible(m)) return false;
 		if (data.sessions[m.id]?.archived && !input.showArchived) return false;
+		if (m.queue?.completed && input.hideCompleted) return false;
 		return !query || matchesFilter(sessionHaystack(m, data, path.basename(input.project(m).root)), query);
 	});
 	const archived = shown.filter(m => data.sessions[m.id]?.archived);

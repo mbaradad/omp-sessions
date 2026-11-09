@@ -1,14 +1,15 @@
 // Models for every omp Sessions client (`omp-sessions models|model`, GET /api/models, the phone app): the
 // list is omp's own (`omp models --json`), switching a session is omp's `set_model` RPC, and the default
-// model for new sessions is `model` in launcher.json (omp's own default, `modelRoles.default`, applies
+// model for new sessions is `model` in ~/.switchyard/config.json (omp's own default, `modelRoles.default`, applies
 // when that is unset). Node-only.
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 import { isRecord } from "./bridge";
 import { HostConnection } from "./host-conn";
-import { findOmp, ompSearchDirs, readLauncherSettings } from "./launch";
+import { findOmp, ompSearchDirs } from "./launch";
 import type { SessionMeta } from "./protocol";
 import { parseConfigValue, readFlags, readLaunchArgs, setLaunchModel } from "./session-config";
+import { readSwitchyardConfig } from "./switchyard-config";
 import { spawnTarget } from "./win-spawn";
 
 export interface ModelEntry {
@@ -27,7 +28,7 @@ export interface ModelEntry {
 
 export interface ModelList {
 	models: ModelEntry[];
-	/** The omp Sessions default (launcher.json), or null: omp's own default applies. */
+	/** The Switchyard default (config.json), or null: omp's own default applies. */
 	default: string | null;
 	/** omp's configured default (`modelRoles.default`), when it could be read. */
 	ompDefault: string | null;
@@ -75,9 +76,9 @@ function runOmp(omp: string, args: string[], cwd: string): Promise<string> {
 
 /** omp's chat models (`search`: `omp models find <search>`), the omp Sessions default marked. */
 export async function listModels(cwd: string, search?: string): Promise<ModelList> {
-	const settings = readLauncherSettings();
-	const omp = findOmp(settings.ompPath);
-	if (!omp) throw new Error("could not find the omp executable (install omp, or run: omp-sessions config set omp.path <path to omp>)");
+	const settings = readSwitchyardConfig();
+	const omp = findOmp();
+	if (!omp) throw new Error("could not find the omp executable: put omp on PATH");
 	const [listing, roles] = await Promise.all([
 		runOmp(omp, search ? ["models", "find", search, "--json"] : ["models", "--json"], cwd),
 		runOmp(omp, ["config", "get", "modelRoles", "--json"], cwd).then(parseConfigValue, () => undefined),
