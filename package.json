@@ -2188,7 +2188,8 @@
 		"test:host": "node test/run.mjs host",
 		"test:hermes": "node integrations/hermes/tests/run.mjs",
 		"hermes:catalog": "node scripts/hermes-catalog-entry.mjs",
-		"ao:schema": "node scripts/ao-schema.mjs"
+		"ao:schema": "node scripts/ao-schema.mjs",
+		"test:ao": "node test/run.mjs ao"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",

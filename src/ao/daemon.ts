@@ -206,21 +206,65 @@ function daemonEnv(env: NodeJS.ProcessEnv, runFile: string): Record<string, stri
 	return out;
 }
 
+/** Settings every unit we run the daemon in needs. KillMode=process: the per-session chat hosts are the daemon's children in its cgroup, and must outlive a restart of it. */
+const UNIT_PROPERTIES = ["KillMode=process", "Restart=on-failure", "RestartSec=5"];
+
+const systemctl = (...args: string[]) => spawnSync("systemctl", ["--user", ...args], { encoding: "utf8", timeout: 15_000 });
+
+/** A value inside a double-quoted unit-file setting: escape quotes and backslashes, and `%` (specifiers). */
+const unitQuote = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%")}"`;
+
+/** The default instance's persistent unit, as RUNTIME.md runs it: enabled, so it also starts at login. */
+export function daemonUnitFile(ao: string, env: Record<string, string>): string {
+	return [
+		"[Unit]",
+		"Description=Agent Orchestrator daemon",
+		"",
+		"[Service]",
+		`ExecStart=${unitQuote(ao)} daemon`,
+		...Object.entries(env).map(([key, value]) => `Environment=${unitQuote(`${key}=${value}`)}`),
+		...UNIT_PROPERTIES,
+		"",
+		"[Install]",
+		"WantedBy=default.target",
+		"",
+	].join("\n");
+}
+
+/**
+ * Starts the daemon under systemd: an installed unit of that name as it is; for the default instance,
+ * a persistent unit written to ~/.config/systemd/user and enabled; for an isolated instance, a
+ * transient unit. False when systemd refuses, so the caller starts a detached process instead.
+ */
 function startSystemd(ao: string, env: Record<string, string>, unit: string, log: (m: string) => void): boolean {
-	const args = ["--user", `--unit=${unit}`, "--collect", "--description=Agent Orchestrator daemon", "--property=Restart=on-failure", "--property=RestartSec=5"];
+	if (systemctl("cat", `${unit}.service`).status === 0) {
+		const r = systemctl("start", `${unit}.service`);
+		if (r.status === 0) log(`started ${unit}.service`);
+		else log(`systemctl --user start ${unit} failed: ${(r.stderr ?? "").trim() || r.status}`);
+		return r.status === 0;
+	}
+	if (unit === "ao-daemon") {
+		const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user");
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, `${unit}.service`), daemonUnitFile(ao, env));
+		systemctl("daemon-reload");
+		const r = systemctl("enable", "--now", `${unit}.service`);
+		if (r.status === 0) {
+			log(`installed and started ${path.join(dir, `${unit}.service`)}`);
+			return true;
+		}
+		log(`systemctl --user enable --now ${unit} failed: ${(r.stderr ?? "").trim() || r.status}`);
+		return false;
+	}
+	const args = ["--user", `--unit=${unit}`, "--collect", "--description=Agent Orchestrator daemon (isolated)", ...UNIT_PROPERTIES.map(p => `--property=${p}`)];
 	for (const [key, value] of Object.entries(env)) args.push(`--setenv=${key}=${value}`);
 	args.push(ao, "daemon");
-	const r = spawnSync("systemd-run", args, { encoding: "utf8", timeout: 10_000 });
+	const r = spawnSync("systemd-run", args, { encoding: "utf8", timeout: 15_000 });
 	if (r.status === 0) {
-		log(`started ${unit}.service (${ao} daemon)`);
+		log(`started transient ${unit}.service (${ao} daemon)`);
 		return true;
 	}
-	// The unit exists already: it is starting (or restarting) the daemon; wait for it.
-	if (/already (exists|loaded)/i.test(r.stderr ?? "")) {
-		log(`${unit}.service exists; waiting for it`);
-		return true;
-	}
-	log(`systemd-run failed (${(r.stderr ?? "").trim() || r.status}); starting a detached process`);
+	log(`systemd-run failed (${(r.stderr ?? "").trim() || r.status})`);
 	return false;
 }
 

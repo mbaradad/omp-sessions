@@ -1,5 +1,5 @@
 // Test runner: bundles the session host and the TypeScript tests with esbuild into .test-out/,
-// then runs them with `node --test`. Usage: node test/run.mjs [unit|host]...
+// then runs them with `node --test`. Usage: node test/run.mjs [unit|host|ao]...
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -11,8 +11,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = process.env.TEST_OUT ? path.resolve(process.env.TEST_OUT) : path.join(root, ".test-out");
 const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : undefined;
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
+// `ao`: live contract tests against a running AO daemon (AO_RUN_FILE/AO_PORT pick it); only when asked for.
 const selected = suites.length ? suites : ["unit", "host"];
-for (const s of selected) if (s !== "unit" && s !== "host") throw new Error(`unknown suite ${s}`);
+for (const s of selected) if (s !== "unit" && s !== "host" && s !== "ao") throw new Error(`unknown suite ${s}`);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });

@@ -1,4 +1,4 @@
-// The only HTTP client to Agent Orchestrator's daemon. Everything else in omp Sessions imports AO
+// The only HTTP client to Agent Orchestrator's daemon. Everything else in Switchyard imports AO
 // types and calls from here (and src/ao/model.ts), never from ./schema.
 //
 //   const ao = await AoClient.connect({ start: true });     // find (or start) the local daemon
@@ -9,9 +9,11 @@
 // `api` is an openapi-fetch client typed by AO's OpenAPI spec: every endpoint, typed params and
 // bodies. `unwrap` turns its `{ data, error }` into the data or a thrown AoError. The wrappers below
 // cover what several clients call; add one here rather than repeating a call shape across clients.
+import { randomUUID } from "node:crypto";
 import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
+import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
 export { AO_SCHEMA_COMMIT };
@@ -44,6 +46,10 @@ export type { AoDaemon, AoStartOptions } from "./daemon";
 export { defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "./daemon";
 export type { AoEvent, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
+export type { AoProjectForFolderOptions } from "./projects";
+export { gitDefaultBranch, gitRoot } from "./projects";
+export type { AoNativeSession } from "./native";
+export { nativeSessionFile, readNativeSession, switchyardHome } from "./native";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -139,10 +145,13 @@ export class AoClient {
 		return this.currentBaseUrl;
 	}
 
-	/** Looks for the daemon again (discovery clients only); returns it, or undefined when none answers. */
+	/**
+	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
+	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 */
 	async rediscover(): Promise<AoDaemon | undefined> {
 		if (!this.discovery) return undefined;
-		const daemon = this.discovery.start ? await ensureDaemon(this.discovery) : await findDaemon(this.discovery);
+		const daemon = await findDaemon(this.discovery);
 		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
 			this.currentBaseUrl = daemon.baseUrl;
 			this.client = this.create();
@@ -201,7 +210,17 @@ export class AoClient {
 		await unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}", { params: { path: { sessionId } }, body: { displayName } }));
 	}
 
-	/** Terminates the session (its agent and host). */
+	/** Stops the agent; the session and its transcript stay (MAPPING.md D4 `stop`). */
+	exitAgent(sessionId: string): Promise<AoSchemas["ExitAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Starts the agent again on its transcript (D4 `resume`); needed after it exited or died ("interrupted"). */
+	resumeAgent(sessionId: string): Promise<AoSchemas["ResumeAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Terminates the session (its agent and host) and releases its workspace. */
 	async killSession(sessionId: string, body: AoSchemas["ControllersKillSessionRequest"] = {}): Promise<AoSchemas["KillSessionResponse"]> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/kill", { params: { path: { sessionId } }, body }));
 	}
@@ -211,20 +230,36 @@ export class AoClient {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/restore", { params: { path: { sessionId } } }));
 	}
 
+	/** Deletes a terminated session for good (D4 `rm`: kill first); `cleanup` removes a clean leftover worktree. */
+	async deleteSession(sessionId: string, cleanup = true): Promise<void> {
+		await unwrap(this.client.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId }, query: { cleanup } } }));
+	}
+
+	async setPinned(sessionId: string, pinned: boolean): Promise<void> {
+		const params = { params: { path: { sessionId } } };
+		await unwrap(pinned ? this.client.POST("/api/v1/sessions/{sessionId}/pin", params) : this.client.DELETE("/api/v1/sessions/{sessionId}/pin", params));
+	}
+
 	// ---- conversation ----
 
 	getConversation(sessionId: string, query: AoConversationQuery = {}): Promise<AoConversation> {
 		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation", { params: { path: { sessionId }, query } }));
 	}
 
-	/** Sends a message: it starts a turn, or queues one behind the running turn. */
+	/**
+	 * Sends a message: it starts a turn, or queues one behind the running turn. `clientMessageId` makes
+	 * it idempotent (a retry with the same id is reported `duplicate`); one is generated when absent.
+	 */
 	sendMessage(sessionId: string, body: AoSendRequest): Promise<AoSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
-	/** Steers the running turn with this text, or sends it as a new turn when none runs. */
+	/**
+	 * Steers the running turn with this text, or sends it as a new turn when none runs. AO requires a
+	 * `clientMessageId` (generated when absent); after a CHAT_STEER_UNCERTAIN error, retry only with the same one.
+	 */
 	steerOrSend(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSteerOrSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/** Stops the running turn. */
@@ -261,5 +296,15 @@ export class AoClient {
 
 	async addProject(body: AoSchemas["AddProjectInput"]): Promise<AoSchemas["Project"]> {
 		return (await unwrap(this.client.POST("/api/v1/projects", { body }))).project;
+	}
+
+	/** Replaces the project's whole per-project config. */
+	async setProjectConfig(projectId: string, config: AoSchemas["ProjectConfig"]): Promise<void> {
+		await unwrap(this.client.PUT("/api/v1/projects/{id}/config", { params: { path: { id: projectId } }, body: { config } }));
+	}
+
+	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
+	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
+		return projectForFolder(this, dir, options);
 	}
 }

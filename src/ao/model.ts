@@ -1,20 +1,21 @@
-// The omp Sessions view of AO sessions: one agent state, the pending question with its choices, the
+// Switchyard's view of AO sessions: one agent state, the pending question with its choices, the
 // last reply, cost, the turn queue and the files the agent changed, derived from an AO session view
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
 // keeps those models current from the daemon's change stream.
 import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
 
 /**
- * `queued`: turns wait while the agent is not connected (hibernated or stopped). `scheduled`: never
- * produced from AO data alone (AO has no start times). `starting`: the session is being provisioned
- * or its agent connects. `working`: a turn runs, or queued turns continue on their own.
- * `needs_input`: an approval or question waits for an answer. `interrupted`: the daemon lost a running
- * turn (it restarted or the agent died: AO marks the turn `recovered`). `idle`: done for now.
- * `stopped`: terminated, failed to start, or its agent exited.
+ * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
+ * work for the session. `scheduled`: the planner starts it later (AO has no start times).
+ * `starting`: the session is being provisioned or its agent connects. `working`: a turn runs, or
+ * queued turns continue on their own. `needs_input`: an approval or question waits for an answer.
+ * `interrupted`: the agent died while a turn ran (AO failed it with AO_LOST_TURN_ERROR), or the
+ * planner's task was cut short. `idle`: done for now. `stopped`: terminated, failed to start, or its
+ * agent exited.
  */
 export type AoAgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
-/** States in which nothing happens until someone acts (or a start time comes): what `omp-sessions wait` waits for. */
+/** States in which nothing happens until someone acts (or a start time comes): what `switchyard wait` waits for. */
 export const SETTLED_STATES: Readonly<Record<AoAgentState, boolean>> = { queued: false, scheduled: true, starting: false, working: false, needs_input: true, interrupted: true, idle: true, stopped: true };
 
 export interface AoDecision {
@@ -228,48 +229,80 @@ export function changedFiles(conversation: AoConversation): AoChangedFile[] {
 	return [...files.values()];
 }
 
-/** The omp state of an AO session; pass its conversation snapshot when there is one (chat sessions) for questions, queue and turns. */
-export function agentState(view: AoSessionView, conversation?: AoConversation): AoAgentState {
+/**
+ * What the planner (PLANNER-API.md) says about the session's lane when it is not running a turn:
+ * `queued` (a task is waiting, held or blocked), `scheduled` (the next task or the lane has a future
+ * start), `interrupted` (a task was cut short and needs a person).
+ */
+export type AoPlannedState = "queued" | "scheduled" | "interrupted";
+
+/**
+ * The Switchyard state of an AO session (MAPPING.md D3). Pass its conversation snapshot when there is one
+ * (chat sessions) for questions, queue and turns, and the planner's state of its lane when it has one:
+ * that wins whenever the session itself is idle or stopped.
+ */
+export function agentState(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoAgentState {
+	const own = sessionState(view, conversation);
+	return planned && (own === "idle" || own === "stopped") ? planned : own;
+}
+
+function sessionState(view: AoSessionView, conversation: AoConversation | undefined): AoAgentState {
 	if (view.isTerminated || view.status === "terminated") return "stopped";
 	if (view.provisionState === "failed") return "stopped";
 	if (view.provisionState === "provisioning") return "starting";
 	if (conversation) {
-		if (pendingActivities(conversation).length > 0) return "needs_input";
-		if (conversation.turns.some(t => t.state === "running")) return "working";
+		const running = conversation.turns.some(t => t.state === "running");
+		const pending = pendingActivities(conversation).length > 0;
+		// The agent died mid-turn (omp crashed or was killed): AO stops the controller and reports it
+		// exited, and either keeps the turn (and any question) open for a replacement agent or fails it
+		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
+		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
+		const down = conversation.controller === "stopped" || view.activity.state === "exited";
+		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (pending) return "needs_input";
+		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
 		if (conversation.turns.some(t => t.state === "queued")) {
 			if (connecting) return "starting";
 			return conversation.controller === "hibernated" || conversation.controller === "stopped" ? "queued" : "working";
 		}
 		if (connecting) return "starting";
+		// Busy with no turn: compaction, a steer being applied.
+		if (conversation.controller === "busy") return "working";
 		if (view.activity.state === "exited") return "stopped";
-		const last = conversation.turns.at(-1);
-		if (last?.state === "recovered") return "interrupted";
+		// `interrupted` turns are a person's stop; `recovered` ones were replayed from omp's history
+		// (resume, adoption) without a known outcome. Neither needs anyone.
 		return "idle";
 	}
 	switch (view.activity.state) {
 		case "active":
 			return "working";
+		// A chat session with a pending question or approval reports waiting_input; blocked is a TUI permission prompt.
 		case "blocked":
+		case "waiting_input":
 			return "needs_input";
 		case "exited":
 			return "stopped";
+		default:
+			return "idle";
 	}
-	if (view.status === "exited") return "stopped";
-	if (view.status === "needs_input") return "needs_input";
-	if (view.status === "working") return "working";
-	return "idle";
+}
+
+/** AO's reason for turns its controller still owned when it ended (SettleOrphanedConversationTurns). */
+export const AO_LOST_TURN_ERROR = "controller ended before the turn completed";
+
+function lostTurn(turn: AoTurn | undefined): boolean {
+	return turn?.state === "failed" && turn.errorMessage === AO_LOST_TURN_ERROR;
 }
 
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
 	const last = conversation?.turns.at(-1);
-	if (last && (last.state === "failed" || last.state === "recovered")) return last.errorMessage || (last.state === "recovered" ? "The daemon lost this turn while it ran." : undefined);
-	return undefined;
+	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
-export function sessionModel(view: AoSessionView, conversation?: AoConversation): AoSessionModel {
+export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {
 	const question = conversation ? questionsOf(conversation)[0] : undefined;
 	const reply = conversation ? lastReply(conversation) : undefined;
 	const exitReason = exitReasonOf(view, conversation);
@@ -282,7 +315,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation)
 		...(view.harness && { harness: view.harness }),
 		...(model && { model }),
 		mode: view.mode,
-		state: agentState(view, conversation),
+		state: agentState(view, conversation, planned),
 		status: view.status,
 		...(view.branch && { branch: view.branch }),
 		pinned: view.isPinned,
