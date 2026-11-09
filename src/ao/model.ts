@@ -526,8 +526,10 @@ export interface AoWatcherOptions {
 	changedFiles?: boolean;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
-	/** How long after a session settles its changed files are read once more (the first read can be stale). Default 1500 ms. */
+	/** After a session settles, its changed files are read again this long after (a quick second look; the first read can be stale). Default 1500 ms. */
 	settleMs?: number;
+	/** The read that makes them final, this long after the session settled: AO caches a manifest for 3 s without saying so, so this must exceed that. Default 3400 ms. */
+	manifestCacheMs?: number;
 }
 
 /**
@@ -541,8 +543,8 @@ export class AoSessionWatcher {
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly cwds = new Map<string, string>();
-	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean }>();
-	private readonly confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly files = new Map<string, { key: string; files: AoChangedFile[]; readAt: number; tries: number; confirmed: boolean; settledAt?: number }>();
+	private readonly confirmTimers = new Map<string, { due: number; timer: ReturnType<typeof setTimeout> }>();
 	private readonly replyTries = new Map<string, { turnId: string; tries: number }>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
@@ -633,7 +635,7 @@ export class AoSessionWatcher {
 		this.closed = true;
 		this.subscription?.close();
 		for (const t of this.timers.values()) clearTimeout(t);
-		for (const t of this.confirmTimers.values()) clearTimeout(t);
+		for (const t of this.confirmTimers.values()) clearTimeout(t.timer);
 		this.confirmTimers.clear();
 		this.timers.clear();
 		this.listeners.clear();
@@ -680,20 +682,32 @@ export class AoSessionWatcher {
 	}
 
 	/**
-	 * Files change only while the agent works, which adds conversation items or settles turns: the
-	 * manifest (a git diff on the daemon) is read again only when those moved. The read made at the instant
-	 * a turn settles can be stale (AO answered without the file the turn had just written, and no event
-	 * follows to correct it: seen live), so a session that just settled is read once more `settleMs`
-	 * later, and a read AO flags `stale` or `refreshing` is not trusted either, up to a few tries.
+	 * Files change only while the agent works, which adds conversation items or settles turns: the manifest (a
+	 * git diff on the daemon) is read again only when those moved. But the read at the instant a turn settles
+	 * can be stale, and AO does not say so: it returns its last computed manifest for 3 s
+	 * (`workspaceCacheTTL`) as fresh (`stale: false`), and only a filesystem watcher, which exists while a
+	 * client holds the workspace events stream (nobody here does), marks it stale earlier. So a manifest
+	 * computed while the turn ran, before it wrote its file, is served unflagged for up to 3 s after the turn
+	 * settles, and no event follows to correct it (seen live: 1 e2e run in 3, the file count stuck for 30 s).
+	 * A session that just settled is therefore read at once (usually right), again after `settleMs`, and
+	 * finally at `manifestCacheMs` after it settled: any read made more than 3 s after AO's last computation
+	 * recomputes, so that one is fresh whatever the earlier ones returned. Only then is it final.
 	 */
 	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
 		const key = conversation ? `${conversation.latestSequence}|${conversation.turns.map(t => `${t.id}:${t.state}`).join(",")}` : view.updatedAt;
 		const open = conversation?.turns.some(t => t.state === "running" || t.state === "queued") === true;
 		const settleMs = this.options.settleMs ?? 1_500;
+		const cacheMs = this.options.manifestCacheMs ?? 3_400;
 		const known = this.files.get(view.id);
-		if (known?.key === key) {
-			if (known.confirmed) return known.files;
-			const wait = known.readAt + settleMs - Date.now();
+		const sameKey = known?.key === key;
+		if (sameKey && known.confirmed) return known.files;
+		// When this state was first seen settled after a change: the clock the final read counts from. A session
+		// seen for the first time, or one still running (every event reads it), has none.
+		const settledAt = sameKey ? known.settledAt : !open && known !== undefined ? Date.now() : undefined;
+		if (sameKey && settledAt !== undefined) {
+			// The next read is due at settleMs (the quick one), and when that one is done, at cacheMs (the final one).
+			const due = settledAt + (known.readAt < settledAt + settleMs ? settleMs : cacheMs);
+			const wait = due - Date.now();
 			if (wait > 0) {
 				this.confirmLater(view.id, wait);
 				return known.files;
@@ -702,13 +716,16 @@ export class AoSessionWatcher {
 		try {
 			const manifest = await this.client.workspaceManifest(view.id);
 			const files = changedFiles(manifest);
-			const tries = known?.key === key ? known.tries + 1 : 1;
+			const readAt = Date.now();
+			const tries = sameKey ? known.tries + 1 : 1;
 			const unsure = manifest.stale || manifest.refreshing;
-			// A session that just changed into a settled state is read once more; an open one is read on every event anyway.
-			const settling = !open && known !== undefined && known.key !== key;
-			const confirmed = tries >= 4 || (known?.key === key ? !unsure : !settling && !unsure);
-			this.files.set(view.id, { key, files, readAt: Date.now(), tries, confirmed });
-			if (!confirmed) this.confirmLater(view.id, settleMs);
+			// Settled: final once a read has been made after AO's cache expired. Otherwise: final unless AO says it is stale (a few tries).
+			const confirmed = settledAt !== undefined ? readAt >= settledAt + cacheMs : !unsure || tries >= 4;
+			this.files.set(view.id, { key, files, readAt, tries, confirmed, settledAt });
+			if (!confirmed) {
+				if (settledAt === undefined) this.confirmLater(view.id, settleMs);
+				else this.confirmLater(view.id, Math.max(0, settledAt + (readAt < settledAt + settleMs ? settleMs : cacheMs) - readAt));
+			}
 			return files;
 		} catch {
 			// No workspace any more (terminated and released), or a transient failure: keep what was known.
@@ -716,16 +733,24 @@ export class AoSessionWatcher {
 		}
 	}
 
-	/** Refreshes the session after `ms`, once: the delayed second read of its changed files. */
+	/**
+	 * Refreshes the session after `ms`: the delayed re-reads of its changed files and of a reply that was not
+	 * final. One timer per session, kept at the earliest deadline asked for, so a long wait (the final files
+	 * read) never holds back a short one (the reply); the refresh that fires asks again for whatever is left.
+	 */
 	private confirmLater(sessionId: string, ms: number): void {
-		if (this.closed || this.confirmTimers.has(sessionId)) return;
-		this.confirmTimers.set(
-			sessionId,
-			setTimeout(() => {
+		if (this.closed) return;
+		const due = Date.now() + ms;
+		const pending = this.confirmTimers.get(sessionId);
+		if (pending && pending.due <= due) return;
+		if (pending) clearTimeout(pending.timer);
+		this.confirmTimers.set(sessionId, {
+			due,
+			timer: setTimeout(() => {
 				this.confirmTimers.delete(sessionId);
 				void this.refresh(sessionId).catch(() => undefined);
 			}, ms),
-		);
+		});
 	}
 
 	/** A session's workspace never moves: read it once (a failed read is retried on the next build). */
