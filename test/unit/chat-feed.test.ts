@@ -264,3 +264,23 @@ test("turns omp undid and the /undo, /redo commands are left out, and come back 
 	assert.equal(feed.activityIdOf("call_xyz"), "a7");
 	assert.equal(feed.activityIdOf("nope"), undefined);
 });
+
+test("omp's write/edit permission prompt (a form with Approve/Deny) is a select dialog answered through the inputs route", () => {
+	const form = act(2, {
+		activityKind: "user_input",
+		status: "pending",
+		turnId: "t1",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: notes.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: notes.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const feed = new ChatFeed();
+	const [ui] = feed.reset(conv({ turns: [turn("t1", "running")], activities: [form], controller: "busy" })).pendingUi;
+	assert.equal(ui.method, "select");
+	assert.equal(ui.title, "Allow tool: write\nPath: notes.md");
+	assert.deepEqual(ui.options, ["Approve", "Approve write for this session", "Deny"]);
+	const req = feed.request("req-write");
+	assert.ok(req);
+	assert.deepEqual(replyFor(req, { value: "Approve" }), { kind: "input", action: "accept", content: { value: "Approve" } });
+	assert.deepEqual(replyFor(req, { cancelled: true }), { kind: "input", action: "accept", content: { value: "Deny" } });
+});

@@ -7,7 +7,7 @@
 // while it streams. This module turns AO snapshots into those shapes: `reset` for a full history,
 // `apply` for every later page, emitting frames only for rows that changed.
 import type { AoActivity, AoConversation, AoMessage, AoTurn, AoUsage } from "../ao/client";
-import { type AoQuestion, questionOf } from "../ao/model";
+import { type AoQuestion, answerFor, questionOf } from "../ao/model";
 import { diffTexts } from "../shared/diff";
 import type { OmpFrame, UiRequest } from "../shared/protocol";
 import type { DiffsByPath, SlimState, ToWebview } from "../shared/webview";
@@ -164,8 +164,9 @@ export function uiRequestOf(a: AoActivity, toolName?: string): PendingRequest {
 	const question = questionOf(a);
 	const base = { type: "extension_ui_request" as const, id: question.id };
 	if (question.kind === "approval") {
-		const tool = toolName ?? toolNameOf(a);
-		return { question, ui: { ...base, method: "select", title: `Allow ${tool}: ${question.title}`, options: question.options ?? [] } };
+		// omp's write/edit prompts arrive as a form whose summary already reads "Allow tool: write\nPath: …".
+		const title = question.inputField ? question.title : `Allow ${toolName ?? toolNameOf(a)}: ${question.title}`;
+		return { question, ui: { ...base, method: "select", title, options: question.options ?? [] } };
 	}
 	const fields = question.questions ?? [];
 	const title = question.message ? `${question.title}\n${question.message}` : question.title;
@@ -199,7 +200,11 @@ export function replyFor(p: PendingRequest, res: Record<string, unknown>): AoRep
 	if (q.kind === "approval") {
 		const decisions = q.decisions ?? [];
 		const chosen = res.cancelled ? decisions.find(d => d.kind === "reject_once") ?? decisions.find(d => d.kind?.startsWith("reject")) : decisions.find(d => d.label === res.value);
-		return chosen ? { kind: "approval", decisionId: chosen.id } : undefined;
+		if (!chosen) return undefined;
+		// A permission prompt omp raised as a form (write/edit) is answered through the inputs route; src/ao knows which.
+		const answer = answerFor(q, chosen.label);
+		if ("error" in answer) return undefined;
+		return answer.kind === "approval" ? answer : { kind: "input", action: answer.body.action, ...(answer.body.content && { content: answer.body.content as Record<string, unknown> }) };
 	}
 	if (res.cancelled) return { kind: "input", action: "decline" };
 	const fields = q.questions ?? [];
