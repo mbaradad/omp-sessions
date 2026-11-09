@@ -228,8 +228,24 @@ export function changedFiles(conversation: AoConversation): AoChangedFile[] {
 	return [...files.values()];
 }
 
-/** The omp state of an AO session; pass its conversation snapshot when there is one (chat sessions) for questions, queue and turns. */
-export function agentState(view: AoSessionView, conversation?: AoConversation): AoAgentState {
+/**
+ * What the planner (PLANNER-API.md) says about the session's lane when it is not running a turn:
+ * `queued` (a task is waiting, held or blocked), `scheduled` (the next task or the lane has a future
+ * start), `interrupted` (a task was cut short and needs a person).
+ */
+export type AoPlannedState = "queued" | "scheduled" | "interrupted";
+
+/**
+ * The omp state of an AO session (MAPPING.md D3). Pass its conversation snapshot when there is one
+ * (chat sessions) for questions, queue and turns, and the planner's state of its lane when it has one:
+ * that wins whenever the session itself is idle or stopped.
+ */
+export function agentState(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoAgentState {
+	const own = sessionState(view, conversation);
+	return planned && (own === "idle" || own === "stopped") ? planned : own;
+}
+
+function sessionState(view: AoSessionView, conversation: AoConversation | undefined): AoAgentState {
 	if (view.isTerminated || view.status === "terminated") return "stopped";
 	if (view.provisionState === "failed") return "stopped";
 	if (view.provisionState === "provisioning") return "starting";
@@ -242,17 +258,20 @@ export function agentState(view: AoSessionView, conversation?: AoConversation): 
 			return conversation.controller === "hibernated" || conversation.controller === "stopped" ? "queued" : "working";
 		}
 		if (connecting) return "starting";
+		// Busy with no turn: compaction, a steer being applied.
+		if (conversation.controller === "busy") return "working";
 		if (view.activity.state === "exited") return "stopped";
-		const last = conversation.turns.at(-1);
-		if (last?.state === "recovered") return "interrupted";
+		// AO marks a turn `recovered` when it lost it while it ran (daemon restart, agent died);
+		// `interrupted` is a person's stop.
+		if (conversation.turns.at(-1)?.state === "recovered") return "interrupted";
 		return "idle";
 	}
-	// AO's status folds both "blocked" (a pending decision) and "waiting_input" (an empty prompt
-	// awaiting the next instruction) into needs_input; only the first waits on an answer.
 	switch (view.activity.state) {
 		case "active":
 			return "working";
+		// A chat session with a pending question or approval reports waiting_input; blocked is a TUI permission prompt.
 		case "blocked":
+		case "waiting_input":
 			return "needs_input";
 		case "exited":
 			return "stopped";
@@ -269,7 +288,7 @@ export function exitReasonOf(view: AoSessionView, conversation?: AoConversation)
 	return undefined;
 }
 
-export function sessionModel(view: AoSessionView, conversation?: AoConversation): AoSessionModel {
+export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {
 	const question = conversation ? questionsOf(conversation)[0] : undefined;
 	const reply = conversation ? lastReply(conversation) : undefined;
 	const exitReason = exitReasonOf(view, conversation);
@@ -282,7 +301,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation)
 		...(view.harness && { harness: view.harness }),
 		...(model && { model }),
 		mode: view.mode,
-		state: agentState(view, conversation),
+		state: agentState(view, conversation, planned),
 		status: view.status,
 		...(view.branch && { branch: view.branch }),
 		pinned: view.isPinned,

@@ -12,6 +12,7 @@
 import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
+import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
 export { AO_SCHEMA_COMMIT };
@@ -44,6 +45,8 @@ export type { AoDaemon, AoStartOptions } from "./daemon";
 export { defaultRunFile, ensureDaemon, findDaemon, stopDaemon } from "./daemon";
 export type { AoEvent, AoEventSubscription, AoEventType, AoStreamStatus } from "./events";
 export { AO_EVENT_TYPES } from "./events";
+export type { AoProjectForFolderOptions } from "./projects";
+export { gitDefaultBranch, gitRoot } from "./projects";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -261,5 +264,15 @@ export class AoClient {
 
 	async addProject(body: AoSchemas["AddProjectInput"]): Promise<AoSchemas["Project"]> {
 		return (await unwrap(this.client.POST("/api/v1/projects", { body }))).project;
+	}
+
+	/** Replaces the project's whole per-project config. */
+	async setProjectConfig(projectId: string, config: AoSchemas["ProjectConfig"]): Promise<void> {
+		await unwrap(this.client.PUT("/api/v1/projects/{id}/config", { params: { path: { id: projectId } }, body: { config } }));
+	}
+
+	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
+	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
+		return projectForFolder(this, dir, options);
 	}
 }
