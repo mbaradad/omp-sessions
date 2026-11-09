@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { TestContext } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { AoError } from "../../src/ao/client";
 import type { AoConversationInfo, AoPort, AoStreamHandlers, AoTurnInfo } from "../../src/planner/ao-port";
 import { Planner } from "../../src/planner/planner";
 import { loadPlan } from "../../src/planner/store";
@@ -19,6 +20,8 @@ interface FakeSession {
 	turns: AoTurnInfo[];
 	conv: AoConversationInfo;
 	spawnBody: Record<string, unknown>;
+	/** The agent's host died (or the session was stopped): AO reads it as exited. */
+	exited?: boolean;
 	branch?: string;
 	/** Real git worktree of a project session. */
 	worktree?: string;
@@ -56,8 +59,13 @@ export class FakeAo implements AoPort {
 	/** With a repo, sessions spawned in project "p" get a real worktree on a branch (ao/<id>/root, or the requested one). */
 	constructor(readonly repo?: string) {}
 
-	private event(session: string): void {
-		this.handlers?.onEvent(++this.seq, session, "idle");
+	/** Model ids AO lists; empty = AO can't say (nothing is refused). */
+	modelIds: string[] = [];
+	/** How often each agent was resumed (`resumeAgent`). */
+	resumed: string[] = [];
+
+	private event(session: string, activity = "idle"): void {
+		this.handlers?.onEvent(++this.seq, session, activity);
 	}
 
 	private turn(s: FakeSession, text: string, clientMessageId?: string): string {
@@ -91,7 +99,7 @@ export class FakeAo implements AoPort {
 
 	async send(session: string, text: string, clientMessageId: string) {
 		const s = this.sessions.get(session);
-		assert.ok(s && !s.terminated);
+		assert.ok(s && !s.terminated && !s.exited, `send to ${session}: terminated or exited`);
 		const dup = s.conv.messages.find(m => m.clientMessageId === clientMessageId);
 		return { turn: dup ? undefined : this.turn(s, text, clientMessageId) } as { turn?: string };
 	}
@@ -104,7 +112,7 @@ export class FakeAo implements AoPort {
 
 	async session(id: string) {
 		const s = this.sessions.get(id);
-		return s && { id, terminated: s.terminated };
+		return s && { id, terminated: s.terminated, ...(s.exited ? { activity: "exited" } : {}) };
 	}
 
 	async activeSessions() {
@@ -113,6 +121,24 @@ export class FakeAo implements AoPort {
 
 	async interrupt(session: string) {
 		this.finishTurn(session, "interrupted");
+	}
+
+	async resumeAgent(session: string) {
+		const s = this.sessions.get(session);
+		if (s) s.exited = false;
+		this.resumed.push(session);
+	}
+
+	async models() {
+		return this.modelIds;
+	}
+
+	/** Simulates the chat host dying mid-turn: the turn stays running, the session reads exited. */
+	killHost(session: string): void {
+		const s = this.sessions.get(session);
+		assert.ok(s, `no session ${session}`);
+		s.exited = true;
+		this.event(session, "exited");
 	}
 
 	async restore(session: string) {
@@ -128,8 +154,18 @@ export class FakeAo implements AoPort {
 		return undefined;
 	}
 
-	async projectFor() {
-		return this.repo ? "p" : undefined;
+	/** Folders registered as projects, as AO refuses a second registration of the same path. */
+	registered = new Set<string>();
+	/** Set to make registration slow (the window in which concurrent registrations race). */
+	registerDelayMs = 0;
+
+	async projectFor(cwd: string) {
+		if (!this.repo) return undefined;
+		if (this.registered.has(cwd)) return "p";
+		await sleep(this.registerDelayMs);
+		if (this.registered.has(cwd)) throw new AoError("A project at this path is already registered (/api/v1/projects)", 409, "PROJECT_ALREADY_REGISTERED");
+		this.registered.add(cwd);
+		return "p";
 	}
 
 	async projectPath(id: string) {

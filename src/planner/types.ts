@@ -6,7 +6,8 @@ export const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+/** What omp accepts for its `thinking` option over ACP (`minimal` is read as `low`, see normalizeOptions). */
+export const THINKING_LEVELS = ["off", "auto", "low", "medium", "high", "xhigh", "max"] as const;
 export const APPROVAL_MODES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
 export type WorktreeMode = "auto" | "always" | "never";
@@ -49,8 +50,6 @@ export interface TaskRun {
 	via: "spawn" | "send";
 	/** Exact spawn body (replayed verbatim after a restart; AO answers a replay with the same session). */
 	spawn?: Record<string, unknown>;
-	/** The prompt goes out as a message after the spawn (when settings must apply first). */
-	sendAfterSpawn?: boolean;
 	/** The git repo (AO project folder) a spawned session works in: its branch is recorded once AO answers. */
 	repo?: string;
 	/** AO session (known up front for `send`, after the spawn otherwise). */
@@ -123,6 +122,8 @@ export interface Task {
 	sync?: Record<string, EdgeSync>;
 	/** Note for the next run's prompt (upstream changes merged, or a merge to resolve). */
 	followUp?: string;
+	/** The next run is only that note (a follow-up in the session that has the work), not the whole task again. */
+	followUpOnly?: boolean;
 }
 
 export interface TaskGit {
