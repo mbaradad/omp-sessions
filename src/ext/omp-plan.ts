@@ -1,17 +1,18 @@
 // omp's own todo plan of each AO session, for the Tasks view: read from the mirror files the shipped
-// omp extension writes (src/omp-extension/todos.ts), edited by sending omp's `/todo import <file>`
-// to the session through AO (GAPS.md G2). omp applies it without a model call; while a turn runs,
-// AO queues it behind that turn.
+// omp extension writes (src/omp-extension/todos.ts, `<switchyard home>/sessions/<id>/todos.json`),
+// edited by sending omp's `/todo import <file>` to the session through AO (GAPS.md G2). omp applies
+// it without a model call; while a turn runs, AO queues it behind that turn.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { AoClient } from "../ao/client";
-import { type TodoPhase, aoDataDir, phasesToMarkdown, readTodoMirror, todoImportCommand, todoImportFile, todoMirrorDir, writeFileAtomic } from "../shared/omp-todos";
+import { switchyardHome } from "../ao/native";
+import { type TodoPhase, phasesToMarkdown, readTodoMirror, todoImportCommand, todoImportFile, writeFileAtomic } from "../shared/omp-todos";
 
 const POLL_MS = 3000;
 
 export class OmpPlans implements vscode.Disposable {
-	private readonly dir: string;
+	private readonly sessionsDir: string;
 	private readonly plans = new Map<string, { mtime: number; phases: TodoPhase[] }>();
 	private readonly emitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.emitter.event;
@@ -19,8 +20,8 @@ export class OmpPlans implements vscode.Disposable {
 	private readonly poll: NodeJS.Timeout;
 	private pending: NodeJS.Timeout | undefined;
 
-	constructor(private readonly dataDir = aoDataDir()) {
-		this.dir = todoMirrorDir(dataDir);
+	constructor(private readonly home = switchyardHome()) {
+		this.sessionsDir = path.join(home, "sessions");
 		this.scan();
 		this.watch();
 		// fs.watch misses events on some file systems (and can't watch a folder that doesn't exist yet).
@@ -37,7 +38,7 @@ export class OmpPlans implements vscode.Disposable {
 
 	/** Asks omp to replace the session's plan with `phases`. */
 	async set(client: AoClient, aoSessionId: string, phases: readonly TodoPhase[]): Promise<void> {
-		const file = todoImportFile(this.dataDir, aoSessionId);
+		const file = todoImportFile(this.home, aoSessionId);
 		writeFileAtomic(file, phasesToMarkdown(phases));
 		await client.sendMessage(aoSessionId, { text: todoImportCommand(file) });
 	}
@@ -52,7 +53,8 @@ export class OmpPlans implements vscode.Disposable {
 	private watch(): void {
 		if (this.watcher) return;
 		try {
-			this.watcher = fs.watch(this.dir, () => {
+			this.watcher = fs.watch(this.sessionsDir, { recursive: true }, (_event, name) => {
+				if (name && !String(name).endsWith("todos.json")) return;
 				this.pending ??= setTimeout(() => {
 					this.pending = undefined;
 					this.scan();
@@ -68,24 +70,23 @@ export class OmpPlans implements vscode.Disposable {
 	}
 
 	private scan(): void {
-		let names: string[];
+		let ids: string[];
 		try {
-			names = fs.readdirSync(this.dir).filter(n => n.endsWith(".json"));
+			ids = fs.readdirSync(this.sessionsDir);
 		} catch {
-			names = [];
+			ids = [];
 		}
 		let changed = false;
 		const seen = new Set<string>();
-		for (const name of names) {
-			const id = name.slice(0, -".json".length);
-			seen.add(id);
-			const file = path.join(this.dir, name);
+		for (const id of ids) {
+			const file = path.join(this.sessionsDir, id, "todos.json");
 			let mtime: number;
 			try {
 				mtime = fs.statSync(file).mtimeMs;
 			} catch {
 				continue;
 			}
+			seen.add(id);
 			if (this.plans.get(id)?.mtime === mtime) continue;
 			const mirror = readTodoMirror(file);
 			if (!mirror) continue;

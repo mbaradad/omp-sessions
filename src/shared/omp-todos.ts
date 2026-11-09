@@ -1,10 +1,10 @@
 // omp's own todo plan (phases → tasks) for sessions AO runs. AO keeps only a flattened, per-turn
-// copy of it (GAPS.md G2), so the omp extension `src/omp-extension/todos.ts` mirrors omp's state to
-// `<AO data dir>/omp-sessions/todos/<AO session id>.json`, and clients edit it by sending omp's
-// own `/todo import <file>` with the phases as omp's Markdown checklist.
+// copy of it (GAPS.md G2), so the Switchyard omp extension `src/omp-extension/todos.ts` mirrors omp's
+// state to `<switchyard home>/sessions/<AO session id>/todos.json` (beside `omp.json` and
+// `checkpoints/`), and clients edit it by sending omp's own `/todo import <file>` with the phases as
+// omp's Markdown checklist.
 // Formats follow omp's `tools/todo.ts` (`phasesToMarkdown`, `canonicalTodoPhases`). Node-only (fs).
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
@@ -101,28 +101,24 @@ function oneLine(s: string): string {
 	return s.replace(/\s+/g, " ").trim();
 }
 
-/** AO's data dir as AO resolves it for its daemon (`AO_DATA_DIR`, default `~/.ao/data`). */
-export function aoDataDir(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string {
-	return env.AO_DATA_DIR?.trim() || path.join(home, ".ao", "data");
-}
-
-export function todoMirrorDir(dataDir: string): string {
-	return path.join(dataDir, "omp-sessions", "todos");
-}
-
-/** AO session ids are slugs (`project-3`, `standalone-1`); anything else can't name a file. */
+/** AO session ids are slugs (`project-3`, `standalone-1`); anything else can't name a folder. */
 function safeId(id: string): string {
 	if (!/^[A-Za-z0-9._-]+$/.test(id) || id.startsWith(".")) throw new Error(`unexpected AO session id: ${id}`);
 	return id;
 }
 
-export function todoMirrorFile(dataDir: string, aoSessionId: string): string {
-	return path.join(todoMirrorDir(dataDir), `${safeId(aoSessionId)}.json`);
+/** The session's Switchyard folder (`<switchyard home>/sessions/<AO session id>`). */
+export function todoSessionDir(home: string, aoSessionId: string): string {
+	return path.join(home, "sessions", safeId(aoSessionId));
+}
+
+export function todoMirrorFile(home: string, aoSessionId: string): string {
+	return path.join(todoSessionDir(home, aoSessionId), "todos.json");
 }
 
 /** Where a client writes the Markdown it asks omp to `/todo import`. */
-export function todoImportFile(dataDir: string, aoSessionId: string): string {
-	return path.join(todoMirrorDir(dataDir), `${safeId(aoSessionId)}.import.md`);
+export function todoImportFile(home: string, aoSessionId: string): string {
+	return path.join(todoSessionDir(home, aoSessionId), "todos.import.md");
 }
 
 export function readTodoMirror(file: string): TodoMirror | undefined {

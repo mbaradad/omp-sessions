@@ -45,13 +45,13 @@ describe("phasesToMarkdown", () => {
 
 describe("omp extension: todo mirror", () => {
 	let dir: string;
-	const saved = { id: process.env.AO_SESSION_ID, data: process.env.AO_DATA_DIR };
+	const saved = { id: process.env.AO_SESSION_ID, home: process.env.SWITCHYARD_HOME };
 	beforeEach(() => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-todos-"));
-		process.env.AO_DATA_DIR = dir;
+		process.env.SWITCHYARD_HOME = dir;
 	});
 	afterEach(() => {
-		for (const [k, v] of [["AO_SESSION_ID", saved.id], ["AO_DATA_DIR", saved.data]] as const) {
+		for (const [k, v] of [["AO_SESSION_ID", saved.id], ["SWITCHYARD_HOME", saved.home]] as const) {
 			if (v === undefined) delete process.env[k];
 			else process.env[k] = v;
 		}

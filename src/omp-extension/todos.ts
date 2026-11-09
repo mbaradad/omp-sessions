@@ -1,12 +1,13 @@
-// omp extension shipped by omp Sessions (installed into omp's agent folder by the VS Code
-// extension, see src/ext/omp-extension.ts). In omp processes AO runs (`AO_SESSION_ID` is set), it
-// mirrors omp's todo phases to `<AO data dir>/omp-sessions/todos/<AO session id>.json` whenever they
-// change, so the Tasks view shows them exactly (AO's own copy drops phases; GAPS.md G2). Anywhere
-// else it does nothing.
+// omp extension shipped by Switchyard (installed into omp's agent folder by the VS Code extension,
+// see src/ext/omp-extension.ts). In omp processes AO runs (`AO_SESSION_ID` is set), it mirrors omp's
+// todo phases to `<switchyard home>/sessions/<AO session id>/todos.json` whenever they change, so
+// the Tasks view shows them exactly (AO's own copy drops phases; GAPS.md G2). Anywhere else it does
+// nothing (MAPPING.md D6).
 //
 // The plan changes through the todo tool and through `/todo` commands; both append a transcript
 // entry and move the branch leaf, so a cheap leaf-id check on a short timer catches every change.
-import { type TodoMirror, aoDataDir, latestTodoPhases, todoMirrorFile, writeFileAtomic } from "../shared/omp-todos";
+import { switchyardHome } from "../ao/native";
+import { type TodoMirror, latestTodoPhases, todoMirrorFile, writeFileAtomic } from "../shared/omp-todos";
 
 /** The slice of omp's ExtensionAPI this module uses (types only; omp passes the real object). */
 interface SessionManagerLike {
@@ -30,7 +31,7 @@ export default function ompSessionsTodos(pi: ExtensionApiLike): void {
 	if (!aoSessionId) return;
 	let file: string;
 	try {
-		file = todoMirrorFile(aoDataDir(), aoSessionId);
+		file = todoMirrorFile(switchyardHome(), aoSessionId);
 	} catch {
 		return;
 	}
