@@ -430,7 +430,7 @@ export class ChatFeed {
 	/**
 	 * After `exit-agent` + `resume-agent` AO replays omp's history and files prompts it already holds (steered
 	 * ones, ones with images) as extra `recovered` turns (`acp-history-turn:`). A replayed turn whose prompt
-	 * text matches a prompt or steer of another turn is a copy: leave it out.
+	 * text matches a prompt or steer of another turn is a copy, and one with no prompt (assistant-only, after a compaction) is noise: leave both out.
 	 */
 	private updateDupes(): void {
 		const replayed = new Set([...this.turns.values()].filter(t => t.providerTurnId?.startsWith("acp-history-turn:")).map(t => t.id));
@@ -445,6 +445,9 @@ export class ChatFeed {
 			} else if (r.kind === "activity" && r.activityKind === "system" && rec(r.detail)?.event === "steer") known.add(norm(str(rec(r.detail)?.text)));
 		}
 		const next = new Set([...promptOf].filter(([, text]) => text && known.has(text)).map(([id]) => id));
+		// A replayed turn with no prompt at all is not a turn of the conversation (after a compaction AO replays
+		// assistant-only ones, one more per restart): leave it out too.
+		for (const id of replayed) if (!promptOf.has(id)) next.add(id);
 		for (const id of next) {
 			if (this.dupes.has(id)) continue;
 			// Rows of this copy were already sent to the webview: it must be rebuilt.

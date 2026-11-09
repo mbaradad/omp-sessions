@@ -334,3 +334,13 @@ test("a queued prompt AO discarded on interrupt (turn interrupted, never started
 	const snap = feed.reset(conv({ turns: [turn("t1", "interrupted", { startedAt: T }), turn("t2", "interrupted")], messages: [msg(1, "user", "slow", "t1"), msg(2, "user", "queued behind it", "t2")] }));
 	assert.deepEqual(texts(snap.messages).filter(t => t && t !== "Interrupted"), ["slow"]);
 });
+
+test("a replayed turn with no prompt (assistant-only, after a compaction) and a compaction's message-less turn leave no trace", () => {
+	const feed = new ChatFeed();
+	const page = conv({
+		turns: [turn("t1", "completed"), turn("t2", "completed", { hasHumanPrompt: false }), turn("h1", "recovered", { providerTurnId: "acp-history-turn:41:abc:root36:h1", hasHumanPrompt: false })],
+		messages: [msg(1, "user", "hello", "t1"), msg(2, "assistant", "hi", "t1"), msg(3, "assistant", "summary of the earlier conversation", "h1")],
+	});
+	assert.deepEqual(texts(feed.reset(page).messages).filter(Boolean), ["hello", "hi"]);
+	assert.equal(feed.isBusy(), false);
+});
