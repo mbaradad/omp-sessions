@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, pendingActivities, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -95,6 +95,19 @@ test("agentState: session lifecycle before and after the conversation", () => {
 	// A chat session with a pending question reports waiting_input (AO's own status: needs_input).
 	assert.equal(agentState(view({ activity: { state: "waiting_input", lastActivityAt: T }, status: "needs_input" })), "needs_input");
 	assert.equal(agentState(view({ status: "pr_open" })), "idle");
+});
+
+test("a pending approval whose turn has ended no longer waits for anyone", () => {
+	// As read live after a person's Stop during an approval: the row stays `pending`, the turn is `interrupted`, the agent is ready.
+	const owned = { ...approval, turnId: "t1" };
+	const stopped = conversation({ turns: [turn("t1", "interrupted")], activities: [owned] });
+	assert.equal(pendingActivities(stopped).length, 0);
+	assert.equal(agentState(view(), stopped), "idle");
+	assert.equal(sessionModel(view(), stopped).question, undefined);
+	// While its turn runs (or is queued) it waits; a request with no turn is kept.
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")], activities: [owned] })), "needs_input");
+	assert.equal(pendingActivities(conversation({ activities: [approval] })).length, 1);
+	for (const state of ["completed", "failed", "cancelled", "recovered"] as const) assert.equal(pendingActivities(conversation({ turns: [turn("t1", state)], activities: [owned] })).length, 0, state);
 });
 
 test("agentState: the conversation decides once there is one", () => {
