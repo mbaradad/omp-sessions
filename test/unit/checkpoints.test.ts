@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import switchyardCheckpoints from "../../src/omp-extension/checkpoints";
-import { type CheckpointPrompt, type FileChange, type SessionEntryLike, aoCheckpointDir, isPromptEntry, messageText, planRestore, readChanges, readState, redoStack, turnStatuses } from "../../src/shared/checkpoints";
+import { type CheckpointPrompt, type FileChange, type SessionEntryLike, aoCheckpointDir, isPromptEntry, messageText, ompToolCallId, planRestore, readChanges, readState, redoStack, turnStatuses } from "../../src/shared/checkpoints";
 
 // ---------- a fake omp: a session tree with omp's navigation rules, and the extension hooks ----------
 
@@ -287,4 +287,11 @@ test("a prompt resent after undoing it matches its own turn, not the undone one"
 		["first", "undone"],
 		["undo", "command"],
 	]);
+});
+
+test("an AO tool activity's providerItemId yields omp's tool call id", () => {
+	assert.equal(ompToolCallId("acp:41:6e889c62-20eb-4f97-9697-9ddc2825fc40:root30:toolu_01GB2yKQBKRp28yvuSu74J7a"), "toolu_01GB2yKQBKRp28yvuSu74J7a");
+	assert.equal(ompToolCallId("acp:6:a:b:é5:x:y:z"), "x:y:z", "lengths are UTF-8 bytes; parts may hold colons");
+	assert.equal(ompToolCallId("ao-plan-1"), "ao-plan-1");
+	assert.equal(ompToolCallId("acp:99:short"), "acp:99:short", "malformed stays as is");
 });

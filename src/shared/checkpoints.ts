@@ -422,6 +422,26 @@ export function aoTurns(conversation: AoConversation): TurnLike[] {
 	});
 }
 
+/**
+ * omp's tool call id (the key of `changes.jsonl`) in an AO activity's `providerItemId`: AO writes
+ * `acp:` + the length-prefixed tuple (scope, id), lengths in UTF-8 bytes (AO's acp/conversation.go
+ * `providerItemID`). Ids without that prefix are returned as they are.
+ */
+export function ompToolCallId(providerItemId: string): string {
+	if (!providerItemId.startsWith("acp:")) return providerItemId;
+	const bytes = Buffer.from(providerItemId.slice(4), "utf8");
+	const parts: string[] = [];
+	let at = 0;
+	while (at < bytes.length) {
+		const colon = bytes.indexOf(0x3a, at);
+		const size = colon < 0 ? Number.NaN : Number(bytes.subarray(at, colon).toString());
+		if (!Number.isInteger(size) || size < 0 || colon + 1 + size > bytes.length) return providerItemId;
+		parts.push(bytes.subarray(colon + 1, colon + 1 + size).toString("utf8"));
+		at = colon + 1 + size;
+	}
+	return parts.length === 2 ? parts[1] : providerItemId;
+}
+
 export type TurnStatus = "undone" | "command";
 
 /** How far apart AO's turn start and omp's prompt record can be and still be the same prompt. */
