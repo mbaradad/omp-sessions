@@ -232,6 +232,26 @@ test("a crash reads interrupted, a person's Stop stopped: both exit the agent, o
 	}
 });
 
+test("an interrupt discards the queued prompts too, and interruptWithQueue hands them back (G41)", async () => {
+	const { session } = await ao.spawnSwitchyard({ dir: REPO, displayName: "src/ao interrupt", prompt: "Run the bash command `sleep 40` and then reply DONE." });
+	const id = session.id;
+	try {
+		await until(id, m => m.conversation?.turns.some(t => t.state === "running") === true, "running a turn");
+		await ao.sendMessage(id, { text: "queued one: ONE" });
+		await ao.sendMessage(id, { text: "queued two: TWO" });
+		await until(id, m => m.queue.pending === 2, "two queued prompts");
+		const { discarded } = await ao.interruptWithQueue(id);
+		assert.deepEqual(discarded.map(d => d.text), ["queued one: ONE", "queued two: TWO"]);
+		// Nothing is left to run: the queue is empty and the agent is idle, though the prompts are in the conversation.
+		const settled = await until(id, m => m.state === "idle", "idle after the interrupt");
+		assert.equal(settled.queue.pending, 0);
+		assert.ok(settled.conversation?.turns.every(t => t.state === "interrupted"), "the running turn and both queued ones ended interrupted");
+	} finally {
+		await ao.killSession(id).catch(() => undefined);
+		await ao.deleteSession(id).catch(() => undefined);
+	}
+});
+
 test("errors carry AO's code", async () => {
 	await assert.rejects(ao.getSession("no-such-session-1"), (e: unknown) => e instanceof AoError && e.status === 404 && e.code === "SESSION_NOT_FOUND");
 });
