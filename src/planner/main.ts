@@ -1,11 +1,12 @@
-// omp Sessions planner: the headless per-user service that holds plans and dispatches them to Agent
+// Switchyard planner: the headless per-user service that holds plans and dispatches them to Agent
 // Orchestrator (see PLANNER-API.md). `node planner.js` runs it (normally as the user service);
 // `node planner.js install|uninstall` sets the service up or removes it.
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { connectAo } from "./ao-port";
 import { createApiServer } from "./api";
-import { forgetPipe, listenPath, logPath, pidPath, planPath, plannerDir, recordPipe, socketPath, stateRoot } from "./paths";
+import { forgetPipe, listenPath, logPath, pidPath, planPath, plannerDir, recordPipe, socketPath } from "./paths";
+import { switchyardHome } from "../ao/native";
 import { Planner } from "./planner";
 import { installService, uninstallService } from "./service";
 import { loadPlan } from "./store";
@@ -24,7 +25,7 @@ function log(...parts: unknown[]): void {
 	} catch {
 		/* state dir gone */
 	}
-	if (process.env.OMP_PLANNER_STDERR) process.stderr.write(line);
+	if (process.env.SWITCHYARD_PLANNER_STDERR) process.stderr.write(line);
 }
 
 function canConnect(target: string): Promise<boolean> {
@@ -66,10 +67,10 @@ async function run(): Promise<void> {
 			file: planPath(),
 			initial: loadPlan(planPath()),
 			connect: connectAo,
-			...(process.env.OMP_PLANNER_USAGE === "off" ? {} : { usage: () => readOmpUsage() }),
+			...(process.env.SWITCHYARD_PLANNER_USAGE === "off" ? {} : { usage: () => readOmpUsage() }),
 			log,
 			version: VERSION,
-			...(process.env.OMP_PLANNER_RETRY_BASE_MS ? { retryBaseMs: Number(process.env.OMP_PLANNER_RETRY_BASE_MS) } : {}),
+			...(process.env.SWITCHYARD_PLANNER_RETRY_BASE_MS ? { retryBaseMs: Number(process.env.SWITCHYARD_PLANNER_RETRY_BASE_MS) } : {}),
 		});
 	} catch (err) {
 		log("cannot start:", String(err));
@@ -87,7 +88,7 @@ async function run(): Promise<void> {
 		releaseLock(pidPath());
 		process.exit(0);
 	};
-	const server = createApiServer({ planner, info: () => ({ pid: process.pid, version: VERSION, root: stateRoot(), startedAt: planner.startedAt, api: 1 }), shutdown, log });
+	const server = createApiServer({ planner, info: () => ({ pid: process.pid, version: VERSION, root: switchyardHome(), startedAt: planner.startedAt, api: 1 }), shutdown, log });
 	server.on("error", err => {
 		const inUse = "code" in err && err.code === "EADDRINUSE";
 		log(inUse ? "another planner took the socket; exiting" : "socket error", String(err));
@@ -102,7 +103,7 @@ async function run(): Promise<void> {
 			return;
 		}
 		const running = planner.state.tasks.filter(t => t.status === "running").length;
-		log("planner started", { pid: process.pid, version: VERSION, root: stateRoot(), node: process.version, tasks: planner.state.tasks.length, running });
+		log("planner started", { pid: process.pid, version: VERSION, root: switchyardHome(), node: process.version, tasks: planner.state.tasks.length, running });
 		planner.start();
 	});
 	process.on("SIGTERM", () => shutdown("SIGTERM"));

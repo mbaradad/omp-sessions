@@ -1,5 +1,5 @@
 // Test runner: bundles the session host and the TypeScript tests with esbuild into .test-out/,
-// then runs them with `node --test`. Usage: node test/run.mjs [unit|host|ao|integration]...
+// then runs them with `node --test`. Usage: node test/run.mjs [unit|host|integration|ao]...
 // No suite named: unit and host. `integration` runs test/integration/ against an isolated AO daemon
 // started per test file by test/ao-fixture.mjs (skips when `ao` is missing; OMP_TEST_AO_BIN picks one).
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
@@ -15,7 +15,7 @@ const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : u
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
 // `ao`: live contract tests against a running AO daemon (AO_RUN_FILE/AO_PORT pick it); only when asked for.
 const selected = suites.length ? suites : ["unit", "host"];
-const SUITES = ["unit", "host", "ao", "integration"];
+const SUITES = ["unit", "host", "integration", "ao"];
 for (const s of selected) if (!SUITES.includes(s)) throw new Error(`unknown suite ${s}`);
 
 fs.rmSync(outDir, { recursive: true, force: true });

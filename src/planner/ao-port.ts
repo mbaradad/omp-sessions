@@ -46,7 +46,8 @@ export interface AoStreamHandlers {
 
 export interface AoPort {
 	readonly url: string;
-	spawn(body: Record<string, unknown>): Promise<{ session: string }>;
+	/** `branch`: the git branch AO checked out for the session (project sessions). */
+	spawn(body: Record<string, unknown>): Promise<{ session: string; branch?: string }>;
 	send(session: string, text: string, clientMessageId: string): Promise<{ turn?: string }>;
 	conversation(session: string): Promise<AoConversationInfo>;
 	/** Undefined when AO doesn't know the session (deleted). */
@@ -60,6 +61,8 @@ export interface AoPort {
 	setThinking(session: string, level: string): Promise<string | undefined>;
 	/** AO project for a folder (registered on first use); undefined outside git. */
 	projectFor(cwd: string): Promise<string | undefined>;
+	/** Folder of an AO project (the repo's main checkout). */
+	projectPath(id: string): Promise<string | undefined>;
 	subscribe(after: number | undefined, handlers: AoStreamHandlers): { close(): void; readonly lastEventId: number | undefined };
 }
 
@@ -109,7 +112,7 @@ export function aoPort(ao: AoClient): AoPort {
 		},
 		async spawn(body) {
 			const res = await ao.spawnSession(body as Parameters<AoClient["spawnSession"]>[0]);
-			return { session: res.session.id };
+			return { session: res.session.id, ...(res.session.branch ? { branch: res.session.branch } : {}) };
 		},
 		async send(session, text, clientMessageId) {
 			const res = await ao.sendMessage(session, { text, clientMessageId });
@@ -153,6 +156,9 @@ export function aoPort(ao: AoClient): AoPort {
 			const { error, response } = await ao.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId: session, configId: "thinking" } }, body: { value: level } });
 			if (!response.ok) throw new AoError(`thinking level ${level}: ${JSON.stringify(error)}`, response.status, `HTTP_${response.status}`);
 			return previous || undefined;
+		},
+		async projectPath(id) {
+			return (await ao.listProjects()).find(p => p.id === id)?.path;
 		},
 		async projectFor(cwd) {
 			return (await ao.projectForFolder(cwd))?.id;

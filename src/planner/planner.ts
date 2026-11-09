@@ -9,7 +9,9 @@
 // someone else) becomes `interrupted` and is never re-run unattended.
 import { type AoConversationInfo, type AoPort, transientAoError } from "./ao-port";
 import { queueOpsToPlanOps, queueView } from "./compat";
-import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, taskPrompt } from "./engine";
+import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyState, evaluate, finishRun, laneOf, laneViews, nextWake, normalizeConfig, startRun, targetSession, taskPrompt } from "./engine";
+import { gitRoot } from "./git";
+import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
 import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, spendUse } from "./usage";
@@ -63,10 +65,18 @@ export class Planner {
 	private usageTimer: NodeJS.Timeout | undefined;
 	private readonly retryTimers = new Map<string, NodeJS.Timeout>();
 	private readonly listeners = new Set<(change: { plan?: true; task?: { task: TaskView; from: TaskStatus } }) => void>();
+	private readonly propagation: Propagation;
 
 	constructor(private readonly opts: PlannerOptions) {
 		this.state = opts.initial ?? emptyState();
 		this.startedAt = this.now();
+		this.propagation = new Propagation({
+			state: () => this.state,
+			commit: mutate => this.commit(mutate),
+			log: (...parts) => this.log(...parts),
+			now: () => this.now(),
+			changed: () => this.schedule(0),
+		});
 	}
 
 	private now(): number {
@@ -81,6 +91,8 @@ export class Planner {
 
 	start(): void {
 		this.stopped = false;
+		// Merges a crashed planner left pending finish now (each is idempotent).
+		void this.propagation.resume();
 		void this.connect();
 		this.pollTimer = setInterval(() => this.poll(), this.opts.pollMs ?? 10_000);
 		if (this.opts.usage) {
@@ -145,6 +157,10 @@ export class Planner {
 		for (const t of this.state.tasks) if (t.status === "running" && t.run?.session === session) this.follow(t.id, 250);
 		// A session we wait on went idle (or busy): readiness may change.
 		if (activity !== before && this.state.lanes.some(l => l.session === session)) this.schedule(100);
+		// A finished git task's session went idle after someone worked in it: its branch may have new commits.
+		if (activity === "idle" && before !== undefined && before !== "idle") {
+			for (const t of this.state.tasks) if (t.git && t.session === session && t.status !== "running" && !this.busy.has(t.id)) void this.propagation.sync(t.id);
+		}
 	}
 
 	private async refreshActivity(): Promise<void> {
@@ -175,8 +191,13 @@ export class Planner {
 
 	// ---------- state changes ----------
 
-	/** Applies `mutate` to the plan, persists it and tells listeners (task transitions included). */
+	/**
+	 * Applies `mutate` to the plan, persists it and tells listeners (task transitions included). A
+	 * stopped planner changes nothing: AO calls still in flight when it stopped must not write over a
+	 * successor's plan.
+	 */
 	private commit(mutate: (s: PlanState) => void): void {
+		if (this.stopped) return;
 		const before = new Map(this.state.tasks.map(t => [t.id, t.status]));
 		mutate(this.state);
 		this.state.rev++;
@@ -200,7 +221,10 @@ export class Planner {
 		if (rev !== undefined && rev !== this.state.rev) throw new PlanError(`stale rev ${rev} (the plan is at ${this.state.rev}); reload and retry`);
 		const res = applyOps(this.state, ops, this.now());
 		this.commit(s => Object.assign(s, res.state));
-		for (const e of res.effects) this.follow(e.task, 0);
+		for (const e of res.effects) {
+			if (e.kind === "sync") void this.propagation.sync(e.task);
+			else this.follow(e.task, 0);
+		}
 		this.schedule(0);
 		return { rev: this.state.rev, refs: res.refs };
 	}
@@ -325,18 +349,27 @@ export class Planner {
 			const task = this.state.tasks.find(t => t.id === id);
 			if (!task || task.status !== "pending") return;
 			const opts = effectiveOptions(this.state, task);
-			const lane = laneOf(this.state, task);
-			const prompt = taskPrompt(this.state, task);
 			const key = `planner-${task.id}-${(task.attempts ?? 0) + 1}-${this.now().toString(36)}`;
 			const provider = providerOf(opts.model);
-			const session = !opts.freshContext ? lane?.session : undefined;
+			// The session this task continues (its lane's, or its own from an earlier run); one AO no longer knows starts a new one.
+			let session = targetSession(this.state, task);
+			if (session && !(await ao.session(session))) session = undefined;
 			let spawn: Record<string, unknown> | undefined;
 			let sendAfterSpawn = false;
+			let repo: string | undefined;
+			let seeded: SeedResult = {};
 			if (!session) {
 				let projectId: string | undefined = opts.project;
 				if (!projectId && opts.cwd) projectId = await ao.projectFor(opts.cwd);
 				if (opts.worktree === "always" && !projectId) throw new PlanError(`worktree "always" needs a git folder; ${opts.cwd ?? "no cwd"} is not in git`);
+				// AO runs every project session in its own worktree (ao/<session>/root); there is no way to run in the checkout itself.
+				if (opts.worktree === "never" && projectId) throw new PlanError(`worktree "never" can't be honored: AO runs every session of a git project in its own worktree (drop the option, or use a folder outside git)`);
+				const projectPath = projectId ? await ao.projectPath(projectId) : undefined;
+				repo = projectPath ? await gitRoot(projectPath) : undefined;
+				// A task with finished parents in this repo starts from their work (GRAPH-PROPAGATION.md).
+				if (repo) seeded = await this.propagation.prepareSpawn(task, repo);
 				sendAfterSpawn = !!opts.thinking;
+				const forPrompt = seeded.followUp ? { ...task, followUp: [task.followUp, seeded.followUp].filter(Boolean).join("\n\n") } : task;
 				spawn = {
 					harness: "omp",
 					mode: "chat",
@@ -344,16 +377,19 @@ export class Planner {
 					displayName: task.title.slice(0, 100),
 					clientRequestId: key,
 					...(projectId ? { projectId } : {}),
+					...(seeded.branch ? { branch: seeded.branch } : {}),
 					...(opts.model ? { model: opts.model } : {}),
 					...(opts.approvalMode ? { approvalMode: opts.approvalMode } : {}),
-					...(sendAfterSpawn ? {} : { prompt }),
+					...(sendAfterSpawn ? {} : { prompt: taskPrompt(this.state, forPrompt) }),
 				};
 			}
+			const donor = session ? this.state.tasks.find(x => x.id !== id && x.session === session && x.git) : undefined;
+			const prompt = taskPrompt(this.state, seeded.followUp ? { ...task, followUp: [task.followUp, seeded.followUp].filter(Boolean).join("\n\n") } : task);
 			// The task may have changed while the project was looked up.
 			const now = this.now();
 			if (!this.evaluateNow().dispatch.some(t => t.id === id)) return;
 			this.commit(s => {
-				startRun(
+				const t = startRun(
 					s,
 					id,
 					{
@@ -362,12 +398,17 @@ export class Planner {
 						prompt,
 						...(spawn ? { spawn } : {}),
 						...(sendAfterSpawn ? { sendAfterSpawn: true, settings: { thinking: opts.thinking } } : {}),
+						...(repo ? { repo } : {}),
 						...(session ? { session } : {}),
 						...(session && (opts.model || opts.thinking) ? { settings: { ...(opts.model ? { model: opts.model } : {}), ...(opts.thinking ? { thinking: opts.thinking } : {}) } } : {}),
 						...(provider ? { provider } : {}),
 					},
 					now,
 				);
+				if (seeded.sync) t.sync = { ...t.sync, ...seeded.sync };
+				if (seeded.followUp) t.followUp = [t.followUp, seeded.followUp].filter(Boolean).join("\n\n");
+				// A lane task continuing a session shares that session's branch and worktree.
+				if (donor?.git && !t.git) t.git = { repo: donor.git.repo, branch: donor.git.branch, ...(donor.git.worktree ? { worktree: donor.git.worktree } : {}) };
 			});
 			this.log("dispatch", id, JSON.stringify(task.title), session ? `→ ${session}` : "→ new session");
 		} catch (err) {
@@ -434,7 +475,22 @@ export class Planner {
 		this.commit(s => {
 			finishRun(s, id, outcome, this.now(), this.opts.retryBaseMs);
 		});
+		// What the turn committed (or left) in its worktree flows to the children's branches.
+		if (this.state.tasks.find(x => x.id === id)?.git) void this.propagation.afterTurn(id);
 		this.schedule(0);
+	}
+
+	/** Commits what the turn left uncommitted in the task's worktree and records the branch head (children branch from it). */
+	private async recordHead(id: string): Promise<void> {
+		const t = this.task(id);
+		if (!t?.git) return;
+		const head = await this.propagation.commitWork(t);
+		// No usable worktree or branch: the task isn't tracked in git (children wouldn't wait for a head).
+		this.updateRun(id, x => {
+			if (!x.git) return;
+			if (head) x.git.head = head;
+			else delete x.git;
+		});
 	}
 
 	private async step(id: string): Promise<void> {
@@ -474,7 +530,8 @@ export class Planner {
 		let t = this.task(id);
 		if (!t?.run) return;
 		if (t.run.via === "spawn" && !t.run.session) {
-			const { session } = await ao.spawn(t.run.spawn ?? {});
+			const { session, branch } = await ao.spawn(t.run.spawn ?? {});
+			if (t.run.repo && branch) await this.propagation.recordSession(id, t.run.repo, branch);
 			this.updateRun(id, x => {
 				x.run.session = session;
 				x.session = session;
@@ -488,7 +545,7 @@ export class Planner {
 			if (t.run.via === "send") {
 				const info = await ao.session(session);
 				if (!info) {
-					this.finish(id, { kind: "lost", reason: `AO session ${session} no longer exists.` });
+					this.finish(id, { kind: "lost", reason: `AO session ${session} no longer exists.`, sessionGone: true });
 					return;
 				}
 				if (info.terminated) await ao.restore(session);
@@ -539,7 +596,7 @@ export class Planner {
 			conv = await ao.conversation(session);
 		} catch (err) {
 			if (err instanceof Error && "status" in err && err.status === 404) {
-				this.finish(id, { kind: "lost", reason: `AO session ${session} was deleted.` });
+				this.finish(id, { kind: "lost", reason: `AO session ${session} was deleted.`, sessionGone: true });
 				return;
 			}
 			throw err;
@@ -556,7 +613,7 @@ export class Planner {
 		const turn = turnId ? conv.turns.find(x => x.id === turnId) : undefined;
 		if (!turn) {
 			const info = await ao.session(session);
-			if (!info || info.terminated) this.finish(id, { kind: "lost", reason: `AO session ${session} ${info ? "was stopped" : "was deleted"} before the task's turn started.` });
+			if (!info || info.terminated) this.finish(id, { kind: "lost", reason: `AO session ${session} ${info ? "was stopped" : "was deleted"} before the task's turn started.`, ...(info ? {} : { sessionGone: true }) });
 			return;
 		}
 		if (turn.state === "queued" || turn.state === "running") {
@@ -578,6 +635,7 @@ export class Planner {
 		// Put the session's model and thinking back the way they were (best effort).
 		if (run.restore?.model) await ao.setModel(session, run.restore.model).catch(err => this.log("model restore failed", String(err)));
 		if (run.restore?.thinking) await ao.setThinking(session, run.restore.thinking).catch(err => this.log("thinking restore failed", String(err)));
+		await this.recordHead(id);
 		switch (turn.state) {
 			case "completed": {
 				const reply = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant" && !m.streaming).pop()?.text;
