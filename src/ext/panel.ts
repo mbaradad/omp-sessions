@@ -25,6 +25,7 @@ import { openLink, openUrlFromOmp } from "./links";
 import { type SessionManager, resolveOmpPath } from "./sessions";
 import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage } from "./slim";
+import { reportSoundPlayed } from "./sounds";
 import { readNativeSession, switchyardHome } from "../ao/native";
 
 const STARRED_MODELS_KEY = "switchyard.starredModels";
@@ -936,6 +937,9 @@ export class ChatPanel implements vscode.Disposable {
 	// ---------- webview -> AO ----------
 	private async onWebviewMessage(m: FromWebview): Promise<void> {
 		switch (m.type) {
+			case "soundPlayed":
+				reportSoundPlayed(m);
+				return;
 			case "ready":
 				this.webviewReady = true;
 				this.schedule(true);

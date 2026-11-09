@@ -33,7 +33,7 @@ import { registerServer } from "./server";
 import { registerTasks } from "./tasks";
 import { createTasksDeps } from "./tasks-deps";
 import { type Node, SessionTree } from "./tree";
-import { addChatSoundSink, registerSounds } from "./sounds";
+import { addChatSoundSink, onDidPlaySound, registerSounds } from "./sounds";
 import { registerToolbox } from "./toolbox";
 import { registerVscodeOpen } from "./vscode-open";
 import { registerWorktrees } from "./worktree";
@@ -492,6 +492,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		organize,
 		sessionTree: tree,
 		sessionsView: treeView,
+		onDidPlaySound,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
 	// One planner connection per window: the Tasks view, the session queues and the views' plan summaries share it.

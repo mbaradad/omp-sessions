@@ -11,7 +11,7 @@ import { finishedAt, scheduledStart } from "../shared/session-sort";
 import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import { schedulerSnapshot, watchScheduler } from "./scheduler";
-import { addSoundSink } from "./sounds";
+import { addSoundSink, reportSoundPlayed } from "./sounds";
 
 let panel: vscode.WebviewPanel | undefined;
 
@@ -94,6 +94,9 @@ function apply(api: OmpApi, updates: FromBoard): void {
 async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 	const store = api.organize;
 	switch (msg.type) {
+		case "soundPlayed":
+			reportSoundPlayed(msg);
+			break;
 		case "ready":
 			refresh(api);
 			break;

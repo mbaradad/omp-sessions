@@ -75,6 +75,40 @@ export interface PlaySoundMessage {
 	volume: number;
 }
 
+/** What a webview tells the extension after playing a cue (src/ext/sounds.ts: observable by the desktop e2e). */
+export interface SoundPlayedMessage {
+	type: "soundPlayed";
+	variant: SoundVariant;
+	volume: number;
+	/** The cue was scheduled on a Web Audio context (false: silent variant, volume 0, or no Web Audio). */
+	played: boolean;
+	/** The context's state afterwards (`suspended`: the page has had no gesture yet and the browser holds the audio), or `none`. */
+	state: AudioContextState | "none";
+	/** Oscillators and noise sources the cue started (0 when nothing played). */
+	voices: number;
+}
+
+/** Plays a cue the extension asked for and builds the acknowledgement for it. */
+export function playRequested(msg: PlaySoundMessage): SoundPlayedMessage {
+	// Count the sources the cue starts: the acknowledgement shows that the voices really ran, not only that a context exists.
+	let voices = 0;
+	const proto = typeof AudioScheduledSourceNode === "undefined" ? undefined : AudioScheduledSourceNode.prototype;
+	const start = proto?.start;
+	if (proto && start) {
+		proto.start = function (this: AudioScheduledSourceNode, when?: number): void {
+			voices++;
+			start.call(this, when);
+		};
+	}
+	let played = false;
+	try {
+		played = playSound(msg.variant, msg.volume);
+	} finally {
+		if (proto && start) proto.start = start;
+	}
+	return { type: "soundPlayed", variant: msg.variant, volume: msg.volume, played, state: ctx?.state ?? "none", voices };
+}
+
 // ---------- audio context ----------
 
 let ctx: AudioContext | null = null;

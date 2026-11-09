@@ -2205,6 +2205,9 @@ omp session: ${session}` : ""}`),
     if (to === "idle" && from === "working") return "complete";
     return void 0;
   }
+  function alertKey(id, kind, turnId, updatedAt) {
+    return `${id}.${kind}.${turnId || updatedAt || ""}`;
+  }
   var AlertTracker = class {
     last = /* @__PURE__ */ new Map();
     /** The alerts between the previous snapshot and `sessions` (none for the first snapshot). */
@@ -2214,7 +2217,7 @@ omp session: ${session}` : ""}`),
       for (const s of sessions) {
         next.set(s.id, s.state);
         const kind = alertFor(this.last.get(s.id), s.state);
-        if (kind) alerts.push({ id: s.id, kind, key: `${s.id}.${kind}.${s.updatedAt ?? ""}` });
+        if (kind) alerts.push({ id: s.id, kind, key: alertKey(s.id, kind, s.turnId, s.updatedAt) });
       }
       this.last = next;
       return alerts;

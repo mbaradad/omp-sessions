@@ -3,7 +3,7 @@
 // which run on the person's computer) synthesizes the cue (src/shared/completion-sound.ts). VS Code has no API
 // for extensions to play its accessibility signals, so with no omp webview open nothing sounds.
 import * as vscode from "vscode";
-import { DEFAULT_COMPLETION_SOUND, DEFAULT_INPUT_SOUND, type PlaySoundMessage, SOUND_VARIANTS, type SoundVariant, soundVariant, soundVolume } from "../shared/completion-sound";
+import { DEFAULT_COMPLETION_SOUND, DEFAULT_INPUT_SOUND, type PlaySoundMessage, SOUND_VARIANTS, type SoundPlayedMessage, type SoundVariant, soundVariant, soundVolume } from "../shared/completion-sound";
 import { type AlertKind, alertFor, alertKey, taskAlertFor } from "../shared/session-alerts";
 import type { OmpApi } from "./api";
 import type { ChatPanel } from "./panel";
@@ -17,6 +17,14 @@ export interface SoundSink {
 }
 
 const sinks = new Set<SoundSink>();
+const playedEmitter = new vscode.EventEmitter<SoundPlayedMessage>();
+/** A webview played (or could not play) a cue: what it reports back. The desktop e2e reads these through `OmpApi.onDidPlaySound`. */
+export const onDidPlaySound = playedEmitter.event;
+
+/** Called with a webview's acknowledgement of a cue. */
+export function reportSoundPlayed(msg: SoundPlayedMessage): void {
+	playedEmitter.fire(msg);
+}
 
 /** Offers a webview for playing cues until the returned disposable runs (with the webview). */
 export function addSoundSink(sink: SoundSink): vscode.Disposable {

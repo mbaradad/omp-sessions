@@ -2,7 +2,7 @@
 // drop planning (field + rank updates), priority cycling and filtering.
 // No DOM, vscode or node imports (type-only): it is bundled into the webview too.
 
-import type { PlaySoundMessage } from "../shared/completion-sound";
+import type { PlaySoundMessage, SoundPlayedMessage } from "../shared/completion-sound";
 import type { OrgColor, OrgGroup, OrgLane, Priority } from "../shared/organize";
 import type { SessionStatus, SyncState } from "../shared/protocol";
 import { type SessionSort, type SortFields, sortBy } from "../shared/session-sort";
@@ -405,6 +405,7 @@ export interface SchedulerInfo {
 export type ToBoard = { type: "data"; data: BoardData; scheduler: SchedulerInfo | null } | { type: "focusFilter" } | PlaySoundMessage;
 
 export type FromBoard =
+	| SoundPlayedMessage
 	| { type: "ready" }
 	| { type: "open"; id: string }
 	| { type: "stop"; ids: string[] }

@@ -9,6 +9,10 @@
 // run file), `home/` (the isolated HOME and XDG_*; only .omp/agent links to the real one), `vscode/` (user data, extensions, OMP_VSCODE_HOME) and `shots/` (screenshots the
 // suite takes). Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_VERBOSE=1 echoes VS Code's log.
 // The shared dev daemon is never touched: discovery goes through AO_RUN_FILE.
+//
+// Scripted runs: SWITCHYARD_E2E_FAKE_OMP=1 runs the daemon's sessions on test/fake-omp-acp.mjs instead of the real omp (no
+// tokens, no login; the agent folder is a scratch one, not the linked real one); SWITCHYARD_E2E_SUITES=sounds,... runs only
+// the named suite files (desktop, flow, sounds; default desktop then flow). SWITCHYARD_E2E_AO_PORT pins the daemon's port.
 
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -19,6 +23,8 @@ import { Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+const fakeOmp = process.env.SWITCHYARD_E2E_FAKE_OMP === "1";
+const onlySuites = (process.env.SWITCHYARD_E2E_SUITES ?? "").split(",").map(s => s.trim()).filter(Boolean);
 const self = fileURLToPath(import.meta.url);
 const here = path.dirname(self);
 const repo = path.resolve(here, "..", "..");
@@ -41,7 +47,7 @@ if (build.status !== 0) process.exit(build.status ?? 1);
 const outDir = path.join(here, "out-views");
 fs.rmSync(outDir, { recursive: true, force: true });
 await esbuild.build({
-	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts"), path.join(here, "suite", "flow.test.ts")],
+	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts"), path.join(here, "suite", "flow.test.ts"), path.join(here, "suite", "sounds.test.ts")],
 	outdir: outDir,
 	bundle: true,
 	platform: "node",
@@ -73,7 +79,14 @@ const ompHome = path.join(dirs.vscode, "omp-home");
 const switchyardHome = path.join(dirs.vscode, "switchyard");
 for (const d of [userData, extensions, home, ompHome, switchyardHome, ...Object.values(xdg)]) fs.mkdirSync(d, { recursive: true });
 fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
-fs.symlinkSync(path.join(os.homedir(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
+// The fake omp needs no login: its sessions go to a scratch agent folder (PI_CODING_AGENT_DIR below), never the real one.
+const fakeAgentDir = path.join(scratch, "fake-omp-agent");
+const fakeBin = path.join(scratch, "fake-bin");
+if (fakeOmp) {
+	fs.mkdirSync(fakeAgentDir, { recursive: true });
+	fs.mkdirSync(fakeBin, { recursive: true });
+	fs.writeFileSync(path.join(fakeBin, "omp"), `#!/bin/sh\nexec "${process.execPath}" "${path.join(repo, "test", "fake-omp-acp.mjs")}" "$@"\n`, { mode: 0o755 });
+} else fs.symlinkSync(path.join(os.homedir(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
 
 // The project: a git repository with one commit (AO gives each session its own worktree of it).
 fs.writeFileSync(path.join(dirs.repo, "README.md"), "# ao-smoke-views\n");
@@ -161,17 +174,17 @@ const check = (name, ok, detail = "") => {
 };
 
 // ---------- isolated AO daemon (RUNTIME.md: all three variables, so nothing hijacks ~/.ao/running.json) ----------
-const port = await freePort();
+const port = process.env.SWITCHYARD_E2E_AO_PORT ? Number(process.env.SWITCHYARD_E2E_AO_PORT) : await freePort();
 const aoEnv = {
 	AO_PORT: String(port),
 	AO_DATA_DIR: path.join(dirs.ao, "data"),
 	AO_RUN_FILE: path.join(dirs.ao, "running.json"),
 };
 // The Switchyard omp shim goes first, as the unit `ao-daemon` of the extension would have it (G34).
-const daemonPath = [path.join(repo, "src", "omp-shim"), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
+const daemonPath = [path.join(repo, "src", "omp-shim"), ...(fakeOmp ? [fakeBin] : []), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
 const ao = findAo();
 const daemonLog = fs.openSync(path.join(dirs.ao, "daemon.log"), "a");
-const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
+const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, SWITCHYARD_HOME: switchyardHome, PATH: daemonPath, ...(fakeOmp && { PI_CODING_AGENT_DIR: fakeAgentDir, FAKE_OMP_LOG: path.join(scratch, "fake-omp.log") }) }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
 const baseUrl = `http://127.0.0.1:${port}`;
 
 // Canary for CONTRACT.md "Isolated HOME": the real ~/.switchyard and the shared omp extensions dir must come out as they went in.
@@ -240,6 +253,9 @@ try {
 			return check(`${name} passed`, false, String(err?.message ?? err));
 		}
 	};
+	if (onlySuites.length) {
+		for (const suite of onlySuites) if (!(await runSuite(suite, `${suite} suite`))) break;
+	} else {
 	const viewsOk = await runSuite("desktop", "views suite");
 	// The flow: chat, approval and a three-task queue in one window; the planner (a detached process that is not
 	// VS Code's) finishes the tasks while no VS Code runs; a new window undoes and redoes the last prompt.
@@ -263,6 +279,7 @@ try {
 		const doneCount = q?.summary?.done ?? q?.done ?? q?.tasks?.filter?.(t => t.status === "done").length;
 		check("the planner finished the three queued tasks with no VS Code running", doneCount === 3, JSON.stringify(q)?.slice(0, 300));
 		if (doneCount === 3) await runSuite("flow", "flow phase 2: new window, tasks done, undo and redo", { SWITCHYARD_E2E_PHASE: "2" });
+	}
 	}
 	} catch (err) {
 	check("runner", false, String(err?.stack ?? err));
