@@ -251,3 +251,23 @@ test("cli: sched budget, usage and limits are set through the planner; --usage s
 	assert.equal(spare.status, 0, spare.stderr);
 	assert.equal(cli("wait", spare.data.id, "--timeout", "60s").status, 0, "no usage window is full: a spare task runs");
 });
+
+test("cli: plan status lists the graph's edges with their sync state; plan sync takes a task or session", { skip, timeout: 180_000 }, () => {
+	// The notes are the fake's script (the planner wraps the title). A session the CLI created has no planner-seeded branch, so its edge may carry no sync state yet (asked planner).
+	const a = json("new", repo, "--task", "PA", "--notes", "write x.txt A1\necho a-done", "--mode", "auto", "--json");
+	assert.equal(a.status, 0, a.stderr);
+	const b = json("new", repo, "--task", "PB", "--notes", "echo b-done", "--after", a.data.id, "--mode", "auto", "--json");
+	assert.equal(b.status, 0, b.stderr);
+	const done = json("wait", b.data.id, "--timeout", "120s", "--json");
+	assert.equal(done.status, 0, JSON.stringify(done.data));
+	type Edge = { parent: string; parentSession?: string; child: string; childSession?: string; state: string };
+	const status = json<{ edges: Edge[] }>("plan", "status", "--json");
+	assert.equal(status.status, 0, status.stderr);
+	const mine = json<{ edges: Edge[] }>("plan", "status", "--json", "--", b.data.id).data.edges;
+	for (const e of mine) assert.ok([e.parentSession, e.childSession].includes(b.data.id));
+	const synced = json<{ synced: string[]; edges: Edge[] }>("plan", "sync", "--json", "--", b.data.id);
+	assert.equal(synced.status, 0, synced.stderr);
+	assert.equal(synced.data.synced.length, 1, "B's one parent");
+	assert.equal(cli("plan", "sync", "--", "no-such-thing").status, 1);
+	assert.equal(cli("plan", "bogus").status, 2);
+});

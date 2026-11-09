@@ -107,6 +107,67 @@ export async function lanesOf(planner: Planner): Promise<Map<string, LaneSummary
 	return laneSummaries(await planner.call("plan", {}));
 }
 
+// ---------- graph propagation (GRAPH-PROPAGATION.md) ----------
+
+/** One parent → child edge of the plan graph and how far the parent's changes reached the child. */
+export interface GraphEdge {
+	parent: string;
+	parentSession?: string;
+	child: string;
+	childSession?: string;
+	/** `in-sync`, `pending`, `merged`, `upstream-changed`, `resolving` or `conflict`. */
+	state: string;
+	/** Conflicted files. */
+	files?: string[];
+	/** The parent's head the child has, or the newer one waiting to be merged. */
+	parentHead?: string;
+	childHead?: string;
+	/** Child branch head before and after the last merge (undo by hand with `git reset`). */
+	before?: string;
+	after?: string;
+	at: number;
+}
+
+/** Every edge the planner has propagation state for (tasks in a git project); non-git tasks only receive results. */
+export function graphEdges(plan: PlanView): GraphEdge[] {
+	const byId = new Map(plan.tasks.map(t => [t.id, t]));
+	const out: GraphEdge[] = [];
+	for (const child of plan.tasks) {
+		for (const [parentId, e] of Object.entries(child.sync ?? {})) {
+			const parent = byId.get(parentId);
+			out.push({
+				parent: parentId,
+				...(parent?.session && { parentSession: parent.session }),
+				child: child.id,
+				...(child.session && { childSession: child.session }),
+				state: e.state,
+				...(e.files?.length && { files: e.files }),
+				...((e.pendingHead ?? e.head) && { parentHead: e.pendingHead ?? e.head }),
+				...(child.git?.head && { childHead: child.git.head }),
+				...(e.before && { before: e.before }),
+				...(e.after && { after: e.after }),
+				at: e.at,
+			});
+		}
+	}
+	return out;
+}
+
+/** Tasks a user's reference names: a task id (or unique prefix), or every task that runs in an AO session. */
+export function tasksOfRef(plan: PlanView, ref: string): PlanView["tasks"] {
+	const exact = plan.tasks.filter(t => t.id === ref);
+	if (exact.length) return exact;
+	const bySession = plan.tasks.filter(t => t.session === ref || t.lane === ref);
+	if (bySession.length) return bySession;
+	return plan.tasks.filter(t => t.id.startsWith(ref));
+}
+
+/** Edges that touch the tasks of `ref` (as parent or child). */
+export function edgesOfRef(plan: PlanView, ref: string): GraphEdge[] {
+	const ids = new Set(tasksOfRef(plan, ref).map(t => t.id));
+	return graphEdges(plan).filter(e => ids.has(e.parent) || ids.has(e.child));
+}
+
 // ---------- the planner service ----------
 
 export interface PlannerInfo {

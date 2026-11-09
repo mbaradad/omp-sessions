@@ -17,7 +17,7 @@ import { readSwitchyardConfig, switchyardConfigPath, writeSwitchyardConfig } fro
 import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
-import { type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
+import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
@@ -996,6 +996,65 @@ async function cmdOrganize(cmd: string, args: Args): Promise<void> {
 	process.stdout.write(changed ? `${c.green("updated")} ${s.id} ${s.title}\n` : c.dim("no change\n"));
 }
 
+// ---------- plan: graph propagation (the planner's edge state) ----------
+
+const EDGE_COLOR: Record<string, (s: string) => string> = { "in-sync": c.green, merged: c.green, pending: c.yellow, resolving: c.yellow, "upstream-changed": c.blue, conflict: c.red };
+
+function printEdges(edges: GraphEdge[]): void {
+	if (!edges.length) {
+		process.stdout.write(c.dim("no graph edges with propagation state (tasks in a git project that wait for other tasks)\n"));
+		return;
+	}
+	for (const e of edges) {
+		const arrow = `${e.parentSession ?? e.parent} → ${e.childSession ?? e.child}`;
+		const heads = e.parentHead ? c.dim(` ${e.parentHead.slice(0, 8)}`) : "";
+		const files = e.files?.length ? c.red(` ${e.files.join(", ")}`) : "";
+		process.stdout.write(`${(EDGE_COLOR[e.state] ?? c.dim)(pad(e.state, 17))}${arrow}${heads}${files}\n`);
+	}
+}
+
+/**
+ * `plan status [ref]` lists the graph's edges and how far each parent's changes reached its child.
+ * `plan sync <ref> [--rerun]` brings the parents' changes into the task's worktree now (it re-checks each
+ * parent's branch and propagates; a task without parents re-checks its own branch for its children);
+ * `--rerun` also runs a finished task again whose edge says `upstream-changed`.
+ */
+async function cmdPlan(args: Args): Promise<number> {
+	const sub = args._[0] ?? "status";
+	const ref = args._[1];
+	const json = flag(args, "json");
+	const p = sub === "status" && !(await plannerIfRunning()) ? undefined : await planner();
+	if (sub === "status") {
+		const edges = p ? (ref ? edgesOfRef(await p.call("plan", {}), ref) : graphEdges(await p.call("plan", {}))) : [];
+		if (json) process.stdout.write(`${JSON.stringify({ edges })}\n`);
+		else printEdges(edges);
+		return 0;
+	}
+	if (sub !== "sync") throw new UsageError(`unknown plan command "${sub}" (status [ref], sync <ref> [--rerun])`);
+	if (!ref || !p) throw new UsageError("plan sync <task|session> [--rerun]");
+	let plan = await p.call("plan", {});
+	let tasks = tasksOfRef(plan, ref);
+	// Title words and `.` name sessions, as everywhere else.
+	if (!tasks.length) tasks = tasksOfRef(plan, (await findSession(ref)).id);
+	if (!tasks.length) throw new Error(`no task or session matches "${ref}" in the plan`);
+	const targets = [...new Set(tasks.flatMap(t => (t.after?.length ? t.after : [t.id])))];
+	await p.call("edit", { ops: targets.map(id => ({ op: "sync" as const, id })) });
+	plan = await p.call("plan", {});
+	const mine = new Set(tasks.map(t => t.id));
+	const rerun = flag(args, "rerun") ? graphEdges(plan).filter(e => mine.has(e.child) && e.state === "upstream-changed").map(e => e.child) : [];
+	if (rerun.length) {
+		await p.call("edit", { ops: [...new Set(rerun)].map(id => ({ op: "requeue" as const, id })) });
+		plan = await p.call("plan", {});
+	}
+	const edges = graphEdges(plan).filter(e => mine.has(e.child) || mine.has(e.parent));
+	if (json) process.stdout.write(`${JSON.stringify({ id: ref, synced: targets, rerun: [...new Set(rerun)], edges })}\n`);
+	else {
+		process.stdout.write(`${c.green("synced")} ${targets.join(", ")}${rerun.length ? c.dim(` · re-running ${[...new Set(rerun)].join(", ")}`) : ""}\n`);
+		printEdges(edges);
+	}
+	return 0;
+}
+
 /** `complete|uncomplete <session>`: the completed marker (PARKED §5), kept on the session's planner lane. */
 async function cmdComplete(args: Args, cmd: string): Promise<number> {
 	const s = await findSession(args._[0] ?? ".");
@@ -1546,6 +1605,15 @@ ${c.bold("Organize")}
   complete|uncomplete <session> [--json]
                                   mark it completed (a ✓ in ls and show; queued work still runs)
 
+${c.bold("Plan graph")}  ${c.dim("(a task in a git project starts from its parents' commits; later parent changes are merged into it)")}
+  plan [status] [task|session] [--json]
+                                  edges and how far each parent's changes reached its child: in-sync,
+                                  pending, merged, upstream-changed (finished child, not re-run), resolving,
+                                  conflict
+  plan sync <task|session> [--rerun] [--json]
+                                  bring its parents' changes in now; --rerun also runs a finished task whose
+                                  edge says upstream-changed
+
 ${c.bold("Scheduler")}  ${c.dim("(the planner's global limit on queued tasks running at once)")}
   sched [--json]                  status
   sched set <n>                   max concurrent queued tasks (0 = unlimited)
@@ -1641,6 +1709,7 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	group: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	archive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
 	unarchive: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },
+	plan: { flags: ["json", "rerun"], run: cmdPlan },
 	complete: { flags: ["json"], run: cmdComplete },
 	uncomplete: { flags: ["json"], run: cmdComplete },
 	move: { flags: [], run: async (args, cmd) => (await cmdOrganize(cmd, args), 0) },

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView } from "../../src/ao/client";
 import { sessionModel } from "../../src/ao/model";
 import type { PlanView } from "../../src/planner/types";
-import { laneSummaries } from "../../src/cli/plan";
+import { edgesOfRef, graphEdges, laneSummaries, tasksOfRef } from "../../src/cli/plan";
 import { ConversationFollower } from "../../src/cli/render";
 import { type Session, filterSessions, plannedState, resolveSession } from "../../src/cli/sessions";
 import { setColor } from "../../src/cli/term";
@@ -153,4 +153,21 @@ test("ConversationFollower: streams the growing reply, prints a tool once and it
 	assert.equal(out(), "Hello wor\n  ▸ $ ls\nld\n  ✗ $ ls\n");
 	f.update(conversation({ messages: [message(3, "assistant", "Hello world", false), message(5, "user", "from the phone")] }));
 	assert.ok(out().endsWith("› from the phone\n"), out());
+});
+
+test("graphEdges: one edge per parent a task has propagation state for; refs name tasks by id, session or lane", () => {
+	const view = plan(
+		[
+			{ id: "ta", session: "repo-1", lane: "repo-1", git: { repo: "/r", branch: "b-a", head: "aaaaaaaa11" } },
+			{ id: "tb", session: "repo-2", lane: "repo-2", after: ["ta"], git: { repo: "/r", branch: "b-b", head: "bbbbbbbb22" }, sync: { ta: { state: "conflict", head: "aaaaaaaa11", pendingHead: "aaaaaaaa33", files: ["x.txt"], at: 5 } } },
+			{ id: "tc", session: "repo-3", lane: "repo-3", after: ["ta"] },
+		],
+		{ id: "repo-1" },
+	);
+	assert.deepEqual(graphEdges(view), [{ parent: "ta", parentSession: "repo-1", child: "tb", childSession: "repo-2", state: "conflict", files: ["x.txt"], parentHead: "aaaaaaaa33", childHead: "bbbbbbbb22", at: 5 }], "tc has no propagation state (not in git): no edge");
+	assert.deepEqual(tasksOfRef(view, "repo-2").map(t => t.id), ["tb"]);
+	assert.deepEqual(tasksOfRef(view, "ta").map(t => t.id), ["ta"]);
+	assert.deepEqual(tasksOfRef(view, "t").length, 3, "a unique-enough id prefix");
+	assert.equal(edgesOfRef(view, "repo-1").length, 1, "as the parent");
+	assert.equal(edgesOfRef(view, "repo-3").length, 0);
 });
