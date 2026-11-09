@@ -7,7 +7,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
-import { loadModels } from "./launch-options";
+import { type ModelChoices, loadModels } from "./launch-options";
 import { plain } from "./plain";
 import { projectRoot } from "./sessions";
 import {
@@ -121,7 +121,7 @@ async function askTask(title: string): Promise<string | undefined> {
 type ModelItem = vscode.QuickPickItem & { selector: string };
 
 /** Models for best-of-N runs (multi-select, typed selectors allowed); [] = default model. */
-async function askModels(cwd: string, title: string): Promise<string[] | undefined> {
+async function askModels(cwd: string, title: string, sessions: ModelChoices): Promise<string[] | undefined> {
 	const qp = vscode.window.createQuickPick<ModelItem>();
 	qp.title = title;
 	qp.placeholder = "Models to compare — runs cycle through the checked ones; none = default model. Type a selector to add one.";
@@ -141,7 +141,7 @@ async function askModels(cwd: string, title: string): Promise<string[] | undefin
 	qp.onDidChangeSelection(sel => {
 		for (const s of sel) if (s.description === "custom model selector" && !custom.some(c => c.selector === s.selector)) custom.push({ ...s, description: "custom" });
 	});
-	void loadModels(cwd).then(list => {
+	void loadModels(cwd, sessions).then(list => {
 		models = list.models.map(m => ({ label: `${m.default ? "$(star-full) " : ""}${m.name}`, description: `${m.selector}${m.default ? " · default" : ""}`, selector: m.selector }));
 		qp.busy = false;
 		render();
@@ -219,7 +219,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 	const step = (n: number) => `Best-of-N in git worktrees (${n}/3)`;
 	const task = await askTask(step(1));
 	if (!task) return;
-	const models = await askModels(folder, step(2));
+	const models = await askModels(folder, step(2), api.sessions);
 	if (!models) return;
 	const runsFor = (n: number) => Array.from({ length: n }, (_, i) => (models.length ? models[i % models.length] : undefined));
 	const minN = Math.min(4, Math.max(2, models.length));

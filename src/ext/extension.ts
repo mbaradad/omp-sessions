@@ -280,10 +280,10 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	reg("omp.newSessionWithOptions", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (!cwd) return;
-		const opts = await askLaunchOptions(cwd);
+		const opts = await askLaunchOptions(cwd, sessions);
 		if (opts) await launchAndOpen({ cwd, ...opts });
 	});
-	reg("omp.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir()));
+	reg("omp.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), sessions));
 	reg("omp.setDefaultMode", () => chooseDefaultMode());
 
 	reg("omp.openSession", async (arg?: unknown) => {

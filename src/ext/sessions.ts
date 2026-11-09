@@ -286,6 +286,26 @@ export class SessionManager implements vscode.Disposable {
 		return parentBranches(this.planSource?.plan, id);
 	}
 
+	/**
+	 * The models a live session of this machine offers (its config options: the only exact list; AO's agent catalog
+	 * has thousands of ids and drops models that run). Asks the most recently active sessions in turn; undefined when
+	 * none is running (a new session has no list yet: callers accept a typed id, the spawn helper checks it).
+	 */
+	async modelChoices(): Promise<Array<{ value: string; name: string }> | undefined> {
+		const client = await this.ao.client(false).catch(() => undefined);
+		if (!client) return undefined;
+		const live = this.all()
+			.filter(m => m.status !== "stopped")
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, 3);
+		for (const m of live) {
+			const options = await client.configOptions(m.id).catch(() => undefined);
+			const choices = options?.options.find(o => o.id === "model")?.choices;
+			if (choices?.length) return choices.map(c => ({ value: c.value, name: c.name || c.value }));
+		}
+		return undefined;
+	}
+
 	/** Relists every session from AO. */
 	refresh(): void {
 		void this.connect()

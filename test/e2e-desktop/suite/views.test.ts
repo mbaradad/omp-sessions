@@ -258,6 +258,15 @@ describe("AO views", () => {
 		}
 	});
 
+	it("model pickers list the live session's own choices, not AO's catalog of thousands", async () => {
+		const choices = await api.sessions.modelChoices();
+		assert.ok(choices && choices.length > 0, "a running session offers models");
+		assert.ok(choices.length < 500, `the session's list, not the catalog: ${choices.length} ids`);
+		assert.ok(choices.every(c => c.value.includes("/")), "provider/model ids");
+		const current = meta()?.model;
+		if (current) assert.ok(choices.some(c => c.value === current), `the session's own model ${current} is offered`);
+	});
+
 	it("stop (exit-agent) and resume (resume-agent) keep the session", async () => {
 		await vscode.commands.executeCommand("omp.stopSession", id);
 		await waitFor("stopped", () => meta()?.status === "stopped", 60_000);
