@@ -129,6 +129,21 @@ function echo(out) {
 	});
 }
 
+// Canary for CONTRACT.md "Isolated HOME": an e2e run must leave the launchers every slice relies on, the
+// real ~/.switchyard and the shared omp extensions dir as they were (an earlier run overwrote
+// ~/.local/bin/omp-sessions). Compared in `finally`. Only paths no concurrent session legitimately writes.
+const REAL_HOME = fs.realpathSync(os.userInfo().homedir);
+const watchedPaths = [".local/bin/omp-sessions", ".local/bin/switchyard", ".switchyard", ".omp/agent/extensions"].map(p => path.join(REAL_HOME, p));
+function fingerprint(p) {
+	try {
+		const st = fs.lstatSync(p);
+		if (!st.isDirectory()) return `${st.isSymbolicLink() ? `-> ${fs.readlinkSync(p)} ` : ""}${st.size}:${st.mtimeMs}`;
+		return fs.readdirSync(p).sort().map(n => `${n}:${fs.lstatSync(path.join(p, n)).mtimeMs}`).join(",");
+	} catch {
+		return "absent";
+	}
+}
+const realStateBefore = new Map(watchedPaths.map(p => [p, fingerprint(p)]));
 let failed = false;
 const results = [];
 const check = (name, ok, detail = "") => {
@@ -172,8 +187,15 @@ try {
 				...(process.platform === "darwin" ? ["--use-mock-keychain"] : process.platform === "linux" ? ["--password-store=basic"] : []),
 			],
 			extensionTestsEnv: {
+				// CONTRACT.md "Isolated HOME": nothing of the run may touch the user's real home.
 				HOME: dirs.home,
+				USERPROFILE: dirs.home,
+				XDG_CONFIG_HOME: path.join(dirs.home, ".config"),
+				XDG_DATA_HOME: path.join(dirs.home, ".local", "share"),
+				XDG_STATE_HOME: path.join(dirs.home, ".local", "state"),
+				XDG_CACHE_HOME: path.join(dirs.home, ".cache"),
 				OMP_VSCODE_HOME: dirs.ompHome,
+				SWITCHYARD_HOME: path.join(tmp, "switchyard"),
 				FAKE_OMP_SESSIONS: dirs.fakeSessions,
 				FAKE_OMP_LOG: fakeLog,
 				OMP_E2E_WORKSPACE: dirs.workspace,
@@ -201,6 +223,8 @@ try {
 	await ao?.stop();
 	const leftovers = killLeftovers();
 	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");
+	const touched = watchedPaths.filter(p => fingerprint(p) !== realStateBefore.get(p));
+	check("the real home is untouched (launchers, ~/.switchyard, omp extensions)", touched.length === 0, touched.length ? `CHANGED: ${touched.join(", ")}: restore the launcher as a copy of the pinned one (CONTRACT.md) and tell the coordinator` : "");
 	console.log("\n── desktop e2e summary ──");
 	for (const r of results) console.log(r);
 	const logClosed = Promise.withResolvers();

@@ -8,7 +8,7 @@ import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResol
 export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
 export { deltaCursor, followConversation, mergeConversation } from "./follow";
 export type { AoPermissionMode, AoReportExtra, AoReportQuestion, AoReportQueue, AoReportStatus, AoSessionReport } from "./report";
-export { permissionModeOf, reportQuestion, sessionReport } from "./report";
+export { approvalModeFor, permissionModeOf, planModeOf, reportQuestion, sessionReport } from "./report";
 
 /**
  * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
@@ -238,12 +238,26 @@ export function lastReply(conversation: AoConversation, max = REPLY_MAX): string
 
 const DONE_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { completed: true, recovered: true, interrupted: true, failed: true };
 
+/** providerTurnId of a turn AO imported from omp's recorded history after exit-agent + resume-agent (G33). */
+const HISTORY_TURN_PREFIX = "acp-history-turn:";
+
+/**
+ * The turns that ran in this conversation: those AO replays from omp's history on resume (prompts
+ * already recorded, steered or with images, come back as `recovered` turns whose providerTurnId starts
+ * with `acp-history-turn:`) are not new work. They are not counted in the queue, and are never "the
+ * last turn" that decides interrupted or the exit reason.
+ */
+export function realTurns(conversation: AoConversation): AoTurn[] {
+	return conversation.turns.filter(t => !t.providerTurnId?.startsWith(HISTORY_TURN_PREFIX));
+}
+
 export function queueOf(conversation: AoConversation): AoQueue {
 	const textOf = new Map<string, string>();
 	for (const m of conversation.messages) if (m.role === "user" && m.turnId && !textOf.has(m.turnId)) textOf.set(m.turnId, m.text);
-	const queued = conversation.turns.filter(t => t.state === "queued");
-	const running = conversation.turns.filter(t => t.state === "running").length;
-	const done = conversation.turns.filter(t => DONE_TURNS[t.state]).length;
+	const turns = realTurns(conversation);
+	const queued = turns.filter(t => t.state === "queued");
+	const running = turns.filter(t => t.state === "running").length;
+	const done = turns.filter(t => DONE_TURNS[t.state]).length;
 	return {
 		pending: queued.length,
 		running,
@@ -293,7 +307,7 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
 		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
 		const down = conversation.controller === "stopped" || view.activity.state === "exited";
-		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (down && (running || pending || lostTurn(realTurns(conversation).at(-1)))) return "interrupted";
 		if (pending) return "needs_input";
 		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
@@ -333,7 +347,7 @@ function lostTurn(turn: AoTurn | undefined): boolean {
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
-	const last = conversation?.turns.at(-1);
+	const last = conversation && realTurns(conversation).at(-1);
 	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
