@@ -214,6 +214,8 @@ try {
 			],
 			extensionTestsEnv: {
 				PI_CODING_AGENT_DIR: hostAgentDir,
+				// The host never installs omp extensions or the shim, whatever its extension mode (CONTRACT.md, Isolated HOME).
+				SWITCHYARD_INSTALL_OMP_EXTENSIONS: "0",
 				...aoEnv,
 				...isolatedEnv,
 				OMP_VSCODE_HOME: ompHome,
