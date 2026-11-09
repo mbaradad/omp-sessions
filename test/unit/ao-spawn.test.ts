@@ -137,9 +137,12 @@ test("spawnSwitchyardSession: extra omp arguments are written for the shim and t
 		assert.equal(fs.readFileSync(sessionFile(home, "omp-args"), "utf8"), "--advisor --plan-yolo\n");
 		// Restart first (a relaunch resets omp's live options), then set them, then the prompt.
 		assert.deepEqual(calls.slice(calls.indexOf("exitAgent")), ["exitAgent", "resumeAgent", "getConversation", "configOptions", "setConfigOption thinking=low", "sendMessage"]);
-		// The shim splits the file on whitespace: an argument with a space cannot be passed.
-		await assert.rejects(spawnSwitchyardSession(fakeAo().ao, { ompArgs: ["--profile work"], home }), /contains whitespace/);
-		await assert.rejects(spawnSwitchyardSession(fakeAo().ao, { ompArgs: [""], home }), /empty or contains whitespace/);
+		// An argument with whitespace is written as a JSON array (the shim reads words or an array); an empty one is refused.
+		const spaced = tmpHome();
+		await spawnSwitchyardSession(fakeAo().ao, { ompArgs: ["--profile", "work space", "--advisor"], home: spaced });
+		assert.equal(fs.readFileSync(sessionFile(spaced, "omp-args"), "utf8"), '["--profile","work space","--advisor"]\n');
+		fs.rmSync(spaced, { recursive: true, force: true });
+		await assert.rejects(spawnSwitchyardSession(fakeAo().ao, { ompArgs: [""], home }), /an omp argument is empty/);
 		// An agent that never comes back: the session is removed and the error says why.
 		const stuck = fakeAo({ ready: false });
 		await assert.rejects(spawnSwitchyardSession(stuck.ao, { ompArgs: ["--advisor"], readyTimeoutMs: 1200, home }), /did not come back/);
