@@ -192,6 +192,8 @@
 .omps-col.is-empty { flex-basis: 168px; }
 .omps-col-head { display: flex; align-items: center; gap: 7px; padding: 10px 12px 9px; border-bottom: 1px solid var(--o-border); font-weight: 600; font-size: 12.5px; position: relative; }
 .omps-col-head::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--tone, var(--o-border)); opacity: 0.85; }
+.omps-col-action { margin-left: auto; height: 22px; padding: 0 7px; font-weight: 500; }
+.omps-col-confirm { margin-left: auto; font-weight: 500; }
 .col-needs { --tone: var(--t-needs_input); }
 .col-working { --tone: var(--t-working); }
 .col-queued { --tone: var(--t-queued); }
@@ -221,6 +223,7 @@
 .omps-card:hover { border-color: var(--o-border-strong); transform: translateY(-1px); box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.55); }
 .omps-card.is-selected { border-color: var(--tone); box-shadow: 0 0 0 1px var(--tone), 0 10px 26px -16px color-mix(in srgb, var(--tone) 80%, transparent); }
 .omps-card.is-archived { opacity: 0.6; }
+.omps-chip.is-completed { background: color-mix(in srgb, var(--t-idle) 16%, transparent); border-color: color-mix(in srgb, var(--t-idle) 40%, transparent); }
 .tone-needs_input { --tone: var(--t-needs_input); }
 .tone-working { --tone: var(--t-working); }
 .tone-starting { --tone: var(--t-starting); }
@@ -247,6 +250,15 @@
 .omps-card-vscode { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
 .omps-card:hover .omps-card-vscode, .omps-card:focus-within .omps-card-vscode, .omps-card-vscode:focus-visible { opacity: 1; }
 .omps-card-vscode:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-acts { display: inline-flex; gap: 2px; }
+.omps-card-act { display: inline-flex; align-items: center; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--o-faint); cursor: pointer; opacity: 0; }
+.omps-card:hover .omps-card-act, .omps-card:focus-within .omps-card-act, .omps-card-act:focus-visible { opacity: 1; }
+.omps-card-act:hover { color: var(--o-fg); background: var(--o-hover); }
+.omps-card-act:disabled { cursor: progress; opacity: 0.4; }
+.omps-mode-row.omps-bcard-archive { justify-content: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--o-border); }
+.omps-bcard-archive .omps-input { width: auto; flex: 1 1 160px; }
+.omps-mode-row.omps-detail-actions { justify-content: flex-start; }
+.omps-detail-actions .omps-section-label { min-width: 7rem; }
 .omps-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; padding: 0 7px; height: 19px; border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--o-accent) 14%, transparent); color: var(--o-fg2); border: 1px solid color-mix(in srgb, var(--o-accent) 24%, transparent); }
 .omps-chip.is-warn { background: color-mix(in srgb, var(--o-yellow) 16%, transparent); border-color: color-mix(in srgb, var(--o-yellow) 40%, transparent); }
 .omps-chip.is-needs { background: color-mix(in srgb, var(--o-pink) 16%, transparent); border-color: color-mix(in srgb, var(--o-pink) 40%, transparent); }

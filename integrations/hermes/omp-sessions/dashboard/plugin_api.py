@@ -309,6 +309,8 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "priority": info.get("priority"),
         "tags": [t for t in (info.get("tags") or []) if isinstance(t, str)],
         "archived": info.get("archived") is True,
+        "completed": info.get("completed") is True,
+        "completedAt": info.get("completedAt"),
         "queue": queue_counts(q),
         "autoRun": q.get("autoRun") is True,
         "startAt": q.get("startAt"),
@@ -440,6 +442,10 @@ def session_action(sid: str, action: str, body: dict) -> dict:
         if not model:
             raise ApiError(400, "pick a model")
         return {"ok": True, **o.model(sid, model)}
+    if action in ("archive", "unarchive"):
+        return {"ok": True, "output": o.archive(sid) if action == "archive" else o.unarchive(sid)}
+    if action in ("complete", "uncomplete"):
+        return {"ok": True, **(o.complete(sid) if action == "complete" else o.uncomplete(sid))}
     if action == "run":
         queue = o.queue_get(sid)
         if not any(isinstance(t, dict) and t.get("status") == "pending" for t in (queue or {}).get("tasks") or []):
@@ -460,6 +466,51 @@ def session_action(sid: str, action: str, body: dict) -> dict:
         # Bring the parents' changes in now; rerun: also run its task again with them (upstream-changed).
         return {"ok": True, **o.plan_sync(sid, rerun=body.get("rerun") is True)}
     raise ApiError(404, f"unknown action {action}")
+
+
+def session_board(info: dict, by_session: dict[str, dict]) -> Optional[str]:
+    """The kanban board a session belongs to: its card's (card_ref), else its `hermes:<board>` tag."""
+    ref = card_ref(info, by_session)
+    if ref:
+        return ref[0]
+    tags = info.get("tags") if isinstance(info.get("tags"), list) else []
+    return next((t[7:] for t in tags if isinstance(t, str) and t.startswith("hermes:")), None)
+
+
+def archive_done(body: dict) -> dict:
+    """Archives every done session (ompsessions.is_done: completed, or idle with nothing queued) of a
+    board view in one request: `ids` (the sessions the page shows) and/or the view's filters `board`,
+    `group`, `project` narrow it down; an empty body means every done session.
+    {"archived": [id], "failed": [{id, error}]}."""
+    o = require_omp(settings())
+    ids = body.get("ids")
+    if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)):
+        raise ApiError(400, "ids must be a list of session ids")
+    wanted = set(ids) if ids is not None else None
+    board, group, project = _text(body, "board"), _text(body, "group"), _text(body, "project")
+    by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")} if board else {}
+    archived: list[str] = []
+    failed: list[dict] = []
+    for info in o.sessions(all=True):
+        meta = info.get("meta") if isinstance(info.get("meta"), dict) else {}
+        sid = str(meta.get("id") or "")
+        if not sid or info.get("archived") is True or not ompsessions.is_done(info):
+            continue
+        if wanted is not None and sid not in wanted:
+            continue
+        if group and info.get("group") != group:
+            continue
+        cwd = str(meta.get("cwd") or "")
+        if project and (os.path.basename(cwd.rstrip("/\\")) or cwd) != project:
+            continue
+        if board and session_board(info, by_session) != board:
+            continue
+        try:
+            o.archive(sid)
+            archived.append(sid)
+        except OmpSessionsError as exc:
+            failed.append({"id": sid, "error": str(exc)})
+    return {"archived": archived, "failed": failed}
 
 
 def with_page(out: dict, base_url: str) -> dict:
@@ -722,6 +773,8 @@ def boards_view() -> dict:
                 "model": entry.get("model"),
                 "commentAuthors": entry.get("comment_authors"),
                 "effectiveCommentAuthors": list(trusted.comment_authors),
+                "archiveCompleted": entry.get("archive_completed"),
+                "effectiveArchiveCompleted": settings_mod.archive_completed(s, slug),
                 "linked": linked,
                 "ready": ready,
                 "cards": cards,
@@ -734,6 +787,7 @@ def boards_view() -> dict:
         "enabled": s.lane.enabled,
         "assignee": s.lane.assignee,
         "mode": s.lane.mode,
+        "archiveCompleted": s.lane.archive_completed,
         "allBoards": not s.lane.boards,
         "boards": out,
     }
@@ -756,6 +810,11 @@ def update_board(slug: str, body: dict) -> dict:
             if v is not None and not isinstance(v, str):
                 raise ApiError(400, f"{key} must be text")
             fields[name] = v or ""
+    if "archiveCompleted" in body:
+        v = body["archiveCompleted"]
+        if v is not None and not isinstance(v, bool):
+            raise ApiError(400, "archiveCompleted must be true, false or null (the lane's setting)")
+        fields["archive_completed"] = "" if v is None else "on" if v else "off"
     try:
         if fields:
             commands.set_board(slug, **fields)
@@ -764,6 +823,14 @@ def update_board(slug: str, body: dict) -> dict:
     except ValueError as exc:
         raise ApiError(400, str(exc)) from exc
     return boards_view()
+
+
+def archive_done_cards(slug: str) -> dict:
+    """Archives the board's done lane cards and their omp sessions (`hermes omp archive-done`)."""
+    if slug not in {b["slug"] for b in board_slugs()}:
+        raise ApiError(404, f"no kanban board {slug}")
+    require_omp(settings())
+    return {**lane().archive_done(slug), "view": boards_view()}
 
 
 # ---------- routes ----------
@@ -835,9 +902,19 @@ async def post_default_model(request: Request) -> Any:
     return await _run(set_default_model, await _body(request), write=True)
 
 
+@router.post("/sessions/archive-done")
+async def post_archive_done(request: Request) -> Any:
+    return await _run(archive_done, await _body(request), write=True)
+
+
 @router.post("/sessions/{sid}/{action}")
 async def post_session_action(sid: str, action: str, request: Request) -> Any:
     return await _run(session_action, sid, action, await _body(request), write=True)
+
+
+@router.post("/boards/{slug}/archive-done")
+async def post_board_archive_done(slug: str) -> Any:
+    return await _run(archive_done_cards, slug, write=True)
 
 
 @router.get("/projects")

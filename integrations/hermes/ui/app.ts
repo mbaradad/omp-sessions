@@ -1,7 +1,7 @@
 // The omp Sessions page, written once for both hosts (the Hermes dashboard tab and the Hermes
 // Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph.
-import { errorMessage, type Host, type Overview, type Session, type Started } from "./api";
-import { SessionBoard } from "./board";
+import { type ArchiveDone, errorMessage, type Host, type Overview, type Session, type Started } from "./api";
+import { type CardAction, SessionBoard } from "./board";
 import { BoardsPanel } from "./boards";
 import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
 import { DetailPanel } from "./detail";
@@ -140,6 +140,8 @@ export function createPage(host: Host): () => ReactElement {
 		const [project, setProject] = useState("");
 		const [archived, setArchived] = useState(false);
 		const [notice, setNotice] = useState<string | null>(null);
+		const [boardNote, setBoardNote] = useState<{ text: string; error: boolean } | null>(null);
+		const [busyCards, setBusyCards] = useState<ReadonlySet<string>>(new Set());
 		const search = useRef<HTMLInputElement | null>(null);
 
 		const loadSessions = async (): Promise<void> => {
@@ -208,6 +210,36 @@ export function createPage(host: Host): () => ReactElement {
 			refresh();
 		};
 
+		const cardAction = async (id: string, action: CardAction): Promise<void> => {
+			setBoardNote(null);
+			setBusyCards(prev => new Set(prev).add(id));
+			try {
+				await host.request(`/sessions/${encodeURIComponent(id)}/${action}`, { method: "POST", body: {} });
+				await loadSessions();
+			} catch (err) {
+				setBoardNote({ text: errorMessage(err), error: true });
+			} finally {
+				setBusyCards(prev => {
+					const next = new Set(prev);
+					next.delete(id);
+					return next;
+				});
+			}
+		};
+
+		const archiveAll = async (ids: string[]): Promise<void> => {
+			setBoardNote(null);
+			try {
+				const res = await host.request<ArchiveDone>("/sessions/archive-done", { method: "POST", body: { ids } });
+				const n = res.archived.length;
+				const failed = res.failed.map(f => `${f.id.slice(0, 8)}: ${f.error}`);
+				setBoardNote({ text: `Archived ${n} session${n === 1 ? "" : "s"}.${failed.length ? ` Not archived: ${failed.join("; ")}` : ""}`, error: failed.length > 0 });
+				await loadSessions();
+			} catch (err) {
+				setBoardNote({ text: errorMessage(err), error: true });
+			}
+		};
+
 		const openProject = async (id: string): Promise<void> => {
 			setNotice(null);
 			try {
@@ -256,14 +288,15 @@ export function createPage(host: Host): () => ReactElement {
 					h(Select, { label: "Board", value: board, all: "All boards", options: facets.boards, onChange: setBoard }),
 					h(Select, { label: "Group", value: group, all: "All groups", options: facets.groups, onChange: setGroup }),
 					h(Select, { label: "Project", value: project, all: "All projects", options: facets.projects, onChange: setProject }),
-					archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", pressed: archived, label: `Archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
+					archivedCount ? h(Button, { small: true, kind: archived ? "primary" : "ghost", icon: "archive", pressed: archived, label: `Show archived · ${archivedCount}`, onClick: () => setArchived(!archived) }) : null,
 					filtered ? h(Button, { small: true, kind: "ghost", icon: "x", label: "Clear", onClick: () => (setQuery(""), setBoard(""), setGroup(""), setProject("")) }) : null,
 					h("span", { className: "omps-grow" }),
 					h("span", { className: "omps-muted omps-total" }, filtered ? `${shown.length} of ${all.length}` : `${all.length} session${all.length === 1 ? "" : "s"}`),
 				),
 				error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
 				notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
-				h(SessionBoard, { sessions: shown, selected, now, onOpen: setSelected, onOpenProject: id => void openProject(id), onQueueAction: queueAction, filtered }),
+				boardNote ? h("div", { className: boardNote.error ? "omps-stale" : "omps-notice" }, icon(boardNote.error ? "alert" : "archive", 12), boardNote.text) : null,
+				h(SessionBoard, { sessions: shown, selected, now, busy: busyCards, onOpen: setSelected, onOpenProject: id => void openProject(id), onQueueAction: queueAction, onAction: (id, action) => void cardAction(id, action), onArchiveAll: archiveAll, filtered }),
 			);
 		}
 

@@ -1,7 +1,7 @@
 // Boards: the kanban lane per board (folder, group, mode, model, assignee, comment authors), the cards
 // it runs as omp sessions and the ready cards it will take next, with the lane's switches; and the
 // omp Sessions default model.
-import { type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
+import { type ArchiveDoneCards, type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
 import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
 import { defaultLabel, ModelPicker, ModelsError, useModels } from "./models";
 import { h, type ReactElement, useEffect, useState } from "./react";
@@ -29,8 +29,10 @@ function BoardCard(p: {
 	onSave: (slug: string, body: Record<string, unknown>) => Promise<boolean>;
 	onOpenSession: (id: string) => void;
 	onOpenFolder: (folder: string) => void;
+	onArchiveDone: (slug: string) => Promise<void>;
 }): ReactElement {
 	const { b } = p;
+	const [confirmArchive, setConfirmArchive] = useState(false);
 	const [folder, setFolder] = useState(b.folder ?? "");
 	const [group, setGroup] = useState(b.group ?? "");
 	const [mode, setMode] = useState<string>(b.mode ?? "");
@@ -91,6 +93,37 @@ function BoardCard(p: {
 				children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e: Event) => setAuthors((e.target as HTMLInputElement).value) }),
 			}),
 			h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty })),
+		),
+		h(
+			"div",
+			{ className: "omps-mode-row omps-bcard-archive" },
+			h("label", { className: "omps-section-label", htmlFor: `omps-${b.slug}-archive` }, "Archive done cards"),
+			h(
+				"select",
+				{
+					id: `omps-${b.slug}-archive`,
+					className: "omps-input",
+					value: b.archiveCompleted == null ? "" : b.archiveCompleted ? "on" : "off",
+					disabled: p.busy,
+					title: "Archive a card on the board, and its omp session, as soon as the lane completes it",
+					onChange: (e: Event) => {
+						const v = (e.target as HTMLSelectElement).value;
+						void p.onSave(b.slug, { archiveCompleted: v === "" ? null : v === "on" });
+					},
+				},
+				h("option", { value: "" }, `Lane default${b.archiveCompleted == null ? (b.effectiveArchiveCompleted ? " (when completed)" : " (keep)") : ""}`),
+				h("option", { value: "on" }, "When the lane completes them"),
+				h("option", { value: "off" }, "Keep them"),
+			),
+			confirmArchive
+				? h(
+						"span",
+						{ className: "omps-confirm" },
+						"Archive every done card of this lane now?",
+						h(Button, { small: true, kind: "danger", label: "Archive", busy: p.busy, onClick: () => void p.onArchiveDone(b.slug).finally(() => setConfirmArchive(false)) }),
+						h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmArchive(false) }),
+					)
+				: h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by omp, and their omp sessions`, onClick: () => setConfirmArchive(true) }),
 		),
 		h(
 			"div",
@@ -197,6 +230,25 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 		}
 	};
 
+	const archiveDone = async (slug: string): Promise<void> => {
+		setBusy(slug);
+		setActionError(null);
+		setNotice(null);
+		try {
+			const res = await p.host.request<ArchiveDoneCards>(`/boards/${encodeURIComponent(slug)}/archive-done`, { method: "POST", body: {} });
+			setView(res.view);
+			const n = res.archived.length;
+			const failed = Object.entries(res.failed).map(([card, why]) => `${card}: ${why}`);
+			if (failed.length) setActionError(`Not archived: ${failed.join("; ")}`);
+			setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} omp session${res.sessions.length === 1 ? "" : "s"}.`);
+			p.onChanged();
+		} catch (err) {
+			setActionError(errorMessage(err));
+		} finally {
+			setBusy(null);
+		}
+	};
+
 	if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
 	const notes = p.lane?.notes ?? [];
 	const tick = p.lane?.dispatcher;
@@ -260,6 +312,7 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 							models: models.models,
 							onSave: (slug, body) => post(slug, `/boards/${encodeURIComponent(slug)}`, body),
 							onOpenSession: p.onOpenSession,
+							onArchiveDone: slug => archiveDone(slug),
 							onOpenFolder: folder => void openFolder(folder),
 						}),
 					),

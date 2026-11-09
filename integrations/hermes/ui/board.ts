@@ -1,6 +1,6 @@
 // The session board: five columns by state, cards with what matters at a glance.
 import { MODE_INFO, type Session, type State } from "./api";
-import { Empty } from "./components";
+import { Button, Empty } from "./components";
 import { h, type ReactElement, useState } from "./react";
 import { QueueControls, type RunQueueAction } from "./queue";
 import { ago, clock, cx, type IconName, icon, money, plain, stateText } from "./util";
@@ -20,6 +20,14 @@ export const COLUMNS: readonly Column[] = [
 	{ id: "done", label: "Done", states: ["idle"], icon: "check", empty: "No finished turns yet." },
 	{ id: "stopped", label: "Stopped", states: ["interrupted", "stopped"], icon: "stop", empty: "No stopped sessions." },
 ];
+
+export type CardAction = "archive" | "unarchive" | "complete" | "uncomplete";
+
+/** A finished session "Archive all" takes: marked completed, or idle with nothing queued or running
+ *  (is_done in the plugin's ompsessions.py). */
+export function isDone(s: Session): boolean {
+	return s.completed || (s.state === "idle" && !s.queue.pending && !s.queue.running);
+}
 
 /** The finished columns grow without bound; past this many cards they end in "Show N more". */
 const SHOWN: Partial<Record<Column["id"], number>> = { done: 24, stopped: 20 };
@@ -41,7 +49,35 @@ function questionLine(s: Session): string {
 	return q.title.split("\n")[0];
 }
 
-function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; onQueueAction?: RunQueueAction }): ReactElement {
+function CardButton(p: { icon: IconName; title: string; disabled: boolean; onClick: () => void }): ReactElement {
+	return h(
+		"button",
+		{
+			type: "button",
+			className: "omps-card-act",
+			title: p.title,
+			"aria-label": p.title,
+			disabled: p.disabled,
+			onClick: (e: Event) => {
+				e.stopPropagation();
+				p.onClick();
+			},
+			onKeyDown: (e: KeyboardEvent) => e.stopPropagation(),
+		},
+		icon(p.icon, 12),
+	);
+}
+
+function SessionCard(p: {
+	s: Session;
+	selected: boolean;
+	now: number;
+	busy: boolean;
+	onOpen: (id: string) => void;
+	onOpenProject: (id: string) => void;
+	onAction: (id: string, action: CardAction) => void;
+	onQueueAction?: RunQueueAction;
+}): ReactElement {
 	const { s } = p;
 	const open = (): void => p.onOpen(s.id);
 	const cost = money(s.cost);
@@ -51,7 +87,7 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 	return h(
 		"article",
 		{
-			className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived"),
+			className: cx("omps-card", `tone-${s.state}`, p.selected && "is-selected", s.archived && "is-archived", s.completed && "is-completed"),
 			role: "button",
 			tabIndex: 0,
 			"aria-pressed": p.selected,
@@ -97,6 +133,8 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 				: s.upstream?.some(e => e.state === "upstream-changed")
 					? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed")
 					: null,
+			s.completed ? h("span", { className: "omps-chip is-completed", title: s.completedAt ? `Completed ${new Date(s.completedAt).toLocaleString()}` : "Marked completed" }, icon("check", 10), "Completed") : null,
+			s.archived ? h("span", { className: "omps-chip", title: "Archived: hidden unless Archived is on" }, "Archived") : null,
 		),
 		s.state === "needs_input"
 			? h(
@@ -139,13 +177,48 @@ function SessionCard(p: { s: Session; selected: boolean; now: number; onOpen: (i
 			typeof s.startAt === "number"
 				? h("span", { className: "omps-when is-scheduled", title: `Queue starts ${new Date(s.startAt).toLocaleString()}` }, icon("clock", 11), clock(s.startAt))
 				: h("span", { className: "omps-when", title: s.updatedAt ? new Date(s.updatedAt).toLocaleString() : undefined }, ago(s.updatedAt, p.now)),
+			h(
+				"span",
+				{ className: "omps-card-acts" },
+				s.completed
+					? h(CardButton, { icon: "undo", title: "Mark not completed", disabled: p.busy, onClick: () => p.onAction(s.id, "uncomplete") })
+					: h(CardButton, { icon: "check", title: "Mark completed", disabled: p.busy, onClick: () => p.onAction(s.id, "complete") }),
+				s.archived
+					? h(CardButton, { icon: "unarchive", title: "Unarchive", disabled: p.busy, onClick: () => p.onAction(s.id, "unarchive") })
+					: h(CardButton, { icon: "archive", title: "Archive", disabled: p.busy, onClick: () => p.onAction(s.id, "archive") }),
+			),
 		),
 		p.onQueueAction ? h(QueueControls, { s, onAction: p.onQueueAction, compact: true }) : null,
 	);
 }
 
-export function SessionBoard(p: { sessions: Session[]; selected: string | null; now: number; onOpen: (id: string) => void; onOpenProject: (id: string) => void; onQueueAction?: RunQueueAction; filtered: boolean }): ReactElement {
+export function SessionBoard(p: {
+	sessions: Session[];
+	selected: string | null;
+	now: number;
+	busy: ReadonlySet<string>;
+	onOpen: (id: string) => void;
+	onOpenProject: (id: string) => void;
+	onAction: (id: string, action: CardAction) => void;
+	onQueueAction?: RunQueueAction;
+	/** Archives these sessions (the view's done ones) in one request. */
+	onArchiveAll: (ids: string[]) => Promise<void>;
+	filtered: boolean;
+}): ReactElement {
 	const [expanded, setExpanded] = useState<Partial<Record<Column["id"], boolean>>>({});
+	const [confirmAll, setConfirmAll] = useState(false);
+	const [archivingAll, setArchivingAll] = useState(false);
+	// Done or completed sessions anywhere in the view (a completed session may sit in another column).
+	const archivable = p.sessions.filter(s => !s.archived && isDone(s));
+	const archiveAll = async (): Promise<void> => {
+		setArchivingAll(true);
+		try {
+			await p.onArchiveAll(archivable.map(s => s.id));
+		} finally {
+			setArchivingAll(false);
+			setConfirmAll(false);
+		}
+	};
 	return h(
 		"div",
 		{ className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
@@ -166,12 +239,31 @@ export function SessionBoard(p: { sessions: Session[]; selected: string | null; 
 					h("span", { className: "omps-col-icon" }, icon(col.icon, 13)),
 					h("span", { className: "omps-col-title" }, col.label),
 					h("span", { className: "omps-count" }, String(list.length)),
+					col.id === "done" && archivable.length
+						? confirmAll
+							? h(
+									"span",
+									{ className: "omps-confirm omps-col-confirm" },
+									`Archive ${archivable.length}?`,
+									h(Button, { small: true, kind: "danger", label: "Archive", busy: archivingAll, onClick: () => void archiveAll() }),
+									h(Button, { small: true, kind: "ghost", label: "Cancel", disabled: archivingAll, onClick: () => setConfirmAll(false) }),
+								)
+							: h(Button, {
+									small: true,
+									kind: "ghost",
+									icon: "archive",
+									label: "Archive all",
+									className: "omps-col-action",
+									title: `Archive the ${archivable.length} done or completed session${archivable.length === 1 ? "" : "s"} shown (idle with nothing queued, or marked completed)`,
+									onClick: () => setConfirmAll(true),
+								})
+						: null,
 				),
 				h(
 					"div",
 					{ className: "omps-col-body" },
 					shown.length
-						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, onOpen: p.onOpen, onOpenProject: p.onOpenProject, onQueueAction: p.onQueueAction }))
+						? shown.map(s => h(SessionCard, { key: s.id, s, selected: s.id === p.selected, now: p.now, busy: p.busy.has(s.id), onOpen: p.onOpen, onOpenProject: p.onOpenProject, onAction: p.onAction, onQueueAction: p.onQueueAction }))
 						: h(Empty, { compact: true, icon: col.icon, title: p.filtered ? "No matches" : col.empty }),
 					list.length > shown.length
 						? h("button", { type: "button", className: "omps-more", onClick: () => setExpanded({ ...expanded, [col.id]: true }) }, `Show ${list.length - shown.length} more`)

@@ -230,6 +230,71 @@ class PluginTest(unittest.TestCase):
         self.tick_until("proj", card, lambda t: t.status == "done", "done")
         self.assertIn("fake-mini", str(report(sid).get("model") or ""))
 
+    # ---- archiving ----
+
+    def test_archive_completed_archives_the_card_and_its_session_once_done(self) -> None:
+        import dataclasses
+
+        def archived(sid: str) -> bool:
+            return next(s for s in sessions() if s["meta"]["id"] == sid).get("archived") is True
+
+        # Off by default: a completed card stays done and its session stays listed.
+        kept = self.create("proj", "echo kept")
+        self.tick("proj")
+        kept_sid = self.session_of(kept)
+        self.tick_until("proj", kept, lambda t: t.status == "done", "kept done")
+        self.tick("proj")
+        self.assertEqual(self.card("proj", kept).status, "done")
+        self.assertFalse(archived(kept_sid))
+
+        lane = self.plugin.lane
+        real = lane.settings
+        lane.settings = lambda: dataclasses.replace(real(), lane=dataclasses.replace(real().lane, archive_completed=True))
+        try:
+            card = self.create("proj", "echo archive me")
+            self.tick("proj")
+            sid = self.session_of(card)
+            t = self.tick_until("proj", card, lambda t: t.status in ("done", "archived"), "card finished")
+            self.assertEqual(t.status, "archived", "completed and archived in the same lane pass")
+            self.assertEqual(t.result, "archive me", "completed (with omp's reply) before it was archived")
+            self.assertTrue(archived(sid))
+            self.assertNotIn(f"proj/{card}", self.links())
+            self.assertEqual(self.card("proj", kept).status, "done", "only cards the lane completes from now on")
+        finally:
+            lane.settings = real
+
+    def test_archive_done_command_archives_a_boards_done_lane_cards_and_sessions(self) -> None:
+        import argparse
+        import contextlib
+        import io
+
+        from hermes_plugins.omp_sessions import commands
+
+        # "other" is not a lane board: archive-done works on any board.
+        with kbc.connect_closing(board="other") as conn:
+            mine = kb.create_task(conn, title="done by omp", assignee="omp", board="other")
+            ran = kb.create_task(conn, title="ran in omp", assignee="someone", board="other")
+            theirs = kb.create_task(conn, title="done by someone", assignee="someone", board="other")
+            still = kb.create_task(conn, title="still open", assignee="omp", board="other")
+            for c in (mine, ran, theirs):
+                self.assertTrue(kb.complete_task(conn, c, result="ok"))
+        sid = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo ran", "--tag", "hermes:other", "--tag", f"card:{ran}").stdout)["id"]
+
+        parser = argparse.ArgumentParser()
+        commands.setup_cli(parser)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.plugin.cli(parser.parse_args(["archive-done", "--board", "other"])), 0)
+        self.assertIn("other: archived 2 done cards", out.getvalue())
+        self.assertIn("and 1 omp session(s)", out.getvalue())
+        self.assertEqual(
+            {c: self.card("other", c).status for c in (mine, ran, theirs, still)},
+            {mine: "archived", ran: "archived", theirs: "done", still: "ready"},
+            "done cards of the lane's assignee or run by omp; nobody else's, nothing open",
+        )
+        self.assertTrue(next(s for s in sessions() if s["meta"]["id"] == sid).get("archived"))
+        self.assertIn("other: archived 0 done cards", commands.archive_done_text(["other"], self.plugin.lane))
+
     def test_needs_input_blocks_and_unblocks_then_completes(self) -> None:
         card = self.create("asking", "bash ls\nwrite a.txt hi\necho wrote a.txt")
         self.tick("asking")
@@ -651,6 +716,10 @@ class PureTest(unittest.TestCase):
         self.assertEqual(self.settings.board_lane(s, "b").comment_authors, ("dashboard", "alice"))
         self.assertTrue(self.settings.board_lane(s, "a").trusts("anyone-at-all"))
         self.assertFalse(self.settings.parse_settings({}).agent_approvals)
+        ac = self.settings.parse_settings({"lane": {"enabled": True, "archive_completed": True, "boards": {"a": {"archive_completed": False}, "b": {}, "c": {"archive_completed": "yes"}}}})
+        self.assertFalse(self.settings.parse_settings({"lane": {"enabled": True}}).lane.archive_completed, "off by default")
+        self.assertEqual([self.settings.board_lane(ac, x).archive_completed for x in ("a", "b", "c")], [False, True, True], "a board's own bool wins; anything else: the lane's")
+        self.assertTrue(self.lane.board_lane_fallback(ac, "b").archive_completed)
 
     def test_the_mode_gates_question_is_an_approval(self) -> None:
         from hermes_plugins.omp_sessions.ompsessions import is_approval

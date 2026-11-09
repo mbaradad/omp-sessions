@@ -220,6 +220,9 @@ const PATHS = {
 	external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
 	pause: "M8 5v14M16 5v14",
 	tag: "M3 12V4h8l10 10-8 8z M7.5 7.5h.01",
+	archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
+	unarchive: "M3 4h18v4H3zM5 8v12h14V8M12 18v-6M9.5 14.5L12 12l2.5 2.5",
+	undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
 } as const;
 export type IconName = keyof typeof PATHS;
 

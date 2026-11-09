@@ -194,6 +194,9 @@ hermes omp board lightscale --folder ~/src/lightscale --group Lightscale --mode 
 hermes omp project lightscale ~/src/lightscale       # folder for a Hermes project, by id, slug or name
 hermes omp lane off                                  # stop taking new cards; linked cards keep reporting
 hermes omp lane run                                  # one pass now
+hermes omp lane on --archive-completed on            # archive each card (and its omp session) once the lane completes it
+hermes omp board lightscale --archive-completed on   # the same for one board (off; default: the lane's setting)
+hermes omp archive-done --board lightscale          # archive a board's done lane cards and their omp sessions now (repeat --board; default: every board)
 hermes omp status                                    # lane, last passes, errors, linked cards and their sessions
 ```
 
@@ -213,6 +216,7 @@ plugins:
           assignee: omp
           mode: auto                   # unset: the omp Sessions default (omp-sessions config set mode), else omp's; edits/ask make cards wait for a person at the first command
           comment_authors: [dashboard] # whose comments reach omp and whose @omp assigns cards ("*": anyone)
+          archive_completed: false     # true: archive a card on the board, and its omp session, as soon as the lane completes it
           boards:                      # empty: every board
             lightscale:
               folder: /home/me/src/lightscale
@@ -220,9 +224,16 @@ plugins:
               mode: auto
               model: anthropic/claude-sonnet-4-5   # unset: the omp Sessions default
               comment_authors: [dashboard, alice]  # replaces the lane's list on this board
+              archive_completed: true              # replaces the lane's archive_completed on this board
         projects:
           lightscale: /home/me/src/lightscale
 ```
+
+### Archiving done cards
+
+Done cards pile up on a board. With `archive_completed` on (the lane's setting, or a board's own), the lane archives a card right after it completes it, with the card's result kept, and archives the card's omp session too (`omp-sessions archive`; it stays in `ls --all` and under *Show archived* on the page). It is off by default.
+
+`hermes omp archive-done [--board <slug>]` does it in one go for the cards already done: every `done` card assigned to the board's lane assignee, or run by an omp session (tagged `hermes:<board>` and `card:<id>`), is archived with Hermes's own `archive_task`, together with those sessions. Cards of other assignees and open cards are left alone. The Boards view has the same, per board: *Archive done cards* (when the lane completes them, keep them, or the lane's default) and *Archive done now*.
 
 ### Answering a card's question
 
@@ -275,8 +286,8 @@ The plugin adds an **omp Sessions** page to the left sidebar of the Hermes web d
 ![omp Sessions in the Hermes dashboard](images/hermes-dashboard.png)
 
 - **Status strip:** `omp-sessions` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
-- **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply; interrupted sessions say so. Filter by board, group or project, or search (`/`). Each card has a button to open its project in VS Code.
-- **Detail panel** (click a card): the question with one button per answer (the answer names the question, so a stale click fails instead of answering a different dialog), the full last reply, a follow-up box (it runs after the current turn; tick *Steer this turn* to redirect it instead), the permission mode switch, a model switcher, Stop (hidden for interrupted sessions), **VS Code** and **Open project in VS Code** (below).
+- **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply; interrupted sessions say so. Filter by board, group or project, or search (`/`). Each card has a button to open its project in VS Code, and (on hover) **Mark completed** / **Mark not completed** and **Archive** / **Unarchive**. **Archive all** on the Done column header (after a confirm) archives, in one request, every done session the board shows: idle with nothing queued, or marked completed (`omp-sessions complete`). Archived sessions are hidden; **Show archived** brings them back, with Unarchive on each.
+- **Detail panel** (click a card): the question with one button per answer (the answer names the question, so a stale click fails instead of answering a different dialog), the full last reply, a follow-up box (it runs after the current turn; tick *Steer this turn* to redirect it instead), the permission mode switch, a model switcher, Mark completed and Archive (or their undo), Stop (hidden for interrupted sessions), **VS Code** and **Open project in VS Code** (below).
 - **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, a searchable model picker, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
 - **Boards:** the lane switch, and per board (the ones in the lane first) the lane's folder (with an open-in-VS-Code button), omp group, mode, default model, trusted comment authors and assignee, the cards it runs as omp sessions with their status, and the ready cards it takes next.
 - **Graph:** a board's kanban cards as a dependency graph, parents on the left and their children (cards that wait for them: `hermes kanban link <parent> <child>`, or a card created with parents) to the right. Cards are coloured by status and show the state of the omp session working on them: the lane's session (marked *lane*), else the latest session tagged `hermes:<board>` + `card:<id>`. An edge is solid once its parent is done and dashed while it still holds the child back. Only cards linked to another card show until you switch **Linked cards only** to **All cards** (unlinked cards then sit in a grid below; archived cards never show). Click a card (or focus it and press Enter) to see what it waits for and what it unblocks; a card with an omp session also opens that session's detail panel.

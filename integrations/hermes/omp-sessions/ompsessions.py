@@ -61,6 +61,15 @@ def agent_state(info: dict) -> str:
     return state if isinstance(state, str) and state else "unknown"
 
 
+def is_done(info: dict) -> bool:
+    """A finished session the user can archive: marked completed (`omp-sessions complete`), or idle with
+    nothing queued or running."""
+    if info.get("completed") is True:
+        return True
+    q = info.get("queue") if isinstance(info.get("queue"), dict) else {}
+    return agent_state(info) == "idle" and not int(q.get("pending") or 0) and not int(q.get("running") or 0)
+
+
 class OmpSessionsError(RuntimeError):
     """omp-sessions is missing, failed, or printed something that isn't the expected JSON."""
 
@@ -302,6 +311,27 @@ class OmpSessions:
             raise OmpSessionsError(error_text(r) or f"omp-sessions status exited with {r.code}") from exc
         if not isinstance(out, dict):
             raise OmpSessionsError(f"omp-sessions status printed {r.stdout.strip()[:100]!r}")
+        return out
+
+    def archive(self, session: str) -> str:
+        """Hides the session from the default lists (`omp-sessions archive`); returns what it printed."""
+        return self.ok(["archive", free_text_ok(session)]).strip()
+
+    def unarchive(self, session: str) -> str:
+        return self.ok(["unarchive", free_text_ok(session)]).strip()
+
+    def complete(self, session: str) -> dict:
+        """Marks the session completed (`omp-sessions complete`): done, whatever its state. Returns
+        {id, completed, completedAt?, changed}."""
+        return self._completed("complete", session)
+
+    def uncomplete(self, session: str) -> dict:
+        return self._completed("uncomplete", session)
+
+    def _completed(self, cmd: str, session: str) -> dict:
+        out = self.json([cmd, free_text_ok(session), "--json"])
+        if not isinstance(out, dict):
+            raise OmpSessionsError(f"omp-sessions {cmd} printed {str(out)[:100]!r}")
         return out
 
     def projects(self) -> list[dict]:

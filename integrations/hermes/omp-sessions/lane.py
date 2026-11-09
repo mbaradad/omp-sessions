@@ -14,7 +14,9 @@ Android): a comment on a linked card from a trusted author (the board's `comment
 `dashboard`) answers omp's open question or reaches the session as a message marked as a kanban
 comment from that author, and `@omp` from a trusted author on any card of a lane board assigns that
 card to the lane. Approval dialogs are never answered from comments. A comment that can't be
-delivered is retried on later passes (a few times) instead of being dropped.
+delivered is retried on later passes (a few times) instead of being dropped. With `archive_completed`
+on (the lane's or the board's setting), a card the lane completes is archived on the board right away,
+together with its omp session.
 
 Card <-> session links and the lane's lock are machine-wide (store.lane_data_dir, beside the shared
 kanban boards), so several profiles' gateways never run two lane passes at once; before creating a
@@ -34,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval, short
-from .settings import ANY_AUTHOR, BoardLane, Settings, board_lane
+from .settings import ANY_AUTHOR, BoardLane, Settings, archive_completed, board_lane
 from .store import Busy, Store
 
 log = logging.getLogger(__name__)
@@ -812,6 +814,8 @@ class Lane:
             if ok or (after and after.status == "done"):
                 log.info("omp lane: %s completed from omp session %s", key, short(link["session"]))
                 links.pop(key, None)
+                if (cfg or board_lane_fallback(self.settings(), slug)).archive_completed:
+                    self.archive_card(conn, slug, card_id, [str(link["session"])], omp)
             else:
                 link["error"] = "complete refused (are all parents done?)"
         elif kind == "block_transient":
@@ -837,6 +841,64 @@ class Lane:
             link.pop("session_gone", None)
             self._create(conn, slug, link, task, cfg, omp)
 
+    # -- archiving --
+
+    def archive_card(self, conn: Any, slug: str, card_id: str, sessions: list[str], omp: OmpSessions) -> Optional[str]:
+        """Archives a done card on Hermes's board and its omp sessions; returns what failed, or None.
+        The card is archived even when an omp session can't be (it is then still listed by omp)."""
+        from hermes_cli import kanban_db as kb
+
+        failed = []
+        if not kb.archive_task(conn, card_id):
+            after = kb.get_task(conn, card_id)
+            if after is None or after.status != "archived":
+                failed.append(f"Hermes refused to archive card {card_id}")
+        for sid in sessions:
+            try:
+                omp.archive(sid)
+            except OmpSessionsError as exc:
+                failed.append(f"omp session {short(sid)}: {exc}")
+        if failed:
+            log.warning("omp lane: archiving %s/%s: %s", slug, card_id, "; ".join(failed))
+            return "; ".join(failed)
+        log.info("omp lane: %s/%s archived with omp session(s) %s", slug, card_id, ", ".join(short(s) for s in sessions) or "none")
+        return None
+
+    def archive_done(self, slug: str) -> dict:
+        """Archives every done lane card on `slug` (`hermes omp archive-done`): done cards assigned to the
+        lane's assignee or worked by an omp session (tagged `hermes:<slug>` + `card:<id>`), together
+        with those sessions. {"archived": [card id], "sessions": [session id], "failed": {card id: why}}."""
+        from hermes_cli import kanban_db as kb
+        from hermes_cli import kanban_db_connect as kbc
+
+        settings = self.settings()
+        assignee = (settings.lane.boards.get(slug, {}).get("assignee") or settings.lane.assignee).lower()
+        omp = self.omp()
+        by_card: dict[str, list[str]] = {}
+        for s in omp.sessions(all=True):
+            tags = s.get("tags") if isinstance(s.get("tags"), list) else []
+            meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+            if f"hermes:{slug}" not in tags or not meta.get("id"):
+                continue
+            for t in tags:
+                if isinstance(t, str) and t.startswith("card:"):
+                    by_card.setdefault(t[5:], [])
+                    if s.get("archived") is not True:
+                        by_card[t[5:]].append(str(meta["id"]))
+        out: dict[str, Any] = {"archived": [], "sessions": [], "failed": {}}
+        with kbc.connect_closing(board=slug) as conn:
+            for task in kb.list_tasks(conn, status="done"):
+                if (task.assignee or "").lower() != assignee and task.id not in by_card:
+                    continue
+                sessions = by_card.get(task.id, [])
+                err = self.archive_card(conn, slug, task.id, sessions, omp)
+                if err:
+                    out["failed"][task.id] = err
+                else:
+                    out["archived"].append(task.id)
+                    out["sessions"].extend(sessions)
+        return out
+
 
 def card_model(task: Any) -> Optional[str]:
     """The card's model override (`hermes kanban set-model`) as an omp model selector (provider/model
@@ -852,7 +914,7 @@ def board_lane_fallback(settings: Settings, slug: str) -> BoardLane:
     """Settings for a linked card whose board the lane no longer takes new cards from."""
     e = settings.lane.boards.get(slug, {})
     authors = tuple(e["comment_authors"]) if "comment_authors" in e else settings.lane.comment_authors
-    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors)
+    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors, archive_completed=archive_completed(settings, slug))
 
 
 def project_folder(project_id: Optional[str], settings: Settings) -> Optional[str]:

@@ -261,6 +261,20 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Meta, { label: "Files changed", children: String(view.changedFiles) }),
 						h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
 						view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map(t => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
+						view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null,
+					)
+				: null,
+			view
+				? h(
+						"div",
+						{ className: "omps-mode-row omps-detail-actions" },
+						h("span", { className: "omps-section-label" }, view.archived ? "Archived" : view.completed ? "Completed" : "Organize"),
+						view.completed
+							? h(Button, { small: true, kind: "ghost", icon: "undo", label: "Mark not completed", busy: busy === "uncomplete", onClick: () => void act("uncomplete", "uncomplete", {}) })
+							: h(Button, { small: true, kind: "ghost", icon: "check", label: "Mark completed", title: "Done, whatever its state: Archive all on the Done column takes it", busy: busy === "complete", onClick: () => void act("complete", "complete", {}) }),
+						view.archived
+							? h(Button, { small: true, kind: "ghost", icon: "unarchive", label: "Unarchive", busy: busy === "unarchive", onClick: () => void act("unarchive", "unarchive", {}) })
+							: h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive", title: "Hide it from the board (Show archived brings it back)", busy: busy === "archive", onClick: () => void act("archive", "archive", {}) }),
 					)
 				: null,
 			view ? h(QueueControls, { s: view, onAction: queueAction }) : null,

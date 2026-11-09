@@ -103,6 +103,9 @@ export interface Session {
 	priority?: string | null;
 	tags: string[];
 	archived: boolean;
+	/** Marked completed (omp-sessions complete): done, whatever its state. */
+	completed: boolean;
+	completedAt?: number | null;
 	queue: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number };
 	/** The queue runs its pending tasks by itself (off: paused, or waiting for `startAt`). */
 	autoRun?: boolean;
@@ -211,6 +214,10 @@ export interface Board {
 	commentAuthors?: string[] | null;
 	/** Whose comments reach omp and whose @omp assigns cards on this board ("*": anyone). */
 	effectiveCommentAuthors: string[];
+	/** This board's archive_completed (null: the lane's setting). */
+	archiveCompleted?: boolean | null;
+	/** Whether the lane archives the cards it completes on this board (and their omp sessions). */
+	effectiveArchiveCompleted: boolean;
 	linked: LinkedCard[];
 	ready: Array<{ id: string; title: string } & Partial<CardLinks>>;
 	/** Absent from an older backend. */
@@ -224,8 +231,23 @@ export interface BoardsView {
 	enabled: boolean;
 	assignee: string;
 	mode?: Mode | null;
+	archiveCompleted: boolean;
 	allBoards: boolean;
 	boards: Board[];
+}
+
+/** POST /sessions/archive-done: the done sessions it archived, and the ones omp-sessions refused. */
+export interface ArchiveDone {
+	archived: string[];
+	failed: Array<{ id: string; error: string }>;
+}
+
+/** POST /boards/<slug>/archive-done: the board's done lane cards it archived, with their omp sessions. */
+export interface ArchiveDoneCards {
+	archived: string[];
+	sessions: string[];
+	failed: Record<string, string>;
+	view: BoardsView;
 }
 
 export interface Places {

@@ -334,6 +334,96 @@ class DashboardApiTest(unittest.TestCase):
         finally:
             self.assertIsNone(self.post("/models/default", {"model": None})["default"])
 
+    def new(self, *args: str) -> str:
+        return json.loads(omp_sessions("new", str(WORK), "--detach", "--json", *args).stdout)["id"]
+
+    def test_archive_unarchive_complete_and_uncomplete_actions(self) -> None:
+        sid = self.new("-p", "echo to archive")
+        v = until(lambda: self.state_is(sid, "idle"), "idle")
+        self.assertEqual((v["archived"], v["completed"]), (False, False))
+        self.post(f"/sessions/{sid}/archive", {})
+        self.assertTrue(self.view(sid)["archived"])
+        self.post(f"/sessions/{sid[:8]}/unarchive", {})
+        self.assertFalse(self.view(sid)["archived"])
+        # complete/uncomplete run `omp-sessions complete|uncomplete <session> --json` (stubbed here, so the
+        # test doesn't depend on the CLI version the plugin runs against).
+        calls: list[list[str]] = []
+        real_json = self.api.ompsessions.OmpSessions.json
+
+        def fake_json(o, args, **kw):
+            if args[0] in ("complete", "uncomplete"):
+                calls.append(list(args))
+                return {"id": sid, "completed": args[0] == "complete", "changed": True}
+            return real_json(o, args, **kw)
+
+        with mock.patch.object(self.api.ompsessions.OmpSessions, "json", fake_json):
+            self.assertEqual(self.post(f"/sessions/{sid}/complete", {}), {"ok": True, "id": sid, "completed": True, "changed": True})
+            self.assertFalse(self.post(f"/sessions/{sid}/uncomplete", {})["completed"])
+        self.assertEqual(calls, [["complete", sid, "--json"], ["uncomplete", sid, "--json"]])
+        self.assertIn("unknown action", self.post(f"/sessions/{sid}/bogus", {}, status=404)["error"])
+        self.assertIn("invalid value", self.post("/sessions/--all/archive", {}, status=400)["error"], "a session reference is never a flag")
+
+    def test_archive_done_archives_a_views_done_sessions_in_one_request(self) -> None:
+        group = "Archive-all group"
+        done1 = self.new(f"--group={group}", "-p", "echo one")
+        done2 = self.new(f"--group={group}", "--tag", "hermes:dash", "-p", "echo two")
+        elsewhere = self.new("-p", "echo three")
+        already = self.new(f"--group={group}", "-p", "echo four")
+        later = self.new(f"--group={group}", "--task=echo later", "--at=+2h")
+        marked = self.new(f"--group={group}", "--task=echo marked", "--at=+3h")
+        for sid in (done1, done2, elsewhere, already):
+            until(lambda: self.state_is(sid, "idle"), f"{sid[:8]} idle")
+        omp_sessions("archive", already)
+        self.assertEqual(self.view(later)["state"], "scheduled")
+
+        # The view's filters: board (a card's board or a hermes:<board> tag) and group.
+        self.assertEqual(self.post("/sessions/archive-done", {"group": group, "board": "dash"}), {"archived": [done2], "failed": []})
+        # A session marked completed is done whatever its state (stubbed: `ls --json` reports `completed`).
+        real_sessions = self.api.ompsessions.OmpSessions.sessions
+
+        def with_completed(o, all=True):
+            out = real_sessions(o, all)
+            for i in out:
+                if i["meta"]["id"] == marked:
+                    i["completed"] = True
+            return out
+
+        with mock.patch.object(self.api.ompsessions.OmpSessions, "sessions", with_completed):
+            r = self.post("/sessions/archive-done", {"group": group})
+        self.assertEqual((set(r["archived"]), r["failed"]), ({done1, marked}, []), "idle with nothing queued, or completed; never one already archived")
+        self.assertFalse(self.view(later)["archived"], "scheduled work is not done")
+        self.assertTrue(all(self.view(s)["archived"] for s in (done1, done2, marked, already)))
+        # `ids`: the sessions the page shows; only the done ones among them are archived.
+        self.assertEqual(self.post("/sessions/archive-done", {"ids": [elsewhere, later]})["archived"], [elsewhere])
+        self.assertFalse(self.view(later)["archived"])
+        self.assertEqual(self.post("/sessions/archive-done", {"ids": [later]})["archived"], [])
+        self.assertIn("ids must be", self.post("/sessions/archive-done", {"ids": elsewhere}, status=400)["error"])
+
+    def test_board_archive_setting_and_archiving_a_boards_done_cards(self) -> None:
+        try:
+            v = self.post("/boards/dash", {"archiveCompleted": True})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["archiveCompleted"], dash["effectiveArchiveCompleted"], v["archiveCompleted"]), (True, True, False))
+            self.assertIs(self.api.settings().lane.boards["dash"]["archive_completed"], True)
+            v = self.post("/boards/dash", {"archiveCompleted": None})
+            dash = next(b for b in v["boards"] if b["slug"] == "dash")
+            self.assertEqual((dash["archiveCompleted"], dash["effectiveArchiveCompleted"]), (None, False), "back to the lane's setting")
+            self.assertIn("archiveCompleted", self.post("/boards/dash", {"archiveCompleted": "yes"}, status=400)["error"])
+
+            with kbc.connect_closing(board="dash") as conn:
+                done = kb.create_task(conn, title="dash done", assignee="omp", board="dash")
+                kb.complete_task(conn, done, result="ok")
+                other = kb.create_task(conn, title="dash someone's", assignee="someone", board="dash")
+                kb.complete_task(conn, other, result="ok")
+            r = self.post("/boards/dash/archive-done", {})
+            self.assertEqual((r["archived"], r["failed"]), ([done], {}))
+            self.assertTrue(any(b["slug"] == "dash" for b in r["view"]["boards"]))
+            with kbc.connect_closing(board="dash") as conn:
+                self.assertEqual((kb.get_task(conn, done).status, kb.get_task(conn, other).status), ("archived", "done"))
+            self.assertIn("no kanban board", self.post("/boards/nope/archive-done", {}, status=404)["error"])
+        finally:
+            CONFIG.write_text(self.config_text)
+
     def test_missing_omp_sessions_is_explained(self) -> None:
         with mock.patch.object(self.api.ompsessions, "find_omp_sessions", return_value=None):
             self.assertTrue(self.get("/sessions", status=503)["error"])
