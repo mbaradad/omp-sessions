@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskBaseOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/ao/mobile";
 
@@ -294,4 +294,30 @@ test("laneQueue: the lane's own state, reason and wait time come from the planne
 	assert.deepEqual([held?.state, held?.waitReason], ["held", "provider usage limit until 21:00"]);
 	assert.equal(laneQueue(plan(lane({ state: "scheduled", waitUntil: 5000 })), "S")?.startAt, 5000);
 	assert.equal(laneQueue(plan(lane({})), "S")?.state, undefined);
+});
+
+test("taskBaseOf: the first task with a recorded base wins; a root task in a planner-created session has none (the manifest is exact)", () => {
+	const lane = (id: string): LaneView => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 0, running: 0, done: 1, failed: 0, total: 1 });
+	const task = (id: string, extra: Partial<TaskView>): TaskView => ({ id, title: id, subtasks: [], status: "done", createdAt: 0, state: "done", ...extra });
+	const git = (base?: string) => ({ repo: "/r", branch: "b", ...(base && { base }) });
+	const plan: PlanView = {
+		rev: 1,
+		edges: [],
+		keptBranches: [],
+		lanes: [lane("c"), lane("r")],
+		tasks: [task("t2", { lane: "c", createdAt: 2, git: git("bbb") }), task("t1", { lane: "c", createdAt: 1, git: git("aaa") }), task("root", { lane: "r", git: git() })],
+		recurring: [],
+		status: {} as PlanView["status"],
+	};
+	assert.equal(taskBaseOf(plan, "C"), "aaa");
+	assert.equal(taskBaseOf(plan, "R"), undefined);
+	assert.equal(taskBaseOf(undefined, "C"), undefined);
+});
+
+test("asChangedFile: git's letters as AO's manifest words them", () => {
+	assert.deepEqual(asChangedFile({ status: "A", path: "a" }), { path: "a", status: "added", additions: 0, deletions: 0 });
+	assert.equal(asChangedFile({ status: "?", path: "u" }).status, "added");
+	assert.equal(asChangedFile({ status: "D", path: "d" }).status, "deleted");
+	assert.deepEqual(asChangedFile({ status: "R", path: "new", from: "old" }), { path: "new", oldPath: "old", status: "renamed", additions: 0, deletions: 0 });
+	assert.equal(asChangedFile({ status: "M", path: "m" }).status, "modified");
 });

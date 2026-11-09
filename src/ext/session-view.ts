@@ -3,7 +3,7 @@
 // vscode), so the CLI and tests can use it too.
 import * as path from "node:path";
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
-import type { AoAgentState, AoSessionModel } from "../ao/model";
+import type { AoAgentState, AoChangedFile, AoSessionModel } from "../ao/model";
 import type { PlanOp, PlanView, TaskState, TaskView } from "../planner/types";
 import type { FileChange } from "../shared/checkpoints";
 import type { Priority } from "../shared/organize";
@@ -250,6 +250,26 @@ export function ownFiles<T extends { path: string }>(files: readonly T[], cwd: s
 	if (!changes) return [...files];
 	const touched = new Set(changes.flatMap(c => c.files.map(f => path.resolve(f.path))));
 	return files.filter(f => touched.has(path.resolve(cwd, f.path)));
+}
+
+/**
+ * Where a graph child's own work starts: the planner's `Task.git.base` (the branch head after its parents were merged in,
+ * before its first run) of the session's first task that has one. `git diff base` in its worktree is what the task changed;
+ * AO's manifest also lists the parents' commits (GAPS G43). Undefined for a session without such a task: a root task in a
+ * session the planner created (the manifest is exact there) or a session outside the graph.
+ */
+export function taskBaseOf(plan: PlanView | undefined, sessionId: string): string | undefined {
+	if (!plan) return undefined;
+	const lanes = new Set(plan.lanes.filter(l => l.id === sessionId || l.session === sessionId).map(l => l.id));
+	return plan.tasks
+		.filter(t => ((t.lane !== undefined && lanes.has(t.lane)) || t.session === sessionId) && t.git?.base)
+		.sort((a, b) => a.createdAt - b.createdAt)[0]?.git?.base;
+}
+
+/** git's name-status letter of a changed file as AO's manifest words it. */
+export function asChangedFile(f: { status: string; path: string; from?: string }): AoChangedFile {
+	const status = f.status === "A" || f.status === "?" ? "added" : f.status === "D" ? "deleted" : f.status === "R" || f.status === "C" ? "renamed" : "modified";
+	return { path: f.path, ...(f.from && { oldPath: f.from }), status, additions: 0, deletions: 0 };
 }
 
 /** A planner task whose state changed between two plans (the sounds listen to these). */
