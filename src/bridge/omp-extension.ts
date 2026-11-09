@@ -1,8 +1,8 @@
-// `out/omp-bridge.js`: omp extension that gives every omp session the VS Code bridge tools
+// `out/switchyard-bridge.js`: omp extension that gives every omp session the VS Code bridge tools
 // (the same TOOL_DEFS `out/mcp.js` serves). Agent Orchestrator runs omp as `omp acp`, and ACP
 // sessions ignore on-disk MCP config (their MCP servers come from the ACP client), so the tools
 // are registered natively instead. The VS Code extension copies this file to
-// `<omp agent dir>/extensions/omp-vscode-bridge/index.js` while `omp.vscodeTools` is on.
+// `<omp agent dir>/extensions/switchyard-bridge/index.js` while `omp.vscodeTools` is on.
 // Names stay `mcp__vscode_<tool>`, what omp called them when they came from the MCP server.
 import * as fs from "node:fs";
 import { bridgeDisabledFlag, MCP_SERVER_NAME, TOOL_DEFS } from "../shared/bridge";

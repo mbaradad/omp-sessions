@@ -823,7 +823,7 @@ async function bridgeStatus(api: OmpApi): Promise<void> {
 export function registerBridge(api: OmpApi): void {
 	const srv = new BridgeServer();
 	server = srv;
-	const bundle = vscode.Uri.joinPath(api.context.extensionUri, "out", "omp-bridge.js").fsPath;
+	const bundle = vscode.Uri.joinPath(api.context.extensionUri, "out", "switchyard-bridge.js").fsPath;
 	const apply = () => {
 		const on = enabled();
 		syncDisabledFlag(on);

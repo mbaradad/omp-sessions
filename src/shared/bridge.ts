@@ -1,6 +1,6 @@
 // VS Code bridge: lets omp sessions use VS Code's language features.
-//   omp ──omp extension (out/omp-bridge.js)──┐
-//   MCP client ──stdio MCP (out/mcp.js)──────┴──JSONL socket──> extension (one socket per VS Code window)
+//   omp ──omp extension (out/switchyard-bridge.js)──┐
+//   MCP client ──stdio MCP (out/mcp.js)─────────────┴──JSONL socket──> extension (one socket per VS Code window)
 // Each window registers itself in `<stateRoot>/bridge/<pid>.json` (0600) next to its socket; the
 // caller picks the window whose workspace folders contain the session cwd and authenticates
 // with the per-window token from that file. Everything here is node-only and VS Code-free.
@@ -134,13 +134,13 @@ export function pickWindows(entries: BridgeEntry[], cwd: string): WindowChoice[]
 
 // ---------- omp side: the omp extension that registers the tools in every omp session ----------
 
-/** Folder of the bridge's omp extension: `<omp agent dir>/extensions/omp-vscode-bridge`. */
+/** Folder of the bridge's omp extension: `<omp agent dir>/extensions/switchyard-bridge`. */
 export function bridgeExtensionDir(agentDir = ompPaths().agentDir): string {
-	return path.join(agentDir, "extensions", "omp-vscode-bridge");
+	return path.join(agentDir, "extensions", "switchyard-bridge");
 }
 
 /**
- * Installs (or refreshes) the bundled omp extension `out/omp-bridge.js` as `index.js` of
+ * Installs (or refreshes) the bundled omp extension `out/switchyard-bridge.js` as `index.js` of
  * {@link bridgeExtensionDir}, so omp sessions, including the `omp acp` ones Agent Orchestrator
  * runs (which ignore on-disk MCP config), get the VS Code tools. Rewrites only on change; true
  * when it wrote. omp loads extensions at startup: running sessions keep what they had.

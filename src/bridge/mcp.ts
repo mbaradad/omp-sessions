@@ -1,5 +1,5 @@
 // `out/mcp.js`: stdio MCP server exposing this machine's VS Code windows' language features to any
-// MCP client. omp sessions get the same tools from the omp extension (`out/omp-bridge.js`), because
+// MCP client. omp sessions get the same tools from the omp extension (`out/switchyard-bridge.js`), because
 // `omp acp` (how Agent Orchestrator runs omp) ignores on-disk MCP config. It always answers
 // initialize / tools/list; tools/call is forwarded to the VS Code window that has the cwd open, or
 // fails with a clear "not connected" message.
