@@ -21,7 +21,7 @@ import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } 
 import { attach } from "./attach";
 import { ensureBundles, extensionReport, installBundles, shippedBundles, uninstallBundles } from "./extension";
 import { modeProblem } from "./gate";
-import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
+import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, canRequeue, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
 import { MIGRATE_HELP, cmdMigrate } from "./migrate";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
@@ -972,6 +972,7 @@ async function cmdQueue(args: Args): Promise<void> {
 			break;
 		case "requeue":
 			// Failed tasks go back to pending; else a paused or interrupted queue restarts; else the last finished task runs again.
+			if (!canRequeue(q)) throw new Error("nothing to requeue: the queue has no tasks, a task is running, or its pending tasks already wait to run (queue run starts them now)");
 			ops = [{ op: "requeue" }];
 			break;
 		case "retry":
@@ -1789,14 +1790,16 @@ ${c.bold("Queue")}  ${c.dim("(the planner runs a session's tasks one by one)")}
   queue <session> run [n] | start | pause | clear | retry [n] | rm n | done n | skip n [--json]
                                   run: run now from task n (continues an interrupted queue); start: turn
                                   auto-run on; pause: off
-  queue <session> at <+30m|14:30|ISO time|off> [--json]
-                                  start the queue at that time (off: cancel the schedule)
+  queue <session> at <when|off> [--json]
+                                  start the queue at that time: +30m, in 2h, 14:30, 9pm, tomorrow 9:00 or
+                                  an ISO time like 2025-01-31T08:00 (off: cancel the schedule)
   queue <session> after <session>…|off [--json]
                                   the queue waits until those sessions finished (replaces its dependencies;
                                   refused for itself, unknown sessions and cycles); new --task … --after <s>
   queue <session> requeue [--json]
                                   run again: failed tasks go back to pending, else a paused or interrupted
-                                  queue restarts, else the last finished task runs again
+                                  queue restarts, else the last finished task runs again; a scheduled start
+                                  is kept (refused when there is nothing to requeue)
 
 ${c.bold("Organize")}
   prio <session> <urgent|high|normal|low>

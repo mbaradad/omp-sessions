@@ -5,8 +5,7 @@ import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { effectiveColor, effectiveRank } from "../shared/organize";
-import { type BoardData, type BoardCard, type FromBoard, type ToBoard, queueActions } from "../kanban/board";
-import type { QueueOp } from "../shared/protocol";
+import { type BoardData, type BoardCard, type FromBoard, type ToBoard, queueOpsFor } from "../kanban/board";
 import type { OmpApi } from "./api";
 import { finishedAt, scheduledStart } from "../shared/session-sort";
 import { askStartTime } from "./task-extras";
@@ -94,25 +93,20 @@ function apply(api: OmpApi, updates: FromBoard): void {
 }
 
 /**
- * Run now (the planner's `run`: the queue's first pending task goes ahead and a scheduled start is dropped) or
- * Requeue (`lane.requeue`: failed tasks back to pending, else a paused or interrupted queue restarts, else the
- * last finished task runs again; a scheduled start is kept). Requeue falls back to run for a queue that only
- * has pending work, so a card dropped on Queued always starts what it can. The planner resumes a stopped
+ * Run now or Requeue a card's queue on the planner (queueOpsFor says which ops). The planner resumes a stopped
  * session itself when it dispatches.
  */
 async function queueAction(api: OmpApi, id: string, action: "run" | "requeue"): Promise<void> {
 	const meta = api.sessions.get(id);
-	const q = api.sessions.queue(id);
-	const can = queueActions({ queue: meta?.queue, startAt: scheduledStart(meta?.queue) });
-	const ops: QueueOp[] = action === "requeue" && can.requeue ? [{ op: "requeue" }] : q.tasks.some(t => t.status === "pending") ? [{ op: "run" }] : [];
+	const ops = queueOpsFor(action, { queue: meta?.queue, startAt: scheduledStart(meta?.queue) }, api.sessions.queue(id).tasks.some(t => t.status === "pending"));
 	if (ops.length === 0) {
-		void vscode.window.showInformationMessage(`“${meta?.title ?? id}” has nothing to ${action === "requeue" ? "requeue" : "run"}.`);
+		void vscode.window.showInformationMessage(`“${meta?.title ?? id}” has nothing to ${action}.`);
 		return;
 	}
 	try {
 		await api.sessions.editQueue(id, ops);
 	} catch (err) {
-		void vscode.window.showWarningMessage(`Could not ${action === "requeue" ? "requeue" : "run"} “${meta?.title ?? id}”: ${err instanceof Error ? err.message : String(err)}`);
+		void vscode.window.showWarningMessage(`Could not ${action} “${meta?.title ?? id}”: ${err instanceof Error ? err.message : String(err)}`);
 	}
 }
 

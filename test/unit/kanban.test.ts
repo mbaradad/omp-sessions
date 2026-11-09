@@ -14,6 +14,7 @@ import {
 	planDrop,
 	projectsOf,
 	queueActions,
+	queueOpsFor,
 	rankInsert,
 	requeueDrop,
 	stepTarget,
@@ -388,5 +389,14 @@ describe("queue actions", () => {
 		assert.equal(requeueDrop("status", cols, ["f"], { columnId: "status:idle", sectionId: "status:idle" }), undefined);
 		assert.equal(requeueDrop("priority", buildColumns("priority", { lanes: [], groups: [] }, cards), ["f"], { columnId: "priority:normal", sectionId: "priority:normal" }), undefined);
 		assert.equal(planDrop("status", cols, ["f"], onQueued), undefined, "not a field move");
+	});
+	test("queueOpsFor: Requeue requeues what can run again, else runs pending work; Run now needs a pending task", () => {
+		const failed = { queue: q({ failed: 1 }), startAt: undefined };
+		assert.deepEqual(queueOpsFor("requeue", failed, false), [{ op: "requeue" }]);
+		assert.deepEqual(queueOpsFor("requeue", { queue: q({ done: 1 }) }, false), [{ op: "requeue" }], "finished");
+		assert.deepEqual(queueOpsFor("requeue", { queue: q({ pending: 1 }) }, true), [{ op: "run" }], "paused with pending work: run it");
+		assert.deepEqual(queueOpsFor("requeue", { queue: q({ running: 1 }) }, false), [], "running: nothing to do");
+		assert.deepEqual(queueOpsFor("run", { queue: q({ pending: 1, autoRun: false }), startAt: NOW }, true), [{ op: "run" }]);
+		assert.deepEqual(queueOpsFor("run", failed, false), [], "no pending task: nothing to run (requeue it first)");
 	});
 });

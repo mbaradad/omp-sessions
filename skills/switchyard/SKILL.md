@@ -61,12 +61,12 @@ switchyard queue <session> add "Write the changelog entry" --notes - --run < bri
 switchyard sched set 2      # at most 2 queued tasks run at once, across all sessions
 ```
 
-The queue runs its tasks one by one. A failed task pauses the queue: `switchyard queue <session>` shows it, and `switchyard queue <session> retry` retries. `switchyard queue <session> at <when|off>` reschedules or cancels a start time; `switchyard stop` on a scheduled session cancels its start.
+The queue runs its tasks one by one. A failed task pauses the queue: `switchyard queue <session>` shows it, and `switchyard queue <session> retry` retries. `switchyard queue <session> at <when|off>` reschedules or cancels a start time (`+30m`, `in 2h`, `14:30`, `9pm`, `tomorrow 9:00`, an ISO time; `queue <session> run` starts it now and drops the start time); `switchyard stop` on a scheduled session cancels its start.
 
 More planning controls:
 
 - **Dependencies:** `switchyard new /abs/repo --task "Integrate" --after <session> --after <other>` (or `queue <session> after <s>…|off`) holds the queue until those sessions have finished. Self-dependencies and cycles are refused.
-- **Requeue:** `switchyard queue <session> requeue` runs it again: failed tasks go back to pending, else a paused or interrupted queue restarts, else the last finished task runs again.
+- **Requeue:** `switchyard queue <session> requeue` runs it again: failed tasks go back to pending, else a paused or interrupted queue restarts, else the last finished task runs again; a scheduled start is kept, and it exits 1 with "nothing to requeue" when there is nothing to do.
 - **Completed:** `switchyard complete <session>` marks a finished session as done (a ✓ in `ls`/`show`; `completed`, `completedAt` in `--json`); `uncomplete` reopens it. It doesn't stop queued work.
 - **Graph changes:** in a git repository a session that waits for others starts from their commits, and when a parent's work changes later, it is merged into the children. `switchyard plan status [--json]` lists the edges (`in-sync`, `pending`, `merged`, `upstream-changed`, `resolving`, `conflict`); `show --json` has `upstream` (the edges into that session, as `plan status` prints them) and `upstreamState` (the worst of their states) for a session. `upstream-changed` means a finished child got the new changes but was not re-run: `switchyard plan sync <session> --rerun` runs it again with them. `conflict` needs a person: the child agent was asked to resolve the merge and couldn't.
 - **Usage:** a task added with `--usage spare` starts only while every usage window of its provider is below the `sched usage spare <percent>` threshold. Work is held at `sched usage hold <percent>`, and `sched budget <hour|day|week> <usd|off>` caps what queued work may spend. A held session reports `waitReason` (e.g. a provider limit and when it resets); `switchyard sched` lists the limits in force.

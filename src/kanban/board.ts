@@ -4,7 +4,7 @@
 
 import type { PlaySoundMessage } from "../shared/completion-sound";
 import type { OrgColor, OrgGroup, OrgLane, Priority } from "../shared/organize";
-import type { SessionStatus, SyncState } from "../shared/protocol";
+import type { QueueOp, SessionStatus, SyncState } from "../shared/protocol";
 import { type SessionSort, type SortFields, sortBy } from "../shared/session-sort";
 
 export type { OrgColor, Priority };
@@ -431,6 +431,17 @@ export function requeueDrop(mode: BoardMode, columns: BoardColumn[], movingIds: 
 		if (!actions.run && !actions.requeue) return undefined;
 	}
 	return movingIds;
+}
+
+/**
+ * The queue ops a card's Run now / Requeue (or a drop on Queued) sends to the planner. Requeue (`lane.requeue`:
+ * failed tasks back to pending, else a paused or interrupted queue restarts, else the last finished task runs
+ * again, a scheduled start kept) falls back to run for a queue with only pending work; run (`run`: the first
+ * pending task goes ahead and a scheduled start is dropped) needs a pending task. Empty: nothing to do.
+ */
+export function queueOpsFor(action: "run" | "requeue", c: Pick<BoardCard, "queue" | "startAt">, hasPending: boolean): QueueOp[] {
+	if (action === "requeue" && queueActions(c).requeue) return [{ op: "requeue" }];
+	return hasPending ? [{ op: "run" }] : [];
 }
 
 // ---------- extension <-> board webview ----------

@@ -148,6 +148,8 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual((q["tasks"][0]["status"], q["startAt"], q["autoRun"]), ("pending", at, False))
         v = self.view(sid)
         self.assertEqual((v["state"], v["startAt"], v["queue"]["failed"], v["queue"]["pending"]), ("scheduled", at, 0, 1))
+        # Pending work that already waits for its start has nothing to requeue (Run now starts it): refused, not silent.
+        self.assertIn("nothing to requeue", self.post(f"/sessions/{sid}/retry", {}, status=400)["error"])
 
         # Reschedule (epoch ms, as the page may send), then unschedule: the task stays, the queue paused.
         later = int((time.time() + 3 * 3600) * 1000)

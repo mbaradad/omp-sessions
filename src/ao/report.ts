@@ -27,6 +27,8 @@ export interface AoReportQueue {
 	autoRun: boolean;
 	startAt?: number;
 	interrupted?: number;
+	/** Failed tasks: `queue requeue` brings them back. */
+	failed?: number;
 	waiting?: { position: number; since: number };
 }
 

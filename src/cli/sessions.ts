@@ -242,7 +242,7 @@ export function resolveSession(query: string, sessions: readonly Session[], cwd:
 export function queueSummary(s: Session): AoReportQueue {
 	const l = s.lane;
 	if (!l) return { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
-	return { pending: l.pending, running: l.running, done: l.done, total: l.total, autoRun: l.autoRun, ...(l.startAt !== undefined && { startAt: l.startAt }), ...(l.interrupted !== undefined && { interrupted: l.interrupted }) };
+	return { pending: l.pending, running: l.running, done: l.done, total: l.total, autoRun: l.autoRun, ...(l.startAt !== undefined && { startAt: l.startAt }), ...(l.interrupted !== undefined && { interrupted: l.interrupted }), ...(l.failed && { failed: l.failed }) };
 }
 
 /**
