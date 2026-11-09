@@ -70,7 +70,13 @@ export interface Question {
 	questions?: Array<{ question: string; options: string[]; multi: boolean }>;
 }
 
-export interface CardRef {
+/** Kanban dependency links: a child card waits for its parents. */
+export interface CardLinks {
+	parents: string[];
+	children: string[];
+}
+
+export interface CardRef extends Partial<CardLinks> {
 	board: string;
 	id: string;
 	title?: string | null;
@@ -147,7 +153,7 @@ export interface Overview {
 	pluginVersion?: string;
 }
 
-export interface LinkedCard {
+export interface LinkedCard extends Partial<CardLinks> {
 	id: string;
 	title?: string | null;
 	status: string;
@@ -156,6 +162,21 @@ export interface LinkedCard {
 	laneState?: string | null;
 	waitingOnInput: boolean;
 	error?: string | null;
+}
+
+/** A card of the board (archived ones aside) for the dependency graph. */
+export interface GraphCard extends CardLinks {
+	id: string;
+	title: string;
+	status: string;
+	assignee?: string | null;
+	/** The omp session working on the card: the lane's, else the latest tagged with it. */
+	session?: string | null;
+	/** That session's state ("removed" when it's gone; "not created" for a lane card not started yet). */
+	sessionState?: string | null;
+	/** The kanban lane runs this card. */
+	lane: boolean;
+	laneState?: string | null;
 }
 
 export interface Board {
@@ -177,7 +198,9 @@ export interface Board {
 	/** Whose comments reach omp and whose @omp assigns cards on this board ("*": anyone). */
 	effectiveCommentAuthors: string[];
 	linked: LinkedCard[];
-	ready: Array<{ id: string; title: string }>;
+	ready: Array<{ id: string; title: string } & Partial<CardLinks>>;
+	/** Absent from an older backend. */
+	cards?: GraphCard[];
 	lastPass?: number | null;
 	error?: string | null;
 }

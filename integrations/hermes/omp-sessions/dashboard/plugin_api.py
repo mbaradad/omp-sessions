@@ -195,8 +195,35 @@ def board_slugs() -> list[dict]:
         return []
 
 
+LINKS_CHUNK = 400  # card ids per link query (under SQLite's bound-parameter limit)
+
+
+def card_links(conn: Any, kb: Any, ids: list[str]) -> dict[str, dict[str, list[str]]]:
+    """{card id: {"parents": [card id], "children": [card id]}} for `ids` on one board: the kanban
+    dependency links (a child waits for its parents), batched (Hermes's task_graph_contexts, else the
+    task_links table). Empty lists on a Hermes without task links."""
+    ids = list(dict.fromkeys(str(i) for i in ids if i))
+    out: dict[str, dict[str, list[str]]] = {i: {"parents": [], "children": []} for i in ids}
+    try:
+        if hasattr(kb, "task_graph_contexts"):
+            for start in range(0, len(ids), LINKS_CHUNK):
+                for tid, ctx in kb.task_graph_contexts(conn, ids[start : start + LINKS_CHUNK]).items():
+                    if tid in out:
+                        out[tid] = {k: [str(c["id"]) for c in ctx.get(k) or []] for k in ("parents", "children")}
+        elif ids:
+            for row in conn.execute("SELECT parent_id, child_id FROM task_links ORDER BY parent_id, child_id").fetchall():
+                parent, child = str(row[0]), str(row[1])
+                if child in out:
+                    out[child]["parents"].append(parent)
+                if parent in out:
+                    out[parent]["children"].append(child)
+    except Exception:
+        return {i: {"parents": [], "children": []} for i in ids}
+    return out
+
+
 def card_lookup(refs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
-    """{(board, card id): {title, status, assignee, project}} for the cards that still exist."""
+    """{(board, card id): {title, status, assignee, project, parents, children}} for the cards that still exist."""
     from hermes_cli import kanban_db as kb
     from hermes_cli import kanban_db_connect as kbc
 
@@ -209,10 +236,11 @@ def card_lookup(refs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
     for board, cards in by_board.items():
         try:
             with kbc.connect_closing(board=board) as conn:
+                rel = card_links(conn, kb, cards)
                 for card in cards:
                     t = kb.get_task(conn, card)
                     if t is not None:
-                        out[(board, card)] = {"title": t.title, "status": t.status, "assignee": t.assignee, "project": getattr(t, "project_id", None)}
+                        out[(board, card)] = {"title": t.title, "status": t.status, "assignee": t.assignee, "project": getattr(t, "project_id", None), **rel[card]}
         except Exception:
             continue
     return out
@@ -281,7 +309,8 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "card": None,
     }
     if ref:
-        view["card"] = {"board": ref[0], "id": ref[1], "title": (card or {}).get("title"), "status": (card or {}).get("status")}
+        c = card or {}
+        view["card"] = {"board": ref[0], "id": ref[1], "title": c.get("title"), "status": c.get("status"), "parents": c.get("parents") or [], "children": c.get("children") or []}
     return view
 
 
@@ -560,12 +589,20 @@ def boards_view() -> dict:
     ln = lane()
     links = ln.links()
     ticks = ln.ticks()
-    states: dict[str, str] = {}
+    infos: list[dict] = []
     if ompsessions.find_omp_sessions(s.omp_sessions):
         try:
-            states = {str(i["meta"]["id"]): ompsessions.agent_state(i) for i in ompsessions.OmpSessions(s.omp_sessions).sessions(all=True) if isinstance(i.get("meta"), dict)}
+            infos = [i for i in ompsessions.OmpSessions(s.omp_sessions).sessions(all=True) if isinstance(i.get("meta"), dict)]
         except OmpSessionsError:
-            states = {}
+            infos = []
+    states = {str(i["meta"]["id"]): ompsessions.agent_state(i) for i in infos}
+    # The omp session of each card: the lane's, else the latest one tagged hermes:<board> + card:<id>.
+    by_session = {str(l.get("session")): l for l in links.values() if l.get("session")}
+    session_of: dict[tuple[str, str], str] = {}
+    for i in sorted(infos, key=lambda i: (str(i["meta"]["id"]) in by_session, i["meta"].get("updatedAt") or 0)):
+        ref = card_ref(i, by_session)
+        if ref:
+            session_of[ref] = str(i["meta"]["id"])
     out = []
     for b in board_slugs():
         slug = str(b["slug"])
@@ -573,13 +610,15 @@ def boards_view() -> dict:
         assignee = (entry.get("assignee") or s.lane.assignee).lower()
         listed = not s.lane.boards or slug in s.lane.boards
         trusted = settings_mod.board_lane(s, slug, b.get("name")) or lane_mod.board_lane_fallback(s, slug)
-        linked, ready = [], []
+        linked, ready, cards = [], [], []
         try:
             with kbc.connect_closing(board=slug) as conn:
-                for key, l in sorted(links.items()):
-                    if l.get("board") != slug:
-                        continue
-                    t = kb.get_task(conn, str(l.get("card")))
+                lane_of = {str(l.get("card")): l for _, l in sorted(links.items()) if l.get("board") == slug}
+                tasks = kb.list_tasks(conn)
+                rel = card_links(conn, kb, [t.id for t in tasks] + list(lane_of))
+                no_links: dict[str, list[str]] = {"parents": [], "children": []}
+                for card, l in lane_of.items():
+                    t = kb.get_task(conn, card)
                     sid = str(l.get("session") or "")
                     linked.append(
                         {
@@ -591,10 +630,27 @@ def boards_view() -> dict:
                             "laneState": l.get("state"),
                             "waitingOnInput": l.get("input_blocked") is True,
                             "error": l.get("error"),
+                            **rel.get(card, no_links),
                         }
                     )
-                mine = {str(l.get("card")) for l in links.values() if l.get("board") == slug}
-                ready = [{"id": t.id, "title": t.title} for t in kb.list_tasks(conn, assignee=assignee, status="ready") if t.id not in mine]
+                ready = [{"id": t.id, "title": t.title, **rel.get(t.id, no_links)} for t in kb.list_tasks(conn, assignee=assignee, status="ready") if t.id not in lane_of]
+                # Every card (archived ones aside) with its links and omp session: the dependency graph.
+                for t in tasks:
+                    l = lane_of.get(t.id)
+                    sid = str((l or {}).get("session") or "") or session_of.get((slug, t.id), "")
+                    cards.append(
+                        {
+                            "id": t.id,
+                            "title": t.title,
+                            "status": t.status,
+                            "assignee": t.assignee,
+                            **rel.get(t.id, no_links),
+                            "session": sid or None,
+                            "sessionState": (states.get(sid) or "removed") if sid else ("not created" if l else None),
+                            "lane": l is not None,
+                            "laneState": l.get("state") if l else None,
+                        }
+                    )
         except Exception as exc:
             ticks.setdefault(slug, {})["error"] = f"cannot read the board: {exc}"
         tick = ticks.get(slug) if isinstance(ticks.get(slug), dict) else {}
@@ -616,6 +672,7 @@ def boards_view() -> dict:
                 "effectiveCommentAuthors": list(trusted.comment_authors),
                 "linked": linked,
                 "ready": ready,
+                "cards": cards,
                 "lastPass": tick.get("at"),
                 "error": tick.get("error"),
             }
