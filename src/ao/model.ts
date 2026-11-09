@@ -131,9 +131,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
-/** Approvals and questions still waiting for an answer, oldest first. */
+const OPEN_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { queued: true, running: true };
+
+/**
+ * Approvals and questions still waiting for an answer, oldest first. A request belongs to a turn that
+ * waits on it: when that turn has ended (a person's Stop leaves the approval row `pending` although the
+ * turn is `interrupted` and the agent ready, checked live) nobody can answer it any more.
+ */
 export function pendingActivities(conversation: AoConversation): AoActivity[] {
-	return conversation.activities.filter(a => a.status === "pending" && a.requestId && (a.activityKind === "approval" || a.activityKind === "user_input"));
+	const turns = new Map(conversation.turns.map(t => [t.id, t]));
+	return conversation.activities.filter(a => {
+		if (a.status !== "pending" || !a.requestId || (a.activityKind !== "approval" && a.activityKind !== "user_input")) return false;
+		const turn = a.turnId ? turns.get(a.turnId) : undefined;
+		return !turn || OPEN_TURNS[turn.state] === true;
+	});
 }
 
 /** Labels for ACP's permission option kinds, for decisions that come without one. */
