@@ -11,7 +11,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { shimDir, switchyardHome } from "./native";
+import { readHibernationSetting, shimDir, switchyardHome } from "./native";
 
 export const AO_SERVICE = "agent-orchestrator-daemon";
 export const AO_DEFAULT_PORT = 3001;
@@ -69,6 +69,8 @@ export interface AoStartOptions extends AoDaemonOptions {
 	/** How to run it. `auto` (default): a systemd user unit where systemd runs, else a detached process. */
 	supervisor?: "auto" | "systemd" | "detached";
 	log?: (message: string) => void;
+	/** Chat hibernation for a daemon this call starts: true/false, or undefined to follow `hibernation` in `<SWITCHYARD_HOME>/config.json` (absent = leave AO alone). */
+	chatHibernation?: boolean;
 }
 
 export function defaultRunFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -318,9 +320,37 @@ export async function ensureDaemon(options: AoStartOptions = {}): Promise<AoDaem
 	while (Date.now() < deadline) {
 		await new Promise(resolve => setTimeout(resolve, 250));
 		const daemon = await findDaemon(options);
-		if (daemon) return daemon;
+		if (daemon) {
+			// A daemon we just started has AO's setting off (it is in memory): apply the opt-in one (G28).
+			const wanted = options.chatHibernation ?? readHibernationSetting(switchyardHome(env));
+			if (wanted !== undefined) {
+				const applied = await applyChatHibernation(daemon.baseUrl, wanted, { fetch: options.fetch }).catch((error: unknown) => (log(`chat hibernation: ${error instanceof Error ? error.message : String(error)}`), undefined));
+				if (applied) log(`chat hibernation ${applied.enabled ? "on" : "off"}`);
+			}
+			return daemon;
+		}
 	}
 	throw new Error(`The AO daemon did not become ready within ${Math.round((options.startTimeoutMs ?? 60_000) / 1000)} s (run file ${runFile}).`);
+}
+
+/** AO's `chatHibernationEnabled` (idle chat hosts shut down after about 90 s; a message wakes them). */
+export async function getChatHibernation(baseUrl: string, options: { fetch?: typeof fetch } = {}): Promise<boolean> {
+	const response = await (options.fetch ?? globalThis.fetch)(`${baseUrl.replace(/\/+$/, "")}/api/v1/settings`);
+	if (!response.ok) throw new Error(`GET /api/v1/settings: HTTP ${response.status}`);
+	const settings: unknown = await response.json();
+	return typeof settings === "object" && settings !== null && "chatHibernationEnabled" in settings && settings.chatHibernationEnabled === true;
+}
+
+/**
+ * Makes AO's chat hibernation `enabled`: reads it, and writes only when it differs
+ * (`PATCH /api/v1/settings/chat-hibernation`). `changed` says whether it had to.
+ */
+export async function applyChatHibernation(baseUrl: string, enabled: boolean, options: { fetch?: typeof fetch } = {}): Promise<{ enabled: boolean; changed: boolean }> {
+	const doFetch = options.fetch ?? globalThis.fetch;
+	if ((await getChatHibernation(baseUrl, options)) === enabled) return { enabled, changed: false };
+	const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}/api/v1/settings/chat-hibernation`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) });
+	if (!response.ok) throw new Error(`PATCH /api/v1/settings/chat-hibernation: HTTP ${response.status}`);
+	return { enabled, changed: true };
 }
 
 /** Asks the daemon to shut down (`POST /shutdown`); `stopAgents` also stops its agent hosts. Resolves once its pid is gone. */
