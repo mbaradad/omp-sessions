@@ -13,7 +13,7 @@ import { type Outcome, PlanError, advance, applyOps, effectiveOptions, emptyStat
 import { gitRoot } from "./git";
 import { Propagation, type SeedResult } from "./propagation";
 import { savePlan } from "./store";
-import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, Task, TaskStatus, TaskView, UsageWindow } from "./types";
+import type { PlanOp, PlanState, PlanView, PlannerConfig, PlannerStatus, QueueOp, QueueView, SyncChange, Task, TaskStatus, TaskView, UsageWindow } from "./types";
 import { activeLimits, providerOf, pruneLimits, pruneSpend, replyIsLimitError, spendUse } from "./usage";
 
 export interface PlannerOptions {
@@ -38,6 +38,13 @@ const BUSY_ACTIVITY: Record<string, true> = { active: true, waiting_input: true,
 /** A spawn AO keeps reporting as not committed after this many tries is given up as lost. */
 const MAX_INCOMPLETE_TRIES = 12;
 const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** What listeners hear: a plan change, a task status transition, or a propagation step. */
+export interface PlannerChange {
+	plan?: true;
+	task?: { task: TaskView; from: TaskStatus };
+	sync?: SyncChange;
+}
 
 export class Planner {
 	state: PlanState;
@@ -64,7 +71,7 @@ export class Planner {
 	private pollTimer: NodeJS.Timeout | undefined;
 	private usageTimer: NodeJS.Timeout | undefined;
 	private readonly retryTimers = new Map<string, NodeJS.Timeout>();
-	private readonly listeners = new Set<(change: { plan?: true; task?: { task: TaskView; from: TaskStatus } }) => void>();
+	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
 	/** omp model ids AO knows, fetched at most every 10 minutes. */
 	private models: { at: number; ids: ReadonlySet<string> } | undefined;
@@ -114,7 +121,7 @@ export class Planner {
 		this.stream?.close();
 	}
 
-	onChange(listener: (change: { plan?: true; task?: { task: TaskView; from: TaskStatus } }) => void): () => void {
+	onChange(listener: (change: PlannerChange) => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
 	}
@@ -201,6 +208,7 @@ export class Planner {
 	private commit(mutate: (s: PlanState) => void): void {
 		if (this.stopped) return;
 		const before = new Map(this.state.tasks.map(t => [t.id, t.status]));
+		const edgesBefore = new Map(this.state.tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, e]) => [`${t.id}\0${parent}`, e.state] as const)));
 		mutate(this.state);
 		this.state.rev++;
 		if (this.opts.file) savePlan(this.opts.file, this.state);
@@ -210,6 +218,12 @@ export class Planner {
 			for (const t of changed) {
 				const view = views.get(t.id);
 				if (view) for (const l of this.listeners) l({ task: { task: view, from: before.get(t.id) as TaskStatus } });
+			}
+		}
+		for (const t of this.state.tasks) {
+			for (const [parent, edge] of Object.entries(t.sync ?? {})) {
+				const from = edgesBefore.get(`${t.id}\0${parent}`);
+				if (from !== edge.state) for (const l of this.listeners) l({ sync: { child: t.id, parent, ...(from ? { from } : {}), to: edge.state, edge: structuredClone(edge) } });
 			}
 		}
 		this.emit();

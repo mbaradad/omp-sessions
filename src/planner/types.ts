@@ -359,7 +359,9 @@ export type PlanOp =
 	| { op: "recur.remove"; id: string }
 	| { op: "recur.fire"; id: string }
 	/** Re-checks the task's branch now and propagates new commits to its children (GRAPH-PROPAGATION.md). */
-	| { op: "sync"; id: string };
+	| { op: "sync"; id: string }
+	/** "Re-run with parent changes": one more run in the task's own session with only the upstream note. */
+	| { op: "rerun"; id: string };
 
 // ---------- compatibility with the old per-session queue ----------
 
@@ -441,4 +443,16 @@ export interface PlannerRequest {
 
 export type PlannerResponse = { id: number; ok: true; result: unknown } | { id: number; ok: false; error: string };
 
-export type PlannerEvent = { id: number; event: "plan"; plan: PlanView } | { id: number; event: "task"; task: TaskView; from: TaskStatus };
+/** One step of graph propagation: `child`'s edge to `parent` moved from `from` (absent: new edge) to `to`. */
+export interface SyncChange {
+	child: string;
+	parent: string;
+	from?: EdgeSync["state"];
+	to: EdgeSync["state"];
+	edge: EdgeSync;
+}
+
+export type PlannerEvent =
+	| { id: number; event: "plan"; plan: PlanView }
+	| { id: number; event: "task"; task: TaskView; from: TaskStatus }
+	| ({ id: number; event: "sync" } & SyncChange);

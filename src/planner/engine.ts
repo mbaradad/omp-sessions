@@ -367,6 +367,13 @@ function resetRun(t: Task): void {
 	delete t.followUpOnly;
 }
 
+/** Back to pending for one more run in its own session: just the follow-up note, not the whole task again. */
+export function requeueForFollowUp(t: Task): void {
+	t.status = "pending";
+	t.followUpOnly = true;
+	for (const k of ["startedAt", "finishedAt", "attempts", "interrupted", "holdUntil", "paused"] as const) delete t[k];
+}
+
 /** Positions of `lane`'s tasks (or of free tasks) in the plan array. */
 function memberIndexes(state: PlanState, lane: string | undefined): number[] {
 	const out: number[] = [];
@@ -771,6 +778,15 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 				s.recurring = s.recurring.filter(x => x !== r);
 				break;
 			}
+			case "rerun": {
+				// "Re-run with parent changes": the task runs once more in its own session with only the upstream note.
+				const t = task(o.id);
+				notRunning(t, "re-run");
+				const changed = (t.after ?? []).map(id => s.tasks.find(x => x.id === id)).filter((p): p is Task => !!p && t.sync?.[p.id]?.state !== undefined && t.sync[p.id].state !== "in-sync");
+				if (!t.followUp) t.followUp = `${changed.length ? changed.map(p => `Upstream task "${p.title}" changed; its branch ${p.git?.branch ?? ""} is merged into your worktree.`).join("\n") : "Upstream tasks changed."}\nRe-check your work against it.`;
+				requeueForFollowUp(t);
+				break;
+			}
 			case "sync":
 				// Carried out by the service: re-check the task's branch and propagate to its children.
 				effects.push({ kind: "sync", task: task(o.id).id });
@@ -1131,6 +1147,8 @@ export function finishRun(s: PlanState, id: string, outcome: Outcome, now: numbe
 			if (run?.provider) delete s.limits[run.provider];
 			delete t.followUp;
 			delete t.followUpOnly;
+			// A run that saw the merged upstream work settles the edges marked as changed behind its back.
+			for (const edge of Object.values(t.sync ?? {})) if (edge.state === "upstream-changed") edge.state = "merged";
 			return t;
 		case "interrupted":
 		case "lost": {

@@ -113,7 +113,7 @@ test("a later change to the parent: the working child merges after its turn and 
 	const prompts = ao.sessions.get(bSession)?.conv.messages.filter(m => m.role === "user").map(m => m.text) ?? [];
 	assert.equal(prompts.length, 2);
 	assert.match(prompts[1], /Upstream task "A" changed/);
-	assert.match(prompts[1], /Changed files: x\.txt/);
+	assert.match(prompts[1], /Changed files: M x\.txt/);
 	assert.equal(merges(repo, byTitle(p, "B").git?.branch as string), 1);
 	assert.equal(merges(repo, byTitle(p, "C").git?.branch as string), 1);
 });
@@ -210,4 +210,36 @@ test("two tasks starting in the same new folder register its project once", asyn
 	]);
 	await until("both sent", () => sent(p, "one") && sent(p, "two"));
 	assert.equal(ao.created, 2);
+});
+
+test("every propagation step is an event; `rerun` runs a finished child once more with only the upstream note and settles the edge", async t => {
+	const rig = await graph(t);
+	const { ao, p } = rig;
+	const a = byTitle(p, "A");
+	const steps: string[] = [];
+	p.onChange(c => {
+		if (!c.sync) return;
+		const title = byTitle(p, "A").id === c.sync.child ? "A" : p.state.tasks.find(x => x.id === c.sync?.child)?.title;
+		steps.push(`${title}:${c.sync.from ?? "-"}>${c.sync.to}`);
+	});
+	const bSession = sent(p, "B") as string;
+	const cSession = sent(p, "C") as string;
+	ao.finishTurn(cSession, "completed", "C done");
+	await until("C done", () => byTitle(p, "C").status === "done");
+	await reRunA(rig, "A2\n");
+	await until("C marked", () => byTitle(p, "C").sync?.[a.id]?.state === "upstream-changed");
+	assert.deepEqual(steps.filter(s => s.startsWith("C:")), ["C:in-sync>pending", "C:pending>upstream-changed"]);
+	assert.deepEqual(steps.filter(s => s.startsWith("B:")), ["B:in-sync>pending"]);
+	// B is still working; finish it so the test ends clean, then re-run C on demand.
+	ao.finishTurn(bSession, "completed", "B done");
+	p.edit([{ op: "rerun", id: byTitle(p, "C").id }]);
+	await until("C re-run sent", () => byTitle(p, "C").status === "running" && byTitle(p, "C").run?.via === "send" && sent(p, "C"));
+	const prompt = ao.sessions.get(cSession)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /^\[Follow-up on your task\] C/);
+	assert.match(prompt, /Upstream task "A" changed/);
+	assert.doesNotMatch(prompt, /Results of the tasks/, "not the whole task again");
+	ao.finishTurn(cSession, "completed", "C rechecked");
+	await until("edge settled", () => byTitle(p, "C").sync?.[a.id]?.state === "merged");
+	assert.equal(byTitle(p, "C").status, "done");
+	assert.ok(steps.includes("C:upstream-changed>merged"));
 });

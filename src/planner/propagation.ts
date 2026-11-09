@@ -14,6 +14,7 @@
 //   mid-propagation finishes it exactly once.
 import * as fs from "node:fs";
 import { abortMerge, changesBetween, commitAll, git, isAncestor, merge, mergeInProgress, revParse, seedBranch, withRepoLock, worktreeOf } from "./git";
+import { requeueForFollowUp } from "./engine";
 import type { EdgeSync, PlanState, Task } from "./types";
 
 export interface PropagationHost {
@@ -283,13 +284,6 @@ export class Propagation {
 			});
 		}
 	}
-}
-
-/** Back to pending for one more run in its own session (the follow-up or the merge resolution). */
-function requeueForFollowUp(t: Task): void {
-	t.status = "pending";
-	t.followUpOnly = true;
-	for (const k of ["startedAt", "finishedAt", "attempts", "interrupted", "holdUntil", "paused"] as const) delete t[k];
 }
 
 function upstreamNote(parent: Task, changes: { subjects: string[]; files: string[] }): string {

@@ -235,6 +235,13 @@ lanes**; a lane counts as finished when all its tasks are done/skipped) and `req
 
 ## Graph propagation (GRAPH-PROPAGATION.md)
 
+**AO check (done).** Stock AO has no base-ref field and cannot run a session in a given worktree, but its spawn
+field `branch` checks out an existing local branch (`gitworktree.addWorktree`; a branch checked out in another
+worktree is refused). So the planner creates `switchyard/<task id>` at the parent's head and spawns on it
+(GAPS G43, verified live with real omp). No fork. Git operations are `src/planner/git.ts`; the generic
+helpers of `omp/worktrees` `worktree-git.ts` (`parseNameStatus`, `ChangedFile`, `conflictedFiles`) are ported
+there; its worktree creation and `omp/` branches are superseded by AO's worktrees.
+
 Applies to tasks that run in a git project (AO gives each such session its own worktree). A task with
 other `cwd`/standalone sessions only receives its parents' results.
 
@@ -258,6 +265,15 @@ other `cwd`/standalone sessions only receives its parents' results.
    idempotent (a merge whose target is already an ancestor is done), so a restart finishes a pending
    propagation exactly once; edges record `before`/`after` SHAs (undo by hand with `git reset`).
 
+**Ops.** `sync {id}`: commit what the task's worktree holds now and propagate to its children (also done
+automatically when a finished task's session goes idle after somebody worked in it). `rerun {id}`
+("Re-run with parent changes"): the task runs once more in its own session with only the upstream note
+(`followUpOnly`); when that run completes its `upstream-changed` edges become `merged`. `requeue`/`run`
+instead run the whole task again.
+
+**Events** (`subscribe {topic:"plan"}`): every edge transition is `{event:"sync", child, parent, from?, to, edge}`
+(`from` absent for a new edge); the plan snapshot carries the edges in `TaskView.sync`.
+
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
 ## Events (`subscribe {topic: "plan"}`)
@@ -265,6 +281,7 @@ other `cwd`/standalone sessions only receives its parents' results.
 - `{id, event: "plan", plan: PlanView}`: first right after subscribing, then after every change
   (coalesced, ≤ 5/s).
 - `{id, event: "task", task: TaskView, from: TaskStatus}`: each status transition (for sounds/notifications).
+- `{id, event: "sync", child, parent, from?, to, edge}`: each graph propagation step (see "Graph propagation").
 
 ## Usage gating (auto-scheduling)
 
@@ -282,6 +299,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: `rerun` op and `sync` events; AO check recorded; `worktree-git.ts` helpers ported.
 - 2026-11-09: lanes resolve by session id; `lane.session` set at dispatch; `state`/`waitUntil` on `LaneView` and `QueueView`.
 - 2026-11-09: draft v1.
 - 2026-11-09: implemented on `ao/planner`. `status.usage` is `usageWindows`; worktree and approval
