@@ -1,4 +1,4 @@
-// The omp Sessions view of AO sessions: one agent state, the pending question with its choices, the
+// Switchyard's view of AO sessions: one agent state, the pending question with its choices, the
 // last reply, cost, the turn queue and the files the agent changed, derived from an AO session view
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
 // keeps those models current from the daemon's change stream.
@@ -14,7 +14,7 @@ import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResol
  */
 export type AoAgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
-/** States in which nothing happens until someone acts (or a start time comes): what `omp-sessions wait` waits for. */
+/** States in which nothing happens until someone acts (or a start time comes): what `switchyard wait` waits for. */
 export const SETTLED_STATES: Readonly<Record<AoAgentState, boolean>> = { queued: false, scheduled: true, starting: false, working: false, needs_input: true, interrupted: true, idle: true, stopped: true };
 
 export interface AoDecision {

@@ -1,4 +1,4 @@
-// The only HTTP client to Agent Orchestrator's daemon. Everything else in omp Sessions imports AO
+// The only HTTP client to Agent Orchestrator's daemon. Everything else in Switchyard imports AO
 // types and calls from here (and src/ao/model.ts), never from ./schema.
 //
 //   const ao = await AoClient.connect({ start: true });     // find (or start) the local daemon
