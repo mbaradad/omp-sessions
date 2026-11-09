@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type AoFacts, aoChecks, plannerChecks } from "../../src/ext/doctor-ao";
+import { type AoFacts, aoChecks, gateChecks, plannerChecks } from "../../src/ext/doctor-ao";
 import {
 	type DoctorFacts,
 	type SessionFacts,
@@ -61,6 +61,7 @@ function doctorFacts(over: Partial<DoctorFacts> = {}): DoctorFacts {
 		writable: true,
 		ao: AO_OK,
 		planner: { version: "0.7.0", pid: 8 },
+		gate: { gate: true, shim: true, extensionDir: "/h/.omp/agent/extensions/switchyard", shimFile: "/h/.switchyard/bin/omp" },
 		sessions: [],
 		snapshots: [],
 		cleanupDays: 14,
@@ -175,6 +176,17 @@ test("aoChecks: unreachable daemon is an error; AO's view of omp; supervision", 
 	const plain = aoChecks({ ...AO_OK, unit: undefined })[1];
 	assert.deepEqual(plain.fixes?.map(f => f.command), ["omp.server.install"]);
 	assert.equal(aoChecks({ ...AO_OK, unit: undefined, serviceAvailable: false })[1].fixes, undefined);
+});
+
+test("gateChecks (G46): a missing gate is an error that says modes are not enforced; a missing shim is a warning; both offer the install", () => {
+	const facts = { extensionDir: "/e", shimFile: "/s/omp" };
+	assert.deepEqual(gateChecks({ ...facts, gate: true, shim: true }).map(c => c.level), ["ok", "ok"]);
+	const [gate, shim] = gateChecks({ ...facts, gate: false, shim: false });
+	assert.equal(gate.level, "error");
+	assert.match(gate.detail ?? "", /NOT enforced/);
+	assert.equal(shim.level, "warn");
+	assert.equal(gate.fixes?.[0].command, "switchyard.installOmpIntegration");
+	assert.equal(gateChecks({ ...facts, gate: true, shim: false })[1].level, "warn");
 });
 
 test("plannerChecks: a planner that doesn't answer warns with Start", () => {

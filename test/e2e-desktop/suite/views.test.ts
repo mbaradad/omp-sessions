@@ -343,6 +343,7 @@ describe("AO views", () => {
 		assert.match(report, new RegExp(`AO daemon running at ${(process.env.SWITCHYARD_E2E_AO_URL ?? "").replace(/[.]/g, "\\.")}`));
 		assert.match(report, /AO can run omp/);
 		assert.match(report, /## Planner/);
+		assert.match(report, /## Permission gate and omp flags/);
 		assert.match(report, /views smoke \(repo-1\)/);
 		await vscode.commands.executeCommand("omp.doctor");
 		await settle(3000);

@@ -25,6 +25,16 @@ export interface PlannerFacts {
 	error?: string;
 }
 
+/** What the permission gate and the `omp` shim need (src/ao/gate.ts `gateStatus`). */
+export interface GateFacts {
+	gate: boolean;
+	shim: boolean;
+	extensionDir: string;
+	shimFile: string;
+}
+
+const INSTALL_GATE: Fix = { label: "Install gate and shim", command: "switchyard.installOmpIntegration" };
+
 const START: Fix = { label: "Start planner and AO", command: "omp.server.start" };
 const LOG: Fix = { label: "Show log", command: "omp.server.showLog" };
 const INSTALL_SERVICE: Fix = { label: "Install login services", command: "omp.server.install" };
@@ -47,6 +57,21 @@ export function aoChecks(f: AoFacts): Check[] {
 	else if (omp.authentication === "unauthorized") checks.push({ level: "warn", title: "omp is not logged in to a model provider", detail: omp.authenticationReason, fixes: [{ label: "Log in", command: "omp.login" }] });
 	else checks.push({ level: "ok", title: "AO can run omp", detail: [omp.installationReason, omp.authenticationReason].filter(Boolean).join("\n") || undefined });
 	return checks;
+}
+
+/**
+ * G46: without the gate (an omp extension) a session's mode is only a file nothing reads: ask, edits and plan run
+ * unrestricted. Without the shim, extra omp flags never reach omp.
+ */
+export function gateChecks(f: GateFacts): Check[] {
+	return [
+		f.gate
+			? { level: "ok", title: "The permission gate is installed", detail: `omp loads it from ${f.extensionDir}: ask, edits and plan are enforced.` }
+			: { level: "error", title: "The permission gate is not installed", detail: `Sessions run in AO's bypass mode, so ask, edits and plan are NOT enforced (a session reports its mode but runs unrestricted).\nIt installs into ${f.extensionDir}.`, fixes: [INSTALL_GATE] },
+		f.shim
+			? { level: "ok", title: "The omp shim is installed", detail: `${f.shimFile}: extra omp flags reach omp when the AO daemon has its folder first on PATH.` }
+			: { level: "warn", title: "The omp shim is not installed", detail: `Extra omp flags (omp.extraArgs, New Session flags) do not reach omp.\nIt installs into ${f.shimFile}.`, fixes: [INSTALL_GATE] },
+	];
 }
 
 export function plannerChecks(f: PlannerFacts): Check[] {

@@ -307,6 +307,11 @@
 				"icon": "$(edit)"
 			},
 			{
+				"command": "switchyard.installOmpIntegration",
+				"title": "Install omp Permission Gate and Shim",
+				"category": "Switchyard"
+			},
+			{
 				"command": "switchyard.setDependencies",
 				"title": "Dependencies…",
 				"category": "omp",
