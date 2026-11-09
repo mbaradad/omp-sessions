@@ -320,8 +320,8 @@ export class ChatPanel implements vscode.Disposable {
 							this.streamOpen = open;
 							this.post({ type: "connection", connected: open && this.loaded });
 						}
-						// A reconnect replays what it missed after Last-Event-ID; a replaced log can't, so read everything again.
-						if (s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) this.schedule(true);
+						// A reconnect replays what it missed after Last-Event-ID; a replaced or pruned log can't, so read everything again.
+						if ((s.state === "open" && opens++ > 0 && (s.reset || !s.resumed)) || s.state === "gap") this.schedule(true);
 					},
 				});
 				this.lease(true);
@@ -447,7 +447,7 @@ export class ChatPanel implements vscode.Disposable {
 
 	private async refreshOptions(ao: AoClient): Promise<void> {
 		try {
-			this.options = (await unwrap(ao.api.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId: this.sessionId } } }))).options;
+			this.options = (await ao.configOptions(this.sessionId)).options;
 		} catch {
 			// Not connected yet: the footer shows no model until the next turn ends.
 		}
@@ -512,7 +512,7 @@ export class ChatPanel implements vscode.Disposable {
 	/** Sets one of omp's config options (model, thinking, mode); AO answers with the whole new list. */
 	private async setOption(id: string, value: string): Promise<void> {
 		const ao = await this.client();
-		this.options = (await unwrap(ao.api.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId: this.sessionId, configId: id } }, body: { value } }))).options;
+		this.options = (await ao.setConfigOption(this.sessionId, id, { value })).options;
 		this.postState();
 	}
 
@@ -555,8 +555,8 @@ export class ChatPanel implements vscode.Disposable {
 		try {
 			this.post({ type: "notice", level: "info", text: `Restarting omp in ${PERMISSION_MODE_INFO[mode].label} mode (same conversation)…` });
 			await ao.setTurnSettings(this.sessionId, { approvalMode: approval });
-			await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: this.sessionId } } }));
-			await unwrap(ao.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: this.sessionId } } }));
+			await ao.exitAgent(this.sessionId);
+			await ao.resumeAgent(this.sessionId);
 			this.post({ type: "notice", level: "info", text: `${PERMISSION_MODE_INFO[mode].label} mode: ${PERMISSION_MODE_INFO[mode].detail}.` });
 		} finally {
 			this.switchingMode = false;
