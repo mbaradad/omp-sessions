@@ -325,8 +325,18 @@ class DashboardApiTest(unittest.TestCase):
         self.assertIn("error", self.post("/folders/vscode", {"path": "relative/dir"}, status=400))
 
     def test_models_and_the_default_model(self) -> None:
-        m = self.get("/models")
-        self.assertTrue(m["models"], m)
+        # Only a running session's omp knows the real list: with none running the CLI says so, with no models.
+        for s in base.sessions():
+            if s["meta"]["status"] in ("working", "waiting", "idle", "starting"):
+                omp_sessions("stop", s["meta"]["id"], check=False)
+        none = self.get("/models")
+        self.assertEqual((none["models"], none.get("source")), ([], None), none)
+        self.assertIn("no running session", none.get("note", ""), none)
+        # A running session names itself as the source of the list.
+        sid = self.new("-p", "slow 30000")
+        until(lambda: self.state_is(sid, "working"), "a running session")
+        m = until(lambda: (r := self.get("/models")) and r["models"] and r, "models from the running session")
+        self.assertEqual(m["source"], sid)
         pick = m["models"][-1]["selector"]
         try:
             self.assertEqual(self.post("/models/default", {"model": pick})["default"], pick)
@@ -334,6 +344,7 @@ class DashboardApiTest(unittest.TestCase):
             self.assertIn("error", self.post("/models/default", {"model": 3}, status=400))
         finally:
             self.assertIsNone(self.post("/models/default", {"model": None})["default"])
+            omp_sessions("stop", sid, check=False)
 
     def new(self, *args: str) -> str:
         return json.loads(omp_sessions("new", str(WORK), "--detach", "--json", *args).stdout)["id"]
