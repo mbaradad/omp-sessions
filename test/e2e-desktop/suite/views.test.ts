@@ -181,9 +181,10 @@ describe("AO views", () => {
 		}
 	});
 
-	it("the project's omp extensions load: the agent's edits leave a checkpoint record under the Switchyard home", async () => {
-		const file = path.join(process.env.SWITCHYARD_HOME ?? "", "sessions", id, "checkpoints", "changes.jsonl");
-		await waitFor("checkpoints changes.jsonl", () => fs.existsSync(file) && fs.readFileSync(file, "utf8").trim(), 30_000);
+	it("the project's omp extensions load: the checkpoints extension keeps its state under the Switchyard home", async () => {
+		// state.json is written for every prompt; changes.jsonl only when the agent edits with an edit tool (real omp sometimes edits through the shell).
+		const file = path.join(process.env.SWITCHYARD_HOME ?? "", "sessions", id, "checkpoints", "state.json");
+		await waitFor("checkpoints state.json", () => fs.existsSync(file), 30_000);
 	});
 
 	it("on the real planner: Dependencies… (after), Mark completed (lane.complete), priority; the task graph shows in the card data", async () => {
