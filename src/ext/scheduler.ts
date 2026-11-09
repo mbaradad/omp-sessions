@@ -2,6 +2,8 @@
 // a pause switch, and a status bar counter "2/3 running · 5 waiting". The planner enforces them with
 // VS Code closed; this only shows them and sends changes.
 import * as vscode from "vscode";
+import { holdLines, parseBudget } from "../shared/plan-tree";
+import type { PlannerConfig } from "../planner/types";
 import type { OmpApi } from "./api";
 import type { PlannerStore } from "./planner-store";
 
@@ -15,6 +17,8 @@ export interface SchedulerSnapshot {
 	running: number;
 	/** Ready tasks waiting for a slot. */
 	waiting: number;
+	/** Ready tasks held by a provider limit, a spend cap or a retry backoff. */
+	held: number;
 }
 
 let source: PlannerStore | undefined;
@@ -22,13 +26,13 @@ let source: PlannerStore | undefined;
 /** The planner's last word on the limit and the counts (all zero while it is unreachable). */
 export function schedulerSnapshot(): SchedulerSnapshot {
 	const s = source?.plan?.status;
-	return { maxConcurrent: s?.maxConcurrent ?? 0, paused: s?.paused === true, running: s?.running ?? 0, waiting: s?.waiting ?? 0 };
+	return { maxConcurrent: s?.maxConcurrent ?? 0, paused: s?.paused === true, running: s?.running ?? 0, waiting: s?.waiting ?? 0, held: s?.held ?? 0 };
 }
 
 /** "2/3 running · 5 waiting"; empty when there's nothing to say (no limit, nothing running). */
 export function describeScheduler(s: SchedulerSnapshot): string {
-	if (!s.maxConcurrent && !s.running && !s.waiting && !s.paused) return "";
-	const parts = [s.maxConcurrent ? `${s.running}/${s.maxConcurrent} running` : `${s.running} running`, s.waiting ? `${s.waiting} waiting` : "", s.paused ? "paused" : ""];
+	if (!s.maxConcurrent && !s.running && !s.waiting && !s.held && !s.paused) return "";
+	const parts = [s.maxConcurrent ? `${s.running}/${s.maxConcurrent} running` : `${s.running} running`, s.waiting ? `${s.waiting} waiting` : "", s.held ? `${s.held} held` : "", s.paused ? "paused" : ""];
 	return parts.filter(Boolean).join(" · ");
 }
 
@@ -69,17 +73,18 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			return;
 		}
 		status.text = `${s.paused ? "$(debug-pause)" : "$(layers)"} ${text}`;
-		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to change.\nPrompts typed in a chat are never held back.`;
+		const holds = source?.plan ? holdLines(source.plan.status) : [];
+		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to change.\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}`;
 		status.show();
 	};
 	context.subscriptions.push(watchScheduler(render));
 
-	const set = async (change: { maxConcurrent?: number; paused?: boolean }): Promise<boolean> => {
+	const set = async (change: Partial<Pick<PlannerConfig, "maxConcurrent" | "paused" | "budget">>): Promise<boolean> => {
 		try {
 			await planner.scheduler(change);
 			return true;
 		} catch (err) {
-			void vscode.window.showWarningMessage(`omp planner: ${err instanceof Error ? err.message : String(err)}`);
+			void vscode.window.showWarningMessage(`Switchyard planner: ${err instanceof Error ? err.message : String(err)}`);
 			return false;
 		}
 	};
@@ -109,6 +114,23 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 		vscode.commands.registerCommand("omp.scheduler.togglePause", async () => {
 			const paused = schedulerSnapshot().paused;
 			if (await set({ paused: !paused })) void vscode.window.showInformationMessage(paused ? "Queued tasks may start again." : "No new queued task will start (running ones finish). Run the command again to resume.");
+		}),
+		vscode.commands.registerCommand("omp.scheduler.setBudget", async () => {
+			const current = source?.plan?.status.budget ?? {};
+			const value = Object.entries(current).map(([w, usd]) => `${w} ${usd}`).join(" ");
+			const text = await vscode.window.showInputBox({
+				title: "Spend budget for planner tasks (USD)",
+				prompt: 'No new task starts while the spend of planner tasks in a rolling hour/day/week reaches its cap. E.g. "day 20" or "hour 2 day 20 week 100"; empty removes it.',
+				value,
+				validateInput: v => {
+					const parsed = parseBudget(v);
+					return "error" in parsed ? parsed.error : undefined;
+				},
+				ignoreFocusOut: true,
+			});
+			if (text === undefined) return;
+			const parsed = parseBudget(text);
+			if ("caps" in parsed) await set({ budget: parsed.caps });
 		}),
 	);
 }

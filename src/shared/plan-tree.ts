@@ -1,6 +1,6 @@
 // How the Tasks view lays out the planner's plan (PLANNER-API.md): lanes (queues) in start order,
 // each with its tasks, then the free tasks, and the one-line state of a task or lane. Pure.
-import type { LaneView, PlanView, Priority, TaskView } from "../planner/types";
+import type { BudgetCaps, LaneView, PlanView, PlannerStatus, Priority, TaskView } from "../planner/types";
 import { PRIORITIES } from "../planner/types";
 import { formatStartTime } from "./task-text";
 
@@ -58,4 +58,32 @@ export function laneSummary(lane: LaneView, now = new Date()): string {
 	]
 		.filter(Boolean)
 		.join(" · ");
+}
+
+const BUDGET_WINDOWS = ["hour", "day", "week"] as const;
+
+/**
+ * "day 20", "hour 2 day 20 week 100" (USD per rolling window; `$`, `=` and commas allowed) → caps.
+ * Empty text clears the budget (`{}`). Anything else is an error that says what to type.
+ */
+export function parseBudget(text: string): { caps: BudgetCaps } | { error: string } {
+	const t = text.trim().toLowerCase();
+	if (!t || t === "off" || t === "none") return { caps: {} };
+	const caps: BudgetCaps = {};
+	const rest = t.replace(/(hour|day|week)\s*=?\s*\$?\s*(\d+(?:\.\d+)?)\s*,?/g, (_m, window: (typeof BUDGET_WINDOWS)[number], usd: string) => {
+		caps[window] = Number(usd);
+		return "";
+	});
+	if (rest.trim() || Object.keys(caps).length === 0) return { error: 'Type caps in USD like "day 20" or "hour 2 day 20 week 100"; empty removes the budget.' };
+	if (Object.values(caps).some(v => !(v > 0))) return { error: "A cap must be more than 0 (leave the window out to have no cap)." };
+	return { caps };
+}
+
+/** Why queued work may be held right now, one line each: provider limits and spend caps in force. */
+export function holdLines(status: Pick<PlannerStatus, "limits" | "spend">, now = new Date()): string[] {
+	const out = status.limits.filter(l => l.until > now.getTime()).map(l => `${l.provider} is rate-limited until ${formatStartTime(l.until, now)}${l.reason ? ` (${l.reason.slice(0, 80)})` : ""}`);
+	for (const s of status.spend) {
+		out.push(`spend this ${s.window}: $${s.spent.toFixed(2)} of $${s.cap}${s.over ? ` (cap reached${s.freesAt ? `, frees ${formatStartTime(s.freesAt, now)}` : ""})` : ""}`);
+	}
+	return out;
 }

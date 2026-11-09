@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { laneSummary, orderedLanes, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { holdLines, laneSummary, orderedLanes, parseBudget, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -57,5 +57,38 @@ describe("laneSummary", () => {
 		assert.equal(laneSummary(lane("q", { startAt: at, pending: 1, total: 1 }), NOW), "1 pending · 0/1 done · ⏰ starts tomorrow 09:00");
 		assert.equal(laneSummary(lane("q", { pending: 1, failed: 1, total: 2, priority: "high" }), NOW), "high · 1 pending · 1 failed · 0/2 done · ⏸ paused");
 		assert.equal(laneSummary(lane("q"), NOW), "no tasks");
+	});
+});
+
+describe("parseBudget", () => {
+	test("reads USD caps per window in any order, with $, = and commas", () => {
+		assert.deepEqual(parseBudget("day 20"), { caps: { day: 20 } });
+		assert.deepEqual(parseBudget("Week=$100, hour 2.5 day 20"), { caps: { week: 100, hour: 2.5, day: 20 } });
+	});
+
+	test("empty (or off) removes the budget; anything else, or a zero cap, is an error that says what to type", () => {
+		assert.deepEqual(parseBudget("  "), { caps: {} });
+		assert.deepEqual(parseBudget("off"), { caps: {} });
+		for (const bad of ["20", "month 5", "day twenty", "day 20 please", "day 0"]) assert.ok("error" in parseBudget(bad), bad);
+	});
+});
+
+describe("holdLines", () => {
+	test("lists limits still in force and the spend per capped window, saying when a full cap frees", () => {
+		const at = new Date(2026, 10, 9, 12, 0).getTime();
+		const lines = holdLines(
+			{
+				limits: [
+					{ provider: "anthropic", until: at + 3_600_000, since: at, failures: 1, reason: "429 usage limit" },
+					{ provider: "openai", until: at - 1, since: at - 9, failures: 1, reason: "old" },
+				],
+				spend: [
+					{ window: "day", cap: 20, spent: 21.5, over: true, freesAt: at + 7_200_000 },
+					{ window: "hour", cap: 5, spent: 1, over: false },
+				],
+			},
+			NOW,
+		);
+		assert.deepEqual(lines, ["anthropic is rate-limited until 13:00 (429 usage limit)", "spend this day: $21.50 of $20 (cap reached, frees 14:00)", "spend this hour: $1.00 of $5"]);
 	});
 });

@@ -289,7 +289,7 @@ export async function editOrWarn(deps: TasksDeps, ops: PlanOp[]): Promise<boolea
 		await deps.planner.edit(ops);
 		return true;
 	} catch (err) {
-		void vscode.window.showWarningMessage(`omp planner: ${err instanceof Error ? err.message : String(err)}`);
+		void vscode.window.showWarningMessage(`Switchyard planner: ${err instanceof Error ? err.message : String(err)}`);
 		return false;
 	}
 }
@@ -441,6 +441,13 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		}
 		const lane = laneArg(arg);
 		if (lane) await edit([{ op: "lane.clearDone", id: lane }]);
+	});
+
+	// The "completed" marker of a queue (the old per-session completed mark, now the planner's `lane.complete`).
+	reg("omp.tasks.completeLane", async (arg?: unknown) => {
+		const id = laneArg(arg);
+		const lane = id ? deps.planner.plan?.lanes.find(l => l.id === id) : undefined;
+		if (lane) await edit([{ op: "lane.complete", id: lane.id, completed: !lane.completed }]);
 	});
 
 	reg("omp.tasks.openChat", (arg?: unknown) => {

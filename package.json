@@ -544,6 +544,12 @@
 				"icon": "$(arrow-up)"
 			},
 			{
+				"command": "omp.tasks.completeLane",
+				"title": "Mark Queue Completed / Reopen",
+				"category": "omp",
+				"icon": "$(check)"
+			},
+			{
 				"command": "omp.editWithOmp",
 				"title": "Edit with omp…",
 				"category": "omp",
@@ -916,6 +922,12 @@
 				"icon": "$(debug-pause)"
 			},
 			{
+				"command": "omp.scheduler.setBudget",
+				"title": "Set Spend Budget for Queued Tasks…",
+				"category": "omp",
+				"icon": "$(credit-card)"
+			},
+			{
 				"command": "omp.doctor.markStopped",
 				"title": "Mark Session Stopped",
 				"category": "omp"
@@ -1075,6 +1087,11 @@
 					"command": "omp.scheduler.togglePause",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@2"
+				},
+				{
+					"command": "omp.scheduler.setBudget",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@3"
 				},
 				{
 					"command": "omp.doctor",
@@ -1377,6 +1394,11 @@
 					"command": "omp.tasks.setPriority",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@4"
+				},
+				{
+					"command": "omp.tasks.completeLane",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"group": "1_session@5"
 				},
 				{
 					"command": "omp.tasks.add",
@@ -1820,6 +1842,10 @@
 				},
 				{
 					"command": "omp.tasks.setPriority",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.completeLane",
 					"when": "false"
 				},
 				{
