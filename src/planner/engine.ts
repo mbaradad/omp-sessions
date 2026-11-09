@@ -369,6 +369,14 @@ function resetRun(t: Task): void {
 	delete t.followUpOnly;
 }
 
+/** The follow-up that asks a child agent to merge a conflicting parent branch itself. */
+export function resolveNote(parent: Task, files: string[]): string {
+	return [
+		`Upstream task "${parent.title}" changed and its branch ${parent.git?.branch} conflicts with yours${files.length ? ` in ${files.join(", ")}` : ""}.`,
+		`Merge it into your branch: run \`git merge ${parent.git?.branch}\`, resolve the conflicts keeping both sides' intent, and commit the merge. Then re-check your work against it.`,
+	].join("\n");
+}
+
 /** Back to pending for one more run in its own session: just the follow-up note, not the whole task again. */
 export function requeueForFollowUp(t: Task): void {
 	t.status = "pending";
@@ -806,7 +814,17 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 				const t = task(o.id);
 				notRunning(t, "re-run");
 				const changed = (t.after ?? []).map(id => s.tasks.find(x => x.id === id)).filter((p): p is Task => !!p && t.sync?.[p.id]?.state !== undefined && t.sync[p.id].state !== "in-sync");
-				if (!t.followUp) t.followUp = `${changed.length ? changed.map(p => `Upstream task "${p.title}" changed; its branch ${p.git?.branch ?? ""} is merged into your worktree.`).join("\n") : "Upstream tasks changed."}\nRe-check your work against it.`;
+				// A conflicting edge is not merged: the run asks the agent to merge it, and the edge is `resolving` until that run ends.
+				const notes: string[] = [];
+				for (const p of changed) {
+					const edge = t.sync?.[p.id];
+					if (edge?.state === "conflict") {
+						notes.push(resolveNote(p, edge.files ?? []));
+						edge.state = "resolving";
+						edge.at = now;
+					} else if (edge?.state !== "resolving") notes.push(`Upstream task "${p.title}" changed; its branch ${p.git?.branch ?? ""} is merged into your worktree.\nRe-check your work against it.`);
+				}
+				if (!t.followUp) t.followUp = notes.length ? notes.join("\n\n") : "Upstream tasks changed. Re-check your work against them.";
 				requeueForFollowUp(t);
 				break;
 			}

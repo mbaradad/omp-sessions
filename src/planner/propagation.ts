@@ -14,7 +14,7 @@
 //   mid-propagation finishes it exactly once.
 import * as fs from "node:fs";
 import { abortMerge, changesBetween, commitAll, git, isAncestor, merge, mergeInProgress, revParse, seedBranch, withRepoLock, worktreeOf } from "./git";
-import { requeueForFollowUp } from "./engine";
+import { requeueForFollowUp, resolveNote } from "./engine";
 import type { EdgeSync, PlanState, Task } from "./types";
 
 export interface PropagationHost {
@@ -321,9 +321,3 @@ function upstreamNote(parent: Task, changes: { subjects: string[]; files: string
 	return lines.join("\n");
 }
 
-function resolveNote(parent: Task, files: string[]): string {
-	return [
-		`Upstream task "${parent.title}" changed and its branch ${parent.git?.branch} conflicts with yours${files.length ? ` in ${files.join(", ")}` : ""}.`,
-		`Merge it into your branch: run \`git merge ${parent.git?.branch}\`, resolve the conflicts keeping both sides' intent, and commit the merge. Then re-check your work against it.`,
-	].join("\n");
-}

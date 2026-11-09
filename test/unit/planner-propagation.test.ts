@@ -278,3 +278,34 @@ test("a child in a session a client spawned earlier gets its parent's work merge
 	await until("C marked", () => byTitle(p, "C").sync?.[byTitle(p, "A").id]?.state === "upstream-changed");
 	assert.equal(read(ao, session, "x.txt"), "A2\n");
 });
+
+test("`rerun` on a conflict edge asks the agent to merge (edge resolving) and settles it", async t => {
+	const rig = await graph(t);
+	const { ao, p } = rig;
+	const a = byTitle(p, "A");
+	const bSession = sent(p, "B") as string;
+	write(ao, bSession, "x.txt", "B-version\n");
+	ao.finishTurn(bSession, "completed", "B edited x.txt");
+	await until("B done", () => byTitle(p, "B").status === "done");
+	await reRunA(rig, "A2\n");
+	await until("B resolve run", () => byTitle(p, "B").status === "running" && sent(p, "B"));
+	ao.finishTurn(bSession, "completed", "could not");
+	await until("edge conflict", () => byTitle(p, "B").sync?.[a.id]?.state === "conflict");
+	p.edit([{ op: "rerun", id: bSession }]);
+	assert.equal(byTitle(p, "B").sync?.[a.id]?.state, "resolving");
+	await until("B asked again", () => byTitle(p, "B").status === "running" && byTitle(p, "B").run?.via === "send" && sent(p, "B"));
+	const prompt = ao.sessions.get(bSession)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /^\[Follow-up on your task\] B/);
+	assert.match(prompt, /conflicts with yours in x\.txt/);
+	const wt = ao.worktreeOf(bSession);
+	try {
+		git(wt, "merge", "--no-edit", a.git?.branch as string);
+	} catch {
+		/* conflicts expected */
+	}
+	fs.writeFileSync(path.join(wt, "x.txt"), "A2+B\n");
+	git(wt, "add", "-A");
+	git(wt, "commit", "-qm", "resolve");
+	ao.finishTurn(bSession, "completed", "resolved");
+	await until("edge merged", () => byTitle(p, "B").sync?.[a.id]?.state === "merged");
+});

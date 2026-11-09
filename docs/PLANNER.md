@@ -282,7 +282,8 @@ note leads the prompt; a conflict gives the `resolving` edge and the resolve not
 automatically when a finished task's session goes idle after somebody worked in it). `rerun {id}`
 ("Re-run with parent changes"): the task runs once more in its own session with only the upstream note
 (`followUpOnly`); when that run completes its `upstream-changed` edges become `merged`. `requeue`/`run`
-instead run the whole task again.
+instead run the whole task again (and leave edges as they are). On a `conflict` edge `rerun` asks the agent to merge
+the parent's branch itself and sets the edge `resolving`; the run's end settles it to `merged` or back to `conflict`.
 
 **Events** (`subscribe {topic:"plan"}`): every edge transition is `{event:"sync", child, parent, from?, to, edge}`
 (`from` absent for a new edge); the plan snapshot carries the edges in `TaskView.sync`.
