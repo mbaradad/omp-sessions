@@ -8,7 +8,8 @@
 // OMP_E2E_VERBOSE=1 echoes VS Code's own log lines (always saved to <tmp>/vscode.log),
 // OMP_E2E_ARTIFACTS=<dir> copies the logs (VS Code, fake omp, session hosts) there on failure (CI),
 // OMP_E2E_AO=1 also starts an isolated AO daemon with the fake `omp acp` (test/ao-fixture.mjs) and
-// hands the extension host its AO_PORT/AO_DATA_DIR/AO_RUN_FILE plus OMP_E2E_AO_URL.
+// hands the extension host its AO_PORT/AO_DATA_DIR/AO_RUN_FILE plus OMP_E2E_AO_URL; OMP_E2E_PLANNER=1
+// also runs the planner service (test/planner-fixture.mjs) on the suite's OMP_VSCODE_HOME.
 //
 // VS Code is downloaded once into .vscode-test/. Without a DISPLAY the run is re-executed
 // under `xvfb-run`. All state (user data, extensions, OMP_VSCODE_HOME, HOME, workspace) lives
@@ -138,12 +139,19 @@ const check = (name, ok, detail = "") => {
 
 // OMP_E2E_AO=1: an isolated AO daemon running the fake `omp acp` (test/ao-fixture.mjs) for the suite;
 // its AO_PORT/AO_DATA_DIR/AO_RUN_FILE reach the extension host, so src/ao discovery finds it.
+// OMP_E2E_PLANNER=1 (implies the AO fixture): the planner service too, on the suite's OMP_VSCODE_HOME.
 let ao;
+let planner;
 try {
-	if (process.env.OMP_E2E_AO === "1") {
+	if (process.env.OMP_E2E_AO === "1" || process.env.OMP_E2E_PLANNER === "1") {
 		const { startAoFixture } = await import("../ao-fixture.mjs");
 		ao = await startAoFixture({ keep: !!process.env.OMP_E2E_KEEP });
 		console.log(`AO fixture: ${ao.baseUrl} (${ao.root})`);
+	}
+	if (process.env.OMP_E2E_PLANNER === "1") {
+		const { startPlannerFixture } = await import("../planner-fixture.mjs");
+		planner = await startPlannerFixture({ ao, stateRoot: dirs.ompHome });
+		console.log(`planner fixture: pid ${planner.pid}, socket ${planner.socket}`);
 	}
 	const version = process.env.OMP_E2E_VSCODE_VERSION || "stable";
 	const vscodeExecutablePath = await downloadAndUnzipVSCode({ version, cachePath: path.join(repo, ".vscode-test") });
@@ -189,6 +197,7 @@ try {
 } catch (err) {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
+	await planner?.stop();
 	await ao?.stop();
 	const leftovers = killLeftovers();
 	check("no leftover host/omp processes", leftovers.length === 0, leftovers.length ? `killed ${leftovers.join(", ")}` : "");

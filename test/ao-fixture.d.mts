@@ -60,7 +60,8 @@ export interface AoFixture {
 	scratchRepo(name?: string): string;
 	/** Registers `dir` as an AO project whose workers default to omp; returns its id. */
 	createProject(dir: string, projectId?: string): Promise<string>;
-	fakeOmpFrames(): FakeOmpFrame[];
+	/** Frames of the fake omp processes; AO's background chats (title generation) only with includeBackground. */
+	fakeOmpFrames(opts?: { includeBackground?: boolean }): FakeOmpFrame[];
 	daemonLog(): string;
 	/** SIGKILLs the chat host(s) of one AO session and the omp they run (as a crash would); returns how many. */
 	killChatHosts(sessionId: string): number;

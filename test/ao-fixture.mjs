@@ -76,12 +76,30 @@ function freePort() {
 /** Detached chat hosts (`ao chat-host <session> <dataDir> ...`, own process group) of one daemon, or of one of its sessions. */
 function chatHostPids(dataDir, sessionId) {
 	if (process.platform === "win32") return [];
-	const r = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" });
-	const marker = sessionId ? ` chat-host ${sessionId} ${dataDir} ` : ` ${dataDir} `;
+	const matches = argv => {
+		const i = argv.indexOf("chat-host");
+		return i >= 0 && argv[i + 2] === dataDir && (!sessionId || argv[i + 1] === sessionId);
+	};
 	const pids = [];
+	if (fs.existsSync("/proc/self/cmdline")) {
+		// /proc, not `ps`: chat host command lines carry whole system prompts, and a few dozen of them
+		// overflow spawnSync's output buffer (ENOBUFS → a truncated list → hosts left behind).
+		for (const entry of fs.readdirSync("/proc")) {
+			if (!/^\d+$/.test(entry)) continue;
+			let argv;
+			try {
+				argv = fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");
+			} catch {
+				continue;
+			}
+			if (matches(argv)) pids.push(Number(entry));
+		}
+		return pids;
+	}
+	const r = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 	for (const line of (r.stdout ?? "").split("\n")) {
 		const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-		if (m && / chat-host /.test(m[2]) && m[2].includes(marker)) pids.push(Number(m[1]));
+		if (m && matches(m[2].split(" "))) pids.push(Number(m[1]));
 	}
 	return pids;
 }
@@ -276,14 +294,21 @@ export async function startAoFixture(opts = {}) {
 			await fx.api("PUT", `/api/v1/projects/${encodeURIComponent(project.id)}/config`, { config: { defaultBranch: "main", worker: { agent: "omp" } } });
 			return project.id;
 		},
-		/** Every frame the fake omp processes exchanged with AO so far ({mono,pid,dir:"in"|"out"|"argv",msg}). */
-		fakeOmpFrames() {
+		/**
+		 * Every frame the fake omp processes exchanged so far ({mono,pid,dir:"in"|"out"|"argv",msg}).
+		 * Leaves out AO's own background chats (title generation, run in `<data>/background-tasks/`)
+		 * unless `includeBackground`.
+		 */
+		fakeOmpFrames({ includeBackground = false } = {}) {
 			if (!fx.fakeOmpLog || !fs.existsSync(fx.fakeOmpLog)) return [];
-			return fs
+			const frames = fs
 				.readFileSync(fx.fakeOmpLog, "utf8")
 				.split("\n")
 				.filter(Boolean)
 				.map(l => JSON.parse(l));
+			if (includeBackground) return frames;
+			const background = new Set(frames.filter(f => f.msg?.method === "session/new" && /[/\\]background-tasks[/\\]/.test(f.msg.params?.cwd ?? "")).map(f => f.pid));
+			return frames.filter(f => !background.has(f.pid));
 		},
 		daemonLog() {
 			return fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
