@@ -429,6 +429,46 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- graph view ---------- */
+.omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
+.omps-graph-panel .omps-filters { margin-bottom: 0; }
+.omps-glegend { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.omps-glegend .omps-kstatus { margin-left: 0; }
+.omps-graph-scroll { overflow: auto; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-col); max-height: calc(100vh - 220px); min-height: 160px; }
+.omps-host-desktop .omps-graph-scroll { max-height: none; }
+.omps-graph { display: block; font-family: inherit; }
+.omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
+.omps-gedge-head { fill: var(--o-border-strong); }
+.omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
+.omps-gnode:focus, .omps-gnode:focus-visible { outline: none; }
+.omps-gnode.k-running { --k: var(--o-blue); }
+.omps-gnode.k-ready { --k: var(--o-purple); }
+.omps-gnode.k-blocked { --k: var(--o-pink); }
+.omps-gnode.k-done { --k: var(--o-green); }
+.omps-gnode.k-triage, .omps-gnode.k-todo { --k: var(--o-yellow); }
+.omps-gnode-box { fill: var(--o-raised); stroke: color-mix(in srgb, var(--k) 45%, var(--o-border)); stroke-width: 1; }
+.omps-gnode:hover .omps-gnode-box { stroke: var(--k); }
+.omps-gnode:focus-visible .omps-gnode-box { stroke: var(--o-ring); stroke-width: 2; }
+.omps-gnode.is-selected .omps-gnode-box { stroke: var(--k); stroke-width: 2.5; }
+.omps-gnode.is-faded { opacity: 0.4; }
+.omps-gnode-bar { fill: var(--k); }
+.omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
+.omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
+.omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
+.omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
+.omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.omps-gcard-head .omps-kstatus { margin-left: 0; }
+.omps-gcard-title { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.omps-gcard-links { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.omps-gcard-links .omps-section-label { margin: 0 4px 0 0; min-width: 72px; }
+.omps-gchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--o-border); background: var(--o-card); color: var(--o-fg2); border-radius: 999px; padding: 2px 9px 2px 3px; font-size: 12px; cursor: pointer; }
+.omps-gchip .omps-kstatus { margin-left: 0; }
+.omps-gchip:hover:not(:disabled) { border-color: var(--o-border-strong); color: var(--o-fg); }
+.omps-gchip:disabled { cursor: default; opacity: 0.6; }
+
 @media (max-width: 720px) {
 	.omps-search { min-width: 0; flex: 1; }
 	.omps-bgrid { grid-template-columns: 1fr; }

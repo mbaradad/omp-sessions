@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Hermes: dependency graph of a board's cards.** The omp Sessions page in the Hermes dashboard and Desktop has a **Graph** view: a board's kanban cards laid out left to right from parent to child (a child waits for its parents), coloured by card status, with the state of the omp session working on each card (the lane's, or a session tagged with the card). Edges from finished parents are solid, the rest dashed. By default it shows only cards linked to another card; **Linked cards only** switches to every card. Clicking a card shows what it waits for and unblocks, and opens its omp session's detail when it has one. The page's backend reports `parents` and `children` for every card it returns (`/boards` cards, linked and ready lists, and a session's `card`), read in one batch per board; a Hermes without card links reports none.
+
 ## 0.6.2
 
 - Queued tasks' durations and retry backoff, and `omp-sessions wait`'s timeout and settle time, use the monotonic clock: a wall clock that steps (NTP, WSL2) no longer gives negative durations or stretches and cuts waits. Sessions waiting for a concurrency slot are served in arrival order, so a clock stepping back no longer lets a later one cut in, and a finished queued task is saved as done before its slot is freed, so under a limit of 1 no one sees two queued tasks running at once.
