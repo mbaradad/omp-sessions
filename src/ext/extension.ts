@@ -583,7 +583,8 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			if (!sessions.notifies(meta)) return;
 			if (attended) return;
 			let message: string | undefined;
-			if (meta.status === "waiting") message = `omp needs your input: ${meta.title}`;
+			// A merge conflict is needs-input too, but the Tasks view toasts it with the files and the graph (ext-tasks): not twice.
+			if (meta.status === "waiting") message = meta.queue?.sync?.state === "conflict" ? undefined : `omp needs your input: ${meta.title}`;
 			else if (meta.status === "idle" && from === "working") message = `omp finished: ${meta.title}`;
 			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `omp session exited (${meta.exitReason}): ${meta.title}`;
 			if (!message) return;
