@@ -121,6 +121,8 @@ export class AoClient {
 	private readonly doFetch: typeof fetch;
 	/** Set when connected through discovery: a refused connection looks for the daemon again (it may have restarted on another port). */
 	private readonly discovery: AoConnectOptions | undefined;
+	/** The probe in flight, shared by every request that failed at once. */
+	private rediscovering: Promise<AoDaemon | undefined> | undefined;
 
 	constructor(options: AoClientOptions, discovery?: AoConnectOptions) {
 		this.doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -148,15 +150,23 @@ export class AoClient {
 	/**
 	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
 	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 * Concurrent callers (every in-flight request fails together when the daemon goes down) share one
+	 * probe.
 	 */
-	async rediscover(): Promise<AoDaemon | undefined> {
-		if (!this.discovery) return undefined;
-		const daemon = await findDaemon(this.discovery);
-		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
-			this.currentBaseUrl = daemon.baseUrl;
-			this.client = this.create();
-		}
-		return daemon;
+	rediscover(): Promise<AoDaemon | undefined> {
+		if (!this.discovery) return Promise.resolve(undefined);
+		const discovery = this.discovery;
+		this.rediscovering ??= (async () => {
+			const daemon = await findDaemon(discovery);
+			if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
+				this.currentBaseUrl = daemon.baseUrl;
+				this.client = this.create();
+			}
+			return daemon;
+		})().finally(() => {
+			this.rediscovering = undefined;
+		});
+		return this.rediscovering;
 	}
 
 	private create(): AoApi {
