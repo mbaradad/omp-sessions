@@ -10,11 +10,30 @@ import { OmpPlans } from "./omp-plan";
 import { PlannerStore } from "./planner-store";
 import { SessionQueues } from "./session-queues";
 
-/** The part of AoSessionWatcher the Tasks view uses. */
+/** What the Tasks view needs to know about an AO session: its title and whether anything runs in it. */
+export interface TaskSession {
+	id: string;
+	title: string;
+	/** "working" shows a spinner on its queue; "stopped" keeps it out of the add-task picker and the plan-only list. */
+	state: string;
+}
+
+/** The sessions the Tasks view reads (AoSessionModel fits as it is; so can a view over SessionManager). */
 export interface TaskSessions {
-	get(id: string): AoSessionModel | undefined;
-	all(): AoSessionModel[];
+	get(id: string): TaskSession | undefined;
+	all(): TaskSession[];
 	onChange(listener: () => void): () => void;
+}
+
+/**
+ * Parts of the window that other modules already own, so the Tasks view does not build its own: the one
+ * AO connection (`ao`) and the one session store (`sessions`). Without them (tests, the extension alone)
+ * the Tasks view connects to AO and watches sessions itself.
+ */
+export interface SharedAo {
+	/** The window's AO client (connects on first use). */
+	ao(): Promise<AoClient>;
+	sessions: TaskSessions;
 }
 
 export interface TasksDeps {
@@ -91,12 +110,14 @@ class LateSessions implements TaskSessions, vscode.Disposable {
 	}
 }
 
-export function createTasksDeps(context: vscode.ExtensionContext): TasksDeps {
+export function createTasksDeps(context: vscode.ExtensionContext, shared?: SharedAo): TasksDeps {
 	// Start the planner when none runs, unless the person (`omp.server.autoStart`) or a test says not to.
 	const mayStart = !process.env.OMP_SESSIONS_NO_SERVER && vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true);
 	const planner = new PlannerStore(mayStart ? path.join(context.extensionPath, "out", "planner.js") : undefined);
 	const plans = new OmpPlans();
-	const sessions = new LateSessions();
-	context.subscriptions.push(planner, plans, sessions);
-	return { planner, queues: new SessionQueues(planner), plans, aoSessions: sessions, ao: () => sessions.connect() };
+	context.subscriptions.push(planner, plans);
+	if (shared) return { planner, queues: new SessionQueues(planner), plans, aoSessions: shared.sessions, ao: shared.ao };
+	const own = new LateSessions();
+	context.subscriptions.push(own);
+	return { planner, queues: new SessionQueues(planner), plans, aoSessions: own, ao: () => own.connect() };
 }
