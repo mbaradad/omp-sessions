@@ -187,7 +187,7 @@ Switchyard runs whichever agent harness AO is set up for: AO's *chat harnesses* 
 3. the AO project's worker harness (`worker.agent` in AO's project settings);
 4. AO's default: the only authorized chat harness; with several, `omp` when it is authorized, else the one with the most sessions (none authorized: the same rule over the installed ones).
 
-A harness that isn't one of AO's chat harnesses is refused with the list. Switchyard no longer pins `worker.agent: omp` on the projects it registers.
+A harness that isn't one of AO's chat harnesses, or that AO reports it can't start here, is refused with the list (and is never the default). Switchyard no longer pins `worker.agent: omp` on the projects it registers.
 
 **Permission modes on other harnesses** map to AO's approval modes: Ask → `default` (the harness asks through AO; its own baseline applies, Claude Code e.g. follows its settings.json), Edits → `accept-edits`, Auto → `bypass-permissions`. A harness that can't run a mode (Kimi runs only in `default`) refuses it when asked for; a default mode gives way to the nearest one it can run. **Plan** is omp-only.
 
