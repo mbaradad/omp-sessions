@@ -92,8 +92,8 @@ test("agentState: session lifecycle before and after the conversation", () => {
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" })), "working");
 	assert.equal(agentState(view({ activity: { state: "blocked", lastActivityAt: T }, status: "needs_input" })), "needs_input");
 	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T }, status: "exited" })), "stopped");
-	// An agent at an empty prompt waits for its next instruction (AO still says needs_input): done for now.
-	assert.equal(agentState(view({ activity: { state: "waiting_input", lastActivityAt: T }, status: "needs_input" })), "idle");
+	// A chat session with a pending question reports waiting_input (AO's own status: needs_input).
+	assert.equal(agentState(view({ activity: { state: "waiting_input", lastActivityAt: T }, status: "needs_input" })), "needs_input");
 	assert.equal(agentState(view({ status: "pr_open" })), "idle");
 });
 
@@ -116,6 +116,16 @@ test("agentState: the conversation decides once there is one", () => {
 	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "completed")] })), "stopped");
 	// A stale activity signal does not override a settled conversation.
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" }), conversation({ turns: [turn("t1", "completed")] })), "idle");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "completed")], controller: "busy" })), "working");
+});
+
+test("agentState: the planner's lane state wins only while the session itself is idle or stopped", () => {
+	const idle = conversation({ turns: [turn("t1", "completed")] });
+	assert.equal(agentState(view(), idle, "scheduled"), "scheduled");
+	assert.equal(agentState(view(), idle, "queued"), "queued");
+	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), idle, "interrupted"), "interrupted");
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")] }), "queued"), "working");
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")], activities: [approval] }), "scheduled"), "needs_input");
 });
 
 test("questionOf: omp's ask elicitation becomes one question per field, Other folded in", () => {
