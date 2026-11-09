@@ -5,12 +5,13 @@
 import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
 
 /**
- * `queued`: turns wait while the agent is not connected (hibernated or stopped). `scheduled`: never
- * produced from AO data alone (AO has no start times). `starting`: the session is being provisioned
- * or its agent connects. `working`: a turn runs, or queued turns continue on their own.
- * `needs_input`: an approval or question waits for an answer. `interrupted`: the daemon lost a running
- * turn (it restarted or the agent died: AO marks the turn `recovered`). `idle`: done for now.
- * `stopped`: terminated, failed to start, or its agent exited.
+ * `queued`: turns wait while the agent is not connected (hibernated or stopped), or the planner holds
+ * work for the session. `scheduled`: the planner starts it later (AO has no start times).
+ * `starting`: the session is being provisioned or its agent connects. `working`: a turn runs, or
+ * queued turns continue on their own. `needs_input`: an approval or question waits for an answer.
+ * `interrupted`: the agent died while a turn ran (AO failed it with AO_LOST_TURN_ERROR), or the
+ * planner's task was cut short. `idle`: done for now. `stopped`: terminated, failed to start, or its
+ * agent exited.
  */
 export type AoAgentState = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "interrupted" | "idle" | "stopped";
 
@@ -250,8 +251,16 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	if (view.provisionState === "failed") return "stopped";
 	if (view.provisionState === "provisioning") return "starting";
 	if (conversation) {
-		if (pendingActivities(conversation).length > 0) return "needs_input";
-		if (conversation.turns.some(t => t.state === "running")) return "working";
+		const running = conversation.turns.some(t => t.state === "running");
+		const pending = pendingActivities(conversation).length > 0;
+		// The agent died mid-turn (omp crashed or was killed): AO stops the controller and reports it
+		// exited, and either keeps the turn (and any question) open for a replacement agent or fails it
+		// with AO_LOST_TURN_ERROR. Nothing continues and nobody can answer until someone resumes it
+		// (`resume-agent`; a message is refused meanwhile). After the resume it is idle again.
+		const down = conversation.controller === "stopped" || view.activity.state === "exited";
+		if (down && (running || pending || lostTurn(conversation.turns.at(-1)))) return "interrupted";
+		if (pending) return "needs_input";
+		if (running) return "working";
 		const connecting = conversation.controller === "connecting" || conversation.controller === "recovering";
 		if (conversation.turns.some(t => t.state === "queued")) {
 			if (connecting) return "starting";
@@ -261,9 +270,8 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 		// Busy with no turn: compaction, a steer being applied.
 		if (conversation.controller === "busy") return "working";
 		if (view.activity.state === "exited") return "stopped";
-		// AO marks a turn `recovered` when it lost it while it ran (daemon restart, agent died);
-		// `interrupted` is a person's stop.
-		if (conversation.turns.at(-1)?.state === "recovered") return "interrupted";
+		// `interrupted` turns are a person's stop; `recovered` ones were replayed from omp's history
+		// (resume, adoption) without a known outcome. Neither needs anyone.
 		return "idle";
 	}
 	switch (view.activity.state) {
@@ -280,12 +288,18 @@ function sessionState(view: AoSessionView, conversation: AoConversation | undefi
 	}
 }
 
+/** AO's reason for turns its controller still owned when it ended (SettleOrphanedConversationTurns). */
+export const AO_LOST_TURN_ERROR = "controller ended before the turn completed";
+
+function lostTurn(turn: AoTurn | undefined): boolean {
+	return turn?.state === "failed" && turn.errorMessage === AO_LOST_TURN_ERROR;
+}
+
 /** Why a session stopped or its last turn failed, when AO says. */
 export function exitReasonOf(view: AoSessionView, conversation?: AoConversation): string | undefined {
 	if (view.provisionError) return view.provisionError;
 	const last = conversation?.turns.at(-1);
-	if (last && (last.state === "failed" || last.state === "recovered")) return last.errorMessage || (last.state === "recovered" ? "The daemon lost this turn while it ran." : undefined);
-	return undefined;
+	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
 export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState): AoSessionModel {

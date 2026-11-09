@@ -60,7 +60,7 @@ after(async () => {
 	watcher?.close();
 	if (sessionId) {
 		await ao.killSession(sessionId).catch(() => undefined);
-		await ao.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId }, query: { cleanup: true } } }).catch(() => undefined);
+		await ao.deleteSession(sessionId).catch(() => undefined);
 	}
 });
 
@@ -127,6 +127,16 @@ test("spawn an omp chat session, prompt it, read state, reply, cost and events",
 		replayed.filter(e => e.seq <= lastMine).map(e => e.seq),
 		mine.map(e => e.seq),
 	);
+});
+
+test("stop and resume the agent (MAPPING D4)", async () => {
+	assert.ok(sessionId, "the spawn test ran");
+	const id = sessionId;
+	await ao.exitAgent(id);
+	await until(id, m => m.state === "stopped", "stopped");
+	await ao.resumeAgent(id);
+	const back = await until(id, m => m.state === "idle", "idle after resume");
+	assert.ok((back.reply ?? "").includes("SECOND"), "the transcript is still there");
 });
 
 test("errors carry AO's code", async () => {

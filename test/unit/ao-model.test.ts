@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -109,10 +109,24 @@ test("agentState: the conversation decides once there is one", () => {
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "hibernated" })), "queued");
 	assert.equal(agentState(v, conversation({ turns: [turn("t2", "queued")], controller: "connecting" })), "starting");
 	assert.equal(agentState(v, conversation({ controller: "recovering" })), "starting");
-	// The daemon lost a running turn (restart, agent died): someone has to look.
-	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "interrupted");
-	// A person stopping a turn is not an interruption.
+	// The agent died while a turn ran: AO fails the turn and reports the agent exited. Someone has to look.
+	const exited = view({ activity: { state: "exited", lastActivityAt: T } });
+	const lost = turn("t1", "failed", { errorMessage: AO_LOST_TURN_ERROR });
+	assert.equal(agentState(exited, conversation({ turns: [lost] })), "interrupted");
+	assert.equal(sessionModel(exited, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A turn that failed on its own (provider error) leaves a live agent: idle, with the reason.
+	const failed = conversation({ turns: [turn("t1", "failed", { errorMessage: "rate limited" })] });
+	assert.equal(agentState(v, failed), "idle");
+	assert.equal(sessionModel(v, failed).exitReason, "rate limited");
+	// omp killed mid-turn, as observed live: the turn stays `running`, the controller stops, the agent exited.
+	assert.equal(agentState(exited, conversation({ turns: [turn("t1", "running")], controller: "stopped" })), "interrupted");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "running")], activities: [approval], controller: "stopped" })), "interrupted");
+	// After `resume-agent` (observed live): the agent is back, the lost turn stays failed: idle, with the reason.
+	assert.equal(agentState(v, conversation({ turns: [lost] })), "idle");
+	assert.equal(sessionModel(v, conversation({ turns: [lost] })).exitReason, AO_LOST_TURN_ERROR);
+	// A person stopping a turn is not an interruption; nor is history replayed on resume or adoption.
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "interrupted")] })), "idle");
+	assert.equal(agentState(v, conversation({ turns: [turn("t1", "recovered")] })), "idle");
 	assert.equal(agentState(view({ activity: { state: "exited", lastActivityAt: T } }), conversation({ turns: [turn("t1", "completed")] })), "stopped");
 	// A stale activity signal does not override a settled conversation.
 	assert.equal(agentState(view({ activity: { state: "active", lastActivityAt: T }, status: "working" }), conversation({ turns: [turn("t1", "completed")] })), "idle");

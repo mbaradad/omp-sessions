@@ -207,7 +207,17 @@ export class AoClient {
 		await unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}", { params: { path: { sessionId } }, body: { displayName } }));
 	}
 
-	/** Terminates the session (its agent and host). */
+	/** Stops the agent; the session and its transcript stay (MAPPING.md D4 `stop`). */
+	exitAgent(sessionId: string): Promise<AoSchemas["ExitAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Starts the agent again on its transcript (D4 `resume`); needed after it exited or died ("interrupted"). */
+	resumeAgent(sessionId: string): Promise<AoSchemas["ResumeAgentResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId } } }));
+	}
+
+	/** Terminates the session (its agent and host) and releases its workspace. */
 	async killSession(sessionId: string, body: AoSchemas["ControllersKillSessionRequest"] = {}): Promise<AoSchemas["KillSessionResponse"]> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/kill", { params: { path: { sessionId } }, body }));
 	}
@@ -215,6 +225,16 @@ export class AoClient {
 	/** Brings a terminated session back. */
 	restoreSession(sessionId: string): Promise<AoSchemas["RestoreSessionResponse"]> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/restore", { params: { path: { sessionId } } }));
+	}
+
+	/** Deletes a terminated session for good (D4 `rm`: kill first); `cleanup` removes a clean leftover worktree. */
+	async deleteSession(sessionId: string, cleanup = true): Promise<void> {
+		await unwrap(this.client.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId }, query: { cleanup } } }));
+	}
+
+	async setPinned(sessionId: string, pinned: boolean): Promise<void> {
+		const params = { params: { path: { sessionId } } };
+		await unwrap(pinned ? this.client.POST("/api/v1/sessions/{sessionId}/pin", params) : this.client.DELETE("/api/v1/sessions/{sessionId}/pin", params));
 	}
 
 	// ---- conversation ----
