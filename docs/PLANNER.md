@@ -320,7 +320,7 @@ AO's diff is exact). `git diff base..head` = what the task changed (`head`: afte
 
 AO never deletes the branches of its sessions. When a task is **removed** from the plan, the planner deletes its
 `switchyard/*` branch, but only when every commit on it is still reachable from another branch (a parent's,
-`main`…) and nothing has it checked out; a branch with work of its own stays, is logged ("kept branch") and is recorded in the plan: `PlanView.keptBranches: KeptBranch[]` = `{repo, branch, task (title), taskId, tip?, why, at}`, so `plan status` and the Tasks view can list leftover branches. `edit [{op:"branch.clean"}]` (also run at every planner (re)connect) retries them: one a person deleted, or merged into another branch since, leaves the list (and is deleted when merged).
+`main`…) and nothing has it checked out; a branch with work of its own stays, is logged ("kept branch") and is recorded in the plan: `PlanView.keptBranches: KeptBranch[]` = `{repo, branch, task (title), taskId, tip?, why, at}`, so `plan status` and the Tasks view can list leftover branches. `edit [{op:"branch.clean"}]` (also run at every planner (re)connect) retries them, and **answers when the cleanup is done** (the plan event with the shrunk list comes before the response): one a person deleted, or merged into another branch since, leaves the list (and is deleted when merged).
 Branches the planner did not create are never touched.
 
 ## Graphs through sessions a client spawned first (the CLI's `new --task`)
