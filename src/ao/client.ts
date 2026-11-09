@@ -14,6 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
 export { AO_SCHEMA_COMMIT };
@@ -50,7 +51,8 @@ export { AO_EVENT_TYPES } from "./events";
 export type { AoProjectForFolderOptions } from "./projects";
 export { gitDefaultBranch, gitRoot } from "./projects";
 export type { AoNativeSession } from "./native";
-export { nativeSessionFile, readNativeSession, switchyardHome } from "./native";
+export { nativeSessionFile, readNativeSession, sessionStateFile, shimDir, switchyardHome } from "./native";
+export type { AoSessionMode, SpawnedSwitchyardSession, SpawnSwitchyardOptions } from "./spawn";
 
 /** A failed AO call: the daemon's error envelope (`code`, `message`, `requestId`), or `DAEMON_UNREACHABLE` (status 0). */
 export class AoError extends Error {
@@ -107,6 +109,14 @@ export interface AoConnectOptions extends AoStartOptions {
 
 function errorCode(value: unknown): string | undefined {
 	return typeof value === "object" && value !== null && "code" in value && typeof value.code === "string" ? value.code : undefined;
+}
+
+/**
+ * `X-AO-Attachment-Upload: 1` on a request that carries attachments: AO then raises that request's
+ * deadline to at least 10 minutes, so a large image upload is not cut off by the default timeout.
+ */
+function uploadHeaders(body: { attachments?: readonly unknown[] }): Record<string, string> | undefined {
+	return body.attachments && body.attachments.length > 0 ? { "X-AO-Attachment-Upload": "1" } : undefined;
 }
 
 /** The request never reached a daemon (nothing listens there, or it went away mid-connection). */
@@ -214,7 +224,7 @@ export class AoClient {
 	}
 
 	spawnSession(body: AoSpawnRequest): Promise<AoSpawnResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions", { body }));
+		return unwrap(this.client.POST("/api/v1/sessions", { headers: uploadHeaders(body), body }));
 	}
 
 	async renameSession(sessionId: string, displayName: string): Promise<void> {
@@ -260,9 +270,11 @@ export class AoClient {
 	/**
 	 * Sends a message: it starts a turn, or queues one behind the running turn. `clientMessageId` makes
 	 * it idempotent (a retry with the same id is reported `duplicate`); one is generated when absent.
+	 * With `attachments` the request carries `X-AO-Attachment-Upload`, which raises AO's request deadline
+	 * for a large image upload (the same for `steer`, `steerOrSend` and `spawnSession`).
 	 */
 	sendMessage(sessionId: string, body: AoSendRequest): Promise<AoSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/**
@@ -270,7 +282,7 @@ export class AoClient {
 	 * `clientMessageId` (generated when absent); after a CHAT_STEER_UNCERTAIN error, retry only with the same one.
 	 */
 	steerOrSend(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSteerOrSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/**
@@ -280,7 +292,7 @@ export class AoClient {
 	 * steering a session with a queue. `clientMessageId` is generated when absent.
 	 */
 	steer(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSchemas["SteerConversationResponse"]> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer", { params: { path: { sessionId } }, headers: uploadHeaders(body), body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/** Delivers one queued message into the running turn now (steers with its text), leaving the others queued. */
@@ -291,6 +303,25 @@ export class AoClient {
 	/** Stops the running turn. */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
+	}
+
+	/** Compacts the conversation (omp's `/compact`). `tokensBefore`/`tokensAfter` come back when the agent reports them. */
+	compact(sessionId: string): Promise<AoSchemas["CompactConversationResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/compact", { params: { path: { sessionId } } }));
+	}
+
+	/** The slash commands and skills the agent offers in this conversation. */
+	async skills(sessionId: string): Promise<AoSchemas["ConversationSkillResponse"][]> {
+		return (await unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation/skills", { params: { path: { sessionId } } }))).skills;
+	}
+
+	/**
+	 * Tells AO a chat view of this session is open (`active`) or closed: AO keeps a keep-awake lease for
+	 * as long as one is open. `viewId` identifies the view (one per panel); send `active: true` again
+	 * periodically while it stays open, and `false` when it closes.
+	 */
+	async chatView(sessionId: string, viewId: string, active: boolean): Promise<void> {
+		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId } }, body: { viewId, active } }));
 	}
 
 	async resolveApproval(sessionId: string, requestId: string, decisionId: string): Promise<void> {
@@ -353,6 +384,15 @@ export class AoClient {
 	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
+	}
+
+	/**
+	 * Starts a Switchyard session the way every client does (MAPPING D11: bypass launch, the mode file,
+	 * model and thinking validated against the session's own options, extra omp arguments, then the
+	 * prompt with a `clientMessageId`). See spawn.ts.
+	 */
+	spawnSwitchyard(options?: SpawnSwitchyardOptions): Promise<SpawnedSwitchyardSession> {
+		return spawnSwitchyardSession(this, options);
 	}
 
 	// ---- agent accounts (provider limits and usage) ----
