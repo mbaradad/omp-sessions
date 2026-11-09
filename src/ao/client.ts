@@ -30,7 +30,7 @@ export type AoMessage = AoSchemas["ConversationMessageResponse"];
 export type AoActivity = AoSchemas["ConversationActivityResponse"];
 export type AoUsage = AoSchemas["ConversationUsagePayload"];
 export type AoTurnSettings = AoSchemas["ConversationTurnSettingsPayload"];
-export type AoDiffFile = AoSchemas["ConversationDiffFileResponse"];
+export type AoWorkspaceManifest = AoSchemas["WorkspaceManifestResponse"];
 export type AoProject = AoSchemas["ProjectSummary"];
 export type AoSpawnRequest = AoSchemas["SpawnSessionRequest"];
 export type AoSpawnResponse = AoSchemas["SpawnSessionResponse"];
@@ -288,12 +288,28 @@ export class AoClient {
 		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/settings", { params: { path: { sessionId } }, body }));
 	}
 
-	// ---- projects ----
+	/** The agent's own settings (omp: `mode`, `model`, `thinking`), with their choices. */
+	configOptions(sessionId: string): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId } } }));
+	}
+
+	setConfigOption(sessionId: string, configId: string, body: AoSchemas["SetConversationConfigOptionRequest"]): Promise<AoSchemas["ConversationConfigOptionsResponse"]> {
+		return unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/conversation/config-options/{configId}", { params: { path: { sessionId, configId } }, body }));
+	}
+
+	// ---- workspace ----
 
 	/** The folder the session's agent works in: its git worktree, or its standalone scratch dir. */
 	async workspacePath(sessionId: string): Promise<string> {
 		return (await unwrap(this.client.GET("/api/v1/desktop/sessions/{sessionId}/workspace", { params: { path: { sessionId } } }))).workspacePath;
 	}
+
+	/** The workspace against the base it started from: every changed file with its line counts (empty outside git). */
+	workspaceManifest(sessionId: string): Promise<AoWorkspaceManifest> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/workspace/manifest", { params: { path: { sessionId } } }));
+	}
+
+	// ---- projects ----
 
 	async listProjects(): Promise<AoProject[]> {
 		return (await unwrap(this.client.GET("/api/v1/projects"))).projects;
@@ -311,5 +327,48 @@ export class AoClient {
 	/** The AO project of `dir`'s git repo, registered (default branch, omp workers) on first use; undefined outside git (spawn standalone). */
 	projectForFolder(dir: string, options?: AoProjectForFolderOptions): Promise<AoProject | undefined> {
 		return projectForFolder(this, dir, options);
+	}
+
+	// ---- agent accounts (provider limits and usage) ----
+
+	/** Provider accounts AO knows (Claude, Codex devices…) with their limit windows; `refresh` re-reads the providers. */
+	agentAccounts(refresh = false): Promise<AoSchemas["AgentAccountsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts", { params: { query: { refresh } } }));
+	}
+
+	/** Per-account token and cost usage (`costNanos`) over the last `days`. */
+	agentAccountUsage(days?: number): Promise<AoSchemas["AgentAccountUsageResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/accounts/usage", { params: { query: days === undefined ? {} : { days } } }));
+	}
+
+	// ---- daemon ----
+
+	/** `{hostId, apiVersion}`. */
+	identity(): Promise<AoSchemas["IdentityResponse"]> {
+		return unwrap(this.client.GET("/api/v1/identity"));
+	}
+
+	/** The models a harness offers (`omp`: its provider/model ids). */
+	agentModels(agent = "omp", query: NonNullable<paths["/api/v1/agents/{agent}/models"]["get"]["parameters"]["query"]> = {}): Promise<AoSchemas["AgentModelsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/agents/{agent}/models", { params: { path: { agent }, query } }));
+	}
+
+	// ---- mobile (AO's phone app: LAN/tunnel listener and pairing) ----
+
+	mobileStatus(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.GET("/api/v1/mobile/status"));
+	}
+
+	setMobileEnabled(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(enabled ? this.client.POST("/api/v1/mobile/enable") : this.client.POST("/api/v1/mobile/disable"));
+	}
+
+	/** New connection password and pairing link; paired phones must pair again. */
+	regenerateMobile(): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/regenerate"));
+	}
+
+	setMobileSecurePairing(enabled: boolean): Promise<AoSchemas["MobileStatusResponse"]> {
+		return unwrap(this.client.POST("/api/v1/mobile/secure-pairing", { body: { enabled } }));
 	}
 }
