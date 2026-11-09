@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, statusOf, withQueue } from "../../src/ext/session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, rerunTaskIds, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { PERMISSION_MODES } from "../../src/shared/permissions";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
@@ -170,4 +170,27 @@ test("withQueue: an unresolved merge conflict is needs-input (waiting); other sy
 	const conflicted = withQueue(base, queue("conflict"), "idle");
 	assert.equal(withQueue(conflicted, queue("merged"), "idle").status, "idle");
 	assert.equal(withQueue(conflicted, undefined, "idle").queue, undefined);
+});
+
+test("laneQueue: the worst parent-edge sync state of a session's tasks, with the parent sessions in it", () => {
+	const lane = (l: Partial<LaneView>): LaneView => ({ id: "l_1", autoRun: true, createdAt: 1, pending: 0, running: 0, done: 0, failed: 0, total: 0, ...l });
+	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "done", createdAt: 5, state: "done", ...t });
+	const plan = {
+		rev: 1,
+		lanes: [lane({ id: "repo-3", done: 1, total: 1 }), lane({ id: "repo-1" }), lane({ id: "repo-2" })],
+		tasks: [
+			task({ id: "c", lane: "repo-3", after: ["a", "b"], sync: { a: { state: "upstream-changed", at: 1 }, b: { state: "conflict", at: 1 } } }),
+			task({ id: "a", lane: "repo-1" }),
+			task({ id: "b", lane: "repo-2" }),
+		],
+		recurring: [],
+		status: {} as PlanView["status"],
+	} satisfies PlanView;
+	assert.deepEqual(laneQueue(plan, "repo-3")?.sync, { state: "conflict", parents: ["repo-2"] });
+	assert.equal(laneQueue(plan, "repo-1")?.sync, undefined);
+	const clean: PlanView = { ...plan, tasks: plan.tasks.map(t => (t.id === "c" ? { ...t, sync: { a: { state: "in-sync" as const, at: 1 }, b: { state: "in-sync" as const, at: 1 } } } : t)) };
+	assert.equal(laneQueue(clean, "repo-3")?.sync, undefined);
+	assert.deepEqual(rerunTaskIds(plan, "repo-3"), ["c"]);
+	assert.deepEqual(rerunTaskIds(plan, "repo-1"), []);
+	assert.deepEqual(rerunTaskIds(clean, "repo-3"), []);
 });

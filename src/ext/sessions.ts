@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
-import type { PlanView } from "../planner/types";
+import type { PlanOp, PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
@@ -12,7 +12,7 @@ import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../s
 import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, statusOf, withQueue } from "./session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, rerunTaskIds, statusOf, withQueue } from "./session-view";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -81,6 +81,8 @@ export interface NewSessionOptions {
 /** The planner's latest plan and its change event (the Tasks view's PlannerStore has this shape). */
 export interface PlanSource {
 	readonly plan: PlanView | undefined;
+	/** Applies plan edits through the planner (the Tasks view's PlannerStore). */
+	edit(ops: PlanOp[]): Promise<unknown>;
 	readonly onDidChange: vscode.Event<unknown>;
 }
 
@@ -236,6 +238,15 @@ export class SessionManager implements vscode.Disposable {
 		const { data, error, response } = await client.api.GET("/api/v1/sessions/{sessionId}/workspace/files", { params: { path: { sessionId: id } } });
 		if (!response.ok || !data) throw new Error(errorMessage(error, response));
 		return data.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
+	}
+
+	/** Re-runs the session's tasks on top of their parents' current work (propagation states `upstream-changed` and `conflict`); resolves with how many. */
+	async rerunWithParentChanges(id: string): Promise<number> {
+		const source = this.planSource;
+		if (!source) throw new Error("the planner is not connected");
+		const tasks = rerunTaskIds(source.plan, id);
+		if (tasks.length) await source.edit(tasks.map(task => ({ op: "requeue", id: task })));
+		return tasks.length;
 	}
 
 	/** Relists every session from AO. */

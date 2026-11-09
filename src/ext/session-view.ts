@@ -5,7 +5,7 @@ import type { AoNativeSession, AoTurnSettings } from "../ao/client";
 import type { AoAgentState, AoSessionModel } from "../ao/model";
 import type { PlanView } from "../planner/types";
 import type { PermissionMode } from "../shared/permissions";
-import type { SessionMeta, SessionStatus } from "../shared/protocol";
+import type { SessionMeta, SessionStatus, SyncState } from "../shared/protocol";
 
 /** AO launch settings for a permission mode. omp maps AO `default` to its own asking mode and `bypass-permissions` to yolo; plan is omp's `mode` config option. */
 export function approvalModeFor(mode: PermissionMode): { approvalMode: NonNullable<AoTurnSettings["approvalMode"]>; plan: boolean } {
@@ -106,6 +106,9 @@ export function launchFlags(args: readonly string[]): { model?: string; effort?:
 }
 
 
+/** Worst first: what the user must look at before what merely happened (the board's `worstSync` orders the same). */
+const SYNC_SEVERITY: Record<SyncState, number> = { conflict: 5, "upstream-changed": 4, resolving: 3, pending: 2, merged: 1, "in-sync": 0 };
+
 /**
  * A session's task-queue summary (tree badges, the board's Queued column, hide-finished) from the planner's
  * plan: the lanes that continue this AO session (lane id = session id, or `lane.session`). Undefined when the
@@ -130,6 +133,10 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 	const after = sessionsOf(tasks.flatMap(t => t.after ?? []));
 	const blockedBy = sessionsOf(tasks.flatMap(t => t.blockedBy ?? []));
 	const failed = tasks.filter(t => t.state === "failed").length;
+	// Propagation (GRAPH-PROPAGATION.md): the worst state over every parent edge of the session's tasks, and the parent sessions in it.
+	const edges = tasks.flatMap(t => Object.entries(t.sync ?? {}).map(([parent, edge]) => ({ parent, state: edge.state })));
+	const syncState = edges.reduce<SyncState | undefined>((worst, e) => (worst === undefined || SYNC_SEVERITY[e.state] > SYNC_SEVERITY[worst] ? e.state : worst), undefined);
+	const sync = syncState && syncState !== "in-sync" ? { state: syncState, parents: sessionsOf(edges.filter(e => e.state === syncState).map(e => e.parent)) } : undefined;
 	return {
 		pending: total("pending"),
 		running: total("running"),
@@ -139,6 +146,7 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(Number.isFinite(startAt) && { startAt }),
 		...(interrupted && { interrupted }),
 		...(failed && { failed }),
+		...(sync && { sync }),
 		...(after.length && { after }),
 		...(blockedBy.length && { blockedBy }),
 		...(waiting?.position !== undefined && { waiting: { position: waiting.position, since: waiting.createdAt } }),
@@ -154,4 +162,15 @@ export function withQueue(meta: SessionMeta, queue: SessionMeta["queue"], base: 
 	const { queue: _old, ...rest } = meta;
 	const conflict = queue?.sync?.state === "conflict" && base !== "stopped";
 	return { ...rest, status: conflict ? "waiting" : base, ...(queue && { queue }) };
+}
+
+/**
+ * "Re-run with parent changes": the session's tasks whose parent changes were merged without re-running them
+ * (`upstream-changed`) or could not be merged (`conflict`). The planner's `requeue` runs each again in its own
+ * session, on top of its parents' current work.
+ */
+export function rerunTaskIds(plan: PlanView | undefined, sessionId: string): string[] {
+	const lanes = plan?.lanes.filter(l => l.id === sessionId || l.session === sessionId) ?? [];
+	const ids = new Set(lanes.map(l => l.id));
+	return (plan?.tasks ?? []).filter(t => (t.lane !== undefined && ids.has(t.lane) || t.session === sessionId) && Object.values(t.sync ?? {}).some(e => e.state === "upstream-changed" || e.state === "conflict")).map(t => t.id);
 }

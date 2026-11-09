@@ -107,14 +107,14 @@ export const STATUS_COLUMNS = [
 export type StatusKey = (typeof STATUS_COLUMNS)[number]["key"];
 
 /** Worst first: what the user must look at before what merely happened. */
-const SYNC_SEVERITY: Record<SyncState, number> = { conflict: 4, "upstream-changed": 3, pending: 2, merged: 1, "in-sync": 0 };
+const SYNC_SEVERITY: Record<SyncState, number> = { conflict: 5, "upstream-changed": 4, resolving: 3, pending: 2, merged: 1, "in-sync": 0 };
 
 /** The most urgent of several edge states; undefined for none. */
 export function worstSync(states: readonly SyncState[]): SyncState | undefined {
 	return states.reduce<SyncState | undefined>((worst, s) => (worst === undefined || SYNC_SEVERITY[s] > SYNC_SEVERITY[worst] ? s : worst), undefined);
 }
 
-export const SYNC_LABEL: Record<SyncState, string> = { "in-sync": "In sync", pending: "Parent change pending", merged: "Parent change merged", conflict: "Merge conflict", "upstream-changed": "Upstream changed" };
+export const SYNC_LABEL: Record<SyncState, string> = { "in-sync": "In sync", pending: "Parent change pending", merged: "Parent change merged", resolving: "Resolving merge", conflict: "Merge conflict", "upstream-changed": "Upstream changed" };
 
 /** Whether "Re-run with parent changes" applies: a finished child whose parent moved on. */
 export function canRerunWithParent(c: BoardCard): boolean {

@@ -9,7 +9,7 @@ import type { PermissionMode } from "./permissions";
 export type SessionStatus = "starting" | "idle" | "working" | "waiting" | "stopped";
 
 /** How a child task's worktree stands against a parent's changes (GRAPH-PROPAGATION.md rule 7); one per graph edge. */
-export type SyncState = "in-sync" | "pending" | "merged" | "conflict" | "upstream-changed";
+export type SyncState = "in-sync" | "pending" | "merged" | "resolving" | "conflict" | "upstream-changed";
 
 export interface SessionMeta {
 	id: string;

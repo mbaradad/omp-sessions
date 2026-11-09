@@ -163,7 +163,7 @@ input {
 .prio-low { color: var(--c-gray); }
 .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-badge-background); flex-shrink: 0; }
 .pinned { color: var(--c-gray); display: inline-flex; }
-.card-meta { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--vscode-descriptionForeground); }
+.card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px; color: var(--vscode-descriptionForeground); }
 .project { display: inline-flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill {
 	display: inline-flex;
@@ -178,7 +178,7 @@ input {
 .pill.working { background: transparent; color: var(--c-blue); border: 1px solid var(--c-blue); }
 .pill.sync { font-size: 0.85em; }
 .pill.sync-conflict { background: transparent; color: var(--c-red, var(--vscode-errorForeground)); border: 1px solid currentColor; }
-.pill.sync-upstream-changed, .pill.sync-pending { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
+.pill.sync-upstream-changed, .pill.sync-pending, .pill.sync-resolving { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.sync-merged { background: transparent; color: var(--c-green, var(--vscode-descriptionForeground)); border: 1px solid currentColor; }
 .pill.waiting, .pill.queued { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.idle { background: transparent; color: var(--c-green); border: 1px solid var(--c-green); }

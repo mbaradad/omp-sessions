@@ -95,12 +95,12 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			for (const id of msg.ids) await vscode.commands.executeCommand("omp.resumeSession", id);
 			break;
 		case "rerunWithParent":
-			// The planner owns propagation (GRAPH-PROPAGATION.md); the Tasks view registers the command that asks it.
 			for (const id of msg.ids) {
 				try {
-					await vscode.commands.executeCommand("omp.tasks.rerunWithParentChanges", id);
-				} catch {
-					void vscode.window.showWarningMessage("Re-running with parent changes needs the planner (omp.tasks.rerunWithParentChanges is not available).");
+					const n = await api.sessions.rerunWithParentChanges(id);
+					if (n === 0) void vscode.window.showInformationMessage(`“${api.sessions.get(id)?.title ?? id}” has no parent changes to re-run with.`);
+				} catch (err) {
+					void vscode.window.showWarningMessage(`Could not re-run with parent changes: ${err instanceof Error ? err.message : String(err)}`);
 					break;
 				}
 			}

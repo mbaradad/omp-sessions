@@ -144,6 +144,35 @@ describe("AO views", () => {
 		await vscode.commands.executeCommand("omp.sessions.focus");
 	});
 
+	it("parent-change propagation: a conflicted edge is needs-input (tree, board column); upstream-changed offers Re-run", async () => {
+		// The planner's plan is faked here (the real engine is the planner slice's); everything else is the extension.
+		const lane = { id, autoRun: true, createdAt: 1, pending: 0, running: 0, done: 1, failed: 0, total: 1 };
+		const task = (sync: "conflict" | "upstream-changed") => ({ id: "t1", title: "child", subtasks: [], status: "done", createdAt: 1, state: "done", lane: id, after: ["p1"], sync: { p1: { state: sync, at: 1 } } });
+		const edits: unknown[] = [];
+		let plan: unknown = { rev: 1, lanes: [lane], tasks: [task("conflict")], recurring: [], status: {} };
+		const changed = new vscode.EventEmitter<void>();
+		const sub = api.sessions.usePlan({ get plan() { return plan as never; }, onDidChange: changed.event, edit: async ops => void edits.push(...ops) });
+		try {
+			await waitFor("conflict shown as needs-input", () => meta()?.status === "waiting" && meta()?.queue?.sync?.state === "conflict", 10_000);
+			await vscode.commands.executeCommand("omp.board");
+			await vscode.commands.executeCommand("workbench.action.maximizeEditorHideSidebar");
+			await settle(3000);
+			shot("4b-board-conflict");
+			plan = { rev: 2, lanes: [lane], tasks: [task("upstream-changed")], recurring: [], status: {} };
+			changed.fire();
+			await waitFor("back to idle with upstream-changed", () => meta()?.status === "idle" && meta()?.queue?.sync?.state === "upstream-changed", 10_000);
+			await settle(2000);
+			shot("4c-board-upstream-changed");
+			assert.equal(await api.sessions.rerunWithParentChanges(id), 1);
+			assert.deepEqual(edits, [{ op: "requeue", id: "t1" }]);
+		} finally {
+			sub.dispose();
+			changed.dispose();
+			await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+			await vscode.commands.executeCommand("omp.sessions.focus");
+		}
+	});
+
 	it("stop (exit-agent) and resume (resume-agent) keep the session", async () => {
 		await vscode.commands.executeCommand("omp.stopSession", id);
 		await waitFor("stopped", () => meta()?.status === "stopped", 60_000);
