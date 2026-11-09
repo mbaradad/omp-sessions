@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSessionView } from "../ao/client";
 import { type AoAgentState, type AoPermissionMode, type AoPlannedState, type AoReportQueue, type AoSessionModel, type AoSessionReport, SETTLED_STATES, planModeOf, sessionModel, sessionReport } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
-import type { LaneSummary } from "./plan";
+import type { GraphEdge, LaneSummary } from "./plan";
 import { oneLine } from "./term";
 
 /** Board column of a session (`board`, `ls --json`); `interrupted` sessions sit under `stopped` here. */
@@ -242,7 +242,7 @@ export function queueSummary(s: Session): AoReportQueue {
  * `show`/`wait --json`: src/ao's report (project and branch included), plus the completed marker
  * (PARKED §5: `completed`, `completedAt?`) and why queued work is held (`waitReason`).
  */
-export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: NonNullable<LaneSummary["upstream"]> };
+export type CliReport = AoSessionReport & { completed: boolean; completedAt?: number; waitReason?: string; waitUntil?: number; upstream?: GraphEdge[]; upstreamState?: string };
 
 /**
  * `live`: what only the running agent or the workspace can say: the permission mode with omp's live
@@ -254,7 +254,11 @@ export function reportOf(s: Session, live: { mode?: AoPermissionMode; changedFil
 	if (s.lane?.completed) report.completedAt = s.lane.completed;
 	if (s.lane?.waitReason) report.waitReason = s.lane.waitReason;
 	if (s.lane?.waitUntil !== undefined) report.waitUntil = s.lane.waitUntil;
-	if (s.lane?.upstream) report.upstream = s.lane.upstream;
+	if (s.lane?.upstream) {
+		// The edges where this session is the child (full objects, as `plan status` prints them) and the worst of their states.
+		report.upstream = s.lane.upstream.edges;
+		report.upstreamState = s.lane.upstream.state;
+	}
 	return report;
 }
 
@@ -296,7 +300,7 @@ export function infoJson(s: Session, order: number) {
 		...(report.completedAt && { completedAt: report.completedAt }),
 		...(report.waitReason && { waitReason: report.waitReason }),
 		...(report.waitUntil !== undefined && { waitUntil: report.waitUntil }),
-		...(report.upstream && { upstream: report.upstream }),
+		...(report.upstream && { upstream: report.upstream, upstreamState: report.upstreamState }),
 	};
 }
 

@@ -393,7 +393,7 @@ function printReport(r: CliReport): void {
 		process.stdout.write(c.dim(`answer: omp-sessions answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
 	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
-	if (r.upstream && r.upstream.state !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstream.state] ?? c.dim)(`upstream ${r.upstream.state}`)} ${c.dim(r.upstream.edges.map(e => `${e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstream.state === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: omp-sessions plan sync ${r.id} --rerun`) : ""}\n`);
+	if (r.upstream?.length && r.upstreamState && r.upstreamState !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstreamState] ?? c.dim)(`upstream ${r.upstreamState}`)} ${c.dim(r.upstream.map(e => `${e.parentSession ?? e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstreamState === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: omp-sessions plan sync ${r.id} --rerun`) : ""}\n`);
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
 }
@@ -1035,7 +1035,16 @@ async function cmdPlan(args: Args): Promise<number> {
 	const json = flag(args, "json");
 	const p = sub === "status" && !(await plannerIfRunning()) ? undefined : await planner();
 	if (sub === "status") {
-		const edges = p ? (ref ? edgesOfRef(await p.call("plan", {}), ref) : graphEdges(await p.call("plan", {}))) : [];
+		let edges: GraphEdge[] = [];
+		if (p) {
+			const plan = await p.call("plan", {});
+			if (!ref) edges = graphEdges(plan);
+			else {
+				// A task id, a session (or its lane), or title words and `.` as everywhere else.
+				const named = tasksOfRef(plan, ref).length ? ref : (await findSession(ref)).id;
+				edges = edgesOfRef(plan, named);
+			}
+		}
 		if (json) process.stdout.write(`${JSON.stringify({ edges })}\n`);
 		else printEdges(edges);
 		return 0;
@@ -1057,7 +1066,9 @@ async function cmdPlan(args: Args): Promise<number> {
 		plan = await p.call("plan", {});
 	}
 	const edges = graphEdges(plan).filter(e => mine.has(e.child) || mine.has(e.parent));
-	if (json) process.stdout.write(`${JSON.stringify({ id: ref, synced: targets, rerun: [...new Set(rerun)], edges })}\n`);
+	// `task`: the one task the ref named (the ref itself when a session ran several); `rerun`: a re-run was started, for `rerunTasks`.
+	const rerunTasks = [...new Set(rerun)];
+	if (json) process.stdout.write(`${JSON.stringify({ task: tasks.length === 1 ? tasks[0].id : ref, id: ref, synced: targets, rerun: rerunTasks.length > 0, rerunTasks, edges })}\n`);
 	else {
 		process.stdout.write(`${c.green("synced")} ${targets.join(", ")}${rerun.length ? c.dim(` · re-running ${[...new Set(rerun)].join(", ")}`) : ""}\n`);
 		printEdges(edges);

@@ -265,9 +265,12 @@ test("cli: plan status lists the graph's edges with their sync state; plan sync 
 	assert.equal(status.status, 0, status.stderr);
 	const mine = json<{ edges: Edge[] }>("plan", "status", "--json", "--", b.data.id).data.edges;
 	for (const e of mine) assert.ok([e.parentSession, e.childSession].includes(b.data.id));
-	const synced = json<{ synced: string[]; edges: Edge[] }>("plan", "sync", "--json", "--", b.data.id);
+	const synced = json<{ task: string; synced: string[]; rerun: boolean; edges: Edge[] }>("plan", "sync", "--json", "--", b.data.id);
 	assert.equal(synced.status, 0, synced.stderr);
 	assert.equal(synced.data.synced.length, 1, "B's one parent");
+	assert.equal(typeof synced.data.task, "string");
+	assert.equal(synced.data.rerun, false, "no --rerun");
+	assert.equal(cli("plan", "status", "--", "no-such-thing").status, 1);
 	assert.equal(cli("plan", "sync", "--", "no-such-thing").status, 1);
 	assert.equal(cli("plan", "bogus").status, 2);
 });
