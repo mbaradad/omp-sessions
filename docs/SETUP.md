@@ -59,13 +59,17 @@ A repository without a remote needs a default branch for AO: `git remote set-hea
 
 ### Idle sessions and chat hibernation
 
-A finished session keeps its omp process (and its memory) until AO hibernates it. AO does that only when its chat-hibernation setting is on, and a daemon started without AO's desktop app starts with it **off**, so idle omp processes stay up. To turn it on:
+A finished session keeps its omp process (and its memory) until AO hibernates it. AO does that only when its chat-hibernation setting is on, and a daemon started without AO's desktop app has it **off**. AO does not save the flag: it resets to off every time the daemon starts. To have Switchyard turn it on and keep it on:
+
+```sh
+switchyard config set hibernation on
+```
+
+Switchyard then sets it after it starts the AO daemon, and again whenever its planner reconnects to a restarted one. About 100 seconds after a turn settles, an unwatched chat stops its omp process and keeps its transcript; the next message wakes it (the first turn after a wake takes about 10 seconds). It is a daemon-wide AO setting that also affects your other AO sessions, so Switchyard never changes it unless you opt in with that command; `switchyard status` shows whether it is on. Without Switchyard, set it by hand after every daemon start:
 
 ```sh
 curl -X PATCH http://127.0.0.1:$(jq -r .port ~/.ao/running.json)/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'
 ```
-
-About 100 seconds after a turn settles, an unwatched chat then stops its omp process and keeps its transcript; the next message wakes it (the first turn after a wake takes about 10 seconds). It is a daemon-wide AO setting that also affects your other AO sessions, so Switchyard does not change it for you; `switchyard status` tells you when it is off. Whether the setting survives a restart of the daemon is not verified: check `GET /api/v1/settings` (`chatHibernationEnabled`) after one.
 
 ### Extra omp arguments
 
