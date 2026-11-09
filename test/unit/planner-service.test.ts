@@ -104,3 +104,64 @@ test("abort and timeout interrupt the AO turn; abort pauses, a timeout fails", a
 	assert.match(byTitle(p, "slow").summary ?? "", /Timed out/);
 	p.stop();
 });
+
+test("a limit omp gave up retrying arrives as a completed turn: the task is held until the reset, not done (G35)", async t => {
+	const ao = new FakeAo();
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	const reset = new Date(Date.now() + 2 * 3_600_000).toISOString();
+	p.edit([
+		{ op: "add", task: { title: "limited", options: { model: "anthropic/claude-x", retries: 2 } } },
+		{ op: "add", task: { title: "talks about limits" } },
+	]);
+	const s1 = await until("limited sent", () => byTitle(p, "limited").run?.phase === "sent" && byTitle(p, "limited").run?.session);
+	ao.finishTurn(s1, "completed", `429 You have reached your usage limit. Your limit resets at ${reset}. Please try again in 2 hours.`);
+	await until("held", () => byTitle(p, "limited").status === "pending" && p.state.limits.anthropic);
+	assert.equal(byTitle(p, "limited").attempts, undefined);
+	assert.equal(p.state.limits.anthropic.until, Date.parse(reset));
+	assert.equal(p.view().tasks.find(x => x.title === "limited")?.state, "held");
+	// A normal answer that merely mentions rate limits is a normal answer.
+	const s2 = await until("other sent", () => byTitle(p, "talks about limits").run?.phase === "sent" && byTitle(p, "talks about limits").run?.session);
+	ao.finishTurn(s2, "completed", "I added rate limiting to the API: a token bucket per client, 100 requests a minute; clients above it get 429 and a Retry-After header. Tests cover the bucket refill.");
+	await until("done", () => byTitle(p, "talks about limits").status === "done");
+});
+
+test("a model AO doesn't list fails the dispatch before any session exists (G36); sessions start in bypass-permissions unless told otherwise", async t => {
+	const ao = new FakeAo();
+	ao.modelIds = ["anthropic/claude-x"];
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "typo", options: { model: "anthropic/claude-xx" } } }, { op: "add", task: { title: "asks", options: { approvalMode: "default" } } }, { op: "add", task: { title: "plain" } }]);
+	await until("typo failed", () => byTitle(p, "typo").status === "failed");
+	assert.match(byTitle(p, "typo").summary ?? "", /doesn't know the model "anthropic\/claude-xx"/);
+	await until("others sent", () => byTitle(p, "asks").run?.phase === "sent" && byTitle(p, "plain").run?.phase === "sent");
+	assert.equal(ao.created, 2);
+	assert.equal(ao.sessions.get(byTitle(p, "asks").run?.session as string)?.spawnBody.approvalMode, "default");
+	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.approvalMode, "bypass-permissions");
+	assert.equal(ao.sessions.get(byTitle(p, "plain").run?.session as string)?.spawnBody.prompt, undefined, "the task goes out as a message, not with the spawn");
+});
+
+test("a chat host that dies mid-turn leaves the task interrupted; running it again resumes the agent and continues the session (G39)", async t => {
+	const file = tempPlan(t);
+	const ao = new FakeAo();
+	let p = start(file, ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "lane.add", id: "l_00000000dd" }, { op: "add", task: { title: "long", lane: "l_00000000dd" } }]);
+	const s = await until("sent", () => byTitle(p, "long").run?.phase === "sent" && byTitle(p, "long").run?.session);
+	ao.killHost(s);
+	await until("interrupted", () => byTitle(p, "long").interrupted);
+	assert.match(byTitle(p, "long").summary ?? "", /host died/);
+	assert.equal(p.state.lanes[0].autoRun, false);
+	// Across a planner restart it stays put: nothing is re-sent unattended.
+	p.stop();
+	p = start(file, ao);
+	t.after(() => p.stop());
+	await sleep(300);
+	assert.equal(byTitle(p, "long").status, "pending");
+	assert.deepEqual(ao.resumed, []);
+	p.edit([{ op: "run", id: byTitle(p, "long").id }]);
+	await until("re-sent", () => byTitle(p, "long").run?.phase === "sent");
+	assert.deepEqual(ao.resumed, [s]);
+	assert.equal(ao.created, 1);
+	assert.equal(byTitle(p, "long").run?.session, s);
+});

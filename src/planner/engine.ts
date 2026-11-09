@@ -91,7 +91,9 @@ export function normalizeOptions(raw: unknown): TaskOptions | undefined {
 	const out: TaskOptions = {};
 	const model = typeof r.model === "string" ? r.model.trim() : "";
 	if (/^[^/\s]+\/\S+$/.test(model)) out.model = model;
-	if (typeof r.thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(r.thinking)) out.thinking = r.thinking;
+	// Old queues and clients say `minimal`; omp's lowest named level above off is `low`.
+	const thinking = r.thinking === "minimal" ? "low" : r.thinking;
+	if (typeof thinking === "string" && (THINKING_LEVELS as readonly string[]).includes(thinking)) out.thinking = thinking;
 	if (r.freshContext === true) out.freshContext = true;
 	const retries = finite(r.retries);
 	if (retries !== undefined && retries >= 1) out.retries = Math.min(MAX_RETRIES, Math.trunc(retries));
@@ -163,7 +165,6 @@ function normalizeRun(raw: unknown): TaskRun | undefined {
 	if (typeof r.provider === "string") run.provider = r.provider;
 	const spawn = rec(r.spawn);
 	if (spawn) run.spawn = spawn;
-	if (r.sendAfterSpawn === true) run.sendAfterSpawn = true;
 	if (typeof r.repo === "string") run.repo = r.repo;
 	for (const k of ["settings", "restore"] as const) {
 		const v = rec(r[k]);

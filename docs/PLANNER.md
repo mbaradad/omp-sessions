@@ -40,7 +40,7 @@ type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped";   // sa
 
 interface TaskOptions {               // superset of QueueTaskOptions
   model?: string;                     // "provider/modelId"
-  thinking?: string;                  // off|minimal|low|medium|high|xhigh
+  thinking?: string;                  // omp's levels: off|auto|low|medium|high|xhigh|max (`minimal` is read as `low`)
   freshContext?: boolean;             // new AO session instead of continuing the lane's session
   retries?: number;                   // automatic retries after failure/timeout (backoff 10s,20s,…≤5m)
   timeoutMinutes?: number;            // interrupt the turn → failed (or retried)
@@ -142,9 +142,20 @@ interface PlannerConfig {
   share a checkout (`auto` and `always` behave the same). `always` outside git fails the dispatch;
   `never` in a git folder fails it too (AO can't run in the checkout itself). Outside git → standalone
   session (AO scratch dir).
-- **Approvals**: a task whose agent asks for an approval or an answer stays `running` (AO shows the
-  session as needing input) until a person answers through AO. Unattended plans should set
-  `approvalMode` (task, lane `defaults` or planner `defaults`), e.g. `bypass-permissions`.
+- **Approvals**: sessions the planner spawns start in `bypass-permissions` (MAPPING D11: an unattended
+  task can't wait for an approval) unless `approvalMode` says otherwise (task, lane `defaults` or planner
+  `defaults`). A task whose agent does ask (approval or question) stays `running`, and AO shows the session
+  as needing input until a person answers through AO.
+- **Dispatch sequence** (MAPPING D11, idempotent step by step; each step is written to the plan first):
+  check the model against AO's list (unknown → the task fails at once, no session is left behind), spawn
+  with no prompt (`clientRequestId`), set `thinking` through the session's config options, send the task
+  as a message (`clientMessageId`). A continued session first gets `resume-agent` when it reads `exited`,
+  and model/thinking are put back after the turn. A `CHAT_CONTROLLER_NOT_READY` on send resumes the agent
+  and sends once more.
+- **Limit replies and dead hosts**: omp reports a provider limit it gave up retrying as a *completed* turn
+  whose reply is the error (G35); a short reply that opens like a provider limit error holds the provider
+  (until the stated reset, else backoff) and the task goes back to pending without using an attempt. A turn
+  still `running` in a session that reads `exited` (host died, G39) ends the run as `interrupted`.
 
 ## Operations
 
@@ -266,6 +277,8 @@ disables the omp poll.
 - 2026-11-09: draft v1.
 - 2026-11-09: implemented on `ao/planner`. `status.usage` is `usageWindows`; worktree and approval
   rules spelled out; usage windows come from `omp usage`, not AO.
+- 2026-11-09: dispatch follows MAPPING D11 (spawn without prompt, bypass-permissions default, model checked
+  first); thinking levels are omp's (G42); limit replies (G35) and dead hosts (G39) handled.
 - 2026-11-09: Switchyard identity (state in `$SWITCHYARD_HOME/planner`, `switchyard-planner.service`,
   `SWITCHYARD_PLANNER_*` env). New: Graph propagation (`sync` op, `Task.git/sync/followUp/turn`), a free
   task that runs again continues its own session.
