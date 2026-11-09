@@ -87,7 +87,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 		if (!rl) return;
 		clearTimeout(promptTimer);
 		promptTimer = setTimeout(() => {
-			if (!rl || follower.isMidLine()) return;
+			if (!rl || promptVisible || follower.isMidLine()) return;
 			rl.setPrompt(dialog ? c.magenta("? ") : c.cyan("› "));
 			rl.prompt(true);
 			promptVisible = true;

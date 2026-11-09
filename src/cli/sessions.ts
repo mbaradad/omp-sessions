@@ -4,11 +4,13 @@
 // print, and resolves what a user typed to one session.
 import * as path from "node:path";
 import { AoClient, AoError, type AoConversation, type AoProject, type AoSchemas, type AoSessionView, unwrap } from "../ao/client";
-import { type AoAgentState, type AoPlannedState, type AoQuestion, type AoSessionModel, sessionModel } from "../ao/model";
+import { type AoAgentState, type AoPlannedState, type AoQuestion, type AoSessionModel, SETTLED_STATES, sessionModel } from "../ao/model";
 import { type OrgData, type Priority, readOrgFile, schedulingOrder } from "../shared/organize";
 import type { PermissionMode } from "../shared/permissions";
-import type { Column } from "../shared/server-protocol";
 import type { LaneSummary } from "./plan";
+
+/** Board column of a session (`board`, `ls --json`); `interrupted` sessions sit under `stopped` here. */
+export type Column = "waiting" | "scheduled" | "working" | "input" | "idle" | "stopped";
 
 export type AgentState = AoAgentState;
 
@@ -211,6 +213,38 @@ export async function loadSession(client: AoClient, id: string, opts: LoadOption
 	}
 	const projects = new Map((await client.listProjects()).map(p => [p.id, p]));
 	return buildSession(client, view, projects, opts);
+}
+
+/** `ls` filters. */
+export interface ListFilter {
+	/** An AO project by id or name, or a folder path: the session's project folder or its own folder. */
+	project?: string;
+	/** Absolute folder: sessions working in it or below it, or whose project is. */
+	cwd?: string;
+	/** Group name (case-insensitive). */
+	group?: string;
+	/** Every one of these tags. */
+	tags?: string[];
+	/** A `show` state matches the state only; other words the board column or the old status word. */
+	state?: string;
+}
+
+export function filterSessions(sessions: readonly Session[], f: ListFilter): Session[] {
+	const group = f.group?.toLowerCase();
+	const state = f.state?.toLowerCase().replace("-", "_");
+	const isState = state !== undefined && Object.hasOwn(SETTLED_STATES, state);
+	return sessions.filter(s => {
+		if (f.project) {
+			const want = f.project;
+			const named = path.isAbsolute(want) ? [s.project?.path, s.cwd].some(p => p && path.resolve(p) === path.resolve(want)) : s.project?.id === want || s.project?.name === want || (!!s.cwd && path.basename(s.cwd) === want);
+			if (!named) return false;
+		}
+		if (f.cwd && !((s.cwd && inside(s.cwd, f.cwd)) || (s.project && inside(s.project.path, f.cwd)))) return false;
+		if (group !== undefined && s.group?.toLowerCase() !== group) return false;
+		if (f.tags?.length && !f.tags.every(t => s.tags.includes(t))) return false;
+		if (state && (isState ? s.state !== state : columnOf(s.state) !== state && legacyStatus(s) !== state)) return false;
+		return true;
+	});
 }
 
 /**

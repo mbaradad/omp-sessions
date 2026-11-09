@@ -18,7 +18,7 @@ import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } 
 import { attach } from "./attach";
 import { type LaneSummary, type Planner, type PlannerQueue, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
 import { itemLines, timeline } from "./render";
-import { type AgentState, APPROVAL_OF, type Session, type SessionReport, ao, aoIfRunning, changedFileCount, columnOf, infoJson, loadSession, loadSessions, modeOf, ompModeOption, orderOf, resolveSession, sessionReport, workspacePath } from "./sessions";
+import { type AgentState, APPROVAL_OF, type ListFilter, type Session, type SessionReport, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, loadSession, loadSessions, modeOf, ompModeOption, orderOf, resolveSession, sessionReport, workspacePath } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
 
 function readVersion(): string {
@@ -139,41 +139,19 @@ function printTable(sessions: Session[]): void {
 	}
 }
 
-/** `--state`: a show state matches `state` exactly; other words match the board column or the old status word. */
-function matchesState(s: Session, want: string): boolean {
-	const state = want.toLowerCase().replace("-", "_");
-	if (Object.hasOwn(SETTLED_STATES, state)) return s.state === state;
-	return columnOf(s.state) === state || (state === "waiting" && s.state === "needs_input");
-}
-
-function inside(child: string, parent: string): boolean {
-	const rel = path.relative(parent, child);
-	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
 // ---------- commands ----------
 
 async function cmdList(args: Args): Promise<void> {
 	const all = flag(args, "all");
 	const cwdArg = value(args, "cwd");
 	const cwd = cwdArg === undefined ? undefined : path.resolve(cwdArg);
-	const project = value(args, "project");
-	const group = value(args, "group")?.toLowerCase();
-	const tags = args.multi.get("tag");
-	const state = value(args, "state");
-	const filtered = Boolean(project || cwd || group || tags?.length || state);
-	const sessions = (await allSessions()).filter(s => {
-		if (!all && s.archived) return false;
-		if (project) {
-			const named = path.isAbsolute(project) ? [s.project?.path, s.cwd].some(p => p && path.resolve(p) === path.resolve(project)) : s.project?.id === project || s.project?.name === project || projectName(s) === project;
-			if (!named) return false;
-		}
-		if (cwd && !((s.cwd && inside(s.cwd, cwd)) || (s.project && inside(s.project.path, cwd)))) return false;
-		if (group !== undefined && s.group?.toLowerCase() !== group) return false;
-		if (tags?.length && !tags.every(t => s.tags.includes(t))) return false;
-		if (state && !matchesState(s, state)) return false;
-		return true;
-	});
+	const filter: ListFilter = { project: value(args, "project"), cwd, group: value(args, "group"), tags: args.multi.get("tag"), state: value(args, "state") };
+	const state = filter.state;
+	const filtered = Boolean(filter.project || cwd || filter.group || filter.tags?.length || state);
+	const sessions = filterSessions(
+		(await allSessions()).filter(s => all || !s.archived),
+		filter,
+	);
 	// Finished sessions are hidden unless --all or --state; ones with work ahead (queued, scheduled, interrupted) stay.
 	const shown = all || state ? sessions : sessions.filter(s => s.state !== "stopped");
 	if (flag(args, "json")) {
@@ -742,7 +720,8 @@ async function cmdRemove(args: Args): Promise<number> {
 	for (const s of sessions) {
 		// AO deletes only terminated sessions; kill releases the workspace (a dirty worktree is kept on disk).
 		if (!s.model.view.isTerminated) await client.killSession(s.id);
-		await unwrap(client.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId: s.id } } }));
+		// `cleanup`: release a workspace kill left on disk; AO refuses (and says so) when it holds uncommitted work.
+		await unwrap(client.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId: s.id }, query: { cleanup: true } } }));
 		if (p && s.lane) await p.call("edit", { ops: [{ op: "lane.remove", id: s.id }] }).catch(() => undefined);
 		const org = new OrganizeStore();
 		if (org.data.sessions[s.id]) org.cleanup(id => id !== s.id);

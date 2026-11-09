@@ -13,8 +13,12 @@ import { readSwitchyardConfig } from "../shared/switchyard-config";
 export type QueueOp = PlannerQueueOp;
 export type PlannerQueue = QueueView;
 
-/** `out/planner.js`, next to `out/cli.js`. */
-const PLANNER_SCRIPT = path.join(__dirname, "planner.js");
+/** `out/planner.js`, next to `out/cli.js` (resolved on use: `__dirname` exists only in the CommonJS bundle). */
+function plannerScript(): string {
+	const script = path.join(__dirname, "planner.js");
+	if (!fs.existsSync(script)) throw new Error(`the planner is missing next to the CLI (${script}); reinstall omp-sessions`);
+	return script;
+}
 
 export interface Planner {
 	call<K extends PlannerOpName>(op: K, args: PlannerOps[K]["args"]): Promise<PlannerOps[K]["result"]>;
@@ -42,13 +46,13 @@ export async function connectPlanner(opts: { start: boolean }): Promise<Planner 
 	const running = await PlannerClient.connect();
 	if (running) return wrap(running);
 	if (!opts.start) return undefined;
-	if (!fs.existsSync(PLANNER_SCRIPT)) throw new Error(`the planner is missing next to the CLI (${PLANNER_SCRIPT}); reinstall omp-sessions`);
+	const script = plannerScript();
 	const vscodeRuntime = !!process.env.ELECTRON_RUN_AS_NODE || !!process.versions.electron;
 	if (!installedUnit() && readSwitchyardConfig().service !== "off" && !vscodeRuntime) {
-		const r = installService(PLANNER_SCRIPT);
+		const r = installService(script);
 		if (r) process.stderr.write(`omp-sessions: installed the planner as a ${r.kind} user service (${r.file})${r.ok ? "" : "; it couldn't be started"}. Opt out: omp-sessions server uninstall && omp-sessions config set service off\n`);
 	}
-	const client = await ensurePlanner(PLANNER_SCRIPT);
+	const client = await ensurePlanner(script);
 	return client ? wrap(client) : undefined;
 }
 
@@ -139,10 +143,10 @@ export function plannerService() {
 			return { kind, installed: !!unit, ...(unit && { file: unit.file }), autoInstall: readSwitchyardConfig().service !== "off" };
 		},
 		async install(): Promise<{ ok: boolean; file: string; hint: string }> {
-			if (!fs.existsSync(PLANNER_SCRIPT)) throw new Error(`the planner is missing next to the CLI (${PLANNER_SCRIPT}); reinstall omp-sessions`);
+			const script = plannerScript();
 			// A planner started by hand holds the socket: the service's own one must take over.
 			await stopPlanner();
-			const r = installService(PLANNER_SCRIPT);
+			const r = installService(script);
 			if (!r) throw new Error("server install supports Linux (systemd) and macOS (launchd); on Windows the planner starts on demand");
 			return { ok: r.ok, file: r.file, hint: r.kind === "systemd" ? "systemctl --user enable --now omp-sessions-planner.service" : "launchctl bootstrap" };
 		},
