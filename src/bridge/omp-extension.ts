@@ -1,9 +1,10 @@
-// `out/switchyard-bridge.js`: omp extension that gives every omp session the VS Code bridge tools
-// (the same TOOL_DEFS `out/mcp.js` serves). Agent Orchestrator runs omp as `omp acp`, and ACP
-// sessions ignore on-disk MCP config (their MCP servers come from the ACP client), so the tools
-// are registered natively instead. The VS Code extension copies this file to
-// `<omp agent dir>/extensions/switchyard-bridge/index.js` while `omp.vscodeTools` is on.
+// Module of the Switchyard omp extension package (`out/omp-extension/bridge.js`, see
+// src/omp-extension/bridge.ts): gives every omp session the VS Code bridge tools (the same TOOL_DEFS
+// `out/mcp.js` serves). Agent Orchestrator runs omp as `omp acp`, and ACP sessions ignore on-disk MCP
+// config (their MCP servers come from the ACP client), so the tools are registered natively instead.
 // Names stay `mcp__vscode_<tool>`, what omp called them when they came from the MCP server.
+// `omp.vscodeTools` off writes the bridge's `disabled` flag: omp processes started meanwhile register
+// no tools, and running ones refuse the call, so nothing needs uninstalling.
 import * as fs from "node:fs";
 import { bridgeDisabledFlag, MCP_SERVER_NAME, TOOL_DEFS } from "../shared/bridge";
 import { BridgeCaller } from "./call";
@@ -39,6 +40,7 @@ export default function ompVscodeBridge(pi: OmpExtensionApi): void {
 			mcpToolName: def.name,
 			mcpReadOnlyHint: true,
 			async execute(_id, params, _signal, _onUpdate, ctx) {
+				if (fs.existsSync(bridgeDisabledFlag())) throw new Error("The VS Code tools are turned off (setting omp.vscodeTools). Use omp's built-in tools instead.");
 				const cwd = ctx?.cwd || process.cwd();
 				let caller = callers.get(cwd);
 				if (!caller) {

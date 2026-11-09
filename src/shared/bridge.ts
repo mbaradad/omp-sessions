@@ -1,6 +1,6 @@
 // VS Code bridge: lets omp sessions use VS Code's language features.
-//   omp ──omp extension (out/switchyard-bridge.js)──┐
-//   MCP client ──stdio MCP (out/mcp.js)─────────────┴──JSONL socket──> extension (one socket per VS Code window)
+//   omp ──omp extension (module bridge.js of the Switchyard package)──┐
+//   MCP client ──stdio MCP (out/mcp.js)───────────────────────────────┴──JSONL socket──> extension (one socket per VS Code window)
 // Each window registers itself in `<stateRoot>/bridge/<pid>.json` (0600) next to its socket; the
 // caller picks the window whose workspace folders contain the session cwd and authenticates
 // with the per-window token from that file. Everything here is node-only and VS Code-free.
@@ -9,7 +9,6 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ompPaths } from "./omp-paths";
 import { stateRoot } from "./protocol";
 import { privateSocketDir } from "./server-protocol";
 
@@ -130,37 +129,6 @@ export function pickWindows(entries: BridgeEntry[], cwd: string): WindowChoice[]
 	});
 	scored.sort((a, b) => b.score - a.score || b.entry.focusedAt - a.entry.focusedAt);
 	return scored.map(s => ({ entry: s.entry, matched: s.score > 0 }));
-}
-
-// ---------- omp side: the omp extension that registers the tools in every omp session ----------
-
-/** Folder of the bridge's omp extension: `<omp agent dir>/extensions/switchyard-bridge`. */
-export function bridgeExtensionDir(agentDir = ompPaths().agentDir): string {
-	return path.join(agentDir, "extensions", "switchyard-bridge");
-}
-
-/**
- * Installs (or refreshes) the bundled omp extension `out/switchyard-bridge.js` as `index.js` of
- * {@link bridgeExtensionDir}, so omp sessions, including the `omp acp` ones Agent Orchestrator
- * runs (which ignore on-disk MCP config), get the VS Code tools. Rewrites only on change; true
- * when it wrote. omp loads extensions at startup: running sessions keep what they had.
- */
-export function installBridgeExtension(bundle: string, dir = bridgeExtensionDir()): boolean {
-	const code = fs.readFileSync(bundle, "utf8");
-	const target = path.join(dir, "index.js");
-	try {
-		if (fs.readFileSync(target, "utf8") === code) return false;
-	} catch {
-		/* not installed yet */
-	}
-	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(`${target}.tmp`, code);
-	fs.renameSync(`${target}.tmp`, target);
-	return true;
-}
-
-export function removeBridgeExtension(dir = bridgeExtensionDir()): void {
-	fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // ---------- wire protocol (MCP server <-> extension), JSONL ----------
