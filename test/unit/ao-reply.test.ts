@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AoClient, type AoConversation, type AoEventStreamOptions, type AoMessage, type AoSessionView, type AoTurn, type AoWorkspaceManifest } from "../../src/ao/client";
 import { AoSessionWatcher, replyPending, sessionModel, turnReply } from "../../src/ao/model";
+import { virtualClock } from "./ao-clock";
 
 const T = "2026-11-09T15:00:00Z";
 const turn = (id: string, state: AoTurn["state"]): AoTurn => ({ id, state, requestedAt: T });
@@ -74,28 +75,36 @@ test("turnReply: a completed turn's reply is final only once its last assistant 
 });
 
 test("AoClient.awaitTurnReply: reads until the reply is final, or gives up after the grace period with what there is", async () => {
-	const answers = [
-		conv([turn("t1", "completed")], []),
-		conv([turn("t1", "completed")], [assistant(1, "t1", "HAL", true)]),
-		conv([turn("t1", "completed")], [assistant(1, "t1", "HALF DONE", false)]),
-	];
-	let reads = 0;
-	const fetch = async (): Promise<Response> => new Response(JSON.stringify(answers[Math.min(reads++, answers.length - 1)]), { status: 200, headers: { "content-type": "application/json" } });
-	const ao = new AoClient({ baseUrl: "http://127.0.0.1:1", fetch });
-	assert.deepEqual(await ao.awaitTurnReply("repo-1", "t1", { pollMs: 1 }), { text: "HALF DONE", final: true });
-	assert.equal(reads, 3);
-	// A turn that ends with no assistant text: the wait is bounded, and what there is comes back.
-	reads = 0;
-	answers.length = 0;
-	answers.push(conv([turn("t1", "failed")], []));
-	const started = Date.now();
-	assert.deepEqual(await ao.awaitTurnReply("repo-1", "t1", { graceMs: 60, pollMs: 10 }), { final: false });
-	assert.ok(Date.now() - started >= 60 && Date.now() - started < 1000);
+	const clock = virtualClock();
+	try {
+		const answers = [
+			conv([turn("t1", "completed")], []),
+			conv([turn("t1", "completed")], [assistant(1, "t1", "HAL", true)]),
+			conv([turn("t1", "completed")], [assistant(1, "t1", "HALF DONE", false)]),
+		];
+		let reads = 0;
+		const fetch = async (): Promise<Response> => new Response(JSON.stringify(answers[Math.min(reads++, answers.length - 1)]), { status: 200, headers: { "content-type": "application/json" } });
+		const ao = new AoClient({ baseUrl: "http://127.0.0.1:1", fetch });
+		const polled = ao.awaitTurnReply("repo-1", "t1", { pollMs: 1 });
+		assert.deepEqual(await clock.resolve(polled), { text: "HALF DONE", final: true });
+		assert.equal(reads, 3);
+		// A turn that ends with no assistant text: the wait is bounded, and what there is comes back, but not before the grace period.
+		answers.length = 0;
+		answers.push(conv([turn("t1", "failed")], []));
+		let done = false;
+		const bounded = ao.awaitTurnReply("repo-1", "t1", { graceMs: 60, pollMs: 10 }).then(r => ((done = true), r));
+		await clock.advance(50);
+		assert.equal(done, false, "still inside the grace period");
+		assert.deepEqual(await clock.resolve(bounded), { final: false });
+	} finally {
+		clock.stop();
+	}
 });
 
 test("AoSessionWatcher: a completed turn whose reply is not final is read again, so the model ends with the real reply", async () => {
-	const reads = [conv([turn("t1", "completed")], [assistant(1, "t1", "FIRST", false)])];
-	// The conversation AO answers next: t2 completed, its message not final yet, then final.
+	const clock = virtualClock();
+	const first = conv([turn("t1", "completed")], [assistant(1, "t1", "FIRST", false)]);
+	// The conversation AO answers next: t2 completed, its message not there yet, then streaming, then final.
 	const script = [
 		conv([turn("t1", "completed"), turn("t2", "completed")], [assistant(1, "t1", "FIRST", false)]),
 		conv([turn("t1", "completed"), turn("t2", "completed")], [assistant(1, "t1", "FIRST", false), assistant(2, "t2", "SEC", true)]),
@@ -109,11 +118,12 @@ test("AoSessionWatcher: a completed turn whose reply is not final is read again,
 		events: (options: Pick<AoEventStreamOptions, "onEvent" | "onStatus">) => ((stream = options), { lastEventId: undefined, close: () => undefined }),
 		listSessions: async () => ({ sessions: [view()] }),
 		getSession: async () => view(),
-		getConversation: async () => (count++, stage === 0 ? reads[0] : script[Math.min(stage - 1, script.length - 1)]),
+		getConversation: async () => (count++, stage === 0 ? first : script[stage - 1]),
 		workspacePath: async () => "/wt",
 		workspaceManifest: async () => manifest,
 	};
-	const watcher = new AoSessionWatcher(fake as unknown as AoClient, { debounceMs: 1, settleMs: 20 });
+	// changedFiles off: this is about the reply re-reads; the files' own safety reads (3.4 s later) would also re-fetch the conversation.
+	const watcher = new AoSessionWatcher(fake as unknown as AoClient, { debounceMs: 1, settleMs: 20, changedFiles: false });
 	await watcher.start();
 	try {
 		assert.equal(watcher.get("repo-1")?.reply, "FIRST");
@@ -121,44 +131,53 @@ test("AoSessionWatcher: a completed turn whose reply is not final is read again,
 		// The event for t2's completion; AO's answer is the one with no reply of its own yet. No event follows.
 		stage = 1;
 		stream?.onEvent({ seq: 1, projectId: "repo", sessionId: "repo-1", type: "session_updated", payload: {}, createdAt: T }, 1);
-		const deadline = Date.now() + 2000;
-		while (watcher.get("repo-1")?.reply !== "SECOND" && Date.now() < deadline) {
-			if (stage < 3 && watcher.get("repo-1")?.conversation?.turns.length === 2) stage++;
-			await new Promise(r => setTimeout(r, 10));
-		}
+		await clock.advance(5);
+		assert.equal(watcher.get("repo-1")?.conversation?.turns.length, 2);
+		assert.equal(watcher.get("repo-1")?.reply, "FIRST", "the previous turn's reply, for now");
+		assert.equal(watcher.get("repo-1")?.replyPending, true);
+		// settleMs later the message exists but still streams; then it is final: the model follows with no event.
+		stage = 2;
+		await clock.advance(25);
+		assert.equal(watcher.get("repo-1")?.reply, "SEC");
+		assert.equal(watcher.get("repo-1")?.replyPending, true);
+		stage = 3;
+		await clock.advance(25);
 		assert.equal(watcher.get("repo-1")?.reply, "SECOND");
 		assert.equal(watcher.get("repo-1")?.replyPending, undefined);
 		// Final: no more reads on its account.
 		const settled = count;
-		await new Promise(r => setTimeout(r, 120));
+		await clock.advance(5_000);
 		assert.equal(count, settled);
 	} finally {
 		watcher.close();
+		clock.stop();
 	}
 });
 
 test("AoSessionWatcher: a turn that never gets a reply is re-read a few times, not forever", async () => {
+	const clock = virtualClock();
 	let count = 0;
-	let stream: Pick<AoEventStreamOptions, "onEvent" | "onStatus"> | undefined;
 	const manifest: AoWorkspaceManifest = { degraded: false, refreshing: false, stale: false, truncated: false, sessionId: "repo-1", workspaceVersion: "v", sections: {} as never, summary: { files: 0, additions: 0, deletions: 0 }, files: [] };
 	const fake = {
-		events: (options: Pick<AoEventStreamOptions, "onEvent" | "onStatus">) => ((stream = options), { lastEventId: undefined, close: () => undefined }),
+		events: () => ({ lastEventId: undefined, close: () => undefined }),
 		listSessions: async () => ({ sessions: [view()] }),
 		getSession: async () => view(),
 		getConversation: async () => (count++, conv([turn("t1", "completed")], [])),
 		workspacePath: async () => "/wt",
 		workspaceManifest: async () => manifest,
 	};
-	void stream;
 	const watcher = new AoSessionWatcher(fake as unknown as AoClient, { debounceMs: 1, settleMs: 15 });
 	await watcher.start();
 	try {
-		await new Promise(r => setTimeout(r, 400));
+		await clock.advance(400);
 		// The first read plus four more, then it stops.
 		assert.equal(count, 5);
 		assert.equal(watcher.get("repo-1")?.replyPending, true);
+		await clock.advance(5_000);
+		assert.equal(count, 5, "gave up");
 	} finally {
 		watcher.close();
+		clock.stop();
 	}
 });
 
