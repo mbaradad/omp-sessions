@@ -1,98 +1,138 @@
-# Setting up omp Sessions, Hermes and your phone
+# Setting up Switchyard, Hermes and your phone
 
-omp Sessions works the same whether everything runs on the computer in front of you or on a workstation or server you reach over SSH. This guide covers both, with Hermes Agent and the phone app as optional extras. Pick the arrangement that matches yours; the steps are the same, only *where* they run changes.
-
-![One machine runs omp, the omp-sessions server and Hermes; other devices reach it through VS Code Remote-SSH, Hermes Desktop and Tailscale.](images/setup.png)
+Switchyard works the same whether everything runs on the computer in front of you or on a workstation or server you reach over SSH. This guide covers both, with Hermes Agent and the phone app as optional extras. The steps are the same; only *where* they run changes.
 
 | Arrangement | The machine with the code runs | You work from |
 | --- | --- | --- |
 | **Local**: one computer (Linux or macOS) | everything below | the same computer, plus your phone |
-| **Remote**: a workstation or server | everything below | a laptop (the `omp-sessions` command over SSH, VS Code Remote-SSH, Hermes Desktop in remote mode) and your phone |
+| **Remote**: a workstation or server | everything below | a laptop (the `switchyard` command over SSH, VS Code Remote-SSH, Hermes Desktop in remote mode) and your phone |
 
-**Windows**: run omp, the server and Hermes in WSL 2 and use VS Code through a *WSL* window; for the phone, run Tailscale on Windows (see [step 3](#3-your-phone-optional)). Native Windows is handled but untested: there is no login service (the server starts on demand), the command lives in `%LOCALAPPDATA%\omp-sessions`, and Hermes's home is `%LOCALAPPDATA%\hermes`.
+**Windows**: run omp, AO, the planner and Hermes in WSL 2 and use VS Code through a *WSL* window. For the phone, see [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2). Native Windows is handled but untested.
 
-"The machine" below means the computer with your repositories: your own computer in the local arrangement, the workstation or server in the remote one. omp, the `omp-sessions` server, every session, Hermes and the plugin all run there, so closing the laptop or losing signal never stops work.
+"The machine" below means the computer with your repositories: your own computer in the local arrangement, the workstation or server in the remote one. omp, Agent Orchestrator, the planner, every session, Hermes and the plugin run there, so closing the laptop or losing signal never stops work.
 
-## 1. omp Sessions
+## What runs where
 
-1. **omp** on the machine: `curl -fsSL https://omp.sh/install | sh`, then sign in to a model provider (run `omp`, then `/login`).
-2. **omp Sessions**, one of:
-   - **The VS Code extension**: install **omp Sessions** in VS Code. Remote: connect VS Code to the machine with Remote-SSH (or WSL, or a dev container) first; the Extensions view installs it on that side, which is where it runs. Then run **omp: Install omp-sessions Command** for the terminal command.
-   - **Only the command** (a headless server, or no VS Code): with Node 22+, `npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/omp-sessions-<version>.tgz` (the asset of each [release](https://github.com/mbaradad/omp-sessions/releases)).
-3. **Check it**, in a terminal on the machine:
+| Piece | What it does | Runs as |
+| --- | --- | --- |
+| **omp** | the coding agent | one `omp acp` process per session, started by AO |
+| **Agent Orchestrator (AO)** | runs the sessions: per-session hosts that outlive every client, the chat history, approvals, worktrees, the phone listener, notifications | `ao daemon`, a user service |
+| **The Switchyard planner** | holds your plans (task graphs, queues, schedules, priorities, the concurrency limit) and sends each ready task to AO | `switchyard-planner`, a user service |
+| **Switchyard omp extension** | per-session checkpoints (undo and redo of a turn, files included), permission modes, the todo list, the link from an AO session to its omp transcript | loaded by omp inside each AO session |
+| **Clients** | VS Code, the `switchyard` command, the MCP bridge, the Hermes plugin, the agent skill | where you use them |
+
+Sessions never depend on the planner or on a client. If the planner is down, running sessions keep working; queued and scheduled work waits until it is back.
+
+## 1. omp, AO and Switchyard
+
+1. **omp** on the machine: `curl -fsSL https://omp.sh/install | sh`, then sign in to a model provider (run `omp`, then `/login`). AO needs omp 15.0.0 or newer.
+2. **Agent Orchestrator** on the machine, one of:
+   - **The AO desktop app** from [orchestrator.inc](https://orchestrator.inc/download/) (macOS, Windows, Linux). It owns the daemon and starts it for you; Switchyard finds it. Use this on a computer with a screen.
+   - **Headless** (a server or a WSL 2 distribution): AO publishes no bare binary yet, so build it. You need Git and Go 1.27 or newer (`GOTOOLCHAIN=auto` downloads the right toolchain):
+     ```sh
+     git clone https://github.com/OrchestratorInc/agent-orchestrator
+     cd agent-orchestrator/backend
+     GOTOOLCHAIN=auto go build -o ~/.local/bin/ao ./cmd/ao
+     ```
+     AO's own installer for a fresh Ubuntu VM (`scripts/bootstrap-self-hosted.sh`, see AO's [self-hosted guide](https://github.com/OrchestratorInc/agent-orchestrator/blob/main/docs/self-hosted-remote.md)) also works; it signs the VM in to an AO account and sets up a tunnel, which you may not want.
+   
+   With the binary on `PATH` (or `~/.local/bin`, or `AO_BIN`), you don't start anything by hand: the first `switchyard` command or VS Code window that finds no daemon starts `ao daemon` as a systemd user unit (`ao-daemon.service`, enabled, with `KillMode=process` so that running sessions survive a restart of the daemon), or as a detached process where there is no systemd.
+3. **Switchyard**, one of:
+   - **The VS Code extension**: install **Switchyard**. Remote: connect VS Code to the machine with Remote-SSH (or WSL, or a dev container) first; the Extensions view installs it on that side, which is where it runs. Then run **Switchyard: Install switchyard Command** for the terminal command. The extension also installs the Switchyard omp extension into omp's agent folder (`~/.omp/agent/extensions/switchyard/`).
+   - **Only the command** (a headless server, or no VS Code): with Node 22+, `npm install -g <the switchyard package>` and `switchyard omp-extension install`.
+4. **Check it**, in a terminal on the machine:
    ```sh
-   omp-sessions status          # server, login service, omp, default model, sessions, problems (exit 1 if any)
-   omp-sessions config set model anthropic/claude-sonnet-4-5   # optional: default model of new sessions (one `omp-sessions models` lists)
+   switchyard status          # AO daemon, omp, the planner, default model, sessions, problems (exit 1 if any)
+   switchyard config set model anthropic/claude-sonnet-4-5   # optional: default model of new sessions (one `switchyard models` lists)
    ```
-   The first command that needs the server starts it and installs it as a login service once (a systemd user unit on Linux, a launchd agent on macOS), so it comes back after a crash or reboot; restarts from VS Code or the CLI go through systemd or launchd. It needs Node 22+ on PATH: with only VS Code's own runtime (as over Remote-SSH without Node installed), the server still starts on demand but isn't installed as a service, and `omp-sessions status` says why. A service whose Node or `server.js` moved is rewritten by the next command or VS Code start. `omp-sessions server install` does it by hand, `omp-sessions config set service off` stops it from happening by itself, `omp-sessions server uninstall` removes it. On a Linux server, `loginctl enable-linger $USER` keeps user services running without a login session; WSL needs systemd enabled in `/etc/wsl.conf`.
+   `switchyard status` says what is missing. The planner is started on demand and installed as a login service the first time (a systemd user unit `switchyard-planner.service` on Linux, a launchd agent `dev.switchyard.planner` on macOS), so queued and scheduled work keeps running after a crash or reboot. It needs Node 22+ on PATH; with only VS Code's own runtime (as over Remote-SSH without Node installed), the planner still starts on demand but isn't installed as a service, and `switchyard status` says why. `switchyard server install` does it by hand, `switchyard config set service off` stops it from happening by itself, `switchyard server uninstall` removes it. On a Linux server, run `loginctl enable-linger $USER` so user services keep running when nobody is logged in.
 
-   Upgrading from 0.5.0, where the command was `omp-vs`: the extension, or `omp-sessions server install`, replaces the old launcher and service (`omp-vs.service`, `dev.omp.vs-server`) with the `omp-sessions` ones automatically, and running sessions keep going. On Windows, add `%LOCALAPPDATA%\omp-sessions` to PATH.
+That is all Switchyard needs. The rest is optional.
 
-That is all omp Sessions needs. The rest is optional.
+### Every session gets its own worktree
+
+AO runs each session in its own git worktree, on a branch `ao/<session>/root` made from the repository's default branch, under `~/.ao/data/worktrees/<project>/<session>`. Two sessions never overwrite each other, and your checkout stays as it is until you merge (*Merge into Main Checkout…* in VS Code, or `git merge ao/<session>/root`). A folder outside git gets an empty scratch folder instead, so start sessions that need your files from a git repository.
+
+The editor actions that work on what you are looking at (*Fix with omp*, *Commit with omp*, *Review Uncommitted Changes*, …) tell the session where your working copy is, so they edit your checkout, not the worktree.
+
+A repository without a remote needs a default branch for AO: `git remote set-head origin main`, or Switchyard sets `defaultBranch` on the AO project for you.
+
+### Coming from omp Sessions
+
+`switchyard migrate` moves your settings: default model, permission mode, the concurrency limit, and the group and board-lane definitions. It is a dry run until you add `--apply`, copies `~/.omp/vscode` to `~/.switchyard/backups/` before it writes anything, and never deletes old data. **Sessions are not carried over**: the dry run lists each old session with the command that continues it in omp's terminal (`omp --resume <id>`), and each unfinished queued task, so you can queue it again with `switchyard new <dir> --task …`.
+
+The old server (`omp-sessions server`) and its phone app are gone; uninstall the old login service with `omp-sessions server uninstall` before you remove the old extension.
 
 ## 2. Hermes Agent (optional)
 
 1. **Hermes** on the same machine, with its gateway running as a service (`hermes gateway install`). Run the web dashboard too (`hermes dashboard`) if you want the browser page or Hermes Desktop in remote mode.
-2. **The plugin**, in every profile you chat with: **omp: Install Hermes Plugin…** in VS Code, or
+2. **The plugin**, in every profile you chat with: **Switchyard: Install Hermes Plugin…** in VS Code, or
    ```sh
-   omp-sessions hermes install --all-profiles
-   omp-sessions hermes status --all-profiles
+   switchyard hermes install --all-profiles
+   switchyard hermes status --all-profiles
    ```
-   `HERMES_HOME` is respected. The gateway loads the plugin without a restart; restart the dashboard once so it mounts the page's backend. When the extension updates, it refreshes the plugin and reloads it in the running gateway. Without VS Code, install it from Git instead: `hermes plugins install mbaradad/omp-sessions/integrations/hermes/omp-sessions --enable` (it still needs `omp-sessions` on the machine). Comments on kanban cards reach omp only from trusted authors (`lane.comment_authors`, default `dashboard`, which covers the dashboard and Hermes Console).
-3. **The kanban lane**, in one profile: the one whose gateway runs the machine's kanban dispatcher. With a single multiplexed gateway that is `default`; with one gateway per profile, it is whichever gateway took the dispatcher lock. `hermes omp status` tells you which (`kanban dispatcher: last tick … in profile …`) and warns when the lane is on elsewhere.
+   `HERMES_HOME` is respected. The gateway loads the plugin without a restart; restart the dashboard once so it mounts the page's backend. When the extension updates, it refreshes the plugin and reloads it in the running gateway. Without VS Code, install it from Git instead: `hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable` (it still needs `switchyard` on the machine). Comments on kanban cards reach omp only from trusted authors (`lane.comment_authors`, default `dashboard`, which covers the dashboard and Hermes Console).
+3. **The kanban lane**, in one profile: the one whose gateway runs the machine's kanban dispatcher. With a single multiplexed gateway that is `default`; with one gateway per profile, it is whichever gateway took the dispatcher lock. `hermes switchyard status` tells you which (`kanban dispatcher: last tick … in profile …`) and warns when the lane is on elsewhere.
    ```sh
-   hermes -p default omp lane on --board <board>
-   hermes -p default omp board <board> --folder ~/projects/<project> --mode auto
-   hermes -p default omp status
+   hermes -p default switchyard lane on --board <board>
+   hermes -p default switchyard board <board> --folder ~/projects/<project> --mode auto
+   hermes -p default switchyard status
    ```
-4. **The skill for other agents**: **omp: Install omp Sessions Skill for Agents…** or `omp-sessions skill install`, so omp, Claude Code and Codex on the machine can hand work to background sessions too.
+4. **The skill for other agents**: **Switchyard: Install Skill for Agents…** or `switchyard skill install`, so omp, Claude Code and Codex on the machine can hand work to background sessions too.
 
-### The omp Sessions page in Hermes
+### The Switchyard page in Hermes
 
 | Where you open Hermes | How the page gets there |
 | --- | --- |
-| **Web dashboard** (any browser) | Automatic once the plugin is enabled and the dashboard restarted: **omp Sessions** appears under *Plugins* in the sidebar. |
-| **Hermes Desktop, local mode** (Hermes on this computer) | Desktop copies the page from the installed plugin. Turn **omp Sessions** on in *Capabilities → Plugins* (use **Rescan** if it isn't listed). |
-| **Hermes Desktop, remote mode** (an SSH gateway or a remote URL) | Desktop plugins live on the computer running Desktop, so add the page there once: *Capabilities → Plugins → Install from Git*, repository `mbaradad/omp-sessions/integrations/hermes/omp-sessions`. The agent part is already on the machine, so Desktop reports that it exists and installs only the page. Then turn it on. |
+| **Web dashboard** (any browser) | Automatic once the plugin is enabled and the dashboard restarted: **Switchyard** appears under *Plugins* in the sidebar. |
+| **Hermes Desktop, local mode** (Hermes on this computer) | Desktop copies the page from the installed plugin. Turn **Switchyard** on in *Capabilities → Plugins* (use **Rescan** if it isn't listed). |
+| **Hermes Desktop, remote mode** (an SSH gateway or a remote URL) | Desktop plugins live on the computer running Desktop, so add the page there once: *Capabilities → Plugins → Install from Git*, repository `mbaradad/omp-sessions/integrations/hermes/switchyard`. The agent part is already on the machine, so Desktop reports that it exists and installs only the page. Then turn it on. |
 
 The page always talks to the plugin on the machine Hermes runs on, so it shows that machine's sessions. After a plugin update, Desktop keeps its copy of the page until you **Rescan** (local) or **Install from Git** again with **Force reinstall** (remote); the page tells you when it is older than the plugin.
 
 ## 3. Your phone (optional)
 
-- **omp phone app**: **omp: Connect Phone…** (or `omp-sessions remote on` and `omp-sessions remote qr`) and scan the QR code. How the phone reaches the machine:
-  - **Tailscale on the machine** (recommended): pick *Tailscale*. Install Tailscale on the phone too, same account.
-  - **Tailscale on Windows, omp in WSL 2**: pick *Behind Tailscale Serve or an HTTPS proxy*, run `tailscale serve --bg 7413` in a Windows terminal and enter the `https://<machine>.<tailnet>.ts.net` address it prints. The same option works with any HTTPS reverse proxy you run.
-  - **No Tailscale**: *Local network* (plain HTTP; only on a Wi-Fi you trust).
-  
-  Details: [Remote access](REMOTE-API.md).
-- **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/omp` says what needs you and `/omp take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
+The phone uses **AO's mobile app** ([iPhone and iPad](https://apps.apple.com/app/ao-mobile/id6792552173), [Android](https://play.google.com/store/apps/details?id=aoagents.dev)). A Switchyard phone app is planned; for now the AO app shows your sessions, chat, approvals and questions, and sends push notifications, but not Switchyard's queues or schedules.
+
+1. **Switchyard: Connect Phone…** in VS Code (or `switchyard remote on` and `switchyard remote qr`), and scan the QR code in the app.
+2. How the phone reaches the machine:
+   - **Local network and Tailscale** (default): Tailscale on the machine and the phone, same account. AO adds Tailscale's HTTPS pairing when your tailnet has certificates turned on, which iPhones need for Tailscale addresses.
+   - **Local network only** (plain HTTP, only on a Wi-Fi you trust).
+   - **Anywhere**: a Cloudflare quick tunnel that AO starts (`--bind tunnel`).
+   - **Tailscale on Windows, omp in WSL 2**, and other setups where the phone can't see the machine: [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2).
+
+   Details and limits: [Phone and API access](REMOTE-API.md).
+3. **Hermes**: talk to it from its messaging channels, Hermes Desktop, or [Hermes Console](https://github.com/xP3ta/hermes-console) on Android. Asking for coding work starts omp sessions, and the chat hears back when they finish or need you. In any chat, `/omp` says what needs you and `/omp take <card>` hands a kanban card to omp ([details](HERMES.md#hermes-console-android)).
 
 ## 4. The laptop, in the remote arrangement
 
-- **Terminal**: `ssh` to the machine and use `omp-sessions` (`status`, `ls`, `attach`, …). `omp-sessions vscode <session>` prints a link that opens the session in VS Code on the laptop.
-- **VS Code**: Remote-SSH to the machine. Every window attaches to the same sessions; close it whenever you like. A window lists this workspace's sessions by default; *Show All Sessions* in the Sessions view title lists every session on the machine. Links the extension opens on the machine's `localhost` (the phone app's *Open in Browser*, *Open Hermes Card*) are forwarded to your laptop by VS Code.
+- **Terminal**: `ssh` to the machine and use `switchyard` (`status`, `ls`, `attach`, …). `switchyard vscode <session>` prints a link that opens the session's worktree in VS Code on the laptop.
+- **VS Code**: Remote-SSH to the machine. Every window attaches to the same sessions; close it whenever you like. A window lists this workspace's sessions by default; *Show All Sessions* in the Sessions view title lists every session on the machine.
 - **Hermes Desktop**: connect it to the machine's Hermes, as an **SSH** gateway (*Settings → Gateways → Add → SSH*) or a **Remote gateway** URL (with Tailscale, or an SSH tunnel: `ssh -N -L 9119:localhost:9119 <machine>`). Then add the page as in the table above.
-- **Voice** uses the microphone of the machine omp runs on, so it works in local windows only.
+- **AO's own app** (optional): the AO desktop app can connect to the machine's AO as a remote host and shows the same sessions. Session modes it shows are AO's, not Switchyard's (see [Phone and API access](REMOTE-API.md#the-phone)).
+
+Voice isn't available in this version.
 
 ## A day with this setup
 
-1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `omp`, or starts and schedules sessions directly (`omp_session_start`, with `at` for later).
-2. **omp does the coding.** The lane turns ready cards into omp sessions in the card's worktree, one group per board, within omp's concurrency limit (`omp-sessions sched set <n>`).
-3. **Answer questions anywhere.** A session that needs you shows up on the omp Sessions page in Hermes, on the phone, in VS Code, in `omp-sessions ls`, and as a message in the chat that started it. Answering in one place answers it everywhere. Approvals are yours: comments and the Hermes agent can't answer them (unless you turn on `agent_approvals`).
-4. **Review in VS Code.** *Open project in VS Code* on the Hermes page (or `omp-sessions vscode <session>`) brings it up; diffs, checkpoints and undo per turn. The card gets the session's final reply, and dependent cards start.
+1. **Plan in Hermes.** Talk the work through, from Desktop, the dashboard or a chat. Hermes files kanban cards with dependencies, assigned to `omp`, or starts and schedules sessions directly (`switchyard_session_start`, with `at` for later).
+2. **omp does the coding.** The planner sends ready cards and tasks to AO, which gives each session its own worktree and branch, within the planner's concurrency limit (`switchyard sched set <n>`).
+3. **Answer questions anywhere.** A session that needs you shows up on the Switchyard page in Hermes, on the phone, in VS Code, in `switchyard ls`, and as a message in the chat that started it. Answering in one place answers it everywhere. Approvals are yours: comments and the Hermes agent can't answer them (unless you turn on `agent_approvals`).
+4. **Review in VS Code.** *Open project in VS Code* on the Hermes page (or `switchyard vscode <session>`) opens the worktree; diffs, checkpoints and undo per turn. Merge the branch when you are happy. The card gets the session's final reply, and dependent cards start.
 
-If the machine reboots overnight, the server comes back with it and starts queued work that hadn't begun. A task that was running is marked *interrupted*, and its card is blocked until you unblock it.
+If the machine reboots overnight, AO's sessions come back as AO restores them, the planner starts with the login, and it continues the plan: a task that was running is marked *interrupted* and waits for you (its card is blocked until you unblock it); nothing runs twice.
 
 ## Check that it all works
 
 | Check | Command (on the machine) | Healthy |
 | --- | --- | --- |
-| Machine | `omp-sessions status` | exit 0: the server runs, omp is found, no problems listed |
-| Server supervised | `systemctl --user is-active omp-sessions` or `launchctl print gui/$UID/dev.omp.sessions-server` | active / running |
-| Plugin everywhere | `omp-sessions hermes status --all-profiles` | every profile `current, enabled`, the lane on in one |
-| Lane reachable | `hermes -p <profile> omp status` | a dispatcher tick in the last minute, no `!` lines |
-| Extension health | **omp: Run Doctor** in VS Code | no problems in the Hermes section |
-| Hermes page | the dashboard or Desktop sidebar | **omp Sessions** listed and showing your sessions |
-| Phone | `omp-sessions remote status` | `on`, with the URL you pair with |
+| Machine | `switchyard status` | exit 0: AO runs, omp is found, the planner runs, no problems listed |
+| AO supervised | `systemctl --user is-active ao-daemon` (or the AO desktop app is open) | `active` |
+| Planner supervised | `systemctl --user is-active switchyard-planner` or `launchctl print gui/$UID/dev.switchyard.planner` | active / running |
+| omp extension | **Switchyard: Run Doctor** | no problems in the omp extension line |
+| Plugin everywhere | `switchyard hermes status --all-profiles` | every profile `current, enabled`, the lane on in one |
+| Lane reachable | `hermes -p <profile> switchyard status` | a dispatcher tick in the last minute, no `!` lines |
+| Hermes page | the dashboard or Desktop sidebar | **Switchyard** listed and showing your sessions |
+| Phone | `switchyard remote status` | `on`, with the addresses the phone will try |
 
-When something is off, start with `omp-sessions status`, `hermes omp status` and **omp: Run Doctor**; [the Hermes guide](HERMES.md#troubleshooting) lists the usual causes.
+When something is off, start with `switchyard status`, `hermes switchyard status` and **Switchyard: Run Doctor**; [the Hermes guide](HERMES.md#troubleshooting) lists the usual causes. AO's own logs: `journalctl --user -u ao-daemon`.
