@@ -1,7 +1,7 @@
 // Types for test/ao-fixture.mjs (TypeScript tests import it; esbuild bundles the .mjs).
 
 export interface AoFixtureOptions {
-	/** ao executable (default $OMP_TEST_AO_BIN, else `ao` on PATH). */
+	/** ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH). */
 	aoBin?: string;
 	/** Run the real omp from PATH with the real HOME instead of test/fake-omp-acp.mjs. */
 	realOmp?: boolean;
@@ -10,7 +10,7 @@ export interface AoFixtureOptions {
 	/** Extra env for the fake omp (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...). */
 	fakeOmpEnv?: Record<string, string>;
 	readyTimeoutMs?: number;
-	/** Leave the temp dir after stop() (default $OMP_TEST_KEEP_AO=1). */
+	/** Leave the temp dir after stop() (default $SWITCHYARD_TEST_KEEP_AO=1). */
 	keep?: boolean;
 }
 
@@ -74,6 +74,8 @@ export interface AoFixture {
 
 export function aoBinary(): string | undefined;
 export function aoAvailable(): boolean;
+/** node:test `skip` value for tests that need the daemon: false, or why they skip. */
+export const skipWithoutAo: false | string;
 export function fakeOmpAcpPath(): string;
 export function startAoFixture(opts?: AoFixtureOptions): Promise<AoFixture>;
 export function useAoFixture(hooks: { before: (fn: () => Promise<void>) => void; after: (fn: () => Promise<void>) => void }, opts?: AoFixtureOptions): { current: AoFixture | undefined };

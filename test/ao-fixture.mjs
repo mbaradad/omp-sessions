@@ -3,22 +3,23 @@
 // touches the dev daemon (port 3001, ~/.ao) or the real ~/.omp. See RUNTIME.md ("Second isolated
 // instance") in the migration notes.
 //
-//   import { startAoFixture, aoAvailable } from "../ao-fixture.mjs";
-//   const ao = await startAoFixture();            // throws if `ao` is missing; check aoAvailable() to skip
+//   import { skipWithoutAo, startAoFixture } from "../ao-fixture.mjs";
+//   test("...", { skip: skipWithoutAo }, ...)      // skips when no `ao` binary is installed
+//   const ao = await startAoFixture();            // throws if `ao` is missing
 //   await fetch(`${ao.baseUrl}/api/v1/sessions`);  // loopback API: no auth (credentials.headers is {})
 //   const projectId = await ao.createProject(ao.scratchRepo());
 //   ...
 //   await ao.stop();                              // daemon, its detached chat hosts and the temp dir
 //
 // Options: { aoBin, realOmp, env, fakeOmpEnv, readyTimeoutMs, keep }
-//   aoBin        ao executable (default $OMP_TEST_AO_BIN, else `ao` on PATH)
+//   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
 //   realOmp      run the real omp from PATH with the real HOME instead of the fake (smoke tests)
 //   env          extra daemon env (e.g. AO_* overrides)
 //   fakeOmpEnv   extra env for the fake (FAKE_OMP_DELAY, FAKE_OMP_NO_STEERING, ...)
-//   keep         leave the temp dir after stop (default $OMP_TEST_KEEP_AO=1), for post-mortems
+//   keep         leave the temp dir after stop (default $SWITCHYARD_TEST_KEEP_AO=1), for post-mortems
 //
-// Env read here: OMP_TEST_AO_BIN, OMP_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs sets it),
-// OMP_TEST_KEEP_AO=1.
+// Env read here: SWITCHYARD_TEST_AO_BIN, SWITCHYARD_TEST_FAKE_OMP_ACP (path of the fake; test/run.mjs
+// sets it), SWITCHYARD_TEST_KEEP_AO=1.
 
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -30,7 +31,7 @@ import { fileURLToPath } from "node:url";
 
 /** The ao executable the fixture runs, or undefined when there is none. */
 export function aoBinary() {
-	if (process.env.OMP_TEST_AO_BIN) return process.env.OMP_TEST_AO_BIN;
+	if (process.env.SWITCHYARD_TEST_AO_BIN) return process.env.SWITCHYARD_TEST_AO_BIN;
 	const names = process.platform === "win32" ? ["ao.exe", "ao.cmd", "ao"] : ["ao"];
 	for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
 		for (const n of names) {
@@ -49,15 +50,18 @@ export function aoAvailable() {
 	return aoBinary() !== undefined;
 }
 
+/** node:test `skip` value for tests that need the daemon: false, or why they skip. */
+export const skipWithoutAo = aoAvailable() ? false : "ao not installed (set SWITCHYARD_TEST_AO_BIN)";
+
 /** test/fake-omp-acp.mjs: from the env test/run.mjs sets, beside this module (when not bundled), or from the cwd upwards. */
 export function fakeOmpAcpPath() {
-	if (process.env.OMP_TEST_FAKE_OMP_ACP) return process.env.OMP_TEST_FAKE_OMP_ACP;
+	if (process.env.SWITCHYARD_TEST_FAKE_OMP_ACP) return process.env.SWITCHYARD_TEST_FAKE_OMP_ACP;
 	const beside = new URL("./fake-omp-acp.mjs", import.meta.url);
 	if (beside.protocol === "file:" && fs.existsSync(beside)) return fileURLToPath(beside);
 	for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
 		const p = path.join(dir, "test", "fake-omp-acp.mjs");
 		if (fs.existsSync(p)) return p;
-		if (path.dirname(dir) === dir) throw new Error("test/fake-omp-acp.mjs not found: set OMP_TEST_FAKE_OMP_ACP");
+		if (path.dirname(dir) === dir) throw new Error("test/fake-omp-acp.mjs not found: set SWITCHYARD_TEST_FAKE_OMP_ACP");
 	}
 }
 
@@ -144,7 +148,7 @@ function gitIn(cwd, ...args) {
  */
 export async function startAoFixture(opts = {}) {
 	const aoBin = opts.aoBin ?? aoBinary();
-	if (!aoBin) throw new Error("ao not found: install it (see RUNTIME.md) or set OMP_TEST_AO_BIN");
+	if (!aoBin) throw new Error("ao not found: install it (see RUNTIME.md) or set SWITCHYARD_TEST_AO_BIN");
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "ao-fixture-"));
 	const dataDir = path.join(root, "data");
 	const runFile = path.join(root, "running.json");
@@ -192,7 +196,7 @@ export async function startAoFixture(opts = {}) {
 		...opts.env,
 	});
 
-	const keep = opts.keep ?? process.env.OMP_TEST_KEEP_AO === "1";
+	const keep = opts.keep ?? process.env.SWITCHYARD_TEST_KEEP_AO === "1";
 	const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
 	/** Spawns `ao daemon` on `port`: the child once /readyz answers, else the reason and log tail. */
 	async function launch(port) {

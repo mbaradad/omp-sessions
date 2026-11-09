@@ -6,10 +6,8 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { PlanView, TaskView } from "../../src/planner/types";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 import { type PlannerFixture, startPlannerFixture } from "../planner-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
 
 let ao: AoFixture;
 let planner: PlannerFixture;

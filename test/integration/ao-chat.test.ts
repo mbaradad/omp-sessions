@@ -5,9 +5,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { AoClient, unwrap } from "../../src/ao/client";
 import { type AoSessionModel, AoSessionWatcher, answerQuestion } from "../../src/ao/model";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
 let client: AoClient;

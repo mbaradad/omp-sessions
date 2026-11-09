@@ -12,7 +12,7 @@
 //
 // Options: { ao, stateRoot, plannerJs, env, usage, retryBaseMs, readyTimeoutMs }
 //   stateRoot    OMP_VSCODE_HOME to use (e.g. the one a VS Code under test already has); default a temp dir
-//   plannerJs    bundled planner (default $OMP_TEST_PLANNER_JS, which test/run.mjs builds; else built here)
+//   plannerJs    bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, which test/run.mjs builds; else built here)
 //   env          extra planner env
 //   usage        false: OMP_PLANNER_USAGE=off (no `omp usage` polling); default on, against ao.ompBin
 //   retryBaseMs  OMP_PLANNER_RETRY_BASE_MS (retry backoff base) for fast failure tests
@@ -84,10 +84,12 @@ export async function startPlannerFixture(opts) {
 	const root = fs.mkdtempSync(path.join(ao.root, "planner-"));
 	const stateRoot = opts.stateRoot ?? path.join(root, "state");
 	fs.mkdirSync(stateRoot, { recursive: true });
-	const plannerJs = opts.plannerJs ?? process.env.OMP_TEST_PLANNER_JS ?? (await buildPlanner(path.join(root, "planner.js")));
+	const plannerJs = opts.plannerJs ?? process.env.SWITCHYARD_TEST_PLANNER_JS ?? (await buildPlanner(path.join(root, "planner.js")));
 	const socket = plannerSocket(stateRoot);
 	const logFile = path.join(root, "planner-stderr.log");
-	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO.
+	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO. The
+	// OMP_VSCODE_HOME / OMP_PLANNER_* names are the planner's (src/planner/paths.ts, main.ts); they
+	// follow the planner when it moves to the Switchyard names.
 	const clientEnv = { ...ao.stackEnv, OMP_VSCODE_HOME: stateRoot };
 	const env = {
 		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("OMP_PLANNER_"))),

@@ -5,7 +5,7 @@ export interface PlannerFixtureOptions {
 	ao: AoFixture;
 	/** OMP_VSCODE_HOME to use (e.g. the one a VS Code under test already has). Default: a temp dir. */
 	stateRoot?: string;
-	/** Bundled planner (default $OMP_TEST_PLANNER_JS, else built from src/planner/main.ts). */
+	/** Bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, else built from src/planner/main.ts). */
 	plannerJs?: string;
 	env?: Record<string, string>;
 	/** false: no `omp usage` polling (OMP_PLANNER_USAGE=off). Default: polls the AO fixture's omp. */
