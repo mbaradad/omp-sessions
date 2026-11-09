@@ -429,9 +429,21 @@ function makeTask(state: PlanState, input: TaskInput, now: number, refs: Record<
 	return task;
 }
 
-function resolveRefs(ids: string[], refs: Record<string, string>): string[] {
+/**
+ * A task by id, or by AO session id: the task running in that session, else the one that ran in it last.
+ * (Clients that only know sessions name tasks this way, e.g. `after` and `sync`.)
+ */
+export function taskByRef(s: PlanState, ref: string): Task | undefined {
+	const exact = s.tasks.find(t => t.id === ref);
+	if (exact) return exact;
+	const inSession = s.tasks.filter(t => t.session === ref || t.run?.session === ref);
+	const recency = (t: Task) => t.finishedAt ?? t.startedAt ?? t.createdAt;
+	return inSession.find(t => t.status === "running") ?? inSession.sort((a, b) => recency(b) - recency(a))[0];
+}
+
+function resolveRefs(s: PlanState, ids: string[], refs: Record<string, string>): string[] {
 	return ids.map(id => {
-		if (!id.startsWith("@")) return id;
+		if (!id.startsWith("@")) return taskByRef(s, id)?.id ?? id;
 		const r = refs[id.slice(1)];
 		if (!r) fail(`unknown ref ${id} (refs name tasks added earlier in the same edit)`);
 		return r;
@@ -463,7 +475,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 	if (!Array.isArray(ops)) fail("ops must be a list");
 	const task = (id: unknown): Task => {
 		const key = typeof id === "string" && id.startsWith("@") ? refs[id.slice(1)] : id;
-		const t = s.tasks.find(x => x.id === key);
+		const t = typeof key === "string" ? taskByRef(s, key) : undefined;
 		if (!t) fail(`unknown task ${String(id)}`);
 		return t;
 	};
@@ -489,7 +501,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 			case "add": {
 				const t = makeTask(s, o.task, now, refs);
 				insertAt(s, t, finite(o.index));
-				if (o.task.after) setAfter(s, t, resolveRefs(normalizeIds(o.task.after), refs));
+				if (o.task.after) setAfter(s, t, resolveRefs(s, normalizeIds(o.task.after), refs));
 				if (typeof o.ref === "string" && o.ref) refs[o.ref] = t.id;
 				break;
 			}
@@ -542,7 +554,7 @@ export function applyOps(state: PlanState, ops: readonly PlanOp[], now: number):
 				break;
 			}
 			case "after":
-				setAfter(s, task(o.id), resolveRefs(normalizeIds(o.ids), refs));
+				setAfter(s, task(o.id), resolveRefs(s, normalizeIds(o.ids), refs));
 				break;
 			case "run": {
 				const t = task(o.id);

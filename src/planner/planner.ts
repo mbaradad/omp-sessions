@@ -396,6 +396,12 @@ export class Planner {
 			let seeded: SeedResult = {};
 			// A typo'd model would leave a terminated session behind in AO (G36): check before anything is created.
 			if (opts.model) await this.checkModel(ao, opts.model);
+			// A session that exists already (a client spawned it): the parents' work is merged into its worktree.
+			if (session && this.propagation.gitParents(task).length) {
+				const info = await ao.sessionGit(session).catch(() => ({}) as { repo?: string; branch?: string });
+				const sessionRepo = info.repo ? await gitRoot(info.repo) : undefined;
+				if (sessionRepo && info.branch) await this.propagation.prepareExisting(task, sessionRepo, info.branch);
+			}
 			if (!session) {
 				let projectId: string | undefined = opts.project;
 				const cwd = opts.cwd;

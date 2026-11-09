@@ -265,6 +265,16 @@ other `cwd`/standalone sessions only receives its parents' results.
    idempotent (a merge whose target is already an ancestor is done), so a restart finishes a pending
    propagation exactly once; edges record `before`/`after` SHAs (undo by hand with `git reset`).
 
+**Sessions as task refs.** Wherever an op takes a task id (`after`, `sync`, `rerun`, `update`, …) an AO session
+id works too: it stands for the task running in that session, else the one that ran in it last. A client
+that only knows sessions needs no lookup.
+
+**Sessions that exist before their task** (`new --task` spawns the session first, then `queue {id: session}`):
+the branch can't be seeded, so before the prompt goes out the planner records the session's branch as the
+task's and *merges* each done git parent's committed head into that worktree (edge `merged`, the upstream
+note leads the prompt; a conflict gives the `resolving` edge and the resolve note). Put `after` in the same
+`queue` call as the `add` (it applies to tasks added earlier in the call) and arm the lane after it.
+
 **Ops.** `sync {id}`: commit what the task's worktree holds now and propagate to its children (also done
 automatically when a finished task's session goes idle after somebody worked in it). `rerun {id}`
 ("Re-run with parent changes"): the task runs once more in its own session with only the upstream note

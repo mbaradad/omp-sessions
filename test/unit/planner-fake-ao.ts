@@ -168,6 +168,11 @@ export class FakeAo implements AoPort {
 		return "p";
 	}
 
+	async sessionGit(session: string) {
+		const s = this.sessions.get(session);
+		return this.repo && s?.branch ? { repo: this.repo, branch: s.branch } : {};
+	}
+
 	async projectPath(id: string) {
 		return this.repo && id === "p" ? this.repo : undefined;
 	}

@@ -243,3 +243,38 @@ test("every propagation step is an event; `rerun` runs a finished child once mor
 	assert.equal(byTitle(p, "C").status, "done");
 	assert.ok(steps.includes("C:upstream-changed>merged"));
 });
+
+test("a child in a session a client spawned earlier gets its parent's work merged in before the prompt; sessions stand for tasks in after/sync", async t => {
+	const repo = scratchRepo(t);
+	const ao = new FakeAo(repo);
+	const p = start(tempPlan(t), ao);
+	t.after(() => p.stop());
+	p.edit([{ op: "add", task: { title: "A", options: { cwd: repo } } }]);
+	const aSession = await sentSession(p, "A");
+	write(ao, aSession, "x.txt", "A1\n");
+	ao.finishTurn(aSession, "completed", "A edited x.txt");
+	await until("A done", () => byTitle(p, "A").status === "done");
+	// The CLI's `new --task`: the session exists (idle, from the default branch) before the task does.
+	const { session } = await ao.spawn({ harness: "omp", projectId: "p", clientRequestId: "pre-spawned" });
+	assert.equal(fs.readFileSync(path.join(ao.worktreeOf(session), "x.txt"), "utf8"), "base\n");
+	await p.queue(session, [{ op: "add", title: "C" }, { op: "after", ids: [aSession] }, { op: "autoRun", value: true }]);
+	assert.deepEqual(byTitle(p, "C").after, [byTitle(p, "A").id], "a session id names the task that ran in it");
+	await until("C sent", () => sent(p, "C"));
+	const c = byTitle(p, "C");
+	assert.equal(read(ao, session, "x.txt"), "A1\n");
+	assert.equal(c.git?.branch, ao.sessions.get(session)?.branch);
+	assert.equal(c.sync?.[byTitle(p, "A").id]?.state, "merged");
+	const prompt = ao.sessions.get(session)?.conv.messages.filter(m => m.role === "user").pop()?.text ?? "";
+	assert.match(prompt, /Upstream task "A" changed/);
+	assert.match(prompt, /### A\nA edited x\.txt/);
+	assert.equal(merges(repo, c.git?.branch as string), 1);
+	ao.finishTurn(session, "completed", "C done");
+	await until("C done", () => byTitle(p, "C").status === "done");
+	// Later changes to A reach C as for any child; `sync` takes the session id too.
+	p.edit([{ op: "update", id: aSession, notes: "again" }, { op: "requeue", id: aSession }]);
+	await sentSession(p, "A");
+	write(ao, aSession, "x.txt", "A2\n");
+	ao.finishTurn(aSession, "completed", "A again");
+	await until("C marked", () => byTitle(p, "C").sync?.[byTitle(p, "A").id]?.state === "upstream-changed");
+	assert.equal(read(ao, session, "x.txt"), "A2\n");
+});
