@@ -6,7 +6,7 @@
 //
 // Needs `ao` (AO_BIN, else PATH / ~/.local/bin) and a logged-in `omp`. Scratch state lives in
 // /tmp/ao-smoke-views (OMP_E2E_SCRATCH): `repo/` (the git project), `ao/` (the daemon's data dir and
-// run file), `vscode/` (user data, extensions, HOME, OMP_VSCODE_HOME) and `shots/` (screenshots the
+// run file), `home/` (the isolated HOME and XDG_*; only .omp/agent links to the real one), `vscode/` (user data, extensions, OMP_VSCODE_HOME) and `shots/` (screenshots the
 // suite takes). Env: OMP_E2E_VSCODE_VERSION (default "stable"), OMP_E2E_VERBOSE=1 echoes VS Code's log.
 // The shared dev daemon is never touched: discovery goes through AO_RUN_FILE.
 
@@ -64,10 +64,16 @@ fs.rmSync(scratch, { recursive: true, force: true });
 for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
 const userData = path.join(dirs.vscode, "user-data");
 const extensions = path.join(dirs.vscode, "extensions");
-const home = path.join(dirs.vscode, "home");
+// Isolated HOME (CONTRACT.md "Isolated HOME"): nothing of this run reaches the real home (launcher, skill, services,
+// AO's and VS Code's dot-folders). Real omp needs its login and transcripts: only ~/.omp/agent is linked in.
+const home = path.join(scratch, "home");
+const xdg = { XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local", "share"), XDG_STATE_HOME: path.join(home, ".local", "state"), XDG_CACHE_HOME: path.join(home, ".cache") };
+const isolatedEnv = { HOME: home, ...xdg };
 const ompHome = path.join(dirs.vscode, "omp-home");
 const switchyardHome = path.join(dirs.vscode, "switchyard");
-for (const d of [userData, extensions, home, ompHome, switchyardHome]) fs.mkdirSync(d, { recursive: true });
+for (const d of [userData, extensions, home, ompHome, switchyardHome, ...Object.values(xdg)]) fs.mkdirSync(d, { recursive: true });
+fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
+fs.symlinkSync(path.join(os.homedir(), ".omp", "agent"), path.join(home, ".omp", "agent"), "dir");
 
 // The project: a git repository with one commit (AO gives each session its own worktree of it).
 fs.writeFileSync(path.join(dirs.repo, "README.md"), "# ao-smoke-views\n");
@@ -151,7 +157,7 @@ const aoEnv = {
 const daemonPath = [path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".bun", "bin"), path.join(os.homedir(), ".npm-global", "bin"), process.env.PATH].join(path.delimiter);
 const ao = findAo();
 const daemonLog = fs.openSync(path.join(dirs.ao, "daemon.log"), "a");
-const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
+const daemon = spawn(ao, ["daemon"], { cwd: dirs.ao, env: { ...process.env, ...aoEnv, ...isolatedEnv, PATH: daemonPath }, stdio: ["ignore", daemonLog, daemonLog], detached: true });
 const baseUrl = `http://127.0.0.1:${port}`;
 
 try {
@@ -181,7 +187,7 @@ try {
 			],
 			extensionTestsEnv: {
 				...aoEnv,
-				HOME: home,
+				...isolatedEnv,
 				OMP_VSCODE_HOME: ompHome,
 				SWITCHYARD_HOME: switchyardHome,
 				// Never start (or find) the user's own daemon: the run file above is the only one.
@@ -189,8 +195,6 @@ try {
 				OMP_E2E_REPO: dirs.repo,
 				OMP_E2E_SHOTS: dirs.shots,
 				OMP_E2E_AO: baseUrl,
-				// The daemon runs omp with the real HOME: read its transcripts (usage dashboard) from there, read-only.
-				PI_CODING_AGENT_DIR: path.join(os.homedir(), ".omp", "agent"),
 			},
 			stdout: echo(process.stdout),
 			stderr: echo(process.stderr),
@@ -203,7 +207,7 @@ try {
 	check("runner", false, String(err?.stack ?? err));
 } finally {
 	// `ao stop` with the instance's env (POST /shutdown answers DAEMON_OWNER_CHANGED to a client that did not start it).
-	const stop = spawnSync(ao, ["stop"], { env: { ...process.env, ...aoEnv }, encoding: "utf8", timeout: 30_000 });
+	const stop = spawnSync(ao, ["stop"], { env: { ...process.env, ...aoEnv, ...isolatedEnv }, encoding: "utf8", timeout: 30_000 });
 	check("isolated AO daemon stopped", stop.status === 0, (stop.stderr || stop.stdout || "").trim());
 	if (spawnSync("kill", ["-0", String(daemon.pid)]).status === 0) process.kill(daemon.pid, "SIGKILL");
 	// Chat hosts (and their omp) are detached by design and outlive the daemon: end this run's.
