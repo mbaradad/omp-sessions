@@ -85,6 +85,7 @@ async function fresh(id: string, conversationLimit?: number): Promise<Session> {
 async function running(s: Session): Promise<Session> {
 	const v = s.model.view;
 	if (!v.isTerminated && v.activity.state !== "exited") return s;
+	refreshBundles();
 	process.stderr.write(c.dim(`resuming ${s.id} ${s.title}…\n`));
 	await resumeAgent(await ao(), s);
 	return fresh(s.id);
@@ -748,6 +749,7 @@ async function cmdStop(args: Args): Promise<number> {
 
 async function cmdResume(args: Args): Promise<number> {
 	if (args._.length === 0) throw new UsageError("which session?");
+	refreshBundles();
 	const client = await ao();
 	const results: Array<{ id: string; title: string; started: boolean }> = [];
 	for (const q of args._) {
@@ -953,6 +955,7 @@ async function cmdQueue(args: Args): Promise<void> {
 			break;
 		}
 		case "run":
+			refreshBundles();
 			ops = [{ op: "run", ...(rest[0] ? { id: taskRef(q, rest[0]).id } : {}) }];
 			break;
 		case "pause":
@@ -960,6 +963,7 @@ async function cmdQueue(args: Args): Promise<void> {
 			break;
 		case "start":
 		case "resume":
+			refreshBundles();
 			ops = [{ op: "autoRun", value: true }];
 			break;
 		case "clear":
@@ -1383,11 +1387,16 @@ const STATE_ORDER = ["needs_input", "working", "starting", "queued", "scheduled"
 
 type Readiness = AoSchemas["AgentReadinessResponse"]["agents"][number];
 
-/** `new` and `status`: installs or refreshes Switchyard's omp extension and shim when this build ships newer ones (G38); one notice on a first install. */
+/**
+ * Before `new`, `resume`, a `send` that wakes a stopped session, `queue run` and on `status`: installs or refreshes
+ * Switchyard's omp extension and shim when this build ships newer ones (G38, G46); one notice on a first install,
+ * and a read-only folder (EACCES) is a warning, not a failure: the mode check then says what it breaks.
+ */
 function refreshBundles(): void {
 	try {
 		const done = ensureBundles();
-		if (done?.firstInstall) process.stderr.write(c.dim(`installed Switchyard's omp extension into ${done.dir} (omp-sessions omp-extension status; config set omp-extension off stops this)\n`));
+		if (done?.error) process.stderr.write(c.yellow(`warning: ${done.error}\n`));
+		else if (done?.firstInstall) process.stderr.write(c.dim(`installed Switchyard's omp extension into ${done.dir} (omp-sessions omp-extension status; config set omp-extension off stops this)\n`));
 	} catch (err) {
 		process.stderr.write(c.yellow(`warning: could not install Switchyard's omp extension: ${err instanceof Error ? err.message : String(err)}\n`));
 	}
@@ -1402,12 +1411,14 @@ async function cmdOmpExtension(args: Args): Promise<number> {
 		const report = extensionReport((await findDaemon().catch(() => undefined))?.pid);
 		if (json) process.stdout.write(`${JSON.stringify({ ...result, ...report })}\n`);
 		else {
-			process.stdout.write(`${c.green("extension")} ${result.extensions ? "installed" : "unchanged"} ${c.dim(report.dir)}\n`);
-			process.stdout.write(`${c.green("shim")} ${result.shim} ${c.dim(report.shim.path)}\n`);
-			if (result.shim === "skipped") process.stderr.write(c.yellow(`warning: ${report.shim.path} is not Switchyard's shim (or this platform has none): left alone\n`));
+			// installed lists what this call wrote; upToDate: both were already as shipped.
+			process.stdout.write(`${c.green("extension")} ${result.installed.includes("gate") ? "installed" : "unchanged"} ${c.dim(report.dir)}\n`);
+			process.stdout.write(`${c.green("shim")} ${result.installed.includes("shim") ? "installed" : "unchanged"} ${c.dim(report.shim.path)}\n`);
+			if (result.skipped) process.stderr.write(c.yellow(`skipped: ${result.skipped}\n`));
+			if (result.error) process.stderr.write(c.red(`${result.error}${result.code ? ` [${result.code}]` : ""}\n`));
 			if (report.shim.onDaemonPath === false) process.stderr.write(c.yellow(`note: the running AO daemon doesn't have ${path.dirname(report.shim.path)} first on its PATH: restart it through Switchyard for omp flags to apply\n`));
 		}
-		return 0;
+		return result.error || result.skipped ? 1 : 0;
 	}
 	if (sub === "uninstall") {
 		const result = uninstallBundles();
