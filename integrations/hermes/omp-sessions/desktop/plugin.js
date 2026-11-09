@@ -1153,6 +1153,313 @@ function DetailPanel(p) {
   );
 }
 
+// integrations/hermes/ui/graph-layout.ts
+var NODE_W = 228;
+var NODE_H = 58;
+var GAP_X = 64;
+var GAP_Y = 14;
+var PAD = 12;
+var LOOSE_GAP = 36;
+var SWEEPS = 4;
+function graphLinks(cards) {
+  const ids = new Set(cards.map((c) => c.id));
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  const add = (from, to) => {
+    const key = `${from}
+${to}`;
+    if (from === to || !ids.has(from) || !ids.has(to) || seen.has(key)) return;
+    seen.add(key);
+    out.push({ from, to });
+  };
+  for (const c of cards) {
+    for (const p of c.parents) add(p, c.id);
+    for (const ch of c.children) add(c.id, ch);
+  }
+  return out;
+}
+function layoutGraph(cards, showAll) {
+  const links = graphLinks(cards);
+  const parentsOf = /* @__PURE__ */ new Map();
+  const childrenOf = /* @__PURE__ */ new Map();
+  for (const { from, to } of links) {
+    parentsOf.set(to, [...parentsOf.get(to) ?? [], from]);
+    childrenOf.set(from, [...childrenOf.get(from) ?? [], to]);
+  }
+  const isLinked = (id) => parentsOf.has(id) || childrenOf.has(id);
+  const linked = cards.filter((c) => isLinked(c.id));
+  const loose = showAll ? cards.filter((c) => !isLinked(c.id)) : [];
+  const layerOf = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const layer = (id) => {
+    const known = layerOf.get(id);
+    if (known !== void 0) return known;
+    visiting.add(id);
+    let l = 0;
+    for (const p of parentsOf.get(id) ?? []) if (!visiting.has(p)) l = Math.max(l, layer(p) + 1);
+    visiting.delete(id);
+    layerOf.set(id, l);
+    return l;
+  };
+  const layers2 = [];
+  for (const c of linked) (layers2[layer(c.id)] ??= []).push(c);
+  for (let i = 0; i < layers2.length; i++) layers2[i] ??= [];
+  const rowOf = /* @__PURE__ */ new Map();
+  const number = () => layers2.forEach((cs) => cs.forEach((c, i) => rowOf.set(c.id, i)));
+  number();
+  const reorder = (cs, neighbours) => {
+    const key = new Map(
+      cs.map((c, i) => {
+        const rows = (neighbours.get(c.id) ?? []).map((n) => rowOf.get(n)).filter((r) => r !== void 0);
+        return [c.id, rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : i];
+      })
+    );
+    return cs.map((c, i) => ({ c, i })).sort((a, b) => (key.get(a.c.id) ?? 0) - (key.get(b.c.id) ?? 0) || a.i - b.i).map((x) => x.c);
+  };
+  for (let s = 0; s < SWEEPS; s++) {
+    for (let i = 1; i < layers2.length; i++) {
+      layers2[i] = reorder(layers2[i], parentsOf);
+      number();
+    }
+    for (let i = layers2.length - 2; i >= 0; i--) {
+      layers2[i] = reorder(layers2[i], childrenOf);
+      number();
+    }
+  }
+  const nodes = [];
+  const at = /* @__PURE__ */ new Map();
+  const tallest = Math.max(0, ...layers2.map((cs) => cs.length));
+  const graphH = tallest ? tallest * (NODE_H + GAP_Y) - GAP_Y : 0;
+  layers2.forEach((cs, l) => {
+    const top = PAD + (graphH - (cs.length * (NODE_H + GAP_Y) - GAP_Y)) / 2;
+    cs.forEach((card, row) => {
+      const node = { card, layer: l, x: PAD + l * (NODE_W + GAP_X), y: top + row * (NODE_H + GAP_Y) };
+      nodes.push(node);
+      at.set(card.id, node);
+    });
+  });
+  const looseTop = PAD + (graphH ? graphH + LOOSE_GAP : 0);
+  const cols = Math.max(layers2.length, 4);
+  loose.forEach((card, i) => nodes.push({ card, layer: -1, x: PAD + i % cols * (NODE_W + GAP_X), y: looseTop + Math.floor(i / cols) * (NODE_H + GAP_Y) }));
+  const edges = links.map(({ from, to }) => {
+    const a = at.get(from);
+    const b = at.get(to);
+    const x1 = a.x + NODE_W;
+    const y1 = a.y + NODE_H / 2;
+    const x2 = b.x;
+    const y2 = b.y + NODE_H / 2;
+    const bend = Math.max(GAP_X / 2, Math.abs(x2 - x1) / 2);
+    return { from, to, d: `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}` };
+  });
+  const columns = loose.length ? Math.max(layers2.length, Math.min(cols, loose.length)) : layers2.length;
+  const looseRows = Math.ceil(loose.length / cols);
+  return {
+    nodes,
+    edges,
+    width: columns ? PAD * 2 + columns * (NODE_W + GAP_X) - GAP_X : 0,
+    height: nodes.length ? (loose.length ? looseTop + looseRows * (NODE_H + GAP_Y) - GAP_Y : PAD + graphH) + PAD : 0,
+    hidden: showAll ? 0 : cards.length - linked.length
+  };
+}
+
+// integrations/hermes/ui/graph.ts
+var POLL_MS2 = 8e3;
+var TITLE_CHARS = 30;
+var STATUSES = ["triage", "todo", "ready", "running", "blocked", "done"];
+var MET = { done: true, archived: true };
+var clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}…` : text;
+function hasLinks(cards) {
+  const ids = new Set(cards.map((c) => c.id));
+  return cards.some((c) => c.parents.some((p) => ids.has(p)) || c.children.some((ch) => ids.has(ch)));
+}
+function CardNode(p) {
+  const { card } = p;
+  const session = card.sessionState ? SESSION_STATE[card.sessionState] ?? card.sessionState : null;
+  const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""})`;
+  return h(
+    "g",
+    {
+      className: cx("omps-gnode", `k-${card.status}`, p.selected && "is-selected", p.faded && "is-faded"),
+      transform: `translate(${p.x} ${p.y})`,
+      role: "button",
+      tabIndex: 0,
+      "aria-label": label,
+      "aria-pressed": p.selected,
+      "data-card": card.id,
+      onClick: () => p.onOpen(card),
+      onKeyDown: (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          p.onOpen(card);
+        }
+      }
+    },
+    h("title", null, `${card.title}
+${card.id} · ${card.status}${card.assignee ? ` · ${card.assignee}` : ""}${session ? `
+omp session: ${session}` : ""}`),
+    h("rect", { className: "omps-gnode-box", width: NODE_W, height: NODE_H, rx: 8 }),
+    h("rect", { className: "omps-gnode-bar", width: 4, height: NODE_H - 12, x: 0, y: 6, rx: 2 }),
+    h("text", { className: "omps-gnode-title", x: 14, y: 22 }, clip(card.title, TITLE_CHARS)),
+    h("text", { className: "omps-gnode-status", x: 14, y: 44 }, card.status),
+    session ? h(
+      "g",
+      { className: cx("omps-gnode-session", card.sessionState && `tone-${card.sessionState}`), transform: `translate(${NODE_W - 12} 40)` },
+      h("circle", { className: "omps-gnode-dot", cx: 0, cy: 0, r: 4 }),
+      h("text", { x: -10, y: 4, textAnchor: "end" }, card.lane ? `lane · ${session}` : session)
+    ) : null
+  );
+}
+function CardInfo(p) {
+  const { card } = p;
+  const chips = (ids) => ids.map((id) => {
+    const c = p.byId.get(id);
+    return h(
+      "button",
+      { key: id, type: "button", className: "omps-gchip", disabled: !c, title: c ? `${c.title} (${c.status})` : `${id} (archived)`, onClick: () => p.onSelect(id) },
+      h("span", { className: cx("omps-kstatus", `k-${c?.status ?? "archived"}`) }, c?.status ?? "archived"),
+      clip(c?.title ?? id, 40)
+    );
+  });
+  return h(
+    "section",
+    { className: "omps-gcard", "aria-label": `Card ${card.title}` },
+    h(
+      "div",
+      { className: "omps-gcard-head" },
+      h("span", { className: cx("omps-kstatus", `k-${card.status}`) }, card.status),
+      h("span", { className: "omps-gcard-title" }, card.title),
+      h("span", { className: "omps-muted omps-mono" }, card.id),
+      card.assignee ? h("span", { className: "omps-muted" }, `· ${card.assignee}`) : null,
+      h("span", { className: "omps-grow" }),
+      card.session ? h(
+        "button",
+        { type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open omp session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
+        h("span", { className: cx("omps-dot", card.sessionState && `tone-${card.sessionState}`) }),
+        SESSION_STATE[card.sessionState ?? ""] ?? card.sessionState
+      ) : h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no omp session"),
+      h(Button, { small: true, kind: "ghost", icon: "x", title: "Close", onClick: p.onClose })
+    ),
+    h(
+      "div",
+      { className: "omps-gcard-links" },
+      h("span", { className: "omps-section-label" }, "Waits for"),
+      card.parents.length ? chips(card.parents) : h("span", { className: "omps-muted" }, "nothing")
+    ),
+    h(
+      "div",
+      { className: "omps-gcard-links" },
+      h("span", { className: "omps-section-label" }, "Unblocks"),
+      card.children.length ? chips(card.children) : h("span", { className: "omps-muted" }, "nothing")
+    )
+  );
+}
+function GraphPanel(p) {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState(null);
+  const [slug, setSlug] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const load = async () => {
+    try {
+      setView(await p.host.request("/boards"));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, POLL_MS2);
+    return () => clearInterval(timer);
+  }, []);
+  const boards = view?.boards ?? [];
+  const board = boards.find((b) => b.slug === slug) ?? boards.find((b) => hasLinks(b.cards ?? [])) ?? boards[0];
+  const cards = board?.cards;
+  const layout = useMemo(() => layoutGraph(cards ?? [], showAll), [cards, showAll]);
+  const byId = useMemo(() => new Map((cards ?? []).map((c) => [c.id, c])), [cards]);
+  if (!view) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading boards…");
+  if (!board) return h(Empty, { icon: "kanban", title: "No kanban boards", body: "Create one in Hermes (hermes kanban boards create <name>)." });
+  const open = (c) => {
+    setSelected(c.id);
+    if (c.session) p.onOpenSession(c.session);
+  };
+  const picked = selected ? byId.get(selected) : void 0;
+  let body;
+  if (!cards) {
+    body = h(Empty, { icon: "alert", title: "The graph needs a newer omp Sessions plugin", body: "This Hermes runs an omp Sessions backend that doesn't report card links; update the plugin and restart Hermes." });
+  } else if (layout.nodes.length === 0) {
+    body = h(Empty, {
+      icon: "kanban",
+      title: cards.length ? "No linked cards on this board" : "No cards on this board",
+      body: cards.length ? "Cards appear here once one waits for another (hermes kanban link <parent> <child>, or create a card with parents)." : void 0,
+      action: cards.length ? h(Button, { small: true, label: `Show all ${cards.length} cards`, onClick: () => setShowAll(true) }) : void 0
+    });
+  } else {
+    body = h(
+      "div",
+      { className: "omps-graph-scroll" },
+      h(
+        "svg",
+        { className: "omps-graph", width: layout.width, height: layout.height, viewBox: `0 0 ${layout.width} ${layout.height}`, role: "group", "aria-label": `Dependency graph of ${board.name}` },
+        h("defs", null, h("marker", { id: "omps-graph-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, h("path", { d: "M0 0L10 5L0 10z", className: "omps-gedge-head" }))),
+        ...layout.edges.map(
+          (e) => h("path", {
+            key: `${e.from}>${e.to}`,
+            d: e.d,
+            className: cx("omps-gedge", MET[byId.get(e.from)?.status ?? ""] && "is-met", picked && (e.from === picked.id || e.to === picked.id) && "is-near"),
+            markerEnd: "url(#omps-graph-arrow)"
+          })
+        ),
+        ...layout.nodes.map(
+          (n) => h(CardNode, {
+            key: n.card.id,
+            card: n.card,
+            x: n.x,
+            y: n.y,
+            selected: n.card.id === selected,
+            faded: picked !== void 0 && n.card.id !== picked.id && !picked.parents.includes(n.card.id) && !picked.children.includes(n.card.id),
+            onOpen: open
+          })
+        )
+      )
+    );
+  }
+  return h(
+    "div",
+    { className: "omps-graph-panel" },
+    h(
+      "div",
+      { className: "omps-filters" },
+      h(
+        "label",
+        { className: "omps-filter is-set" },
+        h("span", { className: "omps-filter-label" }, "Board"),
+        h(
+          "select",
+          { value: board.slug, "aria-label": "Board", onChange: (e) => (setSlug(e.target.value), setSelected(null)) },
+          ...boards.map((b) => h("option", { key: b.slug, value: b.slug }, b.name))
+        )
+      ),
+      h(Button, {
+        small: true,
+        kind: showAll ? "primary" : "ghost",
+        pressed: showAll,
+        label: showAll ? "All cards" : `Linked cards only${layout.hidden ? ` · ${layout.hidden} hidden` : ""}`,
+        title: showAll ? "Show only cards linked to another card" : "Show every card of the board",
+        onClick: () => setShowAll(!showAll)
+      }),
+      h("span", { className: "omps-grow" }),
+      h("span", { className: "omps-glegend", "aria-label": "Card status colours" }, ...STATUSES.map((s) => h("span", { key: s, className: cx("omps-kstatus", `k-${s}`) }, s)))
+    ),
+    error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
+    board.error ? h(ErrorBox, { message: board.error }) : null,
+    picked ? h(CardInfo, { card: picked, byId, onSelect: setSelected, onOpenSession: p.onOpenSession, onClose: () => setSelected(null) }) : null,
+    body
+  );
+}
+
 // integrations/hermes/ui/newSession.ts
 var AT_PRESETS = [
   { label: "+30m", at: () => "+30m" },
@@ -1598,6 +1905,8 @@ function createPage(host2) {
     let main;
     if (view === "boards") {
       main = h(BoardsPanel, { host: host2, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
+    } else if (view === "graph") {
+      main = h(GraphPanel, { host: host2, onOpenSession: setSelected });
     } else if (notInstalled) {
       main = h(Empty, { icon: "terminal", title: "omp-sessions is not installed", body: overview.ompSessions.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
     } else if (!sessions) {
@@ -1637,7 +1946,7 @@ function createPage(host2) {
     }
     return h(
       "div",
-      { className: cx("omps", `omps-host-${host2.kind}`, selected && view === "sessions" && "has-drawer") },
+      { className: cx("omps", `omps-host-${host2.kind}`, selected && view !== "boards" && "has-drawer") },
       host2.css ? h("style", null, host2.css) : null,
       h(
         "header",
@@ -1650,7 +1959,8 @@ function createPage(host2) {
           onChange: setView,
           options: [
             { value: "sessions", label: "Sessions" },
-            { value: "boards", label: "Boards" }
+            { value: "boards", label: "Boards" },
+            { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" }
           ]
         }),
         h("span", { className: "omps-grow" }),
@@ -1666,7 +1976,7 @@ function createPage(host2) {
         ]
       }) : null,
       h("div", { className: "omps-body" }, main),
-      selected && view === "sessions" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
+      selected && view !== "boards" ? h(DetailPanel, { key: selected, host: host2, id: selected, summary: all.find((s) => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() }) : null,
       creating ? h(NewSessionDialog, { host: host2, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null
     );
   };
@@ -2103,6 +2413,46 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-ready { margin-top: 6px; }
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
+
+/* ---------- graph view ---------- */
+.omps-graph-panel { display: flex; flex-direction: column; gap: 10px; }
+.omps-graph-panel .omps-filters { margin-bottom: 0; }
+.omps-glegend { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.omps-glegend .omps-kstatus { margin-left: 0; }
+.omps-graph-scroll { overflow: auto; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-col); max-height: calc(100vh - 220px); min-height: 160px; }
+.omps-host-desktop .omps-graph-scroll { max-height: none; }
+.omps-graph { display: block; font-family: inherit; }
+.omps-gedge { fill: none; stroke: var(--o-border-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.omps-gedge.is-met { stroke-dasharray: none; stroke: color-mix(in srgb, var(--o-green) 55%, var(--o-border)); }
+.omps-gedge.is-near { stroke: var(--o-accent); stroke-width: 2.25; }
+.omps-gedge-head { fill: var(--o-border-strong); }
+.omps-gnode { --k: var(--t-stopped); cursor: pointer; transition: opacity 0.12s; }
+.omps-gnode:focus, .omps-gnode:focus-visible { outline: none; }
+.omps-gnode.k-running { --k: var(--o-blue); }
+.omps-gnode.k-ready { --k: var(--o-purple); }
+.omps-gnode.k-blocked { --k: var(--o-pink); }
+.omps-gnode.k-done { --k: var(--o-green); }
+.omps-gnode.k-triage, .omps-gnode.k-todo { --k: var(--o-yellow); }
+.omps-gnode-box { fill: var(--o-raised); stroke: color-mix(in srgb, var(--k) 45%, var(--o-border)); stroke-width: 1; }
+.omps-gnode:hover .omps-gnode-box { stroke: var(--k); }
+.omps-gnode:focus-visible .omps-gnode-box { stroke: var(--o-ring); stroke-width: 2; }
+.omps-gnode.is-selected .omps-gnode-box { stroke: var(--k); stroke-width: 2.5; }
+.omps-gnode.is-faded { opacity: 0.4; }
+.omps-gnode-bar { fill: var(--k); }
+.omps-gnode-title { fill: var(--o-fg); font-size: 12.5px; font-weight: 600; }
+.omps-gnode-status { fill: var(--k); font-size: 11px; font-weight: 600; }
+.omps-gnode-session text { fill: var(--o-fg2); font-size: 11px; }
+.omps-gnode-dot { fill: var(--tone, var(--t-stopped)); }
+.omps-gcard { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--o-radius); border: 1px solid var(--o-border); background: var(--o-raised); }
+.omps-gcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.omps-gcard-head .omps-kstatus { margin-left: 0; }
+.omps-gcard-title { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.omps-gcard-links { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.omps-gcard-links .omps-section-label { margin: 0 4px 0 0; min-width: 72px; }
+.omps-gchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--o-border); background: var(--o-card); color: var(--o-fg2); border-radius: 999px; padding: 2px 9px 2px 3px; font-size: 12px; cursor: pointer; }
+.omps-gchip .omps-kstatus { margin-left: 0; }
+.omps-gchip:hover:not(:disabled) { border-color: var(--o-border-strong); color: var(--o-fg); }
+.omps-gchip:disabled { cursor: default; opacity: 0.6; }
 
 @media (max-width: 720px) {
 	.omps-search { min-width: 0; flex: 1; }
