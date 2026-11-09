@@ -14,6 +14,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
 import { type AoProjectForFolderOptions, projectForFolder } from "./projects";
+import { type AoQueueItem, queueOf } from "./model";
 import { type SpawnedSwitchyardSession, type SpawnSwitchyardOptions, spawnSwitchyardSession } from "./spawn";
 import { AO_SCHEMA_COMMIT, type components, type paths } from "./schema";
 
@@ -300,9 +301,39 @@ export class AoClient {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
 	}
 
-	/** Stops the running turn. */
+	/**
+	 * Stops the running turn. AO also settles every queued turn as `interrupted`: they never run, and the
+	 * queue is empty afterwards (G41, checked live). The 204 comes back **before** that: the turns are still
+	 * `running` and `queued` for a few hundred ms. Use `interruptWithQueue` to get the prompts back.
+	 */
 	async interrupt(sessionId: string): Promise<void> {
 		await unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/interrupt", { params: { path: { sessionId } } }));
+	}
+
+	/**
+	 * Stops the running turn and returns the queued prompts the interrupt discarded (G41), in queue order, so
+	 * the caller can warn about them or send them again. AO settles the turns after it has answered, so this
+	 * waits (up to `settleTimeoutMs`, default 10 s) until the running turn has ended and none of the prompts
+	 * that were queued is still queued. A prompt that started running in between ended up running, not
+	 * discarded, and is not reported.
+	 */
+	async interruptWithQueue(sessionId: string, settleTimeoutMs = 10_000): Promise<{ discarded: AoQueueItem[] }> {
+		const before = await this.getConversation(sessionId);
+		const queued = queueOf(before).items;
+		const running = new Set(before.turns.filter(t => t.state === "running").map(t => t.id));
+		await this.interrupt(sessionId);
+		if (queued.length === 0) return { discarded: [] };
+		const watched = new Set(queued.map(q => q.turnId));
+		const deadline = Date.now() + settleTimeoutMs;
+		for (;;) {
+			const turns = (await this.getConversation(sessionId)).turns;
+			const open = turns.some(t => (running.has(t.id) && t.state === "running") || (watched.has(t.id) && t.state === "queued"));
+			if (!open || Date.now() > deadline) {
+				const ended = new Set(turns.filter(t => t.state === "interrupted" || t.state === "cancelled").map(t => t.id));
+				return { discarded: queued.filter(item => ended.has(item.turnId)) };
+			}
+			await new Promise(resolve => setTimeout(resolve, 150));
+		}
 	}
 
 	/** Compacts the conversation (omp's `/compact`). `tokensBefore`/`tokensAfter` come back when the agent reports them. */
