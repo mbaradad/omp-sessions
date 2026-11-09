@@ -376,7 +376,8 @@ async function reportFor(id: string): Promise<CliReport> {
 	const client = await ao();
 	const s = await fresh(id, 200);
 	const live = s.model.conversation && s.state !== "stopped";
-	const [plan, changedFiles] = await Promise.all([live ? livePlanMode(client, id) : undefined, changedFileCount(client, id)]);
+	const edited = !!s.model.conversation?.activities.some(a => a.activityKind === "file_change" && a.status === "completed");
+	const [plan, changedFiles] = await Promise.all([live ? livePlanMode(client, id) : undefined, changedFileCount(client, id, edited)]);
 	return reportOf(s, { ...(s.model.conversation && { mode: aoPermissionMode(s.model.conversation.settings, plan === true) }), ...(changedFiles !== undefined && { changedFiles }) });
 }
 
@@ -1519,15 +1520,24 @@ async function cmdConfig(args: Args): Promise<number> {
 
 type AgentModel = AoSchemas["AgentModelsResponse"]["models"][number];
 
-async function agentModels(): Promise<AgentModel[]> {
+/** AO's omp model catalog and the providers omp is logged in to: the catalog holds every provider's models (thousands), the user can use those of `configured`. */
+async function agentCatalog(): Promise<{ models: AgentModel[]; configured: string[] }> {
 	const client = await ao();
-	return (await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }))).models;
+	const res = await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }));
+	return { models: res.models, configured: res.configuredProviders ?? [] };
+}
+
+async function agentModels(): Promise<AgentModel[]> {
+	return (await agentCatalog()).models;
 }
 
 async function cmdModels(args: Args): Promise<number> {
 	const search = args._.join(" ").toLowerCase();
 	const def = readSwitchyardConfig().model;
-	const models = (await agentModels())
+	const { models: catalog, configured } = await agentCatalog();
+	// MAPPING: the raw list is the whole catalog; what a session can use is the configured providers' share (empty list: AO doesn't know, show all).
+	const usable = configured.length ? catalog.filter(m => m.provider !== undefined && configured.includes(m.provider)) : catalog;
+	const models = usable
 		.filter(m => !search || m.id.toLowerCase().includes(search) || m.label.toLowerCase().includes(search))
 		.map(m => {
 			const slash = m.id.indexOf("/");
@@ -1790,18 +1800,30 @@ function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Open event streams and keep-alive sockets must not hold the process, but a pipe is written
+ * asynchronously: exiting before stdout and stderr have drained cuts long output (`models --json`) short.
+ */
+function exitAfterFlush(code: number): void {
+	let pending = 2;
+	const done = () => {
+		if (--pending === 0) process.exit(code);
+	};
+	process.stdout.write("", done);
+	process.stderr.write("", done);
+}
+
 if (require.main === module) {
 	main(process.argv.slice(2))
 		.then(code => {
 			void plannerPromise?.then(p => p?.close());
 			process.exitCode = code;
-			// Open event streams and keep-alive sockets must not hold the process.
-			setImmediate(() => process.exit(code));
+			exitAfterFlush(code);
 		})
 		.catch(err => {
 			void plannerPromise?.then(p => p?.close());
 			errorLine(errorText(err));
 			process.exitCode = err instanceof UsageError ? 2 : 1;
-			setImmediate(() => process.exit(process.exitCode));
+			exitAfterFlush(process.exitCode);
 		});
 }

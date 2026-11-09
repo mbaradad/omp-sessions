@@ -313,13 +313,23 @@ export async function livePlanMode(client: AoClient, sessionId: string): Promise
 	}
 }
 
-/** Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say. */
-export async function changedFileCount(client: AoClient, sessionId: string): Promise<number | undefined> {
-	try {
-		return (await client.workspaceManifest(sessionId)).files.length;
-	} catch {
-		return undefined;
+/**
+ * Files the session changed in its workspace (AO's workspace manifest); undefined when AO can't say.
+ * `expectFiles`: the conversation shows file edits, so an empty or failed read is a manifest that has not caught up
+ * (it is computed in the background): read it again a few times before believing it.
+ */
+export async function changedFileCount(client: AoClient, sessionId: string, expectFiles = false): Promise<number | undefined> {
+	let last: number | undefined;
+	for (let attempt = 0; attempt < (expectFiles ? 5 : 1); attempt++) {
+		if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 400));
+		try {
+			last = (await client.workspaceManifest(sessionId)).files.length;
+			if (last > 0 || !expectFiles) return last;
+		} catch {
+			last = undefined;
+		}
 	}
+	return last;
 }
 
 /** Ranks sessions the way the board and the planner order them (priority, then manual order). */
