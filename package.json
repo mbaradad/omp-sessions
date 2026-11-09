@@ -527,9 +527,21 @@
 			},
 			{
 				"command": "omp.tasks.schedule",
-				"title": "Schedule Queue Start…",
+				"title": "Schedule Start…",
 				"category": "omp",
 				"icon": "$(clock)"
+			},
+			{
+				"command": "omp.tasks.setDependencies",
+				"title": "Set Dependencies…",
+				"category": "omp",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "omp.tasks.setPriority",
+				"title": "Set Priority…",
+				"category": "omp",
+				"icon": "$(arrow-up)"
 			},
 			{
 				"command": "omp.editWithOmp",
@@ -1362,6 +1374,41 @@
 					"group": "1_session@3"
 				},
 				{
+					"command": "omp.tasks.setPriority",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"group": "1_session@4"
+				},
+				{
+					"command": "omp.tasks.add",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(free|ompSession)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "omp.tasks.openChat",
+					"when": "view == omp.tasks && viewItem == tasks.ompSession",
+					"group": "inline@3"
+				},
+				{
+					"command": "omp.tasks.clearDone",
+					"when": "view == omp.tasks && viewItem == tasks.free",
+					"group": "1_session@1"
+				},
+				{
+					"command": "omp.tasks.schedule",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"group": "1_edit@5"
+				},
+				{
+					"command": "omp.tasks.setDependencies",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"group": "1_edit@6"
+				},
+				{
+					"command": "omp.tasks.setPriority",
+					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"group": "1_edit@7"
+				},
+				{
 					"command": "omp.tasks.runNow",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped|done)$/",
 					"group": "inline@1"
@@ -1765,6 +1812,14 @@
 				},
 				{
 					"command": "omp.tasks.schedule",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.setDependencies",
+					"when": "false"
+				},
+				{
+					"command": "omp.tasks.setPriority",
 					"when": "false"
 				},
 				{

@@ -27,6 +27,7 @@ import { registerRemote } from "./remote";
 import { registerServer } from "./server";
 import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
+import { createTasksDeps } from "./tasks-deps";
 import { type Node, SessionTree } from "./tree";
 import { registerToolbox } from "./toolbox";
 import { registerVscodeOpen } from "./vscode-open";
@@ -491,10 +492,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		sessionsView: treeView,
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
-	registerTasks(api);
+	const tasksDeps = createTasksDeps(context);
+	registerTasks(api, tasksDeps);
 	// Feature modules: one `register*(api)` line each.
 	const server = registerServer(api);
-	registerScheduler(api);
+	registerScheduler(api, tasksDeps.planner);
 	registerOrganize(api);
 	registerWorktrees(api);
 	registerDoctor(api, server);
