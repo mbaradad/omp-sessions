@@ -339,7 +339,7 @@ shim into `<SWITCHYARD_HOME>/bin`; idempotent, never throws. The result is logge
 `… missing:`, `… skipped:`) and returned by `ping` as `omp: {installed, upToDate, skipped?, error?, code?}`. Without
 the gate `spawnSwitchyard` refuses every mode but `auto` (fail closed, foundation), so a task with `mode:
 ask|edits|plan` fails with the fix-it message instead of running unenforced. `SWITCHYARD_INSTALL_OMP_EXTENSIONS=0`
-stops the install for everyone (tests and smokes that share a real agent dir must set it).
+stops the install for everyone (tests and smokes that share a real agent dir must set it). A `planner.js` copied away from its build (a runtime folder, as the VS Code extension does) has no `omp-extension/` next to it: the planner then reports `skipped` and leaves the install to the extension or the CLI; copy `omp-extension/` and `omp-shim/` next to it to have the service install them.
 
 ## Chat hibernation (G28)
 

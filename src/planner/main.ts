@@ -3,6 +3,7 @@
 // `node planner.js install|uninstall` sets the service up or removes it.
 import * as fs from "node:fs";
 import * as net from "node:net";
+import * as path from "node:path";
 import { connectAo } from "./ao-port";
 import { checkpointHooks } from "./checkpoint-hooks";
 import { createApiServer } from "./api";
@@ -11,6 +12,7 @@ import { switchyardHome } from "../ao/native";
 import { Planner } from "./planner";
 import { installService, uninstallService } from "./service";
 import { loadPlan } from "./store";
+import type { OmpIntegrationStatus } from "./types";
 import { readOmpUsage } from "./usage-source";
 import { ensureOmpIntegration } from "../shared/omp-extension-install";
 import { claimLock, holdsLock, releaseLock } from "../shared/process-lock";
@@ -85,7 +87,11 @@ async function run(): Promise<void> {
 	}
 	// The permission gate and the omp shim (G46): without them a session's mode file is not enforced, and spawn
 	// refuses every mode but `auto`. Idempotent, never throws; a failure is logged and shown by `ping`.
-	const omp = ensureOmpIntegration({ bundleRoot: __dirname, production: true });
+	// A planner.js copied away from its build (a runtime folder) has no gate to install: whoever copied it (the VS Code
+	// extension, the CLI) installs the gate itself; copy omp-extension/ and omp-shim/ next to planner.js to have it here too.
+	const omp: OmpIntegrationStatus = fs.existsSync(path.join(__dirname, "omp-extension"))
+		? ensureOmpIntegration({ bundleRoot: __dirname, production: true })
+		: { installed: [], upToDate: false, skipped: `no omp-extension/ next to ${__filename}: the gate is installed by the CLI or the VS Code extension` };
 	if (omp.installed.length) log("omp integration installed:", omp.installed.join(", "));
 	if (omp.error) log("omp integration missing:", omp.error);
 	else if (omp.skipped) log("omp integration skipped:", omp.skipped);
