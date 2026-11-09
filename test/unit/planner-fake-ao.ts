@@ -291,7 +291,7 @@ export function tempPlan(t: TestContext): string {
 }
 
 export function start(file: string, ao: FakeAo, hooks: Pick<PlannerOptions, "undone" | "rewind"> = {}): Planner {
-	const p = new Planner({ ...hooks, file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50 });
+	const p = new Planner({ ...hooks, file, initial: loadPlan(file), connect: async () => ao, pollMs: 100, retryBaseMs: 50, livenessMs: 50, userDefaults: () => ({}) });
 	p.start();
 	return p;
 }

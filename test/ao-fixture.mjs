@@ -14,10 +14,15 @@
 // ISOLATION (CONTRACT.md "Isolated HOME"), always, no switch: the daemon, its chat hosts and omp run with
 // HOME, XDG_*, SWITCHYARD_HOME and OMP_VSCODE_HOME under the fixture root, and the fixture refuses to start
 // if an override (opts.env) points any of them elsewhere. `ao.stackEnv` carries the same variables, so a
-// CLI, planner or Hermes process started with it stays isolated too. Never run `install CLI/skill/service`
-// outside such an env.
-// Options: { aoBin, realOmp, env, fakeOmpEnv, pathPrepend, readyTimeoutMs, keep }
+// CLI, planner or Hermes process started with it stays isolated too. THIS process gets the same variables
+// while the fixture lives (client-side code reads HOME / SWITCHYARD_HOME from process.env: src/ao/spawn.ts,
+// os.homedir()), restored by stop(): nothing depends on a slice remembering to set them.
+// Never run `install CLI/skill/service` outside such an env.
+//
+// Options: { aoBin, realOmp, env, fakeOmpEnv, pathPrepend, switchyardHome, readyTimeoutMs, keep }
 //   aoBin        ao executable (default $SWITCHYARD_TEST_AO_BIN, else `ao` on PATH)
+//   switchyardHome  SWITCHYARD_HOME (any temp dir; default <root>/switchyard): lets a test VS Code, the daemon and
+//                a planner share one
 //   realOmp      run the real omp (from PATH) instead of the fake, for smoke tests. Still isolated: HOME is
 //                the fixture's, with home/.omp/agent linked to the real agent dir (the login lives there)
 //   env          extra daemon env (e.g. AO_* overrides)
@@ -104,13 +109,16 @@ function realHome() {
  * Switchyard state dirs must all lie under the fixture root (opts.env could have overridden them).
  */
 function assertIsolated(env, root, real) {
-	const inside = p => {
-		const rel = path.relative(fs.realpathSync(root), path.resolve(p));
+	const within = (p, dir) => {
+		const rel = path.relative(fs.realpathSync(dir), path.resolve(p));
 		return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 	};
+	const resolved = p => (fs.existsSync(p) ? fs.realpathSync(p) : p);
 	for (const key of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
 		const value = env[key];
-		if (!value || !inside(fs.existsSync(value) ? fs.realpathSync(value) : value)) throw new Error(`ao-fixture: ${key}=${value} is not under the fixture root ${root}: tests never run against the real HOME (${real})`);
+		// SWITCHYARD_HOME may live in any temp dir (a test VS Code, the planner and the daemon share one); the rest under the root.
+		const ok = value && (within(resolved(value), root) || (key === "SWITCHYARD_HOME" && within(resolved(value), os.tmpdir())));
+		if (!ok) throw new Error(`ao-fixture: ${key}=${value} is not under the fixture root ${root}: tests never run against the real HOME (${real})`);
 	}
 	if (path.resolve(env.HOME) === real) throw new Error(`ao-fixture: HOME is the real home ${real}`);
 }
@@ -230,8 +238,18 @@ function gitIn(cwd, ...args) {
 	return r.stdout;
 }
 
+/** Puts back what `startAoFixture` replaced in process.env, key by key, unless another fixture has taken the key over since. */
+function restoreProcessEnv(isolation, previous) {
+	for (const [key, ours] of Object.entries(isolation)) {
+		if (process.env[key] !== ours) continue;
+		if (previous[key] === undefined) delete process.env[key];
+		else process.env[key] = previous[key];
+	}
+}
+
 /**
- * Starts an isolated `ao daemon` and waits for /readyz.
+ * Starts an isolated `ao daemon` and waits for /readyz. While the fixture lives, THIS process's HOME, USERPROFILE,
+ * XDG_*, SWITCHYARD_HOME and OMP_VSCODE_HOME are the fixture's too (restored by stop()).
  * @returns {Promise<AoFixture>}
  */
 export async function startAoFixture(opts = {}) {
@@ -255,7 +273,8 @@ export async function startAoFixture(opts = {}) {
 	// itself: its readiness probes for other harnesses (claude, codex, kiro…) write into $HOME.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !PARENT_OMP_ENV.has(k)));
 	// CONTRACT.md "Isolated HOME": every run, fake or real omp, gets its own HOME, XDG dirs and Switchyard
-	// state dirs under the fixture root. There is no switch for the real HOME.
+	// state dirs under the fixture root (SWITCHYARD_HOME may be any other temp dir: opts.switchyardHome).
+	const switchyardHome = opts.switchyardHome ? path.resolve(opts.switchyardHome) : path.join(root, "switchyard");
 	const isolation = {
 		HOME: home,
 		USERPROFILE: home,
@@ -263,9 +282,11 @@ export async function startAoFixture(opts = {}) {
 		XDG_DATA_HOME: path.join(home, ".local", "share"),
 		XDG_STATE_HOME: path.join(home, ".local", "state"),
 		XDG_CACHE_HOME: path.join(home, ".cache"),
-		SWITCHYARD_HOME: path.join(root, "switchyard"),
+		SWITCHYARD_HOME: switchyardHome,
 		OMP_VSCODE_HOME: path.join(root, "omp-vscode"),
 	};
+	/** The in-process values the isolation will replace (undefined = unset), to put back on stop(). */
+	const previousProcessEnv = Object.fromEntries(Object.keys(isolation).map(k => [k, process.env[k]]));
 	for (const d of [isolation.XDG_CONFIG_HOME, isolation.XDG_DATA_HOME, isolation.XDG_STATE_HOME, isolation.XDG_CACHE_HOME, isolation.SWITCHYARD_HOME, isolation.OMP_VSCODE_HOME]) fs.mkdirSync(d, { recursive: true });
 	fs.writeFileSync(path.join(home, ".gitconfig"), "[user]\n\tname = ao-fixture\n\temail = ao-fixture@localhost\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
 	Object.assign(env, isolation);
@@ -371,6 +392,8 @@ export async function startAoFixture(opts = {}) {
 		/** clientEnv + ompEnv: hand it to a planner, CLI or Hermes process that should use this stack (isolated HOME included). */
 		stackEnv: { ...ompEnv, ...clientEnv },
 		root,
+		/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's own client code and (by default) a planner. */
+		switchyardHome,
 		dataDir,
 		runFile,
 		logFile,
@@ -491,6 +514,8 @@ export async function startAoFixture(opts = {}) {
 		 */
 		async stop() {
 			if (!live.delete(fx)) return;
+			// This process's environment goes back to what it was. A variable a later fixture has taken over stays.
+			restoreProcessEnv(isolation, previousProcessEnv);
 			await killSessions(baseUrl, child);
 			await stopDaemon(child);
 			const survivors = await reapFixtureProcesses(root, dataDir);
@@ -500,6 +525,11 @@ export async function startAoFixture(opts = {}) {
 	};
 	live.add(fx);
 	installExitHook();
+	// Client-side code that runs in THIS process resolves the user's directories from process.env (src/ao/spawn.ts
+	// writes sessions/<id>/mode under SWITCHYARD_HOME; os.homedir() reads HOME; XDG_* for the rest): point all of
+	// them at the fixture's, the same ones the daemon and its omp extensions run with, never the real home
+	// (~/.switchyard is locked: EACCES).
+	Object.assign(process.env, isolation);
 	return fx;
 }
 

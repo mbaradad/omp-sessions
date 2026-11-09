@@ -366,7 +366,7 @@ test("`scheduler {clearLimits}` forgets a provider limit and held work starts; a
 
 test("a turn AO marks completed while its last reply still streams: the summary waits for the final text; a reply that never settles is taken after the grace", async t => {
 	const ao = new FakeAo();
-	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, settleMs: 1500 });
+	const p = new Planner({ file: tempPlan(t), connect: async () => ao, pollMs: 100, settleMs: 1500, userDefaults: () => ({}) });
 	p.start();
 	t.after(() => p.stop());
 	p.setConfig({ maxConcurrent: 0 });

@@ -12,6 +12,8 @@ export interface AoFixtureOptions {
 	readyTimeoutMs?: number;
 	/** Dirs put first on the daemon's PATH, in front of the fake `omp`: where an `omp` shim (G34) goes. */
 	pathPrepend?: string[];
+	/** SWITCHYARD_HOME to use (any temp dir): lets a test VS Code, a planner and the daemon share one. Default: <root>/switchyard. */
+	switchyardHome?: string;
 	/** Leave the temp dir after stop() (default $SWITCHYARD_TEST_KEEP_AO=1). */
 	keep?: boolean;
 }
@@ -42,6 +44,8 @@ export interface AoFixture {
 	/** clientEnv + ompEnv: for a planner, CLI or Hermes process that should use this stack. */
 	stackEnv: Record<string, string>;
 	root: string;
+	/** SWITCHYARD_HOME of the daemon, its omp extensions, this process's client code (process.env is pointed at it while the fixture lives) and, by default, a planner. */
+	switchyardHome: string;
 	dataDir: string;
 	runFile: string;
 	logFile: string;

@@ -6,6 +6,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { AoClient } from "../../src/ao/client";
+import { spawnSwitchyardSession } from "../../src/ao/spawn";
 import { skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 import { startPlannerFixture } from "../planner-fixture.mjs";
 
@@ -123,4 +125,38 @@ test("a busy port never makes the fixture adopt another daemon: it fails instead
 	} finally {
 		await first.stop();
 	}
+});
+
+test("client-side Switchyard code in the test process writes under the fixture's SWITCHYARD_HOME, never the real one", { skip }, async () => {
+	const realSwitchyard = path.join(realHome, ".switchyard");
+	const listingOf = (dir: string) => (fs.existsSync(dir) ? fs.readdirSync(dir).sort().join(",") : "absent");
+	const before = listingOf(realSwitchyard);
+	const keys = ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"];
+	const outside = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+	const ao = await startAoFixture();
+	try {
+		// The fixture points this process's own environment at the one the daemon and its extensions run with.
+		for (const key of keys) assert.equal(process.env[key], ao.stackEnv[key], `${key} of this process is the fixture's`);
+		assert.equal(process.env.SWITCHYARD_HOME, ao.switchyardHome);
+		assert.equal(os.homedir(), ao.home, "os.homedir() (what ~ resolves to in client code) is the fixture's home");
+		const client = await AoClient.connect({ env: { ...process.env, ...ao.clientEnv } });
+		const repo = ao.scratchRepo();
+		// src/ao/spawn.ts writes sessions/<id>/mode under switchyardHome(); with SWITCHYARD_HOME unset it would
+		// have been the real ~/.switchyard (locked: EACCES).
+		const spawned = await spawnSwitchyardSession(client, { dir: repo, mode: "ask", prompt: "echo isolated" });
+		const modeFile = path.join(ao.switchyardHome, "sessions", spawned.session.id, "mode");
+		assert.ok(fs.existsSync(modeFile), `${modeFile} written under the fixture's Switchyard home`);
+		assert.equal(listingOf(realSwitchyard), before, "the real ~/.switchyard is unchanged");
+		// A planner started on this stack shares that home (planner files under <home>/planner/).
+		const planner = await startPlannerFixture({ ao });
+		try {
+			assert.equal(planner.stateRoot, ao.switchyardHome);
+			assert.ok(fs.existsSync(path.join(ao.switchyardHome, "planner")));
+		} finally {
+			await planner.stop();
+		}
+	} finally {
+		await ao.stop();
+	}
+	for (const key of keys) assert.equal(process.env[key], outside[key], `stop() restores this process's ${key}`);
 });

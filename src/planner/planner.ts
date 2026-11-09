@@ -325,7 +325,10 @@ export class Planner {
 	edit(ops: PlanOp[], rev?: number): { rev: number; refs: Record<string, string> } {
 		if (rev !== undefined && rev !== this.state.rev) throw new PlanError(`stale rev ${rev} (the plan is at ${this.state.rev}); reload and retry`);
 		const res = applyOps(this.state, ops, this.now());
+		const tracked = this.state.tasks.filter(t => t.git);
 		this.commit(s => Object.assign(s, res.state));
+		// Tasks removed from the plan take their planner-made branches with them (when git agrees: merged, not checked out).
+		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch);
 		for (const e of res.effects) {
 			if (e.kind === "sync") void this.propagation.sync(e.task);
 			else this.follow(e.task, 0);
@@ -581,6 +584,7 @@ export class Planner {
 				);
 				delete t.clean;
 				if (seeded.sync) t.sync = { ...t.sync, ...seeded.sync };
+				if (seeded.base && repo && seeded.branch) t.git = { ...t.git, repo, branch: seeded.branch, base: seeded.base };
 				if (seeded.followUp) t.followUp = [t.followUp, seeded.followUp].filter(Boolean).join("\n\n");
 				// A lane task continuing a session shares that session's branch and worktree.
 				if (donor?.git && !t.git) t.git = { repo: donor.git.repo, branch: donor.git.branch, ...(donor.git.worktree ? { worktree: donor.git.worktree } : {}) };

@@ -303,6 +303,18 @@ the parent's branch itself and sets the edge `resolving`; the run's end settles 
 
 `EdgeSync = { state: "in-sync" | "pending" | "merged" | "upstream-changed" | "resolving" | "conflict"; head?; pendingHead?; prompt?; files?; before?; after?; at }`.
 
+## "What this task changed", and branch cleanup
+
+AO's diff for a child is against the default branch, so it lists the parents' commits too. `Task.git.base` is the
+branch head after the parents were merged in and before the task's first run (new session: the seeded tip; existing
+session: the worktree head after the parents' merge; absent for a root task in a session the planner created, where
+AO's diff is exact). `git diff base..head` = what the task changed (`head`: after its last turn).
+
+AO never deletes the branches of its sessions. When a task is **removed** from the plan, the planner deletes its
+`switchyard/*` branch, but only when every commit on it is still reachable from another branch (a parent's,
+`main`…) and nothing has it checked out; a branch with work of its own stays (the log says "kept branch").
+Branches the planner did not create are never touched.
+
 ## Graphs through sessions a client spawned first (the CLI's `new --task`)
 
 A task dispatched into an **existing** session (its lane is the session) is tracked in git like a planner-spawned
@@ -365,6 +377,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: `Task.git.base`; removed tasks delete their reachable `switchyard/*` branches.
 - 2026-11-09: no planner-side model pre-check (the spawn helper checks the session's own choices).
 - 2026-11-09: implicit lanes start paused; `lane.add {ensure}`; the plan event precedes the response.
 - 2026-11-09: `scheduler {clearLimits}`; the lane's completed mark clears on new work or a person's prompt.
