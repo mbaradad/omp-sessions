@@ -485,7 +485,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerScheduler(api);
 	registerOrganize(api);
 	registerWorktrees(api);
-	registerDoctor(api, server);
+	registerDoctor(api);
 	registerEditorPlus(api);
 	registerToolbox(api);
 	registerDashboard(api);

@@ -1,34 +1,22 @@
-// Self-help for novices and experts: missing-omp and not-logged-in guidance, the omp Doctor
-// report (with fixes), diagnostics for bug reports, host upgrades and crash recovery prompts.
+// Self-help for novices and experts: missing-omp and not-logged-in guidance, the omp Doctor report (omp,
+// the AO daemon and its view of omp, the planner, sessions; with fixes) and diagnostics for bug reports.
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { settleDeadHost } from "../shared/health";
+import { type AoClient, findDaemon } from "../ao/client";
+import { PlannerClient } from "../planner/client";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
-import { canConnect, hostAlive as hostIsAlive } from "../shared/launch";
+import { hostAlive as hostIsAlive } from "../shared/launch";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import type { AoFacts, PlannerFacts } from "./doctor-ao";
 import type { HermesFacts } from "./doctor-hermes";
-import {
-	type DoctorFacts,
-	type Report,
-	type SessionFacts,
-	abnormalStop,
-	buildReport,
-	cleanupCandidates,
-	formatBytes,
-	installCommand,
-	issueUrl,
-	reportCommands,
-	reportToHtml,
-	reportToMarkdown,
-	tail,
-} from "./doctor-report";
+import { type DoctorFacts, type Report, type SessionFacts, buildReport, cleanupCandidates, formatBytes, installCommand, issueUrl, reportCommands, reportToHtml, reportToMarkdown } from "./doctor-report";
 import { plain } from "./plain";
-import type { ServerControl } from "./server";
+import { installedUnit } from "./server";
 import { resolveOmpPath } from "./sessions";
 
 const HIDE_MISSING_KEY = "omp.doctor.hideOmpMissing";
@@ -115,25 +103,8 @@ async function dirBytes(dir: string): Promise<number> {
 	return sizes.reduce((a, b) => a + b, 0);
 }
 
-/** Last lines of a session's host.log (only the final 64 KiB are read). */
-function logTail(id: string, lines = 20): string | undefined {
-	const file = path.join(sessionDir(id), "host.log");
-	let fd: number | undefined;
-	try {
-		fd = fs.openSync(file, "r");
-		const size = fs.fstatSync(fd).size;
-		const len = Math.min(size, 64 * 1024);
-		const buf = Buffer.alloc(len);
-		fs.readSync(fd, buf, 0, len, size - len);
-		return tail(buf.toString("utf8"), lines) || undefined;
-	} catch {
-		return undefined;
-	} finally {
-		if (fd !== undefined) fs.closeSync(fd);
-	}
-}
-
-async function gatherSessions(): Promise<SessionFacts[]> {
+/** Session folders of the old session host that still hold file snapshots (Disk section, Clean Up File Snapshots). */
+async function gatherSnapshots(): Promise<SessionFacts[]> {
 	let ids: string[] = [];
 	try {
 		ids = fs.readdirSync(sessionsRoot());
@@ -144,14 +115,49 @@ async function gatherSessions(): Promise<SessionFacts[]> {
 		ids.map(async (id): Promise<SessionFacts | undefined> => {
 			const meta = readMetaFile(id);
 			if (!meta) return undefined;
-			const hostAlive = meta.status !== "stopped" && hostIsAlive(meta);
-			const socketOk = hostAlive ? await canConnect(meta.socket) : undefined;
-			const blobBytes = await dirBytes(path.join(sessionDir(id), "blobs"));
-			const troubled = settleDeadHost(meta, hostAlive) !== meta || abnormalStop(meta) || socketOk === false;
-			return { meta, hostAlive, socketOk, blobBytes, logTail: troubled ? logTail(id) : undefined };
+			return { meta, hostAlive: meta.status !== "stopped" && hostIsAlive(meta), blobBytes: await dirBytes(path.join(sessionDir(id), "blobs")) };
 		}),
 	);
 	return facts.filter((f): f is SessionFacts => !!f);
+}
+
+/** The AO daemon as this window reaches it (never starts it), and its readiness report on omp. */
+async function gatherAo(api: OmpApi): Promise<AoFacts> {
+	const serviceAvailable = process.platform === "linux";
+	let client: AoClient;
+	try {
+		client = await api.ao.client(false);
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : String(err), serviceAvailable };
+	}
+	const [daemon, readiness, list] = await Promise.all([
+		findDaemon().catch(() => undefined),
+		client.api.GET("/api/v1/agents/readiness").then(r => r.data, () => undefined),
+		client.listSessions().catch(() => undefined),
+	]);
+	const omp = readiness?.agents.find(a => a.id === "omp");
+	const unit = installedUnit();
+	return {
+		url: client.baseUrl,
+		...(daemon && { pid: daemon.pid }),
+		...(unit && { unit }),
+		...(omp && { omp: { installation: omp.installation.state, installationReason: omp.installation.reason, authentication: omp.authentication.state, authenticationReason: omp.authentication.reason } }),
+		...(list && { sessions: list.sessions.length }),
+		serviceAvailable,
+	};
+}
+
+async function gatherPlanner(): Promise<PlannerFacts> {
+	const planner = await PlannerClient.connect();
+	if (!planner) return { error: "No planner answers on its socket." };
+	try {
+		const info = await planner.request("ping", {}, 3000);
+		return { version: info.version, pid: info.pid };
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : String(err) };
+	} finally {
+		planner.close();
+	}
 }
 
 /** `hermes -p <profile> omp status --json`, parsed; `error` when it fails. */
@@ -200,7 +206,7 @@ function bugsUrl(api: OmpApi): string | undefined {
 // would be re-encoded (`&`/`=` escaped), dropping the prefilled issue title and body.
 const openExternalString = vscode.env.openExternal as unknown as (target: string) => Thenable<boolean>;
 
-export function registerDoctor(api: OmpApi, server: ServerControl): void {
+export function registerDoctor(api: OmpApi): void {
 	const { context, sessions } = api;
 	const reg = (id: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 	let missingShown = false;
@@ -308,7 +314,7 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 			writable = false;
 			writeError = (err as Error).message;
 		}
-		const [sessionFacts, serverStatus, hermes] = await Promise.all([gatherSessions(), server.status(), gatherHermes(context.extensionPath)]);
+		const [snapshots, aoFacts, planner, hermes] = await Promise.all([gatherSnapshots(), gatherAo(api), gatherPlanner(), gatherHermes(context.extensionPath)]);
 		const now = Date.now();
 		return {
 			now,
@@ -324,16 +330,17 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 			stateDir: root,
 			writable,
 			writeError,
-			socket: { platform: process.platform, sessionsRoot: root, tmpdir: os.tmpdir() },
-			sessions: sessionFacts,
+			ao: aoFacts,
+			planner,
+			sessions: sessions.all(),
+			snapshots,
 			cleanupDays: retentionDays(),
-			server: { ...serverStatus, extensionVersion: sessions.version, now },
 			hermes,
 		};
 	}
 
 	async function makeReport(): Promise<Report> {
-		return buildReport(await gatherFacts(), path.join);
+		return buildReport(await gatherFacts());
 	}
 
 	async function runDoctor(): Promise<void> {
@@ -388,7 +395,7 @@ export function registerDoctor(api: OmpApi, server: ServerControl): void {
 		});
 		if (input === undefined) return;
 		const days = Number(input.trim());
-		const candidates = cleanupCandidates(await gatherSessions(), days, Date.now());
+		const candidates = cleanupCandidates(await gatherSnapshots(), days, Date.now());
 		if (candidates.length === 0) {
 			void vscode.window.showInformationMessage(`No stopped session older than ${days} day(s) has snapshots.`);
 			return;

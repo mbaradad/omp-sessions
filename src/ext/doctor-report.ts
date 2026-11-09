@@ -1,10 +1,10 @@
 // omp Doctor: checks → report (markdown for clipboard/issues, HTML with fix links for the panel).
 // Pure: facts are gathered by doctor.ts; everything here is unit-tested without VS Code.
 
-import { HOST_CRASHED, HOST_DIED, isOutdated, settleDeadHost } from "../shared/health";
+import { settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
+import { type AoFacts, type PlannerFacts, aoChecks, plannerChecks } from "./doctor-ao";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
-import { type ServerFacts, serverChecks } from "./doctor-server";
 
 export type Level = "ok" | "warn" | "error" | "info";
 
@@ -34,16 +34,12 @@ export interface Report {
 	sections: Section[];
 }
 
-/** What doctor.ts found about one session folder. */
+/** A session folder of the old session host (pre-AO) that still holds file snapshots (the Disk section). */
 export interface SessionFacts {
 	/** meta.json as written (not settled). */
 	meta: SessionMeta;
 	hostAlive: boolean;
-	/** Whether the host answered on its socket; only probed for live hosts. */
-	socketOk?: boolean;
 	blobBytes: number;
-	/** Last lines of host.log, read for sessions that need attention. */
-	logTail?: string;
 }
 
 export interface DoctorFacts {
@@ -69,11 +65,14 @@ export interface DoctorFacts {
 	stateDir: string;
 	writable: boolean;
 	writeError?: string;
-	socket: { platform: string; sessionsRoot: string; tmpdir: string };
-	sessions: SessionFacts[];
+	/** The Agent Orchestrator daemon every session runs in. */
+	ao: AoFacts;
+	planner: PlannerFacts;
+	/** The sessions AO lists, as the views see them. */
+	sessions: SessionMeta[];
+	/** Old session-host folders with file snapshots (Disk section, Clean Up File Snapshots). */
+	snapshots: SessionFacts[];
 	cleanupDays: number;
-	/** `omp-sessions status --json` (the server, its service, the omp sessions start with, scheduler, remote access). */
-	server?: ServerFacts;
 	/** Set when Hermes Agent is on this machine (a Hermes home or the hermes command). */
 	hermes?: HermesFacts;
 }
@@ -127,83 +126,30 @@ export function tail(text: string, lines = 20): string {
 	return text.split(/\r?\n/).filter(l => l.trim()).slice(-lines).join("\n");
 }
 
-/** Stopped for a reason other than the user stopping it or omp exiting normally. */
-export function abnormalStop(meta: SessionMeta): boolean {
-	return meta.status === "stopped" && !!meta.exitReason && meta.exitReason !== "stopped" && meta.exitReason !== "exited";
-}
-
 /** Sessions whose snapshots can go: stopped and untouched for `days` days. */
 export function cleanupCandidates(sessions: readonly SessionFacts[], days: number, now: number): SessionFacts[] {
 	const cutoff = now - days * 86_400_000;
 	return sessions.filter(s => settleDeadHost(s.meta, s.hostAlive).status === "stopped" && s.meta.updatedAt < cutoff && s.blobBytes > 0);
 }
 
-/**
- * Unix socket paths are capped at ~104 bytes; the host uses `<session>/s.sock` when it fits and
- * falls back to a short temp path otherwise. Windows uses named pipes.
- */
-export function socketCheck(platform: string, sessionsRoot: string, tmpdir: string, join: (...parts: string[]) => string): Check {
-	if (platform === "win32") return { level: "ok", title: "Session sockets: Windows named pipes" };
-	const sampleId = "x".repeat(16);
-	const preferred = join(sessionsRoot, sampleId, "s.sock");
-	if (Buffer.byteLength(preferred) < 100) return { level: "ok", title: `Session socket path length OK (${Buffer.byteLength(preferred)} bytes)` };
-	const fallback = join(tmpdir, "ompv-0000", `${sampleId}.sock`);
-	if (Buffer.byteLength(fallback) < 100) {
-		return { level: "info", title: "Session sockets use the temp folder", detail: `The state folder path is too long for a Unix socket (${Buffer.byteLength(preferred)} bytes); hosts listen under ${join(tmpdir, "ompv-<uid>")} instead.` };
-	}
-	return { level: "error", title: "Socket paths are too long", detail: `Both ${preferred} and ${fallback} exceed the ~104-byte Unix socket limit. Set OMP_VSCODE_HOME or TMPDIR to a shorter folder.` };
-}
-
-/** One line per session: is it what meta.json claims, and what to do about it. */
-export function assessSession(s: SessionFacts, extensionVersion: string): Check {
-	const m = s.meta;
-	const settled = settleDeadHost(m, s.hostAlive);
+/** One line per AO session: what it's doing, and what to do about a problem. */
+export function assessSession(m: SessionMeta): Check {
 	const name = `${m.title} (${m.id})`;
-	const lines = [`Folder: ${m.cwd}`, `Snapshots: ${formatBytes(s.blobBytes)}`];
-	const showLog: Fix = { label: "Show log", command: "omp.showLog", args: [m.id] };
-	if (settled !== m) {
-		const crashed = settled.exitReason === HOST_CRASHED;
-		lines.unshift(`meta.json says "${m.status}" but host process ${m.pid} is gone${crashed ? " — it died mid-turn" : ""}.`);
-		if (crashed && settled.ompSessionFile) lines.push("Resume asks omp to continue the interrupted turn (an interrupted queued task goes back to the queue instead).");
-		return {
-			level: "error",
-			title: `${name}: host died while ${m.status}`,
-			detail: lines.join("\n"),
-			code: s.logTail,
-			fixes: [{ label: "Mark stopped", command: "omp.doctor.markStopped", args: [m.id] }, { label: crashed ? "Resume and continue" : "Resume", command: "omp.resumeSession", args: [m.id] }, showLog],
-		};
-	}
+	const lines = [`Folder: ${m.cwd || "(released)"}`];
 	if (m.status === "stopped") {
-		lines.unshift(`Stopped${m.exitReason ? `: ${m.exitReason}` : ""}${typeof m.exitCode === "number" ? ` (exit code ${m.exitCode})` : ""}.`);
-		if (m.exitReason === HOST_CRASHED && m.ompSessionFile) lines.push("Resume asks omp to continue the interrupted turn (an interrupted queued task goes back to the queue instead).");
-		if (abnormalStop(m) || m.exitReason === HOST_DIED) {
-			return { level: "warn", title: `${name}: stopped unexpectedly`, detail: lines.join("\n"), code: s.logTail, fixes: [{ label: "Resume", command: "omp.resumeSession", args: [m.id] }, showLog] };
-		}
-		return { level: "ok", title: `${name}: stopped`, detail: lines.join("\n") };
+		if (!m.exitReason) return { level: "ok", title: `${name}: stopped`, detail: lines.join("\n") };
+		lines.unshift(`Stopped: ${m.exitReason}`);
+		return { level: "warn", title: `${name}: stopped unexpectedly`, detail: lines.join("\n"), fixes: [{ label: "Resume", command: "omp.resumeSession", args: [m.id] }] };
 	}
-	lines.unshift(`Running (${m.status}), host pid ${m.pid}, host version ${m.hostVersion ?? "unknown (older than 0.4)"}.`);
-	if (s.socketOk === false) {
-		return { level: "warn", title: `${name}: host is not answering`, detail: `${lines.join("\n")}\nThe host process is alive but does not accept connections on ${m.socket}.`, code: s.logTail, fixes: [showLog, { label: "Stop", command: "omp.stopSession", args: [m.id] }] };
-	}
-	const fixes: Fix[] = [];
-	let level: Level = "ok";
-	let title = `${name}: ${m.status}`;
 	if (m.authProblem) {
-		level = "warn";
-		title = `${name}: omp can't use a model`;
 		lines.push(`omp reported: ${m.authProblem}`);
-		fixes.push({ label: "Log in", command: "omp.login" });
+		return { level: "warn", title: `${name}: omp can't use a model`, detail: lines.join("\n"), fixes: [{ label: "Log in", command: "omp.login" }] };
 	}
-	if (isOutdated(m, extensionVersion)) {
-		level = "warn";
-		if (!m.authProblem) title = `${name}: update available`;
-		lines.push(`Started by extension ${m.hostVersion ?? "< 0.4"}; this is ${extensionVersion}. Restart it on the current host when idle.`);
-		fixes.push({ label: "Upgrade host", command: "omp.upgradeSession", args: [m.id] });
-	}
-	return { level, title, detail: lines.join("\n"), fixes: fixes.length ? fixes : undefined };
+	if (m.exitReason) lines.push(`Last turn: ${m.exitReason}`);
+	return { level: "ok", title: `${name}: ${m.status}`, detail: lines.join("\n") };
 }
 
-export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string): Report {
+export function buildReport(f: DoctorFacts): Report {
 	const omp: Check[] = [];
 	const install: Fix = { label: "Install omp", command: "omp.installOmp" };
 	const setPath: Fix = { label: "Set path…", command: "omp.setOmpPath" };
@@ -218,7 +164,7 @@ export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string
 		omp.push({ level: "ok", title: `omp ${f.omp.version ?? "(unknown version)"}`, detail: `${f.omp.resolved}${f.omp.configured ? " (from omp.path)" : ""}` });
 	}
 	omp.push(f.bun ? { level: "ok", title: "Bun found", detail: f.bun } : { level: f.omp.exists && !f.omp.versionError ? "info" : "warn", title: "Bun not found on PATH", detail: "omp runs on Bun; the installer sets it up." });
-	const unauthenticated = f.sessions.filter(s => s.hostAlive && s.meta.status !== "stopped" && s.meta.authProblem);
+	const unauthenticated = f.sessions.filter(m => m.status !== "stopped" && m.authProblem);
 	omp.push(
 		unauthenticated.length
 			? { level: "warn", title: `${unauthenticated.length} running session(s) can't use a model`, detail: "Not logged in to a provider, or the API key is missing or rejected.", fixes: [{ label: "Log in", command: "omp.login" }] }
@@ -229,25 +175,20 @@ export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string
 		{ level: "info", title: `omp Sessions ${f.extensionVersion}` },
 		{ level: "info", title: `VS Code ${f.vscodeVersion}, Node ${f.nodeVersion}` },
 		{ level: "info", title: `Platform ${f.platform} ${f.arch} (${f.osRelease})` },
-		{ level: "info", title: f.remoteName ? `Remote: ${f.remoteName}` : "Local window", detail: f.remoteName ? "omp and the session hosts run on the remote machine." : undefined },
+		{ level: "info", title: f.remoteName ? `Remote: ${f.remoteName}` : "Local window", detail: f.remoteName ? "omp, AO and the planner run on the remote machine." : undefined },
 	];
 
-	const storage: Check[] = [
-		f.writable ? { level: "ok", title: "Sessions folder is writable", detail: f.stateDir } : { level: "error", title: "Sessions folder is not writable", detail: `${f.stateDir}\n${f.writeError ?? ""}`.trim() },
-		socketCheck(f.socket.platform, f.socket.sessionsRoot, f.socket.tmpdir, join),
-	];
+	const storage: Check[] = [f.writable ? { level: "ok", title: "State folder is writable", detail: f.stateDir } : { level: "error", title: "State folder is not writable", detail: `${f.stateDir}\n${f.writeError ?? ""}`.trim() }];
 
-	const sessions = [...f.sessions].sort((a, b) => b.meta.updatedAt - a.meta.updatedAt).map(s => assessSession(s, f.extensionVersion));
+	const sessions = [...f.sessions].sort((a, b) => b.updatedAt - a.updatedAt).map(assessSession);
 	sessions.sort((a, b) => SEVERITY[b.level] - SEVERITY[a.level]);
-	const outdated = f.sessions.filter(s => s.hostAlive && isOutdated(s.meta, f.extensionVersion));
-	if (outdated.length > 1) sessions.unshift({ level: "warn", title: `${outdated.length} sessions run an older host`, fixes: [{ label: "Upgrade idle sessions", command: "omp.upgradeAllSessions" }] });
-	if (sessions.length === 0) sessions.push({ level: "info", title: "No sessions yet" });
+	if (sessions.length === 0) sessions.push({ level: "info", title: f.ao.url ? "No sessions yet" : "No sessions (AO is not reachable)" });
 
-	const total = f.sessions.reduce((n, s) => n + s.blobBytes, 0);
-	const old = cleanupCandidates(f.sessions, f.cleanupDays, f.now);
+	const total = f.snapshots.reduce((n, s) => n + s.blobBytes, 0);
+	const old = cleanupCandidates(f.snapshots, f.cleanupDays, f.now);
 	const oldBytes = old.reduce((n, s) => n + s.blobBytes, 0);
 	const disk: Check[] = [
-		{ level: "info", title: `File snapshots: ${formatBytes(total)} in ${f.sessions.length} session(s)` },
+		{ level: "info", title: `File snapshots: ${formatBytes(total)} in ${f.snapshots.length} session folder(s) of the old session host` },
 		old.length
 			? { level: oldBytes > 512 * 1024 * 1024 ? "warn" : "info", title: `${formatBytes(oldBytes)} in ${old.length} session(s) stopped for over ${f.cleanupDays} days`, detail: "Deleting snapshots only loses the diffs/reverts of those sessions; transcripts stay.", fixes: [{ label: "Clean up…", command: "omp.cleanUpSnapshots" }] }
 			: { level: "ok", title: `Nothing to clean up (no stopped session older than ${f.cleanupDays} days with snapshots)` },
@@ -257,7 +198,8 @@ export function buildReport(f: DoctorFacts, join: (...parts: string[]) => string
 		generatedAt: f.now,
 		sections: [
 			{ title: "omp", checks: omp },
-			...(f.server ? [{ title: "omp-sessions server", checks: serverChecks(f.server) }] : []),
+			{ title: "Agent Orchestrator", checks: aoChecks(f.ao) },
+			{ title: "Planner", checks: plannerChecks(f.planner) },
 			{ title: "Environment", checks: env },
 			{ title: "Storage", checks: storage },
 			{ title: `Sessions (${f.sessions.length})`, checks: sessions },

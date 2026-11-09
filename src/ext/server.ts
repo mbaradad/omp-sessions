@@ -4,7 +4,7 @@
 // the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts), the
 // `omp-sessions` command (`omp.installCli`) and the runtime folder the planner and CLI run from (the
 // extension folder changes with every update), and the `omp.path`/`omp.extraArgs` mirror the CLI reads.
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -19,7 +19,6 @@ import { ensurePlanner, stopPlanner } from "../planner/client";
 import { logPath as plannerLogPath } from "../planner/paths";
 import { installService as installPlannerService, serviceKind, serviceUnitPath } from "../planner/service";
 import type { OmpApi } from "./api";
-import { type ServerFacts, parseMachineStatus } from "./doctor-server";
 import { plain } from "./plain";
 
 /** What the planner and CLI run from: their bundles and the agent skill the CLI installs (plus the Hermes plugin folder). */
@@ -27,10 +26,6 @@ const RUNTIME_FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
 
 /** What other extension modules need from the machine side. */
 export interface ServerControl {
-	/** Finds or starts the AO daemon and the planner; resolves with a status line, rejects when either does not come up. */
-	ensureRunning(): Promise<string>;
-	/** `omp-sessions status --json` from the installed runtime (never starts anything), or why it could not be read. */
-	status(): Promise<Pick<ServerFacts, "status" | "error">>;
 	/** A client for the AO daemon, starting it when none runs (an explicit user action asked for it). */
 	client(): Promise<AoClient>;
 }
@@ -102,7 +97,7 @@ function onPath(dir: string): boolean {
 }
 
 /** The systemd user unit that runs the default AO daemon, when one is installed. */
-function installedUnit(): string | undefined {
+export function installedUnit(): string | undefined {
 	if (process.platform !== "linux") return undefined;
 	const unit = daemonUnitName(defaultRunFile());
 	return spawnSync("systemctl", ["--user", "cat", `${unit}.service`], { stdio: "ignore", timeout: 5_000 }).status === 0 ? unit : undefined;
@@ -210,18 +205,6 @@ export function registerServer(api: OmpApi): ServerControl {
 
 	/** Runs the runtime's CLI as the `omp-sessions` launcher would: this node (Electron as Node when it is VS Code's). */
 	const cliEnv = (): NodeJS.ProcessEnv => (getNode().electron ? { ELECTRON_RUN_AS_NODE: "1" } : {});
-	const status = (): Promise<Pick<ServerFacts, "status" | "error">> => {
-		const { promise, resolve } = Promise.withResolvers<Pick<ServerFacts, "status" | "error">>();
-		if (!runtime) {
-			resolve({ error: "the omp-sessions runtime is not installed (see the AO output)" });
-			return promise;
-		}
-		execFile(getNode().path, [path.join(runtime, "cli.js"), "status", "--json"], { encoding: "utf8", env: { ...process.env, ...cliEnv(), NO_COLOR: "1" }, timeout: 30_000, windowsHide: true }, (err, stdout, stderr) => {
-			const parsed = parseMachineStatus(stdout);
-			resolve(parsed ? { status: parsed } : { error: (`${stderr}`.trim() || err?.message || "no JSON in the output").slice(0, 400) });
-		});
-		return promise;
-	};
 
 	const showError = (err: unknown) =>
 		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
@@ -348,5 +331,5 @@ export function registerServer(api: OmpApi): ServerControl {
 			}
 		}),
 	);
-	return { ensureRunning, status, client: () => ao.client(true) };
+	return { client: () => ao.client(true) };
 }

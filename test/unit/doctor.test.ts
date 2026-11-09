@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import * as path from "node:path";
 import { test } from "node:test";
+import { type AoFacts, aoChecks, plannerChecks } from "../../src/ext/doctor-ao";
 import {
 	type DoctorFacts,
 	type SessionFacts,
@@ -15,7 +15,6 @@ import {
 	reportCommands,
 	reportToHtml,
 	reportToMarkdown,
-	socketCheck,
 	summary,
 } from "../../src/ext/doctor-report";
 import { HOST_CRASHED, HOST_DIED, isAuthError, isOutdated, settleDeadHost } from "../../src/shared/health";
@@ -42,8 +41,10 @@ function meta(over: Partial<SessionMeta> = {}): SessionMeta {
 }
 
 function facts(over: Partial<SessionFacts> = {}): SessionFacts {
-	return { meta: meta(), hostAlive: true, socketOk: true, blobBytes: 0, ...over };
+	return { meta: meta(), hostAlive: false, blobBytes: 0, ...over };
 }
+
+const AO_OK: AoFacts = { url: "http://127.0.0.1:3001", pid: 7, unit: "ao-daemon", sessions: 1, serviceAvailable: true, omp: { installation: "installed", authentication: "authorized" } };
 
 function doctorFacts(over: Partial<DoctorFacts> = {}): DoctorFacts {
 	return {
@@ -58,8 +59,10 @@ function doctorFacts(over: Partial<DoctorFacts> = {}): DoctorFacts {
 		bun: "/home/u/.bun/bin/bun",
 		stateDir: "/home/u/.omp/vscode/sessions",
 		writable: true,
-		socket: { platform: "linux", sessionsRoot: "/home/u/.omp/vscode/sessions", tmpdir: "/tmp" },
+		ao: AO_OK,
+		planner: { version: "0.7.0", pid: 8 },
 		sessions: [],
+		snapshots: [],
 		cleanupDays: 14,
 		...over,
 	};
@@ -144,43 +147,44 @@ test("redact: leaves ordinary diagnostics alone", () => {
 
 // ---------- session assessment ----------
 
-test("assessSession: stale working session → error with mark-stopped/resume fixes", () => {
-	const check = assessSession(facts({ meta: meta({ status: "working" }), hostAlive: false, socketOk: undefined, logTail: "boom" }), "0.4.0");
-	assert.equal(check.level, "error");
-	assert.match(check.title, /host died while working/);
-	assert.equal(check.code, "boom");
-	assert.deepEqual(
-		check.fixes?.map(f => f.command),
-		["omp.doctor.markStopped", "omp.resumeSession", "omp.showLog"],
-	);
-	assert.deepEqual(check.fixes?.[0].args, ["abc123"]);
-});
-
-test("assessSession: running states", () => {
-	assert.equal(assessSession(facts(), "0.4.0").level, "ok");
-	const outdated = assessSession(facts({ meta: meta({ hostVersion: "0.3.0" }) }), "0.4.0");
-	assert.equal(outdated.level, "warn");
-	assert.match(outdated.title, /update available/);
-	assert.deepEqual(outdated.fixes?.map(f => f.command), ["omp.upgradeSession"]);
-	const deaf = assessSession(facts({ socketOk: false }), "0.4.0");
-	assert.equal(deaf.level, "warn");
-	assert.match(deaf.title, /not answering/);
-	const auth = assessSession(facts({ meta: meta({ authProblem: "no model is available" }) }), "0.4.0");
+test("assessSession: AO sessions — running and plain stops are ok; a stop with a reason or a login problem warns with its fix", () => {
+	assert.equal(assessSession(meta()).level, "ok");
+	assert.equal(assessSession(meta({ status: "stopped" })).level, "ok");
+	const failed = assessSession(meta({ status: "stopped", exitReason: "provisioning failed: no default branch" }));
+	assert.equal(failed.level, "warn");
+	assert.match(failed.title, /stopped unexpectedly/);
+	assert.deepEqual(failed.fixes?.map(f => [f.command, f.args]), [["omp.resumeSession", ["abc123"]]]);
+	const auth = assessSession(meta({ authProblem: "no model is available" }));
 	assert.equal(auth.level, "warn");
 	assert.deepEqual(auth.fixes?.map(f => f.command), ["omp.login"]);
+	assert.equal(assessSession(meta({ status: "stopped", authProblem: "x" })).level, "ok");
 });
 
-test("assessSession: stopped sessions — normal is ok, failures warn with the log", () => {
-	assert.equal(assessSession(facts({ meta: meta({ status: "stopped", exitReason: "stopped" }), hostAlive: false }), "0.4.0").level, "ok");
-	assert.equal(assessSession(facts({ meta: meta({ status: "stopped", exitReason: "exited", exitCode: 0 }), hostAlive: false }), "0.4.0").level, "ok");
-	const failed = assessSession(facts({ meta: meta({ status: "stopped", exitReason: "exit code 1", exitCode: 1 }), hostAlive: false, logTail: "Error: x" }), "0.4.0");
-	assert.equal(failed.level, "warn");
-	assert.equal(failed.code, "Error: x");
-	const crashed = assessSession(facts({ meta: meta({ status: "stopped", exitReason: HOST_CRASHED }), hostAlive: false }), "0.4.0");
-	assert.equal(crashed.level, "warn");
+test("aoChecks: unreachable daemon is an error; AO's view of omp; supervision", () => {
+	const down = aoChecks({ error: "connect ECONNREFUSED", serviceAvailable: true });
+	assert.equal(down.length, 1);
+	assert.equal(down[0].level, "error");
+	assert.deepEqual(down[0].fixes?.map(f => f.command), ["omp.server.start", "omp.server.showLog"]);
+	assert.deepEqual(aoChecks(AO_OK).map(c => c.level), ["ok", "ok", "ok"]);
+	const noOmp = aoChecks({ ...AO_OK, omp: { installation: "not_installed", installationReason: "OMP is not installed.", authentication: "unknown" } }).at(-1);
+	assert.equal(noOmp?.level, "error");
+	assert.deepEqual(noOmp?.fixes?.map(f => f.command), ["omp.installOmp"]);
+	const loggedOut = aoChecks({ ...AO_OK, omp: { installation: "installed", authentication: "unauthorized" } }).at(-1);
+	assert.equal(loggedOut?.level, "warn");
+	assert.deepEqual(loggedOut?.fixes?.map(f => f.command), ["omp.login"]);
+	const plain = aoChecks({ ...AO_OK, unit: undefined })[1];
+	assert.deepEqual(plain.fixes?.map(f => f.command), ["omp.server.install"]);
+	assert.equal(aoChecks({ ...AO_OK, unit: undefined, serviceAvailable: false })[1].fixes, undefined);
 });
 
-// ---------- cleanup / sockets / misc ----------
+test("plannerChecks: a planner that doesn't answer warns with Start", () => {
+	assert.equal(plannerChecks({ version: "0.7.0", pid: 1 })[0].level, "ok");
+	const down = plannerChecks({ error: "No planner answers on its socket." })[0];
+	assert.equal(down.level, "warn");
+	assert.deepEqual(down.fixes?.map(f => f.command), ["omp.server.start", "omp.server.showLog"]);
+});
+
+// ---------- cleanup / misc ----------
 
 test("cleanupCandidates: stopped (or dead) sessions older than N days that have snapshots", () => {
 	const all = [
@@ -198,15 +202,6 @@ test("cleanupCandidates: stopped (or dead) sessions older than N days that have 
 		cleanupCandidates(all, 0, NOW).map(s => s.meta.id),
 		["old", "recent", "dead"],
 	);
-});
-
-test("socketCheck: short paths ok, long state dirs fall back to tmp, both too long is an error, Windows pipes", () => {
-	const j = path.posix.join;
-	assert.equal(socketCheck("linux", "/home/u/.omp/vscode/sessions", "/tmp", j).level, "ok");
-	const long = `/home/u/${"deep/".repeat(20)}sessions`;
-	assert.equal(socketCheck("linux", long, "/tmp", j).level, "info");
-	assert.equal(socketCheck("darwin", long, `/var/${"x".repeat(100)}`, j).level, "error");
-	assert.equal(socketCheck("win32", long, "C:\\tmp", path.win32.join).level, "ok");
 });
 
 test("formatBytes", () => {
@@ -233,52 +228,53 @@ test("issueUrl: GitHub new-issue link with encoded title/body; undefined when to
 // ---------- whole report ----------
 
 test("buildReport: missing omp is an error with install/set-path fixes", () => {
-	const report = buildReport(doctorFacts({ omp: { exists: false }, bun: undefined }), path.posix.join);
+	const report = buildReport(doctorFacts({ omp: { exists: false }, bun: undefined }));
 	const omp = report.sections[0].checks[0];
 	assert.equal(omp.level, "error");
 	assert.match(omp.title, /not installed/);
 	assert.deepEqual(omp.fixes?.map(f => f.command), ["omp.installOmp", "omp.setOmpPath"]);
-	const broken = buildReport(doctorFacts({ omp: { configured: "/nope/omp", resolved: "/nope/omp", exists: false } }), path.posix.join);
+	const broken = buildReport(doctorFacts({ omp: { configured: "/nope/omp", resolved: "/nope/omp", exists: false } }));
 	assert.match(broken.sections[0].checks[0].title, /missing file/);
-	const failing = buildReport(doctorFacts({ omp: { resolved: "/x/omp", exists: true, versionError: "/usr/bin/env: 'bun': No such file or directory" }, bun: undefined }), path.posix.join);
+	const failing = buildReport(doctorFacts({ omp: { resolved: "/x/omp", exists: true, versionError: "/usr/bin/env: 'bun': No such file or directory" }, bun: undefined }));
 	assert.match(failing.sections[0].checks[0].detail ?? "", /runs on Bun/);
 });
 
 test("buildReport: healthy setup has no errors; problems are counted and sorted first", () => {
-	const healthy = buildReport(doctorFacts({ sessions: [facts()] }), path.posix.join);
+	const healthy = buildReport(doctorFacts({ sessions: [meta()] }));
 	assert.deepEqual(summary(healthy), { errors: 0, warnings: 0 });
+	assert.deepEqual(
+		healthy.sections.map(s => s.title).slice(0, 3),
+		["omp", "Agent Orchestrator", "Planner"],
+	);
 	const sick = buildReport(
 		doctorFacts({
 			writable: false,
 			writeError: "EACCES",
-			sessions: [facts(), facts({ meta: meta({ id: "dead", status: "working" }), hostAlive: false }), facts({ meta: meta({ id: "old", hostVersion: "0.3.0" }) }), facts({ meta: meta({ id: "old2", hostVersion: "0.3.0" }) })],
+			ao: { error: "connect ECONNREFUSED 127.0.0.1:3001", serviceAvailable: true },
+			planner: { error: "No planner answers on its socket." },
+			sessions: [meta(), meta({ id: "failed", status: "stopped", exitReason: "provisioning failed" })],
 		}),
-		path.posix.join,
 	);
 	const { errors, warnings } = summary(sick);
-	assert.equal(errors, 2); // unwritable dir + dead host
-	assert.ok(warnings >= 3);
+	assert.equal(errors, 2); // unwritable state dir + AO unreachable
+	assert.equal(warnings, 2); // planner down + stopped unexpectedly
 	const sessions = sick.sections.find(s => s.title.startsWith("Sessions"));
 	assert.ok(sessions);
-	assert.match(sessions.checks[0].title, /2 sessions run an older host/);
-	assert.deepEqual(sessions.checks[0].fixes?.map(f => f.command), ["omp.upgradeAllSessions"]);
-	assert.equal(sessions.checks[1].level, "error");
-	assert.ok(reportCommands(sick).includes("omp.doctor.markStopped"));
+	assert.equal(sessions.checks[0].level, "warn");
+	assert.ok(reportCommands(sick).includes("omp.server.start"));
+	assert.match(buildReport(doctorFacts({ ao: { serviceAvailable: false } })).sections.find(s => s.title.startsWith("Sessions"))?.checks[0].title ?? "", /AO is not reachable/);
 });
 
-test("buildReport: disk section offers cleanup for old stopped sessions", () => {
-	const report = buildReport(doctorFacts({ sessions: [facts({ meta: meta({ status: "stopped", exitReason: "stopped", updatedAt: NOW - 40 * DAY }), hostAlive: false, blobBytes: 2048 })] }), path.posix.join);
+test("buildReport: disk section offers cleanup of the old session host's snapshots", () => {
+	const report = buildReport(doctorFacts({ snapshots: [facts({ meta: meta({ status: "stopped", exitReason: "stopped", updatedAt: NOW - 40 * DAY }), hostAlive: false, blobBytes: 2048 })] }));
 	const disk = report.sections.find(s => s.title === "Disk");
 	assert.ok(disk);
 	assert.match(disk.checks[1].title, /2\.0 KB in 1 session\(s\) stopped for over 14 days/);
 	assert.deepEqual(disk.checks[1].fixes?.map(f => f.command), ["omp.cleanUpSnapshots"]);
 });
 
-test("reportToMarkdown: icons, details, log tails, secrets redacted, no command links", () => {
-	const report = buildReport(
-		doctorFacts({ sessions: [facts({ meta: meta({ status: "stopped", exitReason: "exit code 1", exitCode: 1, cwd: "/home/alice/proj" }), hostAlive: false, logTail: "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuv failed" })] }),
-		path.posix.join,
-	);
+test("reportToMarkdown: icons, details, secrets redacted, no command links", () => {
+	const report = buildReport(doctorFacts({ sessions: [meta({ status: "stopped", exitReason: "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuv failed", cwd: "/home/alice/proj" })] }));
 	const md = reportToMarkdown(report, "/home/alice");
 	assert.match(md, /^# omp Doctor/);
 	assert.match(md, /✅ omp 18\.12\.6/);
@@ -290,11 +286,11 @@ test("reportToMarkdown: icons, details, log tails, secrets redacted, no command 
 });
 
 test("reportToHtml: escapes content, links fixes as command URIs, no scripts", () => {
-	const report = buildReport(doctorFacts({ sessions: [facts({ meta: meta({ title: "<img src=x onerror=alert(1)>", status: "working" }), hostAlive: false })] }), path.posix.join);
+	const report = buildReport(doctorFacts({ sessions: [meta({ title: "<img src=x onerror=alert(1)>", status: "stopped", exitReason: "boom" })] }));
 	const html = reportToHtml(report);
 	assert.ok(!html.includes("<img src=x"));
 	assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"));
 	assert.ok(!/<script/i.test(html));
-	assert.ok(html.includes(`href="command:omp.doctor.markStopped?${encodeURIComponent(JSON.stringify(["abc123"])).replace(/"/g, "&quot;")}"`));
+	assert.ok(html.includes(`href="command:omp.resumeSession?${encodeURIComponent(JSON.stringify(["abc123"])).replace(/"/g, "&quot;")}"`));
 	assert.equal(commandLink({ label: "x", command: "omp.doctor" }), "command:omp.doctor");
 });
