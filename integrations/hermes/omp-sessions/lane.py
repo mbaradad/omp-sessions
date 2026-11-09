@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, error_text, is_approval, short
+from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, edge_mark, edges_of, error_text, is_approval, short
 from .settings import ANY_AUTHOR, BoardLane, Settings, archive_completed, board_lane
 from .store import Busy, Store
 
@@ -222,7 +222,7 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
     # A parent's changes that don't merge (GRAPH-PROPAGATION.md) need a person, like a question.
     conflict = next((e for e in upstream_edges(report) if e.get("state") == "conflict"), None)
     if conflict is not None:
-        mark = f"conflict:{conflict.get('parentSession') or conflict.get('parent')}:{conflict.get('parentHead') or ''}"
+        mark = f"conflict:{edge_mark(conflict)}"
         if mark in (link.get("asked") or []):
             return [("claim",)] if card.status == "ready" else []
         acts = [("claim",)] if card.status == "ready" else []
@@ -265,8 +265,7 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
 
 def upstream_edges(report: Optional[dict]) -> list[dict]:
     """The report's parent edges (`upstream` in `show --json`; GRAPH-PROPAGATION.md)."""
-    edges = (report or {}).get("upstream")
-    return [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
+    return edges_of((report or {}).get("upstream"))
 
 
 def conflict_text(edge: dict) -> str:
@@ -425,7 +424,7 @@ class Lane:
         for e in edges:
             child = str(e.get("childSession") or "")
             card = cards.get(child)
-            mark = f"{child}:{e.get('parentHead') or e.get('at') or ''}"
+            mark = f"{child}:{edge_mark(e)}"
             if not card or mark in noted:
                 continue
             parent = str(e.get("parentSession") or "")

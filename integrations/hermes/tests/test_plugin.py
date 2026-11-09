@@ -739,6 +739,24 @@ class PureTest(unittest.TestCase):
         self.assertFalse(is_approval({"kind": "select", "title": "Pick one", "options": ["Allow once", "Deny"], "approval": False}), "the CLI's own flag wins")
         self.assertTrue(is_approval({"kind": "ask", "title": "x", "approval": True}))
 
+    def test_upstream_of_show_and_ls_is_an_object_with_edges(self) -> None:
+        from hermes_plugins.omp_sessions.ompsessions import edge_mark, edges_of
+
+        shown = {"state": "conflict", "edges": [{"parent": "t1", "state": "conflict", "files": ["b.txt", "a.txt"]}, {"parent": "t2", "state": "merged"}]}
+        self.assertEqual([e["parent"] for e in edges_of(shown)], ["t1", "t2"])
+        self.assertEqual([e["parent"] for e in edges_of(shown["edges"])], ["t1", "t2"], "plan status gives a bare list")
+        self.assertEqual(edges_of(None), [])
+        # The lane blocks a card once per conflict: without a parent head the files tell a new conflict apart.
+        d, Card = self.lane.decide, self.lane.Card
+        rep = {"state": "idle", "queue": {"pending": 1, "running": 0, "done": 0, "total": 1}, "upstream": shown}
+        link = {"session": "s1", "state": "active", "asked": []}
+        [(kind, _text, mark)] = d(Card("running", "omp"), link, rep, "omp")
+        self.assertEqual((kind, mark), ("block_conflict", f"conflict:{edge_mark(shown['edges'][0])}"))
+        again = {**link, "input_blocked": True, "asked": [mark]}
+        self.assertEqual(d(Card("blocked", "omp"), again, rep, "omp"), [])
+        other = {**rep, "upstream": {"state": "conflict", "edges": [{"parent": "t1", "state": "conflict", "files": ["c.txt"]}]}}
+        self.assertEqual(d(Card("running", "omp"), again, other, "omp")[0][0], "block_conflict")
+
     def test_upstream_edges_are_grouped_by_child_session_and_absent_without_plan_status(self) -> None:
         from hermes_plugins.omp_sessions.ompsessions import OmpSessions, OmpSessionsError
 

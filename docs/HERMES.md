@@ -145,7 +145,7 @@ The card↔session links and the lane's lock live beside the kanban boards, whic
 
 A card whose Hermes parents ran in the lane is queued with those parents' sessions as `after`, so its omp session branches from their work instead of the repository base. When a parent changes later (a follow-up, a re-run), the planner merges the change into each child's worktree: a child that is working gets it after its turn, an idle one gets it with a note, a done one is marked **upstream changed** and is not run again. Each edge has a sync state: `in-sync`, `pending`, `merged`, `conflict` or `upstream-changed`.
 
-- A `conflict` blocks the child's card (see the table above).
+- A `conflict` blocks the child's card (see the table above). The session itself does not turn `needs_input` (and `omp_session_wait` doesn't return for it): read `upstream.state` in `omp_session_status` (the worst of its parent edges: conflict > resolving > upstream-changed > pending > merged > in-sync).
 - An `upstream-changed` card gets one comment. Re-run it with `switchyard plan sync <session> --rerun`, **Re-run with parent changes** on the omp Sessions page, or `switchyard_plan_sync` with `rerun: true`.
 - `switchyard plan status` lists every edge; the omp Sessions page shows a **merge conflict** or **parent changed** chip on the card and the parents' states in the detail panel, with **Sync now**.
 

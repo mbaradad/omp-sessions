@@ -319,7 +319,7 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "exitReason": meta.get("exitReason") if meta.get("status") == "stopped" else None,
         "authProblem": meta.get("authProblem"),
         "question": question,
-        "upstream": upstream_view(upstream if upstream is not None else info.get("upstream")),
+        "upstream": upstream_view(info.get("upstream") or upstream),
         "card": None,
     }
     if ref:
@@ -331,11 +331,9 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
 def upstream_view(edges: Any) -> list[dict]:
     """The session's parent edges (GRAPH-PROPAGATION.md), for the page: which parent, its sync state, the
     conflicting files."""
-    if not isinstance(edges, list):
-        return []
     out = []
-    for e in edges:
-        if isinstance(e, dict) and e.get("state") in ompsessions.SYNC_STATES:
+    for e in ompsessions.edges_of(edges):
+        if e.get("state") in ompsessions.SYNC_STATES:
             files = [f for f in e.get("files") or [] if isinstance(f, str)]
             out.append({"parent": e.get("parentSession") or e.get("parent"), "state": e["state"], "files": files[:50]})
     return out

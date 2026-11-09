@@ -51,6 +51,19 @@ def is_approval(question: dict) -> bool:
     return True
 
 
+def edges_of(upstream: Any) -> list[dict]:
+    """The parent edges of an `upstream` value: `show`/`ls` give {state, edges: [{parent, state, files?}]}
+    (state: the worst incoming edge); `plan status` edges come as a bare list."""
+    if isinstance(upstream, dict):
+        upstream = upstream.get("edges")
+    return [e for e in upstream if isinstance(e, dict)] if isinstance(upstream, list) else []
+
+
+def edge_mark(edge: dict) -> str:
+    """What makes an edge's state new: its parent and head, or (when the CLI gives no head) the files at issue."""
+    return f"{edge.get('parentSession') or edge.get('parent')}:{edge.get('parentHead') or edge.get('at') or ','.join(sorted(str(f) for f in edge.get('files') or []))}"
+
+
 def short(session_id: str) -> str:
     """A session id for messages: AO ids (`<project>-<n>`, already short and what every command takes)
     in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8, the prefix it was known by."""
