@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { type AoClient, switchyardHome } from "../ao/client";
+import { AoError, type AoClient, switchyardHome } from "../ao/client";
 import { type TodoPhase, phasesToMarkdown, readTodoMirror, todoImportCommand, todoImportFile, writeFileAtomic } from "../shared/omp-todos";
 
 const POLL_MS = 3000;
@@ -35,11 +35,17 @@ export class OmpPlans implements vscode.Disposable {
 		return this.plans.get(aoSessionId)?.phases;
 	}
 
-	/** Asks omp to replace the session's plan with `phases`. */
+	/** Asks omp to replace the session's plan with `phases`. Fails with a plain reason when the session's agent is down. */
 	async set(client: AoClient, aoSessionId: string, phases: readonly TodoPhase[]): Promise<void> {
 		const file = todoImportFile(this.home, aoSessionId);
 		writeFileAtomic(file, phasesToMarkdown(phases));
-		await client.sendMessage(aoSessionId, { text: todoImportCommand(file) });
+		try {
+			await client.sendMessage(aoSessionId, { text: todoImportCommand(file) });
+		} catch (err) {
+			// AO answers 409 CHAT_CONTROLLER_NOT_READY while the session's agent is exited or crashed, until it is resumed.
+			if (err instanceof AoError && err.code === "CHAT_CONTROLLER_NOT_READY") throw new Error("omp is not running in this session: resume it, then edit its plan.");
+			throw err;
+		}
 	}
 
 	dispose(): void {
