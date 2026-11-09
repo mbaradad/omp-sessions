@@ -102,7 +102,7 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(q["group"], "Dash group")
         self.assertEqual(q["title"], "later on")
         ln = until(lambda: self.state_is(linked["id"], "idle"), "linked idle")
-        self.assertEqual(ln["card"], {"board": "dash", "id": card, "title": "Ship the dashboard tab", "status": "ready"})
+        self.assertEqual(ln["card"], {"board": "dash", "id": card, "title": "Ship the dashboard tab", "status": "ready", "parents": [], "children": []})
         self.assertEqual(ln["excerpt"], "linked")
 
         # Detail: the full question and reply; answer it, then follow up, switch mode, stop.
@@ -175,6 +175,62 @@ class DashboardApiTest(unittest.TestCase):
             self.assertTrue(self.post("/lane", {"enabled": True})["enabled"])
         finally:
             CONFIG.write_text(self.config_text)
+
+    def test_cards_carry_their_dependency_links(self) -> None:
+        kbb.create_board("graph", name="Graph board")
+        with kbc.connect_closing(board="graph") as conn:
+            plan = kb.create_task(conn, title="Plan", assignee="omp", board="graph")
+            build = kb.create_task(conn, title="Build", assignee="someone", parents=[plan], board="graph")
+            docs = kb.create_task(conn, title="Docs", assignee="someone", parents=[plan], board="graph")
+            ship = kb.create_task(conn, title="Ship", assignee="someone", parents=[build, docs], board="graph")
+            alone = kb.create_task(conn, title="Alone", assignee="someone", board="graph")
+            gone = kb.create_task(conn, title="Old parent", assignee="someone", board="graph")
+            kb.link_tasks(conn, gone, alone)
+            kb.archive_task(conn, gone)
+        tagged_sid = json.loads(omp_sessions("new", str(WORK), "--detach", "--json", "-p", "echo building", "--tag", "hermes:graph", "--tag", f"card:{build}").stdout)["id"]
+        until(lambda: self.state_is(tagged_sid, "idle"), "tagged session idle")
+
+        def graph_board() -> dict:
+            return next(b for b in self.get("/boards")["boards"] if b["slug"] == "graph")
+
+        g = graph_board()
+        cards = {c["id"]: c for c in g["cards"]}
+        self.assertNotIn(gone, cards, "archived cards are not on the graph")
+        self.assertEqual(set(cards), {plan, build, docs, ship, alone})
+        links = {cid: (sorted(c["parents"]), sorted(c["children"])) for cid, c in cards.items()}
+        self.assertEqual(links[plan], ([], sorted([build, docs])))
+        self.assertEqual(links[build], ([plan], [ship]))
+        self.assertEqual(links[docs], ([plan], [ship]))
+        self.assertEqual(links[ship], (sorted([build, docs]), []))
+        self.assertEqual(links[alone], ([gone], []), "a link to an archived card is still reported")
+        self.assertEqual((cards[ship]["status"], cards[plan]["status"]), ("todo", "ready"), "a child waits for its parents")
+        # The session working on a card: a tagged session (not the lane's), with its state.
+        self.assertEqual((cards[build]["session"], cards[build]["sessionState"], cards[build]["lane"]), (tagged_sid, "idle", False))
+        self.assertEqual((cards[plan]["session"], cards[plan]["sessionState"], cards[plan]["lane"]), (None, None, False))
+        # The lane's ready list carries the links too.
+        self.assertEqual([(r["id"], r["parents"], sorted(r["children"])) for r in g["ready"]], [(plan, [], sorted([build, docs]))])
+        # So do the sessions' card refs (card_lookup).
+        v = self.view(tagged_sid)
+        self.assertEqual((v["card"]["parents"], v["card"]["children"]), ([plan], [ship]))
+
+        # A Hermes without the batched graph API: the task_links table gives the same links.
+        with mock.patch.dict(kb.__dict__):
+            del kb.task_graph_contexts
+            old = {c["id"]: (sorted(c["parents"]), sorted(c["children"])) for c in graph_board()["cards"]}
+        self.assertEqual(old, links)
+
+    def test_card_links_degrade_without_task_links(self) -> None:
+        import sqlite3
+        import types
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            # Neither the batched API nor a task_links table (a Hermes before dependencies): no links, no error.
+            self.assertEqual(self.api.card_links(conn, types.SimpleNamespace(), ["a", "b", "a"]), {"a": {"parents": [], "children": []}, "b": {"parents": [], "children": []}})
+            broken = types.SimpleNamespace(task_graph_contexts=mock.Mock(side_effect=sqlite3.OperationalError("no such table: task_links")))
+            self.assertEqual(self.api.card_links(conn, broken, ["a"]), {"a": {"parents": [], "children": []}})
+        finally:
+            conn.close()
 
     def test_open_in_vscode_records_the_request_and_links_the_last_window(self) -> None:
         queued = self.post("/sessions", {"prompt": "echo vscode", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})

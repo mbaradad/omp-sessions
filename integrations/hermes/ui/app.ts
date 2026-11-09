@@ -1,10 +1,11 @@
 // The omp Sessions page, written once for both hosts (the Hermes dashboard tab and the Hermes
-// Desktop page): status strip, session board with filters, detail panel, New session, Boards.
+// Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph.
 import { errorMessage, type Host, type Overview, type Session, type Started } from "./api";
 import { SessionBoard } from "./board";
 import { BoardsPanel } from "./boards";
 import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
 import { DetailPanel } from "./detail";
+import { GraphPanel } from "./graph";
 import { NewSessionDialog } from "./newSession";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
 import { ago, cx, icon, logo } from "./util";
@@ -13,7 +14,7 @@ import { openInVscode } from "./vscode";
 const SESSIONS_MS = 4000;
 const OVERVIEW_MS = 10_000;
 
-type View = "sessions" | "boards";
+type View = "sessions" | "boards" | "graph";
 
 /** Runs `fn` now and every `every` ms while the page is visible (and right away when it shows again). */
 function usePoll(fn: () => Promise<void>, every: number): void {
@@ -219,6 +220,8 @@ export function createPage(host: Host): () => ReactElement {
 		let main: Child;
 		if (view === "boards") {
 			main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
+		} else if (view === "graph") {
+			main = h(GraphPanel, { host, onOpenSession: setSelected });
 		} else if (notInstalled) {
 			main = h(Empty, { icon: "terminal", title: "omp-sessions is not installed", body: overview.ompSessions.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
 		} else if (!sessions) {
@@ -259,7 +262,7 @@ export function createPage(host: Host): () => ReactElement {
 
 		return h(
 			"div",
-			{ className: cx("omps", `omps-host-${host.kind}`, selected && view === "sessions" && "has-drawer") },
+			{ className: cx("omps", `omps-host-${host.kind}`, selected && view !== "boards" && "has-drawer") },
 			host.css ? h("style", null, host.css) : null,
 			h(
 				"header",
@@ -273,6 +276,7 @@ export function createPage(host: Host): () => ReactElement {
 					options: [
 						{ value: "sessions", label: "Sessions" },
 						{ value: "boards", label: "Boards" },
+						{ value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
 					],
 				}),
 				h("span", { className: "omps-grow" }),
@@ -290,7 +294,7 @@ export function createPage(host: Host): () => ReactElement {
 					})
 				: null,
 			h("div", { className: "omps-body" }, main),
-			selected && view === "sessions"
+			selected && view !== "boards"
 				? h(DetailPanel, { key: selected, host, id: selected, summary: all.find(s => s.id === selected), now, onClose: () => setSelected(null), onChanged: () => void loadSessions() })
 				: null,
 			creating ? h(NewSessionDialog, { host, groups: facets.groups, onClose: () => setCreating(false), onStarted: started }) : null,

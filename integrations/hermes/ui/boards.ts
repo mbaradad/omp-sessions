@@ -8,7 +8,7 @@ import { h, type ReactElement, useEffect, useState } from "./react";
 import { ago, cx, icon, shortId } from "./util";
 import { openInVscode } from "./vscode";
 
-const SESSION_STATE: Record<string, string> = {
+export const SESSION_STATE: Record<string, string> = {
 	needs_input: "needs you",
 	working: "working",
 	starting: "starting",
