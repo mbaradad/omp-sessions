@@ -13,7 +13,7 @@ import {
 	dispatcherConfigured,
 	enablePlugin,
 	findHermes,
-	findOmpSessions,
+	findSwitchyard,
 	gatewayPath,
 	hermesCommand,
 	hermesHome,
@@ -47,13 +47,13 @@ function temp(): string {
 	return dir;
 }
 
-/** A plugin folder like out/hermes-plugin/omp-sessions. */
+/** A plugin folder like out/hermes-plugin/switchyard. */
 function bundle(root: string, version: string): string {
-	const dir = path.join(root, "bundle", "omp-sessions");
-	fs.mkdirSync(path.join(dir, "skills", "omp-sessions"), { recursive: true });
-	fs.writeFileSync(path.join(dir, "plugin.yaml"), `name: omp-sessions\nversion: ${version}\n`);
+	const dir = path.join(root, "bundle", "switchyard");
+	fs.mkdirSync(path.join(dir, "skills", "switchyard"), { recursive: true });
+	fs.writeFileSync(path.join(dir, "plugin.yaml"), `name: switchyard\nversion: ${version}\n`);
 	fs.writeFileSync(path.join(dir, "__init__.py"), `VERSION = "${version}"\n`);
-	fs.writeFileSync(path.join(dir, "skills", "omp-sessions", "SKILL.md"), "---\nname: omp-sessions\n---\n");
+	fs.writeFileSync(path.join(dir, "skills", "switchyard", "SKILL.md"), "---\nname: switchyard\n---\n");
 	return dir;
 }
 
@@ -62,7 +62,7 @@ test("hermes home and plugin folder follow HERMES_HOME; a profile home's root is
 	assert.equal(hermesHome({ HERMES_HOME: "/tmp/h" }, "/home/u", "linux"), "/tmp/h");
 	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h" }, "/home/u", "linux"), "/tmp/h");
 	assert.equal(hermesRoot({ HERMES_HOME: "/tmp/h/profiles/work" }, "/home/u", "linux"), "/tmp/h");
-	assert.equal(pluginTarget("/tmp/h"), path.join("/tmp/h", "plugins", "omp-sessions"));
+	assert.equal(pluginTarget("/tmp/h"), path.join("/tmp/h", "plugins", "switchyard"));
 });
 
 test("hermes home and root follow Hermes's rules: Windows default, data-dir suffix, ~, a HERMES_HOME inside the default home", () => {
@@ -148,7 +148,7 @@ test("install copies the plugin, reports unchanged/updated, and never replaces a
 	assert.deepEqual(pluginState(v1, target), { installed: false, managed: false, current: false });
 	assert.equal(installPlugin(v1, target), "installed");
 	assert.deepEqual(pluginState(v1, target), { installed: true, managed: true, current: true });
-	assert.ok(fs.existsSync(path.join(target, "skills", "omp-sessions", "SKILL.md")));
+	assert.ok(fs.existsSync(path.join(target, "skills", "switchyard", "SKILL.md")));
 	// Python caches inside the installed copy don't make it stale.
 	fs.mkdirSync(path.join(target, "__pycache__"));
 	fs.writeFileSync(path.join(target, "__pycache__", "x.pyc"), "");
@@ -158,13 +158,13 @@ test("install copies the plugin, reports unchanged/updated, and never replaces a
 	assert.equal(pluginState(v2, target).current, false);
 	assert.equal(installPlugin(v2, target), "updated");
 	assert.equal(fs.readFileSync(path.join(target, "__init__.py"), "utf8"), 'VERSION = "2"\n');
-	assert.deepEqual(fs.readdirSync(path.dirname(target)), ["omp-sessions"], "no temp folders left behind");
+	assert.deepEqual(fs.readdirSync(path.dirname(target)), ["switchyard"], "no temp folders left behind");
 
 	assert.equal(uninstallPlugin(target), true);
 	assert.equal(fs.existsSync(target), false);
 
 	fs.mkdirSync(target, { recursive: true });
-	fs.writeFileSync(path.join(target, "plugin.yaml"), "name: omp-sessions\n# someone else's\n");
+	fs.writeFileSync(path.join(target, "plugin.yaml"), "name: switchyard\n# someone else's\n");
 	assert.equal(installPlugin(v2, target), "skipped");
 	assert.equal(uninstallPlugin(target), false, "not ours: left alone");
 	assert.ok(fs.existsSync(path.join(target, "plugin.yaml")));
@@ -185,13 +185,13 @@ plugins:
   clone_timeout_seconds: 300
   enabled:
     - account-pool
-    - "omp-sessions"
+    - "switchyard"
   disabled: []
   entries:
-    omp-sessions:
+    switchyard:
       allow_gateway_injection: true
       settings:
-        omp_sessions: '~/bin/omp-sessions'
+        switchyard: '~/bin/switchyard'
         lane:
           boards:
             lightscale:
@@ -206,25 +206,25 @@ url: http://localhost:9119/x # with a colon
 
 test("configValue reads scalars, lists and nested keys of the block YAML Hermes writes", () => {
 	assert.equal(configValue(HERMES_CONFIG, ["model", "default"]), "x");
-	assert.deepEqual(configValue(HERMES_CONFIG, ["plugins", "enabled"]), ["account-pool", "omp-sessions"]);
+	assert.deepEqual(configValue(HERMES_CONFIG, ["plugins", "enabled"]), ["account-pool", "switchyard"]);
 	assert.deepEqual(configValue(HERMES_CONFIG, ["plugins", "disabled"]), []);
-	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "allow_gateway_injection"]), "true");
+	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "switchyard", "allow_gateway_injection"]), "true");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "other", "allow_gateway_injection"]), "false");
-	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "settings", "lane", "enabled"]), "true");
-	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "omp-sessions", "settings", "omp_sessions"]), "~/bin/omp-sessions");
+	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "switchyard", "settings", "lane", "enabled"]), "true");
+	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "switchyard", "settings", "switchyard"]), "~/bin/switchyard");
 	assert.equal(configValue(HERMES_CONFIG, ["url"]), "http://localhost:9119/x");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries"]), undefined, "a mapping");
 	assert.equal(configValue(HERMES_CONFIG, ["plugins", "entries", "missing", "x"]), undefined);
 	assert.equal(configValue(HERMES_CONFIG, ["lane", "enabled"]), undefined, "only at the right depth");
 	// Indentless lists (PyYAML's default dump) and a disable winning over the allow-list.
-	const dumped = "plugins:\n  enabled:\n  - omp-sessions\n  disabled:\n  - omp-sessions\n  - x\nother: 1\n";
-	assert.deepEqual(configValue(dumped, ["plugins", "disabled"]), ["omp-sessions", "x"]);
+	const dumped = "plugins:\n  enabled:\n  - switchyard\n  disabled:\n  - switchyard\n  - x\nother: 1\n";
+	assert.deepEqual(configValue(dumped, ["plugins", "disabled"]), ["switchyard", "x"]);
 	assert.equal(configPluginStatus(dumped), "disabled");
 	assert.equal(configPluginStatus(HERMES_CONFIG), "enabled");
 	assert.equal(configPluginStatus("plugins:\n  enabled: [a, b]\n"), "not enabled");
 });
 
-test("pluginReport reads status, lane, notifications and omp_sessions from the profile's config.yaml", () => {
+test("pluginReport reads status, lane, notifications and switchyard from the profile's config.yaml", () => {
 	const root = temp();
 	const v1 = bundle(root, "1");
 	const home = path.join(root, "hermes");
@@ -233,7 +233,7 @@ test("pluginReport reads status, lane, notifications and omp_sessions from the p
 	installPlugin(v1, pluginTarget(home));
 	fs.writeFileSync(path.join(home, "config.yaml"), HERMES_CONFIG);
 	const r = pluginReport(v1, t);
-	assert.deepEqual([r.status, r.lane, r.injection, r.ompSessions], ["enabled", true, true, "~/bin/omp-sessions"]);
+	assert.deepEqual([r.status, r.lane, r.injection, r.switchyard], ["enabled", true, true, "~/bin/switchyard"]);
 	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled: []\n");
 	const off = pluginReport(v1, t);
 	assert.deepEqual([off.status, off.lane, off.injection], ["not enabled", undefined, undefined]);
@@ -253,7 +253,7 @@ test("staleCopies: managed copies the bundle is newer than (version, then build 
 	installPlugin(v1, pluginTarget(t("old").home));
 	installPlugin(v2, pluginTarget(t("current").home));
 	fs.mkdirSync(pluginTarget(t("git").home), { recursive: true });
-	fs.writeFileSync(path.join(pluginTarget(t("git").home), "plugin.yaml"), "name: omp-sessions\nversion: 0\n");
+	fs.writeFileSync(path.join(pluginTarget(t("git").home), "plugin.yaml"), "name: switchyard\nversion: 0\n");
 	assert.deepEqual(staleCopies(v2, [t("old"), t("current"), t("git"), t("none")]).map(x => x.label), ["old"]);
 	assert.deepEqual(changedFiles(v2, pluginTarget(t("old").home)), ["__init__.py", "plugin.yaml"]);
 	assert.equal(pluginVersion(v2), "1.2.0");
@@ -276,7 +276,7 @@ test("staleCopies: managed copies the bundle is newer than (version, then build 
 	assert.equal(installPlugin(sameNewer, pluginTarget(t("current").home), { onlyIfNewer: true }), "updated");
 	assert.equal(bundleNewer(sameOlder, pluginTarget(t("current").home)), false, "the marker now records the newer build");
 	assert.equal(bundleNewer(v2, pluginTarget(t("current").home)), false);
-	// A manual install may still replace it with whatever this omp-sessions bundles.
+	// A manual install may still replace it with whatever this switchyard bundles.
 	assert.equal(installPlugin(v1, pluginTarget(t("current").home)), "updated");
 });
 
@@ -291,7 +291,7 @@ test("install lock: a live holder makes installs busy; a dead or old lock is tak
 	const v1 = bundle(root, "1");
 	const target = pluginTarget(path.join(root, "hermes"));
 	const plugins = path.dirname(target);
-	const lockFile = path.join(plugins, ".omp-sessions.install.lock");
+	const lockFile = path.join(plugins, ".switchyard.install.lock");
 	const release = acquireInstallLock(plugins);
 	assert.ok(release);
 	assert.equal(acquireInstallLock(plugins), undefined, "held by this live process");
@@ -314,7 +314,7 @@ test("install lock: a live holder makes installs busy; a dead or old lock is tak
 	fs.writeFileSync(lockFile, `${process.pid} ${Date.now()} other-window\n`);
 	const busy = updatePlugin(bundle(path.join(root, "v2"), "2"), { label: "w", home: path.join(root, "hermes"), profile: "w" }, "/nonexistent/hermes");
 	assert.deepEqual([busy.outcome, busy.reload, busy.enable], ["busy", undefined, undefined]);
-	assert.deepEqual(updateLines("w", busy), ["w: skipped, another window or omp-sessions is installing the plugin there right now"]);
+	assert.deepEqual(updateLines("w", busy), ["w: skipped, another window or switchyard is installing the plugin there right now"]);
 });
 
 test("install sweeps staging left by crashed runs and restores the old copy when the swap fails", { skip: process.platform === "win32" }, () => {
@@ -324,13 +324,13 @@ test("install sweeps staging left by crashed runs and restores the old copy when
 	const target = pluginTarget(path.join(root, "hermes"));
 	const plugins = path.dirname(target);
 	installPlugin(v1, target);
-	for (const name of ["__omp-sessions-999999999-tmp__", "__omp-sessions-999999998-old__", "omp-sessions.999999997.tmp", `omp-sessions.${process.pid}.old`]) {
+	for (const name of ["__switchyard-999999999-tmp__", "__switchyard-999999998-old__", "switchyard.999999997.tmp", `switchyard.${process.pid}.old`]) {
 		fs.mkdirSync(path.join(plugins, name));
-		fs.writeFileSync(path.join(plugins, name, "plugin.yaml"), "name: omp-sessions\n");
+		fs.writeFileSync(path.join(plugins, name, "plugin.yaml"), "name: switchyard\n");
 	}
 	fs.mkdirSync(path.join(plugins, "other-plugin"));
 	assert.equal(installPlugin(v2, target), "updated");
-	assert.deepEqual(fs.readdirSync(plugins).sort(), ["omp-sessions", "other-plugin"]);
+	assert.deepEqual(fs.readdirSync(plugins).sort(), ["other-plugin", "switchyard"]);
 
 	// The new copy can't be read: the copy fails, the installed v2 stays, no staging remains.
 	const broken = bundle(path.join(root, "broken"), "3");
@@ -338,7 +338,7 @@ test("install sweeps staging left by crashed runs and restores the old copy when
 	if (process.getuid?.() !== 0) {
 		assert.throws(() => installPlugin(broken, target));
 		assert.equal(pluginVersion(target), "2");
-		assert.deepEqual(fs.readdirSync(plugins).sort(), ["omp-sessions", "other-plugin"]);
+		assert.deepEqual(fs.readdirSync(plugins).sort(), ["other-plugin", "switchyard"]);
 	}
 	fs.chmodSync(path.join(broken, "__init__.py"), 0o644);
 });
@@ -357,20 +357,20 @@ test("reload retries enable once and reports a plugin left disabled", { skip: pr
 	const home = path.join(root, "work");
 	const t = { label: "work", home, profile: "work" };
 	updatePlugin(bundle(root, "1"), t, undefined);
-	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled:\n    - omp-sessions\n");
+	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled:\n    - switchyard\n");
 	const calls = () => fs.readFileSync(log, "utf8").trim().split("\n");
 
 	fs.writeFileSync(failures, "1");
 	const once = updatePlugin(bundle(path.join(root, "v2"), "2"), t, fake, { enable: false });
 	assert.deepEqual([once.reload?.ok, once.leftDisabled], [true, undefined]);
-	assert.deepEqual(calls(), ["-p work plugins disable omp-sessions", "-p work plugins enable omp-sessions", "-p work plugins enable omp-sessions"]);
+	assert.deepEqual(calls(), ["-p work plugins disable switchyard", "-p work plugins enable switchyard", "-p work plugins enable switchyard"]);
 	fs.rmSync(log);
 
 	fs.writeFileSync(failures, "2");
 	const twice = updatePlugin(bundle(path.join(root, "v3"), "3"), t, fake, { enable: false });
 	assert.deepEqual([twice.reload?.ok, twice.leftDisabled], [false, true]);
 	assert.equal(calls().length, 3);
-	assert.match(updateLines("work", twice)[1], /^work: the plugin was left DISABLED in profile work \(enabling it again failed twice\): run hermes -p work plugins enable omp-sessions/);
+	assert.match(updateLines("work", twice)[1], /^work: the plugin was left DISABLED in profile work \(enabling it again failed twice\): run hermes -p work plugins enable switchyard/);
 });
 
 test("updatePlugin reloads an enabled copy in the running gateway (disable → enable), enables others", { skip: process.platform === "win32" }, () => {
@@ -388,14 +388,14 @@ test("updatePlugin reloads an enabled copy in the running gateway (disable → e
 
 	const fresh = updatePlugin(v1, t, fake);
 	assert.deepEqual([fresh.outcome, fresh.needsReload, fresh.enable?.ok, fresh.reload], ["installed", false, true, undefined]);
-	assert.deepEqual(calls(), ["-p work plugins enable omp-sessions", "-p work config set plugins.entries.omp-sessions.allow_gateway_injection true"]);
+	assert.deepEqual(calls(), ["-p work plugins enable switchyard", "-p work config set plugins.entries.switchyard.allow_gateway_injection true"]);
 	fs.rmSync(log);
 
-	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled:\n    - omp-sessions\n");
+	fs.writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled:\n    - switchyard\n");
 	const u = updatePlugin(v2, t, fake, { enable: false });
 	assert.deepEqual([u.outcome, u.needsReload, u.reload?.ok, u.enable, u.dashboardChanged], ["updated", true, true, undefined, true]);
-	assert.deepEqual(calls(), ["-p work plugins disable omp-sessions", "-p work plugins enable omp-sessions"]);
-	assert.deepEqual(updateLines("work", u), ["work: updated, reloaded in the running gateway", "work: the dashboard's omp Sessions page backend changed; it loads when the dashboard restarts"]);
+	assert.deepEqual(calls(), ["-p work plugins disable switchyard", "-p work plugins enable switchyard"]);
+	assert.deepEqual(updateLines("work", u), ["work: updated, reloaded in the running gateway", "work: the dashboard's Switchyard page backend changed; it loads when the dashboard restarts"]);
 	fs.rmSync(log);
 
 	// Only files outside dashboard/ changed: no dashboard note. Without hermes, only the files change.
@@ -423,14 +423,14 @@ test("findHermes looks on PATH, then ~/.local/bin; hermes always runs with -p", 
 	assert.equal(res.output, "ok plugins\nok config");
 	assert.equal(enablePlugin(fake, { label: "work", home: "/tmp/h/profiles/work", profile: "work" }, env).ok, true);
 	assert.deepEqual(fs.readFileSync(log, "utf8").trim().split("\n"), [
-		"/tmp/h -p default plugins enable omp-sessions",
-		"/tmp/h -p default config set plugins.entries.omp-sessions.allow_gateway_injection true",
-		"/tmp/h -p work plugins enable omp-sessions",
-		"/tmp/h -p work config set plugins.entries.omp-sessions.allow_gateway_injection true",
+		"/tmp/h -p default plugins enable switchyard",
+		"/tmp/h -p default config set plugins.entries.switchyard.allow_gateway_injection true",
+		"/tmp/h -p work plugins enable switchyard",
+		"/tmp/h -p work config set plugins.entries.switchyard.allow_gateway_injection true",
 	]);
 });
 
-test("findOmpSessions follows the plugin's order: setting, the gateway's PATH, ~/.local/bin", { skip: process.platform === "win32" }, () => {
+test("findSwitchyard follows the plugin's order: setting, the gateway's PATH, ~/.local/bin", { skip: process.platform === "win32" }, () => {
 	const root = temp();
 	const home = path.join(root, "home");
 	const exe = (p: string) => {
@@ -438,17 +438,17 @@ test("findOmpSessions follows the plugin's order: setting, the gateway's PATH, ~
 		fs.writeFileSync(p, "#!/bin/sh\n", { mode: 0o755 });
 		return p;
 	};
-	assert.equal(findOmpSessions(undefined, undefined, home), undefined);
-	const local = exe(path.join(home, ".local", "bin", "omp-sessions"));
-	assert.deepEqual(findOmpSessions(undefined, undefined, home), { path: local, via: "install" });
-	const onPath = exe(path.join(root, "bin", "omp-sessions"));
-	assert.deepEqual(findOmpSessions(undefined, path.join(root, "bin"), home), { path: onPath, via: "PATH" });
-	const set = exe(path.join(home, "tools", "omp-sessions"));
-	assert.deepEqual(findOmpSessions("~/tools/omp-sessions", path.join(root, "bin"), home), { path: set, via: "setting" });
-	assert.deepEqual(findOmpSessions(path.join(root, "missing"), undefined, home), { path: local, via: "install" }, "a bad setting falls through");
+	assert.equal(findSwitchyard(undefined, undefined, home), undefined);
+	const local = exe(path.join(home, ".local", "bin", "switchyard"));
+	assert.deepEqual(findSwitchyard(undefined, undefined, home), { path: local, via: "install" });
+	const onPath = exe(path.join(root, "bin", "switchyard"));
+	assert.deepEqual(findSwitchyard(undefined, path.join(root, "bin"), home), { path: onPath, via: "PATH" });
+	const set = exe(path.join(home, "tools", "switchyard"));
+	assert.deepEqual(findSwitchyard("~/tools/switchyard", path.join(root, "bin"), home), { path: set, via: "setting" });
+	assert.deepEqual(findSwitchyard(path.join(root, "missing"), undefined, home), { path: local, via: "install" }, "a bad setting falls through");
 });
 
-test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .cmd runs through a shell, findOmpSessions finds the extension's launcher", { skip: process.platform === "win32" }, () => {
+test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .cmd runs through a shell, findSwitchyard finds the extension's launcher", { skip: process.platform === "win32" }, () => {
 	const root = temp();
 	const la = path.join(root, "AppData", "Local");
 	const env = { LOCALAPPDATA: la, PATH: path.join(root, "empty") };
@@ -461,13 +461,13 @@ test("Windows: findHermes finds the installer's %LOCALAPPDATA%\\hermes\\bin, a .
 	assert.deepEqual(hermesCommand("C:\\h\\hermes.exe", ["-p", "default"], "win32"), { file: "C:\\h\\hermes.exe", args: ["-p", "default"], shell: false });
 	assert.deepEqual(hermesCommand("/x/hermes.cmd", [], "linux").shell, false);
 	const bin = path.join(root, "bin");
-	const shim = path.join(la, "omp-sessions", "omp-sessions.cmd");
+	const shim = path.join(la, "switchyard", "switchyard.cmd");
 	fs.mkdirSync(path.dirname(shim), { recursive: true });
 	fs.writeFileSync(shim, "@echo off\r\n", { mode: 0o755 });
-	assert.deepEqual(findOmpSessions(undefined, bin, root, env, "win32"), { path: shim, via: "install" });
+	assert.deepEqual(findSwitchyard(undefined, bin, root, env, "win32"), { path: shim, via: "install" });
 	fs.mkdirSync(bin);
-	fs.writeFileSync(path.join(bin, "omp-sessions.cmd"), "@echo off\r\n", { mode: 0o755 });
-	assert.deepEqual(findOmpSessions(undefined, `${path.join(root, "empty")};${bin}`, root, env, "win32"), { path: path.join(bin, "omp-sessions.cmd"), via: "PATH" });
+	fs.writeFileSync(path.join(bin, "switchyard.cmd"), "@echo off\r\n", { mode: 0o755 });
+	assert.deepEqual(findSwitchyard(undefined, `${path.join(root, "empty")};${bin}`, root, env, "win32"), { path: path.join(bin, "switchyard.cmd"), via: "PATH" });
 });
 
 test("runningDashboardUrl: the live dashboard in Hermes's spawn ledger, at localhost for a wildcard bind", () => {
@@ -500,23 +500,23 @@ test("gatewayPath reads the PATH of the process in gateway.pid", { skip: process
 	assert.equal(gatewayPath(home), process.env.PATH);
 });
 
-test("parseLaneStatus: the dispatcher heartbeat, notes and last notification of `hermes omp status --json`", () => {
-	const json = JSON.stringify({ profile: "default", omp_sessions: "/x/omp-sessions", dispatcher: { at: 100, pid: 7, profile: "default", lane_on: true, board: "lightscale" }, dispatcher_notes: ["n1", 3], last_notification: { at: 90, ok: false, session: "abc" } });
+test("parseLaneStatus: the dispatcher heartbeat, notes and last notification of `hermes switchyard status --json`", () => {
+	const json = JSON.stringify({ profile: "default", switchyard: "/x/switchyard", dispatcher: { at: 100, pid: 7, profile: "default", lane_on: true, board: "lightscale" }, dispatcher_notes: ["n1", 3], last_notification: { at: 90, ok: false, session: "abc" } });
 	assert.deepEqual(parseLaneStatus(`warning: x\n${json}`), {
 		profile: "default",
-		ompSessions: "/x/omp-sessions",
+		switchyard: "/x/switchyard",
 		dispatcher: { at: 100, pid: 7, profile: "default", laneOn: true, board: "lightscale" },
 		dispatcherNotes: ["n1"],
 		lastNotification: { at: 90, ok: false, session: "abc" },
 	});
 	assert.deepEqual(parseLaneStatus(JSON.stringify({ dispatcher: null, last_notification: null })), { dispatcherNotes: [], dispatcher: null, lastNotification: null });
-	assert.deepEqual(parseLaneStatus(JSON.stringify({ omp_sessions: null })), { dispatcherNotes: [], ompSessions: null }, "an older plugin: no dispatcher key");
+	assert.deepEqual(parseLaneStatus(JSON.stringify({ switchyard: null })), { dispatcherNotes: [], switchyard: null }, "an older plugin: no dispatcher key");
 	assert.equal(parseLaneStatus("not json"), undefined);
 });
 
 test("report line per profile", () => {
 	const state = { installed: true, managed: true, current: false };
-	assert.equal(reportLine({ label: "work", home: "/h", target: "/h/plugins/omp-sessions", state, status: "enabled", lane: true }), "work: outdated, run install to update, enabled · lane on (/h/plugins/omp-sessions)");
+	assert.equal(reportLine({ label: "work", home: "/h", target: "/h/plugins/switchyard", state, status: "enabled", lane: true }), "work: outdated, run install to update, enabled · lane on (/h/plugins/switchyard)");
 	assert.equal(reportLine({ label: "w", home: "/h", target: "/t", state, status: "enabled", lane: false, injection: false }), "w: outdated, run install to update, enabled · lane off · notifications not allowed (allow_gateway_injection) (/t)");
 	assert.equal(reportLine({ label: "default", home: "/h", target: "/t", state: { installed: false, managed: false, current: false } }), "default: not installed (/t)");
 });

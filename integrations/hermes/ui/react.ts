@@ -29,7 +29,7 @@ export function setReact(react: ReactLike): void {
 }
 
 function react(): ReactLike {
-	if (!R) throw new Error("omp Sessions: React is not set");
+	if (!R) throw new Error("Switchyard: React is not set");
 	return R;
 }
 

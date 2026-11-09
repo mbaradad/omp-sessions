@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<!-- omp Sessions: opens the vscode:// link in its #fragment. Hermes Desktop opens only web links, so its
+<!-- Switchyard: opens the vscode:// link in its #fragment. Hermes Desktop opens only web links, so its
      "Open in VS Code" opens this page in the browser. Served without sign-in: it holds no data, and it
-     only follows the links `omp-sessions vscode` makes (src/shared/vscode-open.ts vscodeLink and
+     only follows the links `switchyard vscode` makes (src/shared/vscode-open.ts vscodeLink and
      vscodeFolderLink): the extension's open?session=<id> handler, a vscode-remote folder or workspace
      link, or a local vscode://file folder link. -->
 <html lang="en">
@@ -31,7 +31,7 @@
 	} catch {
 		/* malformed fragment: no link */
 	}
-	const SESSION_LINK = /^(vscode|vscode-insiders|vscodium):\/\/mbaradad\.omp-sessions\/open\?session=[A-Za-z0-9_-]{1,128}$/;
+	const SESSION_LINK = /^(vscode|vscode-insiders|vscodium):\/\/mbaradad\.switchyard\/open\?session=[A-Za-z0-9_-]{1,128}$/;
 	const REMOTE_LINK = /^(vscode|vscode-insiders|vscodium):\/\/vscode-remote\/[a-z][a-z0-9-]*\+[A-Za-z0-9._@%-]{1,512}(\/[A-Za-z0-9._~!*'()%:-]*)+$/;
 	const FOLDER_LINK = /^(vscode|vscode-insiders|vscodium):\/\/file(\/[A-Za-z0-9._~!*'()%:-]*)+$/;
 	if (SESSION_LINK.test(target) || REMOTE_LINK.test(target) || FOLDER_LINK.test(target)) {
@@ -40,7 +40,7 @@
 		location.replace(target);
 	} else {
 		document.getElementById("title").textContent = "No VS Code link";
-		document.getElementById("hint").textContent = "Use Open in VS Code on the omp Sessions page.";
+		document.getElementById("hint").textContent = "Use Open in VS Code on the Switchyard page.";
 		document.getElementById("open").remove();
 	}
 </script>

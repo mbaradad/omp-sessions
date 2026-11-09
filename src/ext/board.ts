@@ -104,10 +104,10 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			await vscode.commands.executeCommand("switchyard.setDependencies", msg.id);
 			break;
 		case "stop":
-			for (const id of msg.ids) await vscode.commands.executeCommand("omp.stopSession", id);
+			for (const id of msg.ids) await vscode.commands.executeCommand("switchyard.stopSession", id);
 			break;
 		case "resume":
-			for (const id of msg.ids) await vscode.commands.executeCommand("omp.resumeSession", id);
+			for (const id of msg.ids) await vscode.commands.executeCommand("switchyard.resumeSession", id);
 			break;
 		case "rerunWithParent":
 			for (const id of msg.ids) {
@@ -156,7 +156,7 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			store.deleteLane(msg.id);
 			break;
 		case "concurrency":
-			await vscode.commands.executeCommand("omp.scheduler.setConcurrency", msg.max);
+			await vscode.commands.executeCommand("switchyard.scheduler.setConcurrency", msg.max);
 			break;
 		case "newSession": {
 			const cwd = await api.pickFolder();
@@ -176,8 +176,8 @@ function openBoard(api: OmpApi): void {
 		return;
 	}
 	panel = vscode.window.createWebviewPanel(
-		"omp.board",
-		"omp Sessions",
+		"switchyard.board",
+		"Switchyard",
 		vscode.ViewColumn.Beside,
 		{
 			enableScripts: true,
@@ -212,7 +212,7 @@ function html(api: OmpApi, webview: vscode.Webview): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${css}">
-<title>omp Sessions</title>
+<title>Switchyard</title>
 </head>
 <body>
 <script nonce="${nonce}" src="${js}"></script>
@@ -223,12 +223,12 @@ function html(api: OmpApi, webview: vscode.Webview): string {
 export function registerBoard(api: OmpApi): void {
 	const { context } = api;
 	context.subscriptions.push(
-		vscode.commands.registerCommand("omp.board", () => openBoard(api)),
+		vscode.commands.registerCommand("switchyard.board", () => openBoard(api)),
 		api.sessions.onDidChange(() => refresh(api)),
 		api.organize.onDidChange(() => refresh(api)),
 		watchScheduler(() => refresh(api)),
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.sessionScope")) refresh(api);
+			if (e.affectsConfiguration("switchyard.sessionScope")) refresh(api);
 		}),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => refresh(api)),
 	);

@@ -19,7 +19,7 @@ export function bridgeRoot(): string {
 	return path.join(stateRoot(), "bridge");
 }
 
-/** Present while `omp.vscodeTools` is off: the omp extension then registers no tools. */
+/** Present while `switchyard.vscodeTools` is off: the omp extension then registers no tools. */
 export function bridgeDisabledFlag(): string {
 	return path.join(bridgeRoot(), "disabled");
 }
@@ -46,7 +46,7 @@ function privateSocketDir(): string {
 	const st = fs.lstatSync(dir);
 	const uid = process.getuid?.();
 	const problem = !st.isDirectory() ? "is not a folder (or is a symlink)" : uid !== undefined && st.uid !== uid ? `belongs to another user (uid ${st.uid})` : (st.mode & 0o077) !== 0 ? `is accessible to other users (mode ${(st.mode & 0o777).toString(8)})` : undefined;
-	if (problem) throw new Error(`unsafe socket folder: ${dir} ${problem}; remove it, or set OMP_VSCODE_HOME or TMPDIR to a shorter path`);
+	if (problem) throw new Error(`unsafe socket folder: ${dir} ${problem}; remove it, or set SWITCHYARD_HOME or TMPDIR to a shorter path`);
 	return dir;
 }
 

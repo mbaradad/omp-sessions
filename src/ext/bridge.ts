@@ -1,6 +1,6 @@
 // VS Code side of the omp bridge: serves this window's language features (read-only) to the
 // per-session MCP server (`out/mcp.js`, see src/shared/bridge.ts), resolves chat symbol links, and
-// implements `omp.bridgeStatus`.
+// implements `switchyard.bridgeStatus`.
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -41,7 +41,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_LINE_BYTES = 1024 * 1024;
 
 function enabled(): boolean {
-	return vscode.workspace.getConfiguration("omp").get<boolean>("vscodeTools") ?? true;
+	return vscode.workspace.getConfiguration("switchyard").get<boolean>("vscodeTools") ?? true;
 }
 
 // ---------- conversions ----------
@@ -617,7 +617,7 @@ function syncDisabledFlag(on: boolean): void {
 		if (on) fs.rmSync(bridgeDisabledFlag(), { force: true });
 		else {
 			ensureBridgeRoot();
-			fs.writeFileSync(bridgeDisabledFlag(), "omp.vscodeTools is off\n", { mode: 0o600 });
+			fs.writeFileSync(bridgeDisabledFlag(), "switchyard.vscodeTools is off\n", { mode: 0o600 });
 		}
 	} catch (err) {
 		console.warn("[omp bridge] could not update the disabled flag:", err);
@@ -713,7 +713,7 @@ function selfTestArgs(tool: ToolName, file: string, target: { name: string; line
 
 /** Spawns out/mcp.js like omp does and runs initialize, tools/list and one call through the socket. */
 async function mcpRoundTrip(script: string, cwd: string, file: string): Promise<string> {
-	const child = spawn(process.execPath, [script], { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", OMP_VSCODE_BRIDGE_CWD: cwd }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+	const child = spawn(process.execPath, [script], { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SWITCHYARD_BRIDGE_CWD: cwd }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
 	const replies = new Map<number, (v: unknown) => void>();
 	let buf = "";
 	child.stdout.setEncoding("utf8");
@@ -758,7 +758,7 @@ async function bridgeStatus(api: OmpApi): Promise<void> {
 	const lines: string[] = ["# omp ↔ VS Code bridge", ""];
 	const on = enabled();
 	const running = server?.running;
-	lines.push(`- Setting \`omp.vscodeTools\`: **${on ? "on" : "off"}**${on ? "" : " (sessions start without the VS Code tools)"}`);
+	lines.push(`- Setting \`switchyard.vscodeTools\`: **${on ? "on" : "off"}**${on ? "" : " (sessions start without the VS Code tools)"}`);
 	lines.push(`- This window: ${running ? `serving on \`${running.socket}\` (pid ${running.pid}, ${server?.clients ?? 0} MCP connection(s))` : `not serving${server?.lastError ? ` — ${server.lastError}` : ""}`}`);
 	const script = vscode.Uri.joinPath(api.context.extensionUri, "out", "mcp.js").fsPath;
 	lines.push(`- MCP server script: \`${script}\`${fs.existsSync(script) ? "" : " **(missing — rebuild the extension)**"}`);
@@ -820,12 +820,12 @@ export function registerBridge(api: OmpApi): void {
 	api.context.subscriptions.push(
 		srv,
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.vscodeTools")) apply();
+			if (e.affectsConfiguration("switchyard.vscodeTools")) apply();
 		}),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => srv.writeEntry(true)),
 		vscode.window.onDidChangeWindowState(s => {
 			if (s.focused) srv.focused();
 		}),
-		vscode.commands.registerCommand("omp.bridgeStatus", () => bridgeStatus(api)),
+		vscode.commands.registerCommand("switchyard.bridgeStatus", () => bridgeStatus(api)),
 	);
 }

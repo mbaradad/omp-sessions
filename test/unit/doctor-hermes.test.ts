@@ -7,17 +7,17 @@ const NOW = 1_800_000_000_000;
 
 function profile(label: string, over: Partial<PluginReport> & { current?: boolean; managed?: boolean } = {}): PluginReport {
 	const { current = true, managed = true, ...rest } = over;
-	return { label, home: `/h/${label}`, target: `/h/${label}/plugins/omp-sessions`, state: { installed: true, managed, current }, status: "enabled", lane: false, injection: true, ...rest };
+	return { label, home: `/h/${label}`, target: `/h/${label}/plugins/switchyard`, state: { installed: true, managed, current }, status: "enabled", lane: false, injection: true, ...rest };
 }
 
-const missing = (label: string): PluginReport => ({ label, home: `/h/${label}`, target: `/h/${label}/plugins/omp-sessions`, state: { installed: false, managed: false, current: false } });
+const missing = (label: string): PluginReport => ({ label, home: `/h/${label}`, target: `/h/${label}/plugins/switchyard`, state: { installed: false, managed: false, current: false } });
 
 function facts(profiles: PluginReport[], over: Partial<HermesFacts> = {}): HermesFacts {
 	return {
 		hermes: "/usr/bin/hermes",
 		profiles,
 		lane: { profile: "default", status: { dispatcherNotes: [], dispatcher: { at: NOW / 1000 - 30, profile: "default", laneOn: true } } },
-		ompSessions: { path: "/home/u/.local/bin/omp-sessions", via: "install" },
+		switchyard: { path: "/home/u/.local/bin/switchyard", via: "install" },
 		gatewayPath: true,
 		now: NOW,
 		...over,
@@ -29,7 +29,7 @@ const warnings = (f: HermesFacts) => hermesChecks(f).filter(c => c.level === "wa
 test("healthy: current, enabled, lane on in the dispatcher's profile", () => {
 	const checks = hermesChecks(facts([profile("default", { lane: true }), profile("work")]));
 	assert.deepEqual(warnings(facts([profile("default", { lane: true }), profile("work")])), []);
-	assert.ok(checks.some(c => c.level === "ok" && c.title === "omp-sessions plugin current and enabled in 2 profile(s)"));
+	assert.ok(checks.some(c => c.level === "ok" && c.title === "switchyard plugin current and enabled in 2 profile(s)"));
 	assert.ok(checks.some(c => c.level === "ok" && c.title === "Kanban dispatcher runs the plugin in default"));
 	assert.ok(checks.some(c => c.level === "ok" && c.title === "Kanban lane on in default, the dispatcher's profile"));
 });
@@ -40,25 +40,25 @@ test("not installed anywhere: one info with Install; nothing else", () => {
 		checks.map(c => [c.level, c.title, c.fixes?.map(f => f.command)]),
 		[
 			["ok", "Hermes Agent found", undefined],
-			["info", "omp-sessions plugin not installed", ["omp.hermes.install"]],
+			["info", "switchyard plugin not installed", ["switchyard.hermes.install"]],
 		],
 	);
 });
 
-test("a managed copy newer than the bundle (another editor's omp-sessions) is info, never an Update", () => {
+test("a managed copy newer than the bundle (another editor's switchyard) is info, never an Update", () => {
 	const checks = hermesChecks(facts([profile("default", { current: false, ahead: true })]));
-	assert.equal(checks.some(c => c.title.startsWith("omp-sessions plugin outdated")), false);
-	const ahead = checks.find(c => c.title === "omp-sessions plugin in default is newer than this extension's");
+	assert.equal(checks.some(c => c.title.startsWith("switchyard plugin outdated")), false);
+	const ahead = checks.find(c => c.title === "switchyard plugin in default is newer than this extension's");
 	assert.deepEqual([ahead?.level, ahead?.fixes], ["info", undefined]);
 });
 
 test("outdated managed copies → Update with their profiles; Git installs → info only; disabled → Enable", () => {
 	const checks = hermesChecks(facts([profile("default", { current: false, lane: true }), profile("work", { current: false }), profile("git", { current: false, managed: false }), profile("off", { status: "disabled", lane: undefined, injection: undefined })]));
-	const outdated = checks.find(c => c.title.startsWith("omp-sessions plugin outdated"));
+	const outdated = checks.find(c => c.title.startsWith("switchyard plugin outdated"));
 	assert.equal(outdated?.level, "warn");
-	assert.deepEqual(outdated?.fixes, [{ label: "Update", command: "omp.hermes.update", args: [["default", "work"]] }]);
+	assert.deepEqual(outdated?.fixes, [{ label: "Update", command: "switchyard.hermes.update", args: [["default", "work"]] }]);
 	assert.equal(checks.find(c => c.title.includes("differs from the bundled one"))?.level, "info");
-	assert.deepEqual(checks.find(c => c.title === "omp-sessions plugin disabled in off")?.fixes, [{ label: "Enable", command: "omp.hermes.enable", args: ["off"] }]);
+	assert.deepEqual(checks.find(c => c.title === "switchyard plugin disabled in off")?.fixes, [{ label: "Enable", command: "switchyard.hermes.enable", args: ["off"] }]);
 });
 
 test("notifications: allow_gateway_injection off, and a refused notification", () => {
@@ -66,7 +66,7 @@ test("notifications: allow_gateway_injection off, and a refused notification", (
 	f.lane = { profile: "default", status: { dispatcherNotes: [], dispatcher: { at: NOW / 1000 - 10, profile: "default" }, lastNotification: { at: NOW / 1000 - 120, ok: false, session: "0123456789" } } };
 	const titles = warnings(f).map(c => c.title);
 	assert.deepEqual(titles, ["Notifications off in default", "Hermes refused the last notification (default)"]);
-	assert.deepEqual(warnings(f)[0].fixes, [{ label: "Allow", command: "omp.hermes.enable", args: ["default"] }]);
+	assert.deepEqual(warnings(f)[0].fixes, [{ label: "Allow", command: "switchyard.hermes.enable", args: ["default"] }]);
 });
 
 test("an undelivered notification with notifications allowed is not a warning (the chat had ended)", () => {
@@ -96,8 +96,8 @@ test("lane on only in a profile the dispatcher doesn't tick: turn it on there an
 	assert.deepEqual(
 		w[0].fixes?.map(f => [f.command, ...(f.args ?? [])]),
 		[
-			["omp.hermes.lane", "default", "on"],
-			["omp.hermes.lane", "work", "off"],
+			["switchyard.hermes.lane", "default", "on"],
+			["switchyard.hermes.lane", "work", "off"],
 		],
 	);
 });
@@ -128,13 +128,13 @@ test("dispatcher silent or stale: warn when a lane is on", () => {
 	assert.deepEqual(warnings(quiet), [], "no lane: only info");
 });
 
-test("omp-sessions: missing is an error when the gateway's PATH was searched, else a warning", () => {
-	const searched = warnings(facts([profile("default", { ompSessions: "/nope/omp-sessions" })], { ompSessions: undefined }));
+test("switchyard: missing is an error when the gateway's PATH was searched, else a warning", () => {
+	const searched = warnings(facts([profile("default", { switchyard: "/nope/switchyard" })], { switchyard: undefined }));
 	assert.deepEqual(
 		searched.map(c => [c.level, c.title, c.fixes?.[0].command]),
-		[["error", "The plugin may not find omp-sessions", "omp.installCli"]],
+		[["error", "The plugin may not find switchyard", "switchyard.installCli"]],
 	);
-	assert.match(searched[0].detail ?? "", /omp_sessions setting \(\/nope\/omp-sessions\)/);
-	assert.equal(warnings(facts([profile("default")], { ompSessions: undefined, gatewayPath: false }))[0].level, "warn");
-	assert.equal(hermesChecks(facts([profile("default", { status: "disabled", lane: undefined })], { ompSessions: undefined })).some(c => /finds? omp-sessions/.test(c.title)), false, "not checked when no profile loads the plugin");
+	assert.match(searched[0].detail ?? "", /switchyard setting \(\/nope\/switchyard\)/);
+	assert.equal(warnings(facts([profile("default")], { switchyard: undefined, gatewayPath: false }))[0].level, "warn");
+	assert.equal(hermesChecks(facts([profile("default", { status: "disabled", lane: undefined })], { switchyard: undefined })).some(c => /finds? switchyard/.test(c.title)), false, "not checked when no profile loads the plugin");
 });

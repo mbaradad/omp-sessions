@@ -1,5 +1,5 @@
 // The planner's local API (PLANNER-API.md): newline-delimited JSON over a user-only Unix socket (a
-// named pipe on Windows), the same framing as the old omp-sessions server, so ServerClient-style
+// named pipe on Windows), the same framing as the old switchyard server, so ServerClient-style
 // clients port as is. `subscribe {topic: "plan"}` streams plan snapshots and task transitions.
 import * as net from "node:net";
 import * as readline from "node:readline";

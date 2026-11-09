@@ -18,7 +18,7 @@ import { pairingLink, type PairingStatus } from "../../../src/ao/mobile";
 import type { SessionMeta } from "../../../src/shared/protocol";
 
 const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
-const EXT_PATH = vscode.extensions.getExtension("mbaradad.omp-sessions")?.extensionPath ?? "";
+const EXT_PATH = vscode.extensions.getExtension("mbaradad.switchyard")?.extensionPath ?? "";
 const SHOTS = process.env.SWITCHYARD_E2E_SHOTS ?? "";
 
 /** Polls `fn` until truthy: AO state lands through its change stream, with no promise the suite can await. */
@@ -49,7 +49,7 @@ describe("AO views", () => {
 	const meta = (): SessionMeta | undefined => api.sessions.get(id);
 
 	before(async () => {
-		const ext = vscode.extensions.getExtension<OmpApi>("mbaradad.omp-sessions");
+		const ext = vscode.extensions.getExtension<OmpApi>("mbaradad.switchyard");
 		assert.ok(ext, "extension present");
 		api = await ext.activate();
 		ao = await api.ao.client(false);
@@ -60,11 +60,11 @@ describe("AO views", () => {
 		assert.equal(ao.baseUrl, process.env.SWITCHYARD_E2E_AO_URL);
 		await waitFor("the shared change stream is open", () => api.ao.status?.state === "open", 15_000);
 		assert.deepEqual(api.sessions.all(), [], "fresh daemon: no sessions");
-		await vscode.commands.executeCommand("omp.sessions.focus");
+		await vscode.commands.executeCommand("switchyard.sessions.focus");
 	});
 
-	it("omp.newSession starts an omp Chat session in an AO project for the workspace's repository", async () => {
-		await vscode.commands.executeCommand("omp.newSession", REPO);
+	it("switchyard.newSession starts an omp Chat session in an AO project for the workspace's repository", async () => {
+		await vscode.commands.executeCommand("switchyard.newSession", REPO);
 		const created = await waitFor("the new session", () => api.sessions.all()[0]);
 		id = created.id;
 		const view = await ao.getSession(id);
@@ -135,7 +135,7 @@ describe("AO views", () => {
 	});
 
 	it("pin: organize.json and AO's own pin", async () => {
-		await vscode.commands.executeCommand("omp.organize.pin", id);
+		await vscode.commands.executeCommand("switchyard.organize.pin", id);
 		assert.equal(api.organize.session(id).pinned, true);
 		await waitFor("AO pin", async () => (await ao.getSession(id)).isPinned, 10_000);
 		const roots = await api.sessionTree.getChildren();
@@ -144,12 +144,12 @@ describe("AO views", () => {
 
 	it("the Sessions Board opens with the session's card", async () => {
 		await vscode.commands.executeCommand("workbench.action.closeAuxiliaryBar");
-		await vscode.commands.executeCommand("omp.board");
+		await vscode.commands.executeCommand("switchyard.board");
 		await vscode.commands.executeCommand("workbench.action.maximizeEditorHideSidebar");
 		await settle(4000);
 		shot("4-board");
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-		await vscode.commands.executeCommand("omp.sessions.focus");
+		await vscode.commands.executeCommand("switchyard.sessions.focus");
 	});
 
 	it("parent-change propagation: a conflicted edge is needs-input (tree, board column); upstream-changed offers Re-run", async () => {
@@ -162,7 +162,7 @@ describe("AO views", () => {
 		const sub = api.sessions.usePlan({ get plan() { return plan as never; }, onDidChange: changed.event, edit: async ops => void edits.push(...ops) });
 		try {
 			await waitFor("conflict shown as needs-input", () => meta()?.status === "waiting" && meta()?.queue?.sync?.state === "conflict", 10_000);
-			await vscode.commands.executeCommand("omp.board");
+			await vscode.commands.executeCommand("switchyard.board");
 			await vscode.commands.executeCommand("workbench.action.maximizeEditorHideSidebar");
 			await settle(3000);
 			shot("4b-board-conflict");
@@ -177,7 +177,7 @@ describe("AO views", () => {
 			sub.dispose();
 			changed.dispose();
 			await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-			await vscode.commands.executeCommand("omp.sessions.focus");
+			await vscode.commands.executeCommand("switchyard.sessions.focus");
 		}
 	});
 
@@ -298,23 +298,23 @@ describe("AO views", () => {
 	});
 
 	it("stop (exit-agent) and resume (resume-agent) keep the session", async () => {
-		await vscode.commands.executeCommand("omp.stopSession", id);
+		await vscode.commands.executeCommand("switchyard.stopSession", id);
 		await waitFor("stopped", () => meta()?.status === "stopped", 60_000);
 		assert.equal((await ao.getSession(id)).activity.state, "exited");
 		assert.equal((await ao.getSession(id)).isTerminated, false);
 		await settle();
 		shot("5-tree-stopped");
-		await vscode.commands.executeCommand("omp.resumeSession", id);
+		await vscode.commands.executeCommand("switchyard.resumeSession", id);
 		await waitFor("resumed", () => meta()?.status === "idle", 120_000);
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 	});
 
 	it("Set Permission Mode: the gate's mode file is rewritten live, and Plan is also omp's mode option; AO stays bypass-permissions", async () => {
-		await vscode.commands.executeCommand("omp.setPermissionMode", id, "ask");
+		await vscode.commands.executeCommand("switchyard.setPermissionMode", id, "ask");
 		await waitFor("ask mode", () => meta()?.permissionMode === "ask", 60_000);
 		assert.equal(readMode(id), "ask");
 		assert.equal((await ao.getConversation(id, { limit: 1 })).settings.approvalMode, "bypass-permissions");
-		await vscode.commands.executeCommand("omp.setPermissionMode", id, "plan");
+		await vscode.commands.executeCommand("switchyard.setPermissionMode", id, "plan");
 		const { data } = await ao.api.GET("/api/v1/sessions/{sessionId}/conversation/config-options", { params: { path: { sessionId: id } } });
 		const mode = (data as { options?: Array<{ id: string; currentValue?: string }> } | undefined)?.options?.find(o => o.id === "mode");
 		assert.equal(mode?.currentValue, "plan", JSON.stringify(data));
@@ -323,7 +323,7 @@ describe("AO views", () => {
 	it("the default permission mode applies to new sessions (the gate's mode file; AO runs them as bypass-permissions)", async () => {
 		writeSwitchyardConfig({ mode: "edits" });
 		const before = new Set(api.sessions.all().map(m => m.id));
-		await vscode.commands.executeCommand("omp.newSession", REPO);
+		await vscode.commands.executeCommand("switchyard.newSession", REPO);
 		const other = await waitFor("second session", () => api.sessions.all().find(m => !before.has(m.id)));
 		await waitFor("second session idle", () => api.sessions.get(other.id)?.status === "idle");
 		assert.equal((await ao.getConversation(other.id, { limit: 1 })).settings.approvalMode, "bypass-permissions");
@@ -368,14 +368,14 @@ describe("AO views", () => {
 	});
 
 	it("Doctor reports the AO daemon, AO's readiness of omp, the planner and the sessions", async () => {
-		await vscode.commands.executeCommand("omp.copyDiagnostics");
+		await vscode.commands.executeCommand("switchyard.copyDiagnostics");
 		const report = await vscode.env.clipboard.readText();
 		assert.match(report, new RegExp(`AO daemon running at ${(process.env.SWITCHYARD_E2E_AO_URL ?? "").replace(/[.]/g, "\\.")}`));
 		assert.match(report, /AO can run omp/);
 		assert.match(report, /## Planner/);
 		assert.match(report, /## Permission gate and omp flags/);
 		assert.match(report, /views smoke \(repo-1\)/);
-		await vscode.commands.executeCommand("omp.doctor");
+		await vscode.commands.executeCommand("switchyard.doctor");
 		await settle(3000);
 		shot("8-doctor");
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
@@ -389,7 +389,7 @@ describe("AO views", () => {
 	});
 
 	it("the usage dashboard opens (cost from AO conversations, transcripts by workspace)", async () => {
-		await vscode.commands.executeCommand("omp.dashboard");
+		await vscode.commands.executeCommand("switchyard.dashboard");
 		await settle(5000);
 		shot("9-dashboard");
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
@@ -407,10 +407,10 @@ describe("AO views", () => {
 		assert.equal(offer.token, status.password);
 		assert.ok(offer.endpoints.length > 0);
 		// Already on: the command shows the code without asking how to connect.
-		await vscode.commands.executeCommand("omp.remote.connectPhone");
+		await vscode.commands.executeCommand("switchyard.remote.connectPhone");
 		await settle(3000);
 		shot("6-connect-phone");
-		await vscode.commands.executeCommand("omp.remote.disable");
+		await vscode.commands.executeCommand("switchyard.remote.disable");
 		const after = (await ao.api.GET("/api/v1/mobile/status")).data as PairingStatus;
 		assert.equal(after.enabled, false);
 	});

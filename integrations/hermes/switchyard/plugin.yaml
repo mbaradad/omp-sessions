@@ -1,0 +1,28 @@
+name: switchyard
+label: Switchyard
+version: 0.7.0
+description: Start, schedule and supervise omp coding sessions (switchyard) from Hermes, hear back when they settle, and run kanban cards assigned to switchyard as omp sessions.
+author: Manel Baradad
+license: MIT
+homepage: https://mbaradad.github.io/omp-sessions/
+tags: [coding, omp, sessions, kanban, scheduling]
+requires_hermes: ">=0.23.0"
+provides_tools:
+  - switchyard_sessions_list
+  - switchyard_projects_list
+  - switchyard_session_start
+  - switchyard_session_status
+  - switchyard_session_wait
+  - switchyard_session_send
+  - switchyard_session_answer
+  - switchyard_session_mode
+  - switchyard_session_stop
+  - switchyard_queue_add
+  - switchyard_queue_schedule
+  - switchyard_server_status
+  - switchyard_models_list
+  - switchyard_session_model
+  - switchyard_plan_status
+  - switchyard_plan_sync
+provides_hooks:
+  - on_kanban_dispatch_tick

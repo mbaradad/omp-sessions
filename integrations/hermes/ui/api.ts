@@ -1,5 +1,5 @@
 // What the page needs from its host, and the shapes of the plugin backend's answers
-// (integrations/hermes/omp-sessions/dashboard/plugin_api.py).
+// (integrations/hermes/switchyard/dashboard/plugin_api.py).
 import type { ReactLike } from "./react";
 
 export interface RequestOptions {
@@ -11,7 +11,7 @@ export interface RequestOptions {
 export interface Host {
 	kind: "dashboard" | "desktop";
 	React: ReactLike;
-	/** JSON request to the plugin's backend; `path` is relative to /api/plugins/omp-sessions. */
+	/** JSON request to the plugin's backend; `path` is relative to /api/plugins/switchyard. */
 	request<T>(path: string, options?: RequestOptions): Promise<T>;
 	/** The page's CSS, when the host doesn't load dist/style.css itself (Desktop). */
 	css?: string;
@@ -32,7 +32,7 @@ export interface VscodeLink {
 	windowAt?: number | null;
 }
 
-/** GET /models: `omp-sessions models --json`. */
+/** GET /models: `switchyard models --json`. */
 export interface Model {
 	/** provider/id: what a session's model is set to. */
 	selector: string;
@@ -40,13 +40,13 @@ export interface Model {
 	id: string;
 	name?: string;
 	contextWindow?: number;
-	/** The omp Sessions default. */
+	/** The Switchyard default. */
 	default?: boolean;
 }
 
 export interface Models {
 	models: Model[];
-	/** The omp Sessions default model for new sessions (null: omp's own default). */
+	/** The Switchyard default model for new sessions (null: omp's own default). */
 	default: string | null;
 	ompDefault?: string | null;
 	/** The session whose omp's choices these are; null when no session is running (then `note` says so and the list is empty). */
@@ -106,7 +106,7 @@ export interface Session {
 	priority?: string | null;
 	tags: string[];
 	archived: boolean;
-	/** Marked completed (omp-sessions complete): done, whatever its state. */
+	/** Marked completed (switchyard complete): done, whatever its state. */
 	completed: boolean;
 	completedAt?: number | null;
 	queue: { pending: number; running: number; done: number; total: number; failed?: number; interrupted?: number };
@@ -165,7 +165,7 @@ export interface Lane {
 
 export interface Overview {
 	profile: string;
-	ompSessions: { found: boolean; command?: string | null; hint?: string | null; cli?: string; server?: string | null; pid?: number | null; error?: string };
+	switchyard: { found: boolean; command?: string | null; hint?: string | null; cli?: string; server?: string | null; pid?: number | null; error?: string };
 	scheduler: Scheduler | null;
 	notify: boolean;
 	lane: Lane;
@@ -215,7 +215,7 @@ export interface Board {
 	model?: string | null;
 	/** This board's trusted comment authors (null: the lane's list). */
 	commentAuthors?: string[] | null;
-	/** Whose comments reach omp and whose @omp assigns cards on this board ("*": anyone). */
+	/** Whose comments reach omp and whose @switchyard assigns cards on this board ("*": anyone). */
 	effectiveCommentAuthors: string[];
 	/** This board's archive_completed (null: the lane's setting). */
 	archiveCompleted?: boolean | null;
@@ -239,7 +239,7 @@ export interface BoardsView {
 	boards: Board[];
 }
 
-/** POST /sessions/archive-done: the done sessions it archived, and the ones omp-sessions refused. */
+/** POST /sessions/archive-done: the done sessions it archived, and the ones switchyard refused. */
 export interface ArchiveDone {
 	archived: string[];
 	failed: Array<{ id: string; error: string }>;
@@ -306,4 +306,4 @@ export function errorMessage(err: unknown): string {
 	return detail || `HTTP ${code ?? "error"}`;
 }
 
-export const NOT_MOUNTED = "The omp Sessions backend is not running here: enable the plugin (hermes plugins enable omp-sessions) and restart Hermes.";
+export const NOT_MOUNTED = "The Switchyard backend is not running here: enable the plugin (hermes plugins enable switchyard) and restart Hermes.";

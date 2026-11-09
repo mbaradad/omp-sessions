@@ -25,7 +25,7 @@ interface SessionFiles {
 const SNIPPET_CONTEXT = 3;
 
 function decorationsEnabled(): boolean {
-	return vscode.workspace.getConfiguration("omp").get<boolean>("showChangeDecorations", true);
+	return vscode.workspace.getConfiguration("switchyard").get<boolean>("showChangeDecorations", true);
 }
 
 /** Path as the session sees it: relative to its cwd when inside it, else absolute. */
@@ -95,14 +95,14 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 						const fix = new vscode.CodeAction(`Fix with omp${ctx.diagnostics.length > 1 ? ` (${ctx.diagnostics.length} problems)` : ""}`, vscode.CodeActionKind.QuickFix);
 						fix.diagnostics = [...ctx.diagnostics];
 						fix.isPreferred = false;
-						fix.command = { command: "omp.fixDiagnostics", title: "Fix with omp", arguments: [doc.uri, range, [...ctx.diagnostics]] };
+						fix.command = { command: "switchyard.fixDiagnostics", title: "Fix with omp", arguments: [doc.uri, range, [...ctx.diagnostics]] };
 						actions.push(fix);
 					}
 					if (!range.isEmpty) {
 						const explain = new vscode.CodeAction("Explain with omp", vscode.CodeActionKind.Empty);
-						explain.command = { command: "omp.explainSelection", title: "Explain with omp", arguments: [doc.uri, range] };
+						explain.command = { command: "switchyard.explainSelection", title: "Explain with omp", arguments: [doc.uri, range] };
 						const ask = new vscode.CodeAction("Ask omp about this…", vscode.CodeActionKind.Empty);
-						ask.command = { command: "omp.askAboutSelection", title: "Ask omp about this…", arguments: [doc.uri, range] };
+						ask.command = { command: "switchyard.askAboutSelection", title: "Ask omp about this…", arguments: [doc.uri, range] };
 						actions.push(explain, ask);
 					}
 					return actions;
@@ -120,7 +120,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		return { doc: editor.document, range: editor.selection };
 	}
 
-	reg("omp.fixDiagnostics", async (uriArg?: unknown, rangeArg?: unknown, diagArg?: unknown) => {
+	reg("switchyard.fixDiagnostics", async (uriArg?: unknown, rangeArg?: unknown, diagArg?: unknown) => {
 		const target = await resolveTarget(uriArg, rangeArg);
 		if (!target) return;
 		const { doc, range } = target;
@@ -139,7 +139,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		await panel.sendPrompt(inCheckout(text, doc.uri.fsPath));
 	});
 
-	reg("omp.explainSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
+	reg("switchyard.explainSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
 		const target = await resolveTarget(uriArg, rangeArg);
 		if (!target || target.range.isEmpty) return;
 		const panel = await panelFor(target.doc.uri);
@@ -147,7 +147,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		await panel.sendPrompt(inCheckout(`Explain this code:\n${selectionRef(target.doc, target.range, undefined)}`, target.doc.uri.fsPath));
 	});
 
-	reg("omp.askAboutSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
+	reg("switchyard.askAboutSelection", async (uriArg?: unknown, rangeArg?: unknown) => {
 		const target = await resolveTarget(uriArg, rangeArg);
 		if (!target || target.range.isEmpty) return;
 		const panel = await panelFor(target.doc.uri);
@@ -158,7 +158,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 	});
 
 	// ---------- add to chat ----------
-	reg("omp.addToChat", async (uriArg?: unknown, urisArg?: unknown) => {
+	reg("switchyard.addToChat", async (uriArg?: unknown, urisArg?: unknown) => {
 		let uris: vscode.Uri[] = [];
 		if (Array.isArray(urisArg)) uris = urisArg.filter((u): u is vscode.Uri => u instanceof vscode.Uri);
 		if (uris.length === 0 && uriArg instanceof vscode.Uri) uris = [uriArg];
@@ -188,7 +188,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 	});
 
 	// ---------- terminal selection ----------
-	reg("omp.sendTerminalSelection", async () => {
+	reg("switchyard.sendTerminalSelection", async () => {
 		const previous = await vscode.env.clipboard.readText();
 		let selection = "";
 		try {
@@ -373,9 +373,9 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 					if (!fileStats || !decorationsEnabled()) return [];
 					const top = new vscode.Range(0, 0, 0, 0);
 					return fileStats.flatMap(({ session, added, removed }) => [
-						new vscode.CodeLens(top, { title: `π omp changed this file · +${added} −${removed}`, tooltip: `"${session.title}" — diff against the content before the session touched this file`, command: "omp.openSessionFileDiff", arguments: [session.id, doc.uri.fsPath] }),
-						new vscode.CodeLens(top, { title: "Revert", tooltip: "Restore the content from before the session touched this file", command: "omp.revertFile", arguments: [session.id, doc.uri.fsPath] }),
-						new vscode.CodeLens(top, { title: "Open chat", command: "omp.openSession", arguments: [session.id] }),
+						new vscode.CodeLens(top, { title: `π omp changed this file · +${added} −${removed}`, tooltip: `"${session.title}" — diff against the content before the session touched this file`, command: "switchyard.openSessionFileDiff", arguments: [session.id, doc.uri.fsPath] }),
+						new vscode.CodeLens(top, { title: "Revert", tooltip: "Restore the content from before the session touched this file", command: "switchyard.revertFile", arguments: [session.id, doc.uri.fsPath] }),
+						new vscode.CodeLens(top, { title: "Open chat", command: "switchyard.openSession", arguments: [session.id] }),
 					]);
 				},
 			},
@@ -386,7 +386,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 		}),
 		vscode.workspace.onDidSaveTextDocument(scheduleDocument),
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (!e.affectsConfiguration("omp.showChangeDecorations")) return;
+			if (!e.affectsConfiguration("switchyard.showChangeDecorations")) return;
 			refreshDecorations();
 			decorateVisible();
 		}),
@@ -407,7 +407,7 @@ export function registerEditorIntegration(context: vscode.ExtensionContext, api:
 	decorateVisible();
 
 	// ---------- revert ----------
-	reg("omp.revertFile", async (arg?: unknown, fileArg?: unknown) => {
+	reg("switchyard.revertFile", async (arg?: unknown, fileArg?: unknown) => {
 		let sessionId: string | undefined;
 		let file: string | undefined;
 		if (typeof arg === "string" && typeof fileArg === "string") {

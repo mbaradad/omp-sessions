@@ -86,7 +86,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 	const projectOptions = [
 		...(places?.folders.length ? [h("optgroup", { key: "f", label: "Recent folders" }, ...places.folders.map(f => h("option", { key: f.path, value: `folder:${f.path}` }, `${f.name} — ${f.label}`)))] : []),
 		...(places?.hermesProjects.length ? [h("optgroup", { key: "h", label: "Hermes projects" }, ...places.hermesProjects.map(x => h("option", { key: x.id, value: `project:${x.slug}` }, x.path ? `${x.name} — ${x.path}` : x.name)))] : []),
-		...(places && Object.keys(places.configured).length ? [h("optgroup", { key: "c", label: "omp-sessions projects" }, ...Object.entries(places.configured).map(([name, path]) => h("option", { key: name, value: `project:${name}` }, `${name} — ${path}`)))] : []),
+		...(places && Object.keys(places.configured).length ? [h("optgroup", { key: "c", label: "switchyard projects" }, ...Object.entries(places.configured).map(([name, path]) => h("option", { key: name, value: `project:${name}` }, `${name} — ${path}`)))] : []),
 	];
 	// The folder the current choice runs in, when the page knows it (for Open in VS Code).
 	const chosenFolder = ((): string | null => {
@@ -241,7 +241,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 						onChange: setWhen,
 						options: [
 							{ value: "now", label: "Start now" },
-							{ value: "queue", label: "Queue", title: "Starts when the omp Sessions scheduler's concurrency limit has a free slot" },
+							{ value: "queue", label: "Queue", title: "Starts when the Switchyard scheduler's concurrency limit has a free slot" },
 							{ value: "at", label: "Schedule" },
 						],
 					}),
@@ -252,7 +252,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 								h("input", { className: "omps-input omps-mono", "aria-label": "Start time", value: at, placeholder: "+30m, 14:30 or 2026-01-31T09:00", onChange: (e: Event) => setAt((e.target as HTMLInputElement).value) }),
 								h("div", { className: "omps-at-presets" }, ...AT_PRESETS.map(x => h("button", { key: x.label, type: "button", className: "omps-chip omps-chip-btn", onClick: () => setAt(x.at()) }, x.label))),
 							)
-						: h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under the omp Sessions scheduler's concurrency limit." : "Starts right away."),
+						: h("div", { className: "omps-field-hint" }, when === "queue" ? "Waits for a free slot under the Switchyard scheduler's concurrency limit." : "Starts right away."),
 				),
 				error ? h(ErrorBox, { message: error }) : null,
 			),

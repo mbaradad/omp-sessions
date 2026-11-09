@@ -1,16 +1,16 @@
-# omp Sessions
+# Switchyard
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/mbaradad.omp-sessions?label=Marketplace&color=9b4dff)](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/mbaradad.omp-sessions?color=ed4abf)](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/mbaradad.switchyard?label=Marketplace&color=9b4dff)](https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/mbaradad.switchyard?color=ed4abf)](https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-5ad8e6)](LICENSE)
 
-![omp Sessions: a task server for your coding agents. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
+![Switchyard: plans for your coding agents. A VS Code chat with an inline diff next to a phone approving a command.](docs/images/hero.png)
 
 Switchyard plans work for [oh-my-pi](https://omp.sh) (`omp`) coding agents and hands it to [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO) to run. You write plans: tasks with subtasks and dependencies, queues per session, scheduled starts, priorities and a limit on how many run at once. The Switchyard *planner*, a small service on the machine with your code, sends each task to AO when its dependencies are done, a slot is free and its start time has come. AO runs it as an omp session in its own git worktree and keeps it alive with no client open. That's the difference from omp in tmux: work keeps moving without you, not just the process. Every client reaches the same sessions: the `switchyard` command, VS Code (any session opens there with the full chat, diffs and undo), AO's phone app, Hermes Agent and other agents. Close everything, sleep the laptop or drop SSH, and come back to what happened meanwhile: answers, diffs, questions waiting for you.
 
-**[Website](https://mbaradad.github.io/omp-sessions/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.omp-sessions)** · **[Setup guide: workstation, laptop, phone](docs/SETUP.md)** · **[Phone & API access](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
+**[Website](https://mbaradad.github.io/omp-sessions/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard)** · **[Setup guide: workstation, laptop, phone](docs/SETUP.md)** · **[Phone & API access](docs/REMOTE-API.md)** · **[Hermes plugin](docs/HERMES.md)** · **[Changelog](CHANGELOG.md)**
 
-![A day with omp Sessions: queue the day at 9:00, walk away at 9:30, approve a command from your phone at 12:40, review and undo in VS Code at 15:00, check the cost at 18:00.](docs/images/a-day.png)
+![A day with Switchyard: queue the day at 9:00, walk away at 9:30, approve a command from your phone at 12:40, review and undo in VS Code at 15:00, check the cost at 18:00.](docs/images/a-day.png)
 
 ## What people use it for
 
@@ -23,7 +23,7 @@ Switchyard plans work for [oh-my-pi](https://omp.sh) (`omp`) coding agents and h
 | **Supervising from anywhere** | AO's phone app shows what's working, waiting or done; approve a command, answer a question or start a new session from the couch. |
 | **Fixing what's in front of you** | *Fix with omp* on a squiggle, on a failed terminal command, or on all of a file's problems; commit messages and PR descriptions from Source Control. |
 | **Scripts and automation** | `switchyard new --task …`, `switchyard wait … --json`, `switchyard status --json`, or AO's HTTP API from your own tools. |
-| **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `omp-sessions` skill; Hermes gets a plugin with native tools, notifications, a kanban lane that runs cards as omp sessions, and an omp Sessions page in its dashboard and Desktop app. [Setting it all up on one workstation](docs/SETUP.md). |
+| **Other agents delegating to omp** | Hermes, Claude Code, Codex or omp itself start, schedule and supervise omp sessions through the `switchyard` skill; Hermes gets a plugin with native tools, notifications, a kanban lane that runs cards as omp sessions, and an Switchyard page in its dashboard and Desktop app. [Setting it all up on one workstation](docs/SETUP.md). |
 
 ## Highlights
 
@@ -85,7 +85,7 @@ Spend and tokens per day, project, model and session, today's spend in the statu
 
 If no AO daemon is running, the first client that needs one starts `ao daemon` as a systemd user unit (a detached process where there is no systemd). The first time a client starts the planner, it installs it as a login service (systemd user unit on Linux, launchd agent on macOS) so queued and scheduled work comes back after a crash or reboot, and says so once. It doesn't when the only Node is VS Code's own runtime (no Node 22+ on PATH). `switchyard config set service off` (VS Code: `switchyard.server.installService`) turns auto-install off; `switchyard server uninstall` removes the service. `switchyard status` says which applies.
 
-Coming from omp Sessions: `switchyard migrate` moves your default model and mode, the concurrency limit and your groups (a dry run until `--apply`; it backs up `~/.omp/vscode` first and deletes nothing). Old sessions are not carried over: the dry run lists each one with the `omp --resume <id>` command that continues it in a terminal.
+**Coming from omp Sessions?** Switchyard is a new extension and command (`mbaradad.switchyard`, `switchyard`). It does not read the old omp Sessions state by itself. `switchyard migrate` imports the old defaults (model and mode), the concurrency limit and your organization (groups and board lanes): a dry run until `--apply`, it backs up `~/.omp/vscode` first and never writes or deletes there. No session is migrated: the dry run lists each old session with the `omp --resume <id>` command that continues it in omp, and its unfinished queued tasks. Once migrated, the old extension and the `omp-sessions` command can be removed.
 
 ## How it works
 
@@ -111,9 +111,9 @@ Works on Linux and macOS, locally and over Remote-SSH. On Windows, run it in WSL
 
 ### Sessions
 
-- **Sessions view** groups sessions by project (git repository, else folder) with working / needs-input counts; `+` on a project starts a session there. *Group Sessions By…* switches between project, your groups, status, or a flat list; *Sort Sessions By…* picks the order inside each group. The eye button (*Hide Finished Sessions*) hides stopped sessions, except those with queued, scheduled or interrupted work; ones with unseen activity stay until you look, and the view header counts how many are hidden. *Open in Side Bar* / *Open in Editor Tab* choose where a chat opens (`omp.chatLocation` sets the default); the **Chat** view can be dragged to the secondary side bar to sit next to your code.
-- `+` starts a session in the workspace folder; *New Session with Options…* picks model, thinking level, permission mode, plan-first / advisor / prewalk, an optional **goal**, and any extra omp CLI flags (remembered for resumes). *Set Default Model for New Sessions…* and *Set Default Permission Mode for New Sessions…* set the defaults every client uses (`omp-sessions config set model|mode`).
-- **Which sessions show**: by default the Sessions view, Tasks view, Board and status bar list this workspace's sessions (folder inside a workspace folder; worktrees count for their main checkout). *Show All Sessions* in the view title switches to every session on the machine (`omp.sessionScope`). Notifications follow the same rule unless `omp.notifyAllSessions` is on.
+- **Sessions view** groups sessions by project (git repository, else folder) with working / needs-input counts; `+` on a project starts a session there. *Group Sessions By…* switches between project, your groups, status, or a flat list; *Sort Sessions By…* picks the order inside each group. The eye button (*Hide Finished Sessions*) hides stopped sessions, except those with queued, scheduled or interrupted work; ones with unseen activity stay until you look, and the view header counts how many are hidden. *Open in Side Bar* / *Open in Editor Tab* choose where a chat opens (`switchyard.chatLocation` sets the default); the **Chat** view can be dragged to the secondary side bar to sit next to your code.
+- `+` starts a session in the workspace folder; *New Session with Options…* picks model, thinking level, permission mode, plan-first / advisor / prewalk, an optional **goal**, and any extra omp CLI flags (remembered for resumes). *Set Default Model for New Sessions…* and *Set Default Permission Mode for New Sessions…* set the defaults every client uses (`switchyard config set model|mode`).
+- **Which sessions show**: by default the Sessions view, Tasks view, Board and status bar list this workspace's sessions (folder inside a workspace folder; worktrees count for their main checkout). *Show All Sessions* in the view title switches to every session on the machine (`switchyard.sessionScope`). Notifications follow the same rule unless `switchyard.notifyAllSessions` is on.
 - **Sessions Board** (*Open Sessions Board*): a kanban of every session — columns by status, by lanes you define (Backlog / To Do / In Progress / Review / Done), by group, or by priority; swimlane mode shows one row per project. Drag cards (or arrow them) to move them; set priority (P to cycle), color, pin, archive and tags per card or in bulk. Cards show queue progress, cost, last text and unread; the header carries the global concurrency counter; *Maximize* fills the panel.
 - **Organization**: nest **groups** (each with a color and an icon) and set **color / priority / pin / archive / tags** per session — from the tree (drag, context menus) or the board. The Sessions view filter box accepts free text, `#tag` and `project:name`; manual ordering and group collapse persist in `organize.json`.
 - **Git worktrees**: every session runs in its own AO worktree on a branch `ao/<session>/root`, so parallel sessions never overwrite each other and your checkout stays as it is. *New Session on Branch…* starts one on a branch you pick; *Best-of-N* runs the same task in N parallel sessions; worktrees group under the main repo in the Sessions view. *Compare Branch with Base*, *Merge into Main Checkout…*, *Open in New Window*, *Remove Worktree and Session* (AO keeps a worktree with uncommitted changes, so nothing is lost silently). The editor actions (*Fix with omp*, *Commit with omp*, …) tell the session where your working copy is, so they edit your checkout.
@@ -129,13 +129,13 @@ Works on Linux and macOS, locally and over Remote-SSH. On Windows, run it in WSL
 
 ### Chat
 
-- Composer: Enter sends, Shift+Enter newline, Esc interrupts (queued follow-ups stay queued), ↑/↓ recall earlier prompts, drafts survive reloads; while the agent works Enter steers (`omp.sendWhileBusy`). `/` completes omp's commands plus the extension's (`/new`, `/btw`, `/tui`, `/changes`, `/mode`, `/plan`, `/undo`, `/redo`, `/copy`, `/cost`, `/login`, `/logout`, `/settings`, `/help`, `/exit`); `@` completes files; `!cmd` runs a shell command in the session folder and adds its output to your next prompt. `/btw` asks a side question in an isolated fork of the session that sees its context but never touches the main conversation. Unsaved editors in the session folder are saved before each prompt so omp reads what you see.
+- Composer: Enter sends, Shift+Enter newline, Esc interrupts (queued follow-ups stay queued), ↑/↓ recall earlier prompts, drafts survive reloads; while the agent works Enter steers (`switchyard.sendWhileBusy`). `/` completes omp's commands plus the extension's (`/new`, `/btw`, `/tui`, `/changes`, `/mode`, `/plan`, `/undo`, `/redo`, `/copy`, `/cost`, `/login`, `/logout`, `/settings`, `/help`, `/exit`); `@` completes files; `!cmd` runs a shell command in the session folder and adds its output to your next prompt. `/btw` asks a side question in an isolated fork of the session that sees its context but never touches the main conversation. Unsaved editors in the session folder are saved before each prompt so omp reads what you see.
 - **Footer**: model picker (star models to pin them on top), thinking level, permission mode, context use, cost and your provider's usage limit when omp reports one.
 - **Terminal UI**: `/tui` (or *Continue Session in omp's Terminal UI*) stops the background agent, opens the same session in omp's own terminal UI in an editor tab, and resumes the background agent when you close the terminal.
 - Messages: hover a prompt to **edit & resend** (undoes the conversation back to it) or **restore its checkpoint**; hover an answer to copy it. Code blocks and diffs are syntax-highlighted with your theme's colors; images open full size on click; tool cards show live durations and the turn's elapsed time is in the footer.
 - **Attachments**: paste or drop images (sent to the model as images) and any other file — PDFs, docs, archives — (stored under the session's `attachments/` on the remote and handed to omp's read tool). 📎 picks files on the remote disk.
 - **Links**: web URLs open in the browser; `file:`/relative/absolute paths (with `:line` or `#L12`) open in the editor; `artifact://`, `local://`, `skill://`, `omp://`, … open their content.
-- **More**: in-chat find, *Copy / Save as Markdown*, `omp.chat.snippets` prompt snippets (`/p:name`, with `{{selection}}` and `{{file}}`), per-message timestamps, and tail-first rendering of long transcripts.
+- **More**: in-chat find, *Copy / Save as Markdown*, `switchyard.chat.snippets` prompt snippets (`/p:name`, with `{{selection}}` and `{{file}}`), per-message timestamps, and tail-first rendering of long transcripts.
 
 ### Queues and scheduling
 
@@ -145,12 +145,12 @@ Works on Linux and macOS, locally and over Remote-SSH. On Windows, run it in WSL
 
 ### Agents and Hermes
 
-- **The `omp-sessions` skill** teaches other agents to use `omp-sessions`: start a session, queue or schedule it (`--task`, `--at`), wait for it (`omp-sessions wait --json` exits 0 idle, 3 needs input, 4 stopped or interrupted, 5 scheduled), read its report (`omp-sessions show --json`: state, waiting question, full last reply), answer its questions (`omp-sessions answer`), and follow up. *Install omp Sessions Skill for Agents…* or `omp-sessions skill install` puts it in `~/.agents/skills` (omp and other tools), `~/.claude/skills` and `~/.codex/skills`; copies it installed are refreshed when the extension updates.
-- **Hermes Agent plugin** (*Install Hermes Plugin…*, `omp-sessions hermes install`, or `hermes plugins install mbaradad/omp-sessions/integrations/hermes/omp-sessions --enable`): 14 native tools (start, queue, schedule, status, wait, send, answer, model, server status, …), a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board, with an optional per-board model), with results, questions and failures written back to the card and dependencies chaining as usual. Card comments from trusted authors reach the session; approvals are never answered by comments. An **omp Sessions** page in the Hermes dashboard and Hermes Desktop shows every session by state, answers questions, follows up, switches models, opens a session or its project in VS Code, starts new sessions, sets up the lane per board and draws a board's cards as a dependency graph with their omp sessions' state. [Details](docs/HERMES.md).
+- **The `switchyard` skill** teaches other agents to use `switchyard`: start a session, queue or schedule it (`--task`, `--at`), wait for it (`switchyard wait --json` exits 0 idle, 3 needs input, 4 stopped or interrupted, 5 scheduled), read its report (`switchyard show --json`: state, waiting question, full last reply), answer its questions (`switchyard answer`), and follow up. *Install Switchyard Skill for Agents…* or `switchyard skill install` puts it in `~/.agents/skills` (omp and other tools), `~/.claude/skills` and `~/.codex/skills`; copies it installed are refreshed when the extension updates.
+- **Hermes Agent plugin** (*Install Hermes Plugin…*, `switchyard hermes install`, or `hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable`): 14 native tools (start, queue, schedule, status, wait, send, answer, model, server status, …), a message back in the Hermes chat when a session it started finishes or needs input, and a kanban lane: cards assigned to `omp` run as omp sessions in the card's workspace (or the board's folder, grouped by board, with an optional per-board model), with results, questions and failures written back to the card and dependencies chaining as usual. Card comments from trusted authors reach the session; approvals are never answered by comments. An **Switchyard** page in the Hermes dashboard and Hermes Desktop shows every session by state, answers questions, follows up, switches models, opens a session or its project in VS Code, starts new sessions, sets up the lane per board and draws a board's cards as a dependency graph with their omp sessions' state. [Details](docs/HERMES.md).
 
-  ![The omp Sessions page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped.](docs/images/hermes-dashboard.png)
-- **Hermes in VS Code**: copies of the plugin that omp-sessions installed are kept current when the extension updates (in every profile, reloaded in the running gateway without a restart). Sessions Hermes started carry a **Hermes** chip in the Sessions view and chat header; kanban-lane sessions show **Hermes · board · card**, with *Open Hermes Card* (the dashboard's Kanban page, `omp.hermes.dashboardUrl`) and *Show Hermes Card* (the card as text in an output channel). **omp Doctor** checks the plugin per profile, notifications, where the kanban dispatcher runs against where the lane is on, and whether the plugin finds `omp-sessions`, with one-click fixes.
-- Agent-friendly CLI: `omp-sessions new … --json` (with `--mode`, `--model`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `status --json`, `models --json`, `ls --json` (with filters) and `sched --json`.
+  ![The Switchyard page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped.](docs/images/hermes-dashboard.png)
+- **Hermes in VS Code**: copies of the plugin that Switchyard installed are kept current when the extension updates (in every profile, reloaded in the running gateway without a restart). Sessions Hermes started carry a **Hermes** chip in the Sessions view and chat header; kanban-lane sessions show **Hermes · board · card**, with *Open Hermes Card* (the dashboard's Kanban page, `switchyard.hermes.dashboardUrl`) and *Show Hermes Card* (the card as text in an output channel). **omp Doctor** checks the plugin per profile, notifications, where the kanban dispatcher runs against where the lane is on, and whether the plugin finds `switchyard`, with one-click fixes.
+- Agent-friendly CLI: `switchyard new … --json` (with `--mode`, `--model`, `--tag`, `--group`, `--notes`, `--at`), `show`, `wait`, `answer`, `projects`, `status --json`, `models --json`, `ls --json` (with filters) and `sched --json`.
 
 ### Phone and remote access
 
@@ -162,52 +162,52 @@ Works on Linux and macOS, locally and over Remote-SSH. On Windows, run it in WSL
 
 - Select code → `Cmd+Alt+K` (or editor context menu → *Send Selection to omp*) inserts `path:lines` plus the snippet into the composer.
 - **Code actions** (lightbulb): *Fix with omp* on problems sends the diagnostics plus a snippet; *Explain with omp* / *Ask omp about this…* on a selection. *Add to omp Chat* (Explorer, editor tab, editor context menu; multi-select, folders too) inserts `@path` references; *Send Terminal Selection to omp* (terminal context menu) inserts selected terminal output.
-- **Editor**: *Edit with omp* (`Ctrl/Cmd+Alt+E`) prompts with a file (or your selection) preloaded; *Fix File/Workspace Problems with omp*, *Fix Failed Command with omp* (also offered in the status bar after a terminal error, `omp.terminalHints`), *Write Tests with omp*, *Add Docs with omp*, *Explain File with omp*.
+- **Editor**: *Edit with omp* (`Ctrl/Cmd+Alt+E`) prompts with a file (or your selection) preloaded; *Fix File/Workspace Problems with omp*, *Fix Failed Command with omp* (also offered in the status bar after a terminal error, `switchyard.terminalHints`), *Write Tests with omp*, *Add Docs with omp*, *Explain File with omp*.
 - **Source Control** `…` menu: *Commit with omp* (groups and commits the working tree with good messages), *Review Uncommitted Changes with omp*, *Write PR Description with omp*.
-- **VS Code bridge**: a session can call *this window's* language features (tools `mcp__vscode_*`): document symbols/definitions, hover and diagnostics of open files; symbol links in the chat resolve to the right file/line here. While `omp.vscodeTools` is on, the extension installs them as a module of the Switchyard omp extension package (`~/.omp/agent/extensions/switchyard/`), so every omp session has these tools, including the sessions Agent Orchestrator runs (turning the setting off stops them at the next call); other MCP clients can use the same tools through `out/mcp.js`. *VS Code Bridge: Show Status* reports connected windows and a round-trip probe; *Session Settings…* toggles a session's skills, tools and MCP servers (a tooltip chip appears in the tree when a session is non-default).
+- **VS Code bridge**: a session can call *this window's* language features (tools `mcp__vscode_*`): document symbols/definitions, hover and diagnostics of open files; symbol links in the chat resolve to the right file/line here. While `switchyard.vscodeTools` is on, the extension installs them as a module of the Switchyard omp extension package (`~/.omp/agent/extensions/switchyard/`), so every omp session has these tools, including the sessions Agent Orchestrator runs (turning the setting off stops them at the next call); other MCP clients can use the same tools through `out/mcp.js`. *VS Code Bridge: Show Status* reports connected windows and a round-trip probe; *Session Settings…* toggles a session's skills, tools and MCP servers (a tooltip chip appears in the tree when a session is non-default).
 
 ### Tools
 
 - **Command Center** (`Ctrl/Cmd+Alt+P`): a searchable, grouped index of every omp command, including omp's own CLI features surfaced as VS Code commands (*Login, Update, Setup, Plugins, Skills, Usage, Stats, Models, Cleanse, Commit in Terminal, Git UI, Continue in Terminal, Import Claude/Codex, Open Docs/Config, Keyboard Shortcuts*).
 - **Usage dashboard** (*Usage Dashboard*): cost, tokens and session trends over a range, counting subagents and every transcript a session used; *Show Today's Spend* in the status bar; *Search Session History…* across every transcript, including ones `omp gc` archived (open the session, resume, or read the raw transcript).
 - **Doctor** (*Run Doctor*): a health report — AO daemon not running, planner not running, missing omp, auth problems (no API key / not logged in), the Switchyard omp extension missing or out of date — each with one-click fixes. *Copy Diagnostics*, *Clean Up File Snapshots*.
-- **Get started**: *Help → Get Started → omp: background coding agent* walks through the features.
+- **Get started**: *Help → Get Started → Switchyard* walks through the features.
 
-## Terminal: `omp-sessions`
+## Terminal: `switchyard`
 
-*omp: Install omp-sessions Command* puts `omp-sessions` in `~/.local/bin` (it runs on Node 22+ from PATH, else on VS Code's own runtime); without VS Code, install the release package with `npm install -g` (see [Get started](#get-started)). The command drives everything without VS Code: over SSH, from scripts, or after a reboot.
+*Switchyard: Install switchyard Command* puts `switchyard` in `~/.local/bin` (it runs on Node 22+ from PATH, else on VS Code's own runtime); without VS Code, install the release package with `npm install -g` (see [Get started](#get-started)). The command drives everything without VS Code: over SSH, from scripts, or after a reboot.
 
 ```bash
-omp-sessions status                   # server, login service, omp, default model, sessions by state, queue, remote access
-omp-sessions ls                       # running sessions and those with work ahead (--all: also finished)
-omp-sessions ls --project app --state needs_input --json   # filters: --project --cwd --group --tag --state (a show state)
-omp-sessions new . -p "fix the flaky test"          # start a session with a prompt
-omp-sessions new ~/repo --task "upgrade deps" --sub "bump" --sub "run tests" --priority high
+switchyard status                   # server, login service, omp, default model, sessions by state, queue, remote access
+switchyard ls                       # running sessions and those with work ahead (--all: also finished)
+switchyard ls --project app --state needs_input --json   # filters: --project --cwd --group --tag --state (a show state)
+switchyard new . -p "fix the flaky test"          # start a session with a prompt
+switchyard new ~/repo --task "upgrade deps" --sub "bump" --sub "run tests" --priority high
                                       # queue-only: the server starts it when a slot is free
-omp-sessions new ~/repo --task "nightly test sweep" --at 02:00   # scheduled
-omp-sessions attach .                 # chat in the terminal; dialogs answer inline; Ctrl-D detaches
-omp-sessions send fix "also update the docs" --wait  # prompt by title words; after the current turn (--steer: redirect it)
-omp-sessions tail <id> -f             # follow output
-omp-sessions queue <id> add "write the changelog" --notes - --run < brief.md   # task title + full notes
-omp-sessions board                    # waiting / scheduled / working / needs input / interrupted / idle (--all: stopped)
-omp-sessions mode fix plan            # permission mode: ask | edits | plan | auto (no mode: show it)
-omp-sessions models sonnet            # models omp can use; ● marks the default
-omp-sessions model fix anthropic/claude-sonnet-4-5   # switch a session's model (live, or from its next resume)
-omp-sessions config set model anthropic/claude-sonnet-4-5   # default model of new sessions (must be one omp lists; --force)
-omp-sessions config set mode auto     # default permission mode of new sessions that ask for none
-omp-sessions vscode fix               # open a session in VS Code (vscode path/to/dir: that project's checkout)
-omp-sessions sched set 2              # at most 2 queued tasks at once, across all sessions
+switchyard new ~/repo --task "nightly test sweep" --at 02:00   # scheduled
+switchyard attach .                 # chat in the terminal; dialogs answer inline; Ctrl-D detaches
+switchyard send fix "also update the docs" --wait  # prompt by title words; after the current turn (--steer: redirect it)
+switchyard tail <id> -f             # follow output
+switchyard queue <id> add "write the changelog" --notes - --run < brief.md   # task title + full notes
+switchyard board                    # waiting / scheduled / working / needs input / interrupted / idle (--all: stopped)
+switchyard mode fix plan            # permission mode: ask | edits | plan | auto (no mode: show it)
+switchyard models sonnet            # models omp can use; ● marks the default
+switchyard model fix anthropic/claude-sonnet-4-5   # switch a session's model (live, or from its next resume)
+switchyard config set model anthropic/claude-sonnet-4-5   # default model of new sessions (must be one omp lists; --force)
+switchyard config set mode auto     # default permission mode of new sessions that ask for none
+switchyard vscode fix               # open a session in VS Code (vscode path/to/dir: that project's checkout)
+switchyard sched set 2              # at most 2 queued tasks at once, across all sessions
 switchyard server status|log -f|install|uninstall      # the planner service (AO: ao status)
 switchyard remote on|off|status|qr|rotate # phone pairing (on: --bind tailscale|lan|tunnel|all)
-omp-sessions new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id
-omp-sessions wait <id> --timeout 2h --json   # idle (0), needs input (3), stopped/interrupted (4), scheduled (5)
-omp-sessions show <id> --json         # state, waiting question, last reply, cost
-omp-sessions answer <id> 1            # answer the waiting question (option number/text, yes/no, text)
-omp-sessions skill install            # teach Claude Code / Codex / omp to drive omp-sessions (omp-sessions skill)
-omp-sessions hermes install           # Hermes Agent plugin: tools, notifications, kanban lane
+switchyard new ~/repo -p "fix the flaky test" --mode auto --tag ENG-142 --json   # for scripts and agents: prints the id
+switchyard wait <id> --timeout 2h --json   # idle (0), needs input (3), stopped/interrupted (4), scheduled (5)
+switchyard show <id> --json         # state, waiting question, last reply, cost
+switchyard answer <id> 1            # answer the waiting question (option number/text, yes/no, text)
+switchyard skill install            # teach Claude Code / Codex / omp to drive switchyard (switchyard skill)
+switchyard hermes install           # Hermes Agent plugin: tools, notifications, kanban lane
 ```
 
-Sessions are named by id, id prefix, title words, or `.` (latest in this folder). `omp-sessions help` lists every command, `omp-sessions help <command>` (or `<command> --help`) one of them; most take `--json` for scripts. Text that starts with `--` goes after `--` (`omp-sessions answer . -- --yes`).
+Sessions are named by id, id prefix, title words, or `.` (latest in this folder). `switchyard help` lists every command, `switchyard help <command>` (or `<command> --help`) one of them; most take `--json` for scripts. Text that starts with `--` goes after `--` (`switchyard answer . -- --yes`).
 
 - **Planner and AO**: commands start the planner and AO's daemon when needed. Without the planner, queued and scheduled sessions wait; sessions that are running keep going in AO. AO can hibernate a chat nobody watches and wake it for the next message, but only when its chat-hibernation setting is on, and a daemon started without AO's desktop app has it off (see [docs/SETUP.md](docs/SETUP.md#idle-sessions-and-chat-hibernation)).
 - **Default model**: a new session uses an explicit `--model` (or the picker's choice), else `switchyard config set model`, else omp's own default. The default permission mode follows the same order (`config set mode`, else Auto).
@@ -218,25 +218,25 @@ Sessions are named by id, id prefix, title words, or `.` (latest in this folder)
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `omp.extraArgs` | `[]` | Extra CLI args for omp in new sessions, e.g. `["--profile","work"]`; user or remote setting only. Applied through Switchyard's `omp` launcher shim, so it needs a daemon that Switchyard started (see [docs/SETUP.md](docs/SETUP.md#extra-omp-arguments)) |
-| `omp.sendWhileBusy` | `steer` | Enter while working: `steer` or `followUp` |
-| `omp.panelLocation` | `beside` | Chat column for editor-tab chats |
-| `omp.chatLocation` | `editor` | Where clicking a session opens its chat: `editor` or `sidebar` |
-| `omp.groupBy` | `project` | Sessions view: `project`, your custom `group`s, `status`, or flat `none` |
-| `omp.sortBy` | `auto` | Order within each group: `auto`, `manual`, `activity`, `priority`, `name`, `created`, `cost` |
-| `omp.sessionScope` | `workspace` | Which sessions the Sessions view, Tasks view, Board and status bar list: `workspace` or `all` (toggle in the view title) |
-| `omp.notifications` | `true` | Notify on finish / needs input |
-| `omp.notifyAllSessions` | `false` | Also notify about sessions outside this window's workspace (started from the terminal, phone or Hermes) |
-| `omp.saveBeforePrompt` | `true` | Save unsaved editors in the session folder before sending a prompt |
-| `omp.showChangeDecorations` | `true` | Explorer badges, changed-line markers and CodeLens for files omp changed |
-| `omp.showTodayCost` | `true` | Today's omp spend (from transcripts) in the status bar; hidden on days without model calls |
-| `omp.dashboard.includeTerminalSessions` | `false` | Dashboard + today's spend also count omp sessions started outside VS Code (all transcripts under `~/.omp/agent/sessions`) |
-| `omp.snapshotRetentionDays` | `14` | Days a stopped session must be unused before *Clean Up File Snapshots* (and the Doctor) offer to delete its blobs |
-| `omp.chat.snippets` | `[]` | Prompt snippets offered in the chat composer: `/p:name`, with `{{selection}}` / `{{file}}` |
-| `omp.terminalHints` | `true` | After a command fails in a terminal in a running session's folder, offer *omp: fix failed command?* in the status bar (needs VS Code shell integration) |
-| `omp.server.autoStart` | `true` | Start the planner (and AO's daemon) when VS Code opens (clients also start them whenever they need them) |
-| `omp.server.installService` | `true` | Install the planner as a login service the first time it starts (`config.json` `service`; machine setting) |
-| `omp.hermes.dashboardUrl` | empty | Hermes dashboard that *Open Hermes Card* opens; empty uses the dashboard Hermes reports running on the machine (any port), else `http://localhost:9119` (forwarded from remote windows) |
+| `switchyard.extraArgs` | `[]` | Extra CLI args for omp in new sessions, e.g. `["--profile","work"]`; user or remote setting only. Applied through Switchyard's `omp` launcher shim, so it needs a daemon that Switchyard started (see [docs/SETUP.md](docs/SETUP.md#extra-omp-arguments)) |
+| `switchyard.sendWhileBusy` | `steer` | Enter while working: `steer` or `followUp` |
+| `switchyard.panelLocation` | `beside` | Chat column for editor-tab chats |
+| `switchyard.chatLocation` | `editor` | Where clicking a session opens its chat: `editor` or `sidebar` |
+| `switchyard.groupBy` | `project` | Sessions view: `project`, your custom `group`s, `status`, or flat `none` |
+| `switchyard.sortBy` | `auto` | Order within each group: `auto`, `manual`, `activity`, `priority`, `name`, `created`, `cost` |
+| `switchyard.sessionScope` | `workspace` | Which sessions the Sessions view, Tasks view, Board and status bar list: `workspace` or `all` (toggle in the view title) |
+| `switchyard.notifications` | `true` | Notify on finish / needs input |
+| `switchyard.notifyAllSessions` | `false` | Also notify about sessions outside this window's workspace (started from the terminal, phone or Hermes) |
+| `switchyard.saveBeforePrompt` | `true` | Save unsaved editors in the session folder before sending a prompt |
+| `switchyard.showChangeDecorations` | `true` | Explorer badges, changed-line markers and CodeLens for files omp changed |
+| `switchyard.showTodayCost` | `true` | Today's omp spend (from transcripts) in the status bar; hidden on days without model calls |
+| `switchyard.dashboard.includeTerminalSessions` | `false` | Dashboard + today's spend also count omp sessions started outside VS Code (all transcripts under `~/.omp/agent/sessions`) |
+| `switchyard.snapshotRetentionDays` | `14` | Days a stopped session must be unused before *Clean Up File Snapshots* (and the Doctor) offer to delete its blobs |
+| `switchyard.chat.snippets` | `[]` | Prompt snippets offered in the chat composer: `/p:name`, with `{{selection}}` / `{{file}}` |
+| `switchyard.terminalHints` | `true` | After a command fails in a terminal in a running session's folder, offer *omp: fix failed command?* in the status bar (needs VS Code shell integration) |
+| `switchyard.server.autoStart` | `true` | Start the planner (and AO's daemon) when VS Code opens (clients also start them whenever they need them) |
+| `switchyard.server.installService` | `true` | Install the planner as a login service the first time it starts (`config.json` `service`; machine setting) |
+| `switchyard.hermes.dashboardUrl` | empty | Hermes dashboard that *Open Hermes Card* opens; empty uses the dashboard Hermes reports running on the machine (any port), else `http://localhost:9119` (forwarded from remote windows) |
 
 ## Development
 
@@ -244,19 +244,20 @@ Sessions are named by id, id prefix, title words, or `.` (latest in this folder)
 npm install
 npm run watch          # esbuild watch → out/
 npm run typecheck
-npm test               # unit + session-host integration tests (test:unit / test:host for one suite)
-npm run test:e2e:desktop  # real local VS Code (downloaded to .vscode-test/, xvfb if no DISPLAY) against test/fake-omp.mjs
-npm run install-local  # production build → dist/omp-sessions-<version>.vsix → installed into ~/.vscode-server
+npm test               # unit tests (test:unit)
+npm run test:integration  # the planner, CLI and extension code against an isolated AO daemon running a scripted fake omp (needs the `ao` binary)
+npm run test:e2e:desktop  # real local VS Code (downloaded to .vscode-test/, xvfb if no DISPLAY) against an isolated AO daemon running the real omp (needs `ao` and a logged-in omp)
+npm run install-local  # production build → dist/switchyard-<version>.vsix → installed into ~/.vscode-server
 ```
 
-- **F5** (*Run Extension*) opens an Extension Development Host with this checkout loaded; over Remote-SSH it runs on the remote like the installed copy. *Run Extension (isolated session state)* uses `.dev-state/` instead of `~/.omp/vscode`, so experiments don't touch your real sessions.
+- **F5** (*Run Extension*) opens an Extension Development Host with this checkout loaded; over Remote-SSH it runs on the remote like the installed copy. *Run Extension (isolated session state)* uses `.dev-state/` instead of `~/.switchyard`, so experiments don't touch your real sessions.
 - Layout: `src/ao` (the only module that talks to AO: client, events, daemon, model), `src/planner` (the planner service), `src/omp-extension` (loaded by omp inside AO sessions), `src/ext` (extension), `src/webview` (chat UI), `src/kanban` (Sessions Board), `src/cli` (`switchyard`), `src/bridge` (VS Code bridge), `src/shared` (helpers and wire contracts). `media/icon.svg` is the source of `media/icon.png`.
 - Tests: `npm test` bundles the TypeScript tests into `.test-out/` with esbuild and runs them with `node --test`. Unit tests cover `src/shared`, `src/ao`, the planner and pure webview helpers; integration tests start an isolated AO daemon (`test/ao-fixture.mjs`) against `test/fake-omp-acp.mjs`, a scriptable stand-in for `omp acp` that never calls a model; `test:e2e:desktop` drives a real desktop VS Code (local, Electron extension host) through the extension's commands.
 
 ## Publishing
 
 1. Bump `version` in `package.json` and add a `## <version>` section to `CHANGELOG.md`.
-2. `git tag v<version> && git push origin main v<version>`: the Release workflow runs the tests, packages the VSIX, publishes to the VS Code Marketplace via Trusted Publishing (GitHub OIDC, no stored token) and to Open VSX (`OVSX_PAT` secret), and opens a GitHub release with the VSIX and the standalone CLI package (`omp-sessions-<version>.tgz`, from `packaging/cli/pack.mjs`) attached.
+2. `git tag v<version> && git push origin main v<version>`: the Release workflow runs the tests, packages the VSIX, publishes to the VS Code Marketplace via Trusted Publishing (GitHub OIDC, no stored token) and to Open VSX (`OVSX_PAT` secret), and opens a GitHub release with the VSIX and the standalone CLI package (`switchyard-<version>.tgz`, from `packaging/cli/pack.mjs`) attached.
 
 One-time setup (publisher, Trusted Publishing policy, Open VSX namespace, screenshots) is in [`docs/PUBLISHING.md`](docs/PUBLISHING.md). All of it is free.
 

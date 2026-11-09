@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { after, test } from "node:test";
 import { detectedPlatforms, installSkill, skillTargets, staleCopies, uninstallSkill } from "../../src/shared/agent-skill";
 
-const SKILL_V1 = "---\nname: omp-sessions\nmetadata:\n  omp-sessions:\n    managed-by: omp-sessions\n---\nv1\n";
+const SKILL_V1 = "---\nname: switchyard\nmetadata:\n  switchyard:\n    managed-by: switchyard\n---\nv1\n";
 const SKILL_V2 = SKILL_V1.replace("v1", "v2");
 
 const temps: string[] = [];
@@ -25,7 +25,7 @@ test("skill targets follow the platforms installed", () => {
 	assert.deepEqual(detectedPlatforms(home), ["agents", "claude"]);
 	assert.deepEqual(
 		skillTargets("claude", home).map(t => path.relative(home, t.dir)),
-		[path.join(".claude", "skills", "omp-sessions")],
+		[path.join(".claude", "skills", "switchyard")],
 	);
 	assert.deepEqual(skillTargets("codex", home), []);
 });
@@ -41,10 +41,10 @@ test("install updates our own copy, never replaces someone else's skill unless f
 
 	const [claude] = skillTargets("agents", path.join(home, "other"));
 	fs.mkdirSync(claude.dir, { recursive: true });
-	fs.writeFileSync(path.join(claude.dir, "SKILL.md"), "---\nname: omp-sessions\n---\nmine\n");
+	fs.writeFileSync(path.join(claude.dir, "SKILL.md"), "---\nname: switchyard\n---\nmine\n");
 	assert.equal(installSkill(claude, SKILL_V2), "skipped");
 	assert.equal(uninstallSkill(claude), false);
-	assert.equal(fs.readFileSync(path.join(claude.dir, "SKILL.md"), "utf8"), "---\nname: omp-sessions\n---\nmine\n");
+	assert.equal(fs.readFileSync(path.join(claude.dir, "SKILL.md"), "utf8"), "---\nname: switchyard\n---\nmine\n");
 	assert.equal(installSkill(claude, SKILL_V2, true), "updated");
 
 	assert.equal(uninstallSkill(target), true);

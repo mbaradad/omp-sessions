@@ -192,7 +192,7 @@ async function askBranch(cwd: string, title: string): Promise<string | undefined
 	return name;
 }
 
-/** `omp.newWorktreeSession` (titled "New Session on Branch…"): every AO session has its own worktree; this one picks its branch. */
+/** `switchyard.newWorktreeSession` (titled "New Session on Branch…"): every AO session has its own worktree; this one picks its branch. */
 async function newWorktreeSession(api: OmpApi, arg: unknown): Promise<void> {
 	const folder = await repoFolder(api, arg);
 	if (!folder) return;
@@ -249,7 +249,7 @@ async function bestOfN(api: OmpApi, arg: unknown): Promise<void> {
 		plain(`Started ${started.length} of ${runs.length} runs, each in its own AO worktree. When they finish, compare each with "Compare with Base", merge the best one, then remove the others.`),
 		"Show Sessions",
 	);
-	if (pick) await vscode.commands.executeCommand("omp.sessions.focus");
+	if (pick) await vscode.commands.executeCommand("switchyard.sessions.focus");
 }
 
 async function pickWorktreeSession(api: OmpApi, arg: unknown, placeHolder: string): Promise<{ meta: SessionMeta; wt: SessionWorktree } | undefined> {
@@ -320,7 +320,7 @@ async function compareWithBase(api: OmpApi, arg: unknown): Promise<void> {
 	const pick = await vscode.window.showQuickPick(items, { title: label, placeHolder: "Open which diff?", matchOnDescription: true });
 	if (!pick) return;
 	if (!pick.file) {
-		await vscode.commands.executeCommand("vscode.changes", `omp: ${label} — ${files.length} file${files.length === 1 ? "" : "s"}`, files.map(f => changesTuple(wt, rev, f)));
+		await vscode.commands.executeCommand("vscode.changes", `Switchyard: ${label} — ${files.length} file${files.length === 1 ? "" : "s"}`, files.map(f => changesTuple(wt, rev, f)));
 		return;
 	}
 	const [abs, left, right] = changesTuple(wt, rev, pick.file);
@@ -465,10 +465,10 @@ async function openWorktreeFolder(api: OmpApi, arg: unknown): Promise<void> {
 export function registerWorktrees(api: OmpApi): void {
 	const reg = (name: string, fn: (arg?: unknown) => Promise<void>) => api.context.subscriptions.push(vscode.commands.registerCommand(name, (arg?: unknown) => fn(arg)));
 	api.context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(GIT_SCHEME, new GitShowProvider()));
-	reg("omp.newWorktreeSession", arg => newWorktreeSession(api, arg));
-	reg("omp.bestOfN", arg => bestOfN(api, arg));
-	reg("omp.worktree.diff", arg => compareWithBase(api, arg));
-	reg("omp.worktree.merge", arg => mergeIntoMain(api, arg));
-	reg("omp.worktree.openFolder", arg => openWorktreeFolder(api, arg));
-	reg("omp.worktree.remove", arg => removeWorktree(api, arg));
+	reg("switchyard.newWorktreeSession", arg => newWorktreeSession(api, arg));
+	reg("switchyard.bestOfN", arg => bestOfN(api, arg));
+	reg("switchyard.worktree.diff", arg => compareWithBase(api, arg));
+	reg("switchyard.worktree.merge", arg => mergeIntoMain(api, arg));
+	reg("switchyard.worktree.openFolder", arg => openWorktreeFolder(api, arg));
+	reg("switchyard.worktree.remove", arg => removeWorktree(api, arg));
 }

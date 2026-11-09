@@ -1,8 +1,8 @@
 {
-	"name": "omp-sessions",
-	"displayName": "omp Sessions",
-	"description": "A task server for oh-my-pi (omp) coding agents: background sessions with a task queue each, scheduled starts and a global concurrency limit, locally or over Remote-SSH. Sessions keep running with no client open; drive them from VS Code, the omp-sessions terminal command, your phone or Hermes Agent. In VS Code: open any session with the full chat, run parallel git-worktree sessions, track every session on a kanban board, and review or revert native diffs.",
-	"version": "0.6.2",
+	"name": "switchyard",
+	"displayName": "Switchyard",
+	"description": "Switchyard is a planning layer for coding agents on Agent Orchestrator: task graphs, queues, schedules, chat and review, from VS Code, the terminal, your phone or Hermes Agent.",
+	"version": "0.7.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -19,6 +19,8 @@
 	"qna": "https://github.com/mbaradad/omp-sessions/issues",
 	"preview": true,
 	"keywords": [
+		"switchyard",
+		"agent orchestrator",
 		"omp",
 		"oh-my-pi",
 		"pi",
@@ -73,34 +75,34 @@
 	"main": "./out/extension.js",
 	"activationEvents": [
 		"onStartupFinished",
-		"onWebviewPanel:omp.chat",
+		"onWebviewPanel:switchyard.chat",
 		"onUri"
 	],
 	"contributes": {
 		"viewsContainers": {
 			"activitybar": [
 				{
-					"id": "omp",
-					"title": "omp",
+					"id": "switchyard",
+					"title": "Switchyard",
 					"icon": "media/omp.svg"
 				}
 			]
 		},
 		"views": {
-			"omp": [
+			"switchyard": [
 				{
-					"id": "omp.sessions",
+					"id": "switchyard.sessions",
 					"name": "Sessions",
 					"icon": "media/omp.svg"
 				},
 				{
 					"type": "webview",
-					"id": "omp.chatView",
+					"id": "switchyard.chatView",
 					"name": "Chat",
 					"icon": "media/omp.svg"
 				},
 				{
-					"id": "omp.tasks",
+					"id": "switchyard.tasks",
 					"name": "Tasks",
 					"icon": "$(checklist)"
 				}
@@ -108,155 +110,155 @@
 		},
 		"viewsWelcome": [
 			{
-				"view": "omp.sessions",
-				"contents": "No omp sessions for this workspace yet.\n[Start omp session](command:omp.newSession)\nSessions keep running on this machine when VS Code disconnects."
+				"view": "switchyard.sessions",
+				"contents": "No sessions for this workspace yet.\n[Start session](command:switchyard.newSession)\nSessions keep running on this machine when VS Code disconnects."
 			},
 			{
-				"view": "omp.tasks",
-				"contents": "Queue work for omp: tasks run one after another in the background, even with VS Code closed. Subtasks, drag & drop to reorder, check to complete.\n[Add task](command:omp.tasks.add)"
+				"view": "switchyard.tasks",
+				"contents": "Queue work for omp: tasks run one after another in the background, even with VS Code closed. Subtasks, drag & drop to reorder, check to complete.\n[Add task](command:switchyard.tasks.add)"
 			}
 		],
 		"commands": [
 			{
-				"command": "omp.doctor",
+				"command": "switchyard.doctor",
 				"title": "Run Doctor",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pulse)"
 			},
 			{
-				"command": "omp.copyDiagnostics",
+				"command": "switchyard.copyDiagnostics",
 				"title": "Copy Diagnostics",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.testSound",
+				"command": "switchyard.testSound",
 				"title": "Test Completion Sound",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(unmute)"
 			},
 			{
-				"command": "omp.reportIssue",
+				"command": "switchyard.reportIssue",
 				"title": "Report Issue…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(report)"
 			},
 			{
-				"command": "omp.installOmp",
+				"command": "switchyard.installOmp",
 				"title": "Install omp…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(cloud-download)"
 			},
 			{
-				"command": "omp.showOmpMissing",
+				"command": "switchyard.showOmpMissing",
 				"title": "omp Is Not Installed",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.cleanUpSnapshots",
+				"command": "switchyard.cleanUpSnapshots",
 				"title": "Clean Up File Snapshots…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.dashboard",
+				"command": "switchyard.dashboard",
 				"title": "Usage Dashboard",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(graph)"
 			},
 			{
-				"command": "omp.searchHistory",
+				"command": "switchyard.searchHistory",
 				"title": "Search Session History…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(search)"
 			},
 			{
-				"command": "omp.todayCost",
+				"command": "switchyard.todayCost",
 				"title": "Show Today's Spend",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pulse)"
 			},
 			{
-				"command": "omp.newWorktreeSession",
+				"command": "switchyard.newWorktreeSession",
 				"title": "New Session on Branch…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-branch)"
 			},
 			{
-				"command": "omp.bestOfN",
+				"command": "switchyard.bestOfN",
 				"title": "Best-of-N: Same Task in Parallel Worktrees…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-compare)"
 			},
 			{
-				"command": "omp.worktree.diff",
+				"command": "switchyard.worktree.diff",
 				"title": "Compare Worktree Branch with Base",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-compare)"
 			},
 			{
-				"command": "omp.worktree.merge",
+				"command": "switchyard.worktree.merge",
 				"title": "Merge Worktree Branch into Main Checkout…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-merge)"
 			},
 			{
-				"command": "omp.worktree.openFolder",
+				"command": "switchyard.worktree.openFolder",
 				"title": "Open Worktree in New Window",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(empty-window)"
 			},
 			{
-				"command": "omp.worktree.remove",
+				"command": "switchyard.worktree.remove",
 				"title": "Remove Worktree and Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.board",
+				"command": "switchyard.board",
 				"title": "Open Sessions Board",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(layout)"
 			},
 			{
-				"command": "omp.setPermissionMode",
+				"command": "switchyard.setPermissionMode",
 				"title": "Set Permission Mode…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(shield)"
 			},
 			{
-				"command": "omp.bridgeStatus",
+				"command": "switchyard.bridgeStatus",
 				"title": "VS Code Bridge: Show Status",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(plug)"
 			},
 			{
-				"command": "omp.newSession",
+				"command": "switchyard.newSession",
 				"title": "New Session",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(add)"
 			},
 			{
-				"command": "omp.newSessionWithOptions",
+				"command": "switchyard.newSessionWithOptions",
 				"title": "New Session with Options…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(settings-gear)"
 			},
 			{
-				"command": "omp.setDefaultModel",
+				"command": "switchyard.setDefaultModel",
 				"title": "Set Default Model for New Sessions…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sparkle)"
 			},
 			{
-				"command": "omp.setDefaultMode",
+				"command": "switchyard.setDefaultMode",
 				"title": "Set Default Permission Mode for New Sessions…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(shield)"
 			},
 			{
-				"command": "omp.reviewChanges",
+				"command": "switchyard.reviewChanges",
 				"title": "Review Changes",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(diff-multiple)"
 			},
 			{
@@ -272,38 +274,38 @@
 				"icon": "$(redo)"
 			},
 			{
-				"command": "omp.openSession",
+				"command": "switchyard.openSession",
 				"title": "Open Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(comment-discussion)"
 			},
 			{
-				"command": "omp.focus",
+				"command": "switchyard.focus",
 				"title": "Focus Chat",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.stopSession",
+				"command": "switchyard.stopSession",
 				"title": "Stop Session",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-stop)"
 			},
 			{
-				"command": "omp.resumeSession",
+				"command": "switchyard.resumeSession",
 				"title": "Resume Session",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-start)"
 			},
 			{
-				"command": "omp.deleteSession",
+				"command": "switchyard.deleteSession",
 				"title": "Remove Session",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.renameSession",
+				"command": "switchyard.renameSession",
 				"title": "Rename Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(edit)"
 			},
 			{
@@ -314,215 +316,215 @@
 			{
 				"command": "switchyard.setDependencies",
 				"title": "Dependencies…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(type-hierarchy)"
 			},
 			{
-				"command": "omp.showChanges",
+				"command": "switchyard.showChanges",
 				"title": "Show Changed Files…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(list-tree)"
 			},
 			{
-				"command": "omp.openSessionFileDiff",
+				"command": "switchyard.openSessionFileDiff",
 				"title": "Open Session Diff",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.sendSelection",
+				"command": "switchyard.sendSelection",
 				"title": "Send Selection to omp",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.refresh",
+				"command": "switchyard.refresh",
 				"title": "Refresh",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(refresh)"
 			},
 			{
-				"command": "omp.toggleGrouping",
+				"command": "switchyard.toggleGrouping",
 				"title": "Group Sessions By…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(list-tree)"
 			},
 			{
-				"command": "omp.addToChat",
-				"title": "Add to omp Chat",
-				"category": "omp",
+				"command": "switchyard.addToChat",
+				"title": "Add to Switchyard Chat",
+				"category": "Switchyard",
 				"icon": "$(mention)"
 			},
 			{
-				"command": "omp.sendTerminalSelection",
+				"command": "switchyard.sendTerminalSelection",
 				"title": "Send Terminal Selection to omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(terminal)"
 			},
 			{
-				"command": "omp.explainSelection",
+				"command": "switchyard.explainSelection",
 				"title": "Explain Selection with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(question)"
 			},
 			{
-				"command": "omp.askAboutSelection",
+				"command": "switchyard.askAboutSelection",
 				"title": "Ask omp about Selection…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(comment)"
 			},
 			{
-				"command": "omp.fixDiagnostics",
+				"command": "switchyard.fixDiagnostics",
 				"title": "Fix Problems at Cursor with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
-				"command": "omp.revertFile",
+				"command": "switchyard.revertFile",
 				"title": "Revert File to Before Session",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(discard)"
 			},
 			{
-				"command": "omp.openInSidebar",
+				"command": "switchyard.openInSidebar",
 				"title": "Open in Side Bar",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(layout-sidebar-left)"
 			},
 			{
-				"command": "omp.openInEditor",
+				"command": "switchyard.openInEditor",
 				"title": "Open in Editor Tab",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(go-to-file)"
 			},
 			{
-				"command": "omp.scm.commit",
+				"command": "switchyard.scm.commit",
 				"title": "Commit with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-commit)"
 			},
 			{
-				"command": "omp.scm.review",
+				"command": "switchyard.scm.review",
 				"title": "Review Uncommitted Changes with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(checklist)"
 			},
 			{
-				"command": "omp.scm.pr",
+				"command": "switchyard.scm.pr",
 				"title": "Write PR Description with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-pull-request)"
 			},
 			{
-				"command": "omp.tasks.add",
+				"command": "switchyard.tasks.add",
 				"title": "Add Task…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(add)"
 			},
 			{
-				"command": "omp.tasks.addSubtask",
+				"command": "switchyard.tasks.addSubtask",
 				"title": "Add Subtask…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(list-tree)"
 			},
 			{
-				"command": "omp.tasks.edit",
+				"command": "switchyard.tasks.edit",
 				"title": "Rename…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(edit)"
 			},
 			{
-				"command": "omp.tasks.editNotes",
+				"command": "switchyard.tasks.editNotes",
 				"title": "Edit Details…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(note)"
 			},
 			{
-				"command": "omp.tasks.delete",
+				"command": "switchyard.tasks.delete",
 				"title": "Delete",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.tasks.runNow",
+				"command": "switchyard.tasks.runNow",
 				"title": "Run Now",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(play)"
 			},
 			{
-				"command": "omp.tasks.start",
+				"command": "switchyard.tasks.start",
 				"title": "Start Queue",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(run-all)"
 			},
 			{
-				"command": "omp.tasks.pause",
+				"command": "switchyard.tasks.pause",
 				"title": "Pause Queue",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-pause)"
 			},
 			{
-				"command": "omp.tasks.markDone",
+				"command": "switchyard.tasks.markDone",
 				"title": "Mark Done",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(check)"
 			},
 			{
-				"command": "omp.tasks.markPending",
+				"command": "switchyard.tasks.markPending",
 				"title": "Mark Pending (re-run)",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(refresh)"
 			},
 			{
-				"command": "omp.tasks.skip",
+				"command": "switchyard.tasks.skip",
 				"title": "Skip",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(circle-slash)"
 			},
 			{
-				"command": "omp.tasks.moveUp",
+				"command": "switchyard.tasks.moveUp",
 				"title": "Move Up",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(arrow-up)"
 			},
 			{
-				"command": "omp.tasks.moveDown",
+				"command": "switchyard.tasks.moveDown",
 				"title": "Move Down",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(arrow-down)"
 			},
 			{
-				"command": "omp.tasks.clearDone",
+				"command": "switchyard.tasks.clearDone",
 				"title": "Clear Finished Tasks",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(clear-all)"
 			},
 			{
-				"command": "omp.tasks.openChat",
+				"command": "switchyard.tasks.openChat",
 				"title": "Open Chat",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(comment-discussion)"
 			},
 			{
-				"command": "omp.tasks.editOptions",
+				"command": "switchyard.tasks.editOptions",
 				"title": "Task Options…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(settings-gear)"
 			},
 			{
-				"command": "omp.tasks.duplicate",
+				"command": "switchyard.tasks.duplicate",
 				"title": "Duplicate Task",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(copy)"
 			},
 			{
-				"command": "omp.tasks.retryFailed",
+				"command": "switchyard.tasks.retryFailed",
 				"title": "Retry Failed Tasks",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(refresh)"
 			},
 			{
-				"command": "omp.tasks.schedule",
+				"command": "switchyard.tasks.schedule",
 				"title": "Schedule Start…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(clock)"
 			},
 			{
@@ -580,399 +582,399 @@
 				"icon": "$(type-hierarchy)"
 			},
 			{
-				"command": "omp.editWithOmp",
+				"command": "switchyard.editWithOmp",
 				"title": "Edit with omp…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sparkle)"
 			},
 			{
-				"command": "omp.fixFileProblems",
+				"command": "switchyard.fixFileProblems",
 				"title": "Fix File Problems with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
-				"command": "omp.fixWorkspaceProblems",
+				"command": "switchyard.fixWorkspaceProblems",
 				"title": "Fix Workspace Errors with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
-				"command": "omp.fixLastFailedCommand",
+				"command": "switchyard.fixLastFailedCommand",
 				"title": "Fix Failed Command with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(wrench)"
 			},
 			{
-				"command": "omp.explainFile",
+				"command": "switchyard.explainFile",
 				"title": "Explain File with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(question)"
 			},
 			{
-				"command": "omp.writeTests",
+				"command": "switchyard.writeTests",
 				"title": "Write Tests with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(beaker)"
 			},
 			{
-				"command": "omp.addDocs",
+				"command": "switchyard.addDocs",
 				"title": "Add Docs with omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(book)"
 			},
 			{
-				"command": "omp.commandCenter",
+				"command": "switchyard.commandCenter",
 				"title": "Command Center",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(rocket)"
 			},
 			{
-				"command": "omp.login",
+				"command": "switchyard.login",
 				"title": "Log In to a Model Provider",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(account)"
 			},
 			{
-				"command": "omp.update",
+				"command": "switchyard.update",
 				"title": "Update omp",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(cloud-download)"
 			},
 			{
-				"command": "omp.setup",
+				"command": "switchyard.setup",
 				"title": "Run omp Setup",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(tools)"
 			},
 			{
-				"command": "omp.plugins",
+				"command": "switchyard.plugins",
 				"title": "Manage Plugins…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(extensions)"
 			},
 			{
-				"command": "omp.skills",
+				"command": "switchyard.skills",
 				"title": "Manage Skills…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(lightbulb)"
 			},
 			{
-				"command": "omp.usage",
+				"command": "switchyard.usage",
 				"title": "Show Provider Usage Limits",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pulse)"
 			},
 			{
-				"command": "omp.stats",
+				"command": "switchyard.stats",
 				"title": "Show Usage Statistics",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(graph)"
 			},
 			{
-				"command": "omp.models",
+				"command": "switchyard.models",
 				"title": "Browse Models…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(hubot)"
 			},
 			{
-				"command": "omp.cleanse",
+				"command": "switchyard.cleanse",
 				"title": "Cleanse Project Diagnostics…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sparkle)"
 			},
 			{
-				"command": "omp.commitInTerminal",
+				"command": "switchyard.commitInTerminal",
 				"title": "Commit with omp in Terminal…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(git-commit)"
 			},
 			{
-				"command": "omp.gitUi",
+				"command": "switchyard.gitUi",
 				"title": "Open omp Git UI",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(source-control)"
 			},
 			{
-				"command": "omp.exportHtml",
+				"command": "switchyard.exportHtml",
 				"title": "Export Session as HTML…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(export)"
 			},
 			{
-				"command": "omp.share",
+				"command": "switchyard.share",
 				"title": "Share Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(live-share)"
 			},
 			{
-				"command": "omp.continueInTerminal",
+				"command": "switchyard.continueInTerminal",
 				"title": "Continue Session in omp's Terminal UI",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(terminal)"
 			},
 			{
-				"command": "omp.importClaude",
+				"command": "switchyard.importClaude",
 				"title": "Import Claude Code Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sign-in)"
 			},
 			{
-				"command": "omp.importCodex",
+				"command": "switchyard.importCodex",
 				"title": "Import Codex Session…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sign-in)"
 			},
 			{
-				"command": "omp.openDocs",
+				"command": "switchyard.openDocs",
 				"title": "Open Documentation",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(book)"
 			},
 			{
-				"command": "omp.openConfig",
+				"command": "switchyard.openConfig",
 				"title": "Open omp Config File",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(gear)"
 			},
 			{
-				"command": "omp.keyboardShortcuts",
+				"command": "switchyard.keyboardShortcuts",
 				"title": "Keyboard Shortcuts",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(record-keys)"
 			},
 			{
-				"command": "omp.organize.filter",
+				"command": "switchyard.organize.filter",
 				"title": "Filter Sessions…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(filter)"
 			},
 			{
-				"command": "omp.organize.clearFilter",
+				"command": "switchyard.organize.clearFilter",
 				"title": "Clear Sessions Filter",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(filter-filled)"
 			},
 			{
-				"command": "omp.organize.sortBy",
+				"command": "switchyard.organize.sortBy",
 				"title": "Sort Sessions By…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(sort-precedence)"
 			},
 			{
-				"command": "omp.organize.hideFinished",
+				"command": "switchyard.organize.hideFinished",
 				"title": "Hide Finished Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(eye-closed)"
 			},
 			{
-				"command": "omp.organize.showFinished",
+				"command": "switchyard.organize.showFinished",
 				"title": "Show Finished Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(eye)"
 			},
 			{
-				"command": "omp.sessions.showAll",
+				"command": "switchyard.sessions.showAll",
 				"title": "Show All Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(globe)"
 			},
 			{
-				"command": "omp.sessions.showWorkspace",
+				"command": "switchyard.sessions.showWorkspace",
 				"title": "Show This Workspace's Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(root-folder)"
 			},
 			{
-				"command": "omp.organize.showArchived",
+				"command": "switchyard.organize.showArchived",
 				"title": "Show Archived Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(archive)"
 			},
 			{
-				"command": "omp.organize.hideArchived",
+				"command": "switchyard.organize.hideArchived",
 				"title": "Hide Archived Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(archive)"
 			},
 			{
-				"command": "omp.organize.hideCompleted",
+				"command": "switchyard.organize.hideCompleted",
 				"title": "Hide Completed Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pass)"
 			},
 			{
-				"command": "omp.organize.showCompleted",
+				"command": "switchyard.organize.showCompleted",
 				"title": "Show Completed Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pass)"
 			},
 			{
-				"command": "omp.organize.newGroup",
+				"command": "switchyard.organize.newGroup",
 				"title": "New Group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(new-folder)"
 			},
 			{
-				"command": "omp.organize.moveToGroup",
+				"command": "switchyard.organize.moveToGroup",
 				"title": "Move to Group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(folder-opened)"
 			},
 			{
-				"command": "omp.organize.removeFromGroup",
+				"command": "switchyard.organize.removeFromGroup",
 				"title": "Remove from Group",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(close)"
 			},
 			{
-				"command": "omp.organize.setColor",
+				"command": "switchyard.organize.setColor",
 				"title": "Set Color…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(symbol-color)"
 			},
 			{
-				"command": "omp.organize.setPriority",
+				"command": "switchyard.organize.setPriority",
 				"title": "Set Priority…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(flame)"
 			},
 			{
-				"command": "omp.organize.editTags",
+				"command": "switchyard.organize.editTags",
 				"title": "Edit Tags…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(tag)"
 			},
 			{
-				"command": "omp.organize.setLane",
+				"command": "switchyard.organize.setLane",
 				"title": "Set Board Lane…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(layout)"
 			},
 			{
-				"command": "omp.organize.pin",
+				"command": "switchyard.organize.pin",
 				"title": "Pin",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pin)"
 			},
 			{
-				"command": "omp.organize.unpin",
+				"command": "switchyard.organize.unpin",
 				"title": "Unpin",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pinned)"
 			},
 			{
-				"command": "omp.organize.archive",
+				"command": "switchyard.organize.archive",
 				"title": "Archive",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(archive)"
 			},
 			{
-				"command": "omp.organize.unarchive",
+				"command": "switchyard.organize.unarchive",
 				"title": "Unarchive",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(archive)"
 			},
 			{
-				"command": "omp.markCompleted",
+				"command": "switchyard.markCompleted",
 				"title": "Mark Completed",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(pass)"
 			},
 			{
-				"command": "omp.markNotCompleted",
+				"command": "switchyard.markNotCompleted",
 				"title": "Mark Not Completed",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(circle-large-outline)"
 			},
 			{
-				"command": "omp.organize.moveUp",
+				"command": "switchyard.organize.moveUp",
 				"title": "Move Up",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(arrow-up)"
 			},
 			{
-				"command": "omp.organize.moveDown",
+				"command": "switchyard.organize.moveDown",
 				"title": "Move Down",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(arrow-down)"
 			},
 			{
-				"command": "omp.organize.moveToTop",
+				"command": "switchyard.organize.moveToTop",
 				"title": "Move to Top",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(fold-up)"
 			},
 			{
-				"command": "omp.organize.newSubgroup",
+				"command": "switchyard.organize.newSubgroup",
 				"title": "New Sub-group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(new-folder)"
 			},
 			{
-				"command": "omp.organize.renameGroup",
+				"command": "switchyard.organize.renameGroup",
 				"title": "Rename Group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(edit)"
 			},
 			{
-				"command": "omp.organize.setGroupIcon",
+				"command": "switchyard.organize.setGroupIcon",
 				"title": "Change Group Icon…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(symbol-misc)"
 			},
 			{
-				"command": "omp.organize.deleteGroup",
+				"command": "switchyard.organize.deleteGroup",
 				"title": "Delete Group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.organize.newSessionInGroup",
+				"command": "switchyard.organize.newSessionInGroup",
 				"title": "New Session in Group…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(add)"
 			},
 			{
-				"command": "omp.organize.stopSelected",
+				"command": "switchyard.organize.stopSelected",
 				"title": "Stop Selected Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-stop)"
 			},
 			{
-				"command": "omp.organize.resumeSelected",
+				"command": "switchyard.organize.resumeSelected",
 				"title": "Resume Selected Sessions",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-start)"
 			},
 			{
-				"command": "omp.organize.deleteSelected",
+				"command": "switchyard.organize.deleteSelected",
 				"title": "Remove Selected Stopped Sessions…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "omp.scheduler.setConcurrency",
+				"command": "switchyard.scheduler.setConcurrency",
 				"title": "Set Max Concurrent Queued Tasks…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(server-process)"
 			},
 			{
-				"command": "omp.scheduler.increase",
+				"command": "switchyard.scheduler.increase",
 				"title": "Increase Concurrent Queued Tasks",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(add)"
 			},
 			{
-				"command": "omp.scheduler.decrease",
+				"command": "switchyard.scheduler.decrease",
 				"title": "Decrease Concurrent Queued Tasks",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(remove)"
 			},
 			{
-				"command": "omp.scheduler.togglePause",
+				"command": "switchyard.scheduler.togglePause",
 				"title": "Pause / Resume Queued Tasks",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-pause)"
 			},
 			{
@@ -1006,981 +1008,981 @@
 				"icon": "$(clear-all)"
 			},
 			{
-				"command": "omp.installCli",
-				"title": "Install omp-sessions Command (Terminal CLI)",
-				"category": "omp",
+				"command": "switchyard.installCli",
+				"title": "Install switchyard Command (Terminal CLI)",
+				"category": "Switchyard",
 				"icon": "$(terminal)"
 			},
 			{
-				"command": "omp.server.start",
+				"command": "switchyard.server.start",
 				"title": "Start Planner and AO Daemon",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(play)"
 			},
 			{
-				"command": "omp.server.restart",
+				"command": "switchyard.server.restart",
 				"title": "Restart Planner",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(debug-restart)"
 			},
 			{
-				"command": "omp.server.showLog",
+				"command": "switchyard.server.showLog",
 				"title": "Show Planner or AO Daemon Log",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(output)"
 			},
 			{
-				"command": "omp.server.install",
+				"command": "switchyard.server.install",
 				"title": "Install Planner and AO Daemon Login Services",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.server.statusInTerminal",
+				"command": "switchyard.server.statusInTerminal",
 				"title": "Show Status in Terminal",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(terminal)"
 			},
 			{
-				"command": "omp.remote.connectPhone",
+				"command": "switchyard.remote.connectPhone",
 				"title": "Connect Phone…",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(device-mobile)"
 			},
 			{
-				"command": "omp.remote.disable",
+				"command": "switchyard.remote.disable",
 				"title": "Disable Remote Access",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.remote.rotateToken",
+				"command": "switchyard.remote.rotateToken",
 				"title": "Rotate Remote Access Token",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.installAgentSkill",
-				"title": "Install omp Sessions Skill for Agents…",
-				"category": "omp"
+				"command": "switchyard.installAgentSkill",
+				"title": "Install Switchyard Skill for Agents…",
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.hermes.install",
+				"command": "switchyard.hermes.install",
 				"title": "Install Hermes Plugin…",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.hermes.openCard",
+				"command": "switchyard.hermes.openCard",
 				"title": "Open Hermes Card",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(link-external)"
 			},
 			{
-				"command": "omp.hermes.showCard",
+				"command": "switchyard.hermes.showCard",
 				"title": "Show Hermes Card",
-				"category": "omp",
+				"category": "Switchyard",
 				"icon": "$(note)"
 			},
 			{
-				"command": "omp.hermes.update",
+				"command": "switchyard.hermes.update",
 				"title": "Update Hermes Plugin",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.hermes.enable",
+				"command": "switchyard.hermes.enable",
 				"title": "Enable Hermes Plugin",
-				"category": "omp"
+				"category": "Switchyard"
 			},
 			{
-				"command": "omp.hermes.lane",
+				"command": "switchyard.hermes.lane",
 				"title": "Turn Hermes Kanban Lane On or Off",
-				"category": "omp"
+				"category": "Switchyard"
 			}
 		],
 		"menus": {
 			"view/title": [
 				{
-					"command": "omp.board",
-					"when": "view == omp.sessions",
+					"command": "switchyard.board",
+					"when": "view == switchyard.sessions",
 					"group": "2_board@1"
 				},
 				{
-					"command": "omp.organize.filter",
-					"when": "view == omp.sessions && !omp.sessions.filtered",
+					"command": "switchyard.organize.filter",
+					"when": "view == switchyard.sessions && !switchyard.sessions.filtered",
 					"group": "navigation@4"
 				},
 				{
-					"command": "omp.organize.clearFilter",
-					"when": "view == omp.sessions && omp.sessions.filtered",
+					"command": "switchyard.organize.clearFilter",
+					"when": "view == switchyard.sessions && switchyard.sessions.filtered",
 					"group": "navigation@4"
 				},
 				{
-					"command": "omp.organize.hideFinished",
-					"when": "view == omp.sessions && !omp.sessions.hideFinished",
+					"command": "switchyard.organize.hideFinished",
+					"when": "view == switchyard.sessions && !switchyard.sessions.hideFinished",
 					"group": "navigation@5"
 				},
 				{
-					"command": "omp.organize.showFinished",
-					"when": "view == omp.sessions && omp.sessions.hideFinished",
+					"command": "switchyard.organize.showFinished",
+					"when": "view == switchyard.sessions && switchyard.sessions.hideFinished",
 					"group": "navigation@5"
 				},
 				{
-					"command": "omp.sessions.showAll",
-					"when": "view == omp.sessions && !omp.sessions.scopeAll && workspaceFolderCount != 0",
+					"command": "switchyard.sessions.showAll",
+					"when": "view == switchyard.sessions && !switchyard.sessions.scopeAll && workspaceFolderCount != 0",
 					"group": "navigation@6"
 				},
 				{
-					"command": "omp.sessions.showWorkspace",
-					"when": "view == omp.sessions && omp.sessions.scopeAll && workspaceFolderCount != 0",
+					"command": "switchyard.sessions.showWorkspace",
+					"when": "view == switchyard.sessions && switchyard.sessions.scopeAll && workspaceFolderCount != 0",
 					"group": "navigation@6"
 				},
 				{
-					"command": "omp.organize.sortBy",
-					"when": "view == omp.sessions",
+					"command": "switchyard.organize.sortBy",
+					"when": "view == switchyard.sessions",
 					"group": "2_view@2"
 				},
 				{
-					"command": "omp.organize.showArchived",
-					"when": "view == omp.sessions && !omp.sessions.showArchived",
+					"command": "switchyard.organize.showArchived",
+					"when": "view == switchyard.sessions && !switchyard.sessions.showArchived",
 					"group": "2_view@3"
 				},
 				{
-					"command": "omp.organize.hideArchived",
-					"when": "view == omp.sessions && omp.sessions.showArchived",
+					"command": "switchyard.organize.hideArchived",
+					"when": "view == switchyard.sessions && switchyard.sessions.showArchived",
 					"group": "2_view@3"
 				},
 				{
-					"command": "omp.organize.hideCompleted",
-					"when": "view == omp.sessions && !omp.sessions.hideCompleted",
+					"command": "switchyard.organize.hideCompleted",
+					"when": "view == switchyard.sessions && !switchyard.sessions.hideCompleted",
 					"group": "2_view@3"
 				},
 				{
-					"command": "omp.organize.showCompleted",
-					"when": "view == omp.sessions && omp.sessions.hideCompleted",
+					"command": "switchyard.organize.showCompleted",
+					"when": "view == switchyard.sessions && switchyard.sessions.hideCompleted",
 					"group": "2_view@3"
 				},
 				{
-					"command": "omp.organize.newGroup",
-					"when": "view == omp.sessions",
+					"command": "switchyard.organize.newGroup",
+					"when": "view == switchyard.sessions",
 					"group": "2_view@4"
 				},
 				{
-					"command": "omp.scheduler.setConcurrency",
-					"when": "view == omp.tasks",
+					"command": "switchyard.scheduler.setConcurrency",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@1"
 				},
 				{
-					"command": "omp.scheduler.togglePause",
-					"when": "view == omp.tasks",
+					"command": "switchyard.scheduler.togglePause",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@2"
 				},
 				{
 					"command": "switchyard.scheduler.setBudget",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@3"
 				},
 				{
 					"command": "switchyard.scheduler.configure",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@4"
 				},
 				{
 					"command": "switchyard.scheduler.setUsage",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@5"
 				},
 				{
 					"command": "switchyard.scheduler.setDefaultModel",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@6"
 				},
 				{
 					"command": "switchyard.scheduler.clearLimits",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "2_scheduler@7"
 				},
 				{
 					"command": "switchyard.tasks.showGraph",
-					"when": "view == omp.tasks",
+					"when": "view == switchyard.tasks",
 					"group": "navigation@4"
 				},
 				{
-					"command": "omp.doctor",
-					"when": "view == omp.sessions",
+					"command": "switchyard.doctor",
+					"when": "view == switchyard.sessions",
 					"group": "9_help@1"
 				},
 				{
-					"command": "omp.reportIssue",
-					"when": "view == omp.sessions",
+					"command": "switchyard.reportIssue",
+					"when": "view == switchyard.sessions",
 					"group": "9_help@2"
 				},
 				{
-					"command": "omp.installCli",
-					"when": "view == omp.sessions",
+					"command": "switchyard.installCli",
+					"when": "view == switchyard.sessions",
 					"group": "9_help@3"
 				},
 				{
-					"command": "omp.searchHistory",
-					"when": "view == omp.sessions",
+					"command": "switchyard.searchHistory",
+					"when": "view == switchyard.sessions",
 					"group": "3_usage@1"
 				},
 				{
-					"command": "omp.dashboard",
-					"when": "view == omp.sessions",
+					"command": "switchyard.dashboard",
+					"when": "view == switchyard.sessions",
 					"group": "3_usage@2"
 				},
 				{
-					"command": "omp.newWorktreeSession",
-					"when": "view == omp.sessions",
+					"command": "switchyard.newWorktreeSession",
+					"when": "view == switchyard.sessions",
 					"group": "1_new@2"
 				},
 				{
-					"command": "omp.bestOfN",
-					"when": "view == omp.sessions",
+					"command": "switchyard.bestOfN",
+					"when": "view == switchyard.sessions",
 					"group": "1_new@3"
 				},
 				{
-					"command": "omp.newSession",
-					"when": "view == omp.sessions",
+					"command": "switchyard.newSession",
+					"when": "view == switchyard.sessions",
 					"group": "navigation@1"
 				},
 				{
-					"command": "omp.refresh",
-					"when": "view == omp.sessions",
+					"command": "switchyard.refresh",
+					"when": "view == switchyard.sessions",
 					"group": "navigation@3"
 				},
 				{
-					"command": "omp.newSessionWithOptions",
-					"when": "view == omp.sessions",
+					"command": "switchyard.newSessionWithOptions",
+					"when": "view == switchyard.sessions",
 					"group": "1_new@1"
 				},
 				{
-					"command": "omp.toggleGrouping",
-					"when": "view == omp.sessions",
+					"command": "switchyard.toggleGrouping",
+					"when": "view == switchyard.sessions",
 					"group": "2_view@1"
 				},
 				{
-					"command": "omp.tasks.add",
-					"when": "view == omp.tasks",
+					"command": "switchyard.tasks.add",
+					"when": "view == switchyard.tasks",
 					"group": "navigation@1"
 				},
 				{
-					"command": "omp.tasks.start",
-					"when": "view == omp.tasks",
+					"command": "switchyard.tasks.start",
+					"when": "view == switchyard.tasks",
 					"group": "navigation@2"
 				},
 				{
-					"command": "omp.tasks.pause",
-					"when": "view == omp.tasks",
+					"command": "switchyard.tasks.pause",
+					"when": "view == switchyard.tasks",
 					"group": "navigation@3"
 				},
 				{
-					"command": "omp.tasks.clearDone",
-					"when": "view == omp.tasks",
+					"command": "switchyard.tasks.clearDone",
+					"when": "view == switchyard.tasks",
 					"group": "1_tasks@1"
 				},
 				{
-					"command": "omp.fixWorkspaceProblems",
+					"command": "switchyard.fixWorkspaceProblems",
 					"when": "view == workbench.panel.markers.view",
 					"group": "navigation@9"
 				},
 				{
-					"command": "omp.commandCenter",
-					"when": "view == omp.sessions",
+					"command": "switchyard.commandCenter",
+					"when": "view == switchyard.sessions",
 					"group": "0_center@1"
 				},
 				{
-					"command": "omp.importClaude",
-					"when": "view == omp.sessions",
+					"command": "switchyard.importClaude",
+					"when": "view == switchyard.sessions",
 					"group": "1_new@8"
 				},
 				{
-					"command": "omp.importCodex",
-					"when": "view == omp.sessions",
+					"command": "switchyard.importCodex",
+					"when": "view == switchyard.sessions",
 					"group": "1_new@9"
 				}
 			],
 			"view/item/context": [
 				{
-					"command": "omp.organize.setPriority",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.organize.setPriority",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "3_organize@1"
 				},
 				{
-					"command": "omp.organize.setColor",
-					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"command": "switchyard.organize.setColor",
+					"when": "view == switchyard.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "3_organize@2"
 				},
 				{
-					"command": "omp.organize.editTags",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.organize.editTags",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "3_organize@3"
 				},
 				{
-					"command": "omp.organize.moveToGroup",
-					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"command": "switchyard.organize.moveToGroup",
+					"when": "view == switchyard.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "3_organize@4"
 				},
 				{
-					"command": "omp.organize.removeFromGroup",
-					"when": "view == omp.sessions && viewItem =~ /^session.*\\.grouped/",
+					"command": "switchyard.organize.removeFromGroup",
+					"when": "view == switchyard.sessions && viewItem =~ /^session.*\\.grouped/",
 					"group": "3_organize@5"
 				},
 				{
-					"command": "omp.organize.newGroup",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.organize.newGroup",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "3_organize@6"
 				},
 				{
-					"command": "omp.organize.setLane",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.organize.setLane",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "3_organize@7"
 				},
 				{
-					"command": "omp.organize.pin",
-					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.pinned)/",
+					"command": "switchyard.organize.pin",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.pinned)/",
 					"group": "3_organize@8"
 				},
 				{
-					"command": "omp.organize.unpin",
-					"when": "view == omp.sessions && viewItem =~ /^session.*\\.pinned/",
+					"command": "switchyard.organize.unpin",
+					"when": "view == switchyard.sessions && viewItem =~ /^session.*\\.pinned/",
 					"group": "3_organize@8"
 				},
 				{
-					"command": "omp.organize.archive",
-					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.archived)/",
+					"command": "switchyard.organize.archive",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.archived)/",
 					"group": "3_organize@9"
 				},
 				{
-					"command": "omp.organize.unarchive",
-					"when": "view == omp.sessions && viewItem =~ /^session.*\\.archived/",
+					"command": "switchyard.organize.unarchive",
+					"when": "view == switchyard.sessions && viewItem =~ /^session.*\\.archived/",
 					"group": "3_organize@9"
 				},
 				{
-					"command": "omp.markCompleted",
-					"when": "view == omp.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.completed)/",
+					"command": "switchyard.markCompleted",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/ && viewItem =~ /^(?!.*\\.completed)/",
 					"group": "3_organize@10"
 				},
 				{
-					"command": "omp.markNotCompleted",
-					"when": "view == omp.sessions && viewItem =~ /^session.*\\.completed/",
+					"command": "switchyard.markNotCompleted",
+					"when": "view == switchyard.sessions && viewItem =~ /^session.*\\.completed/",
 					"group": "3_organize@10"
 				},
 				{
-					"command": "omp.organize.moveUp",
-					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"command": "switchyard.organize.moveUp",
+					"when": "view == switchyard.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "4_order@1"
 				},
 				{
-					"command": "omp.organize.moveDown",
-					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"command": "switchyard.organize.moveDown",
+					"when": "view == switchyard.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "4_order@2"
 				},
 				{
-					"command": "omp.organize.moveToTop",
-					"when": "view == omp.sessions && viewItem =~ /^(session|orgGroup)/",
+					"command": "switchyard.organize.moveToTop",
+					"when": "view == switchyard.sessions && viewItem =~ /^(session|orgGroup)/",
 					"group": "4_order@3"
 				},
 				{
-					"command": "omp.organize.stopSelected",
-					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"command": "switchyard.organize.stopSelected",
+					"when": "view == switchyard.sessions && listMultiSelection && viewItem =~ /^session/",
 					"group": "5_bulk@1"
 				},
 				{
-					"command": "omp.organize.resumeSelected",
-					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"command": "switchyard.organize.resumeSelected",
+					"when": "view == switchyard.sessions && listMultiSelection && viewItem =~ /^session/",
 					"group": "5_bulk@2"
 				},
 				{
-					"command": "omp.organize.deleteSelected",
-					"when": "view == omp.sessions && listMultiSelection && viewItem =~ /^session/",
+					"command": "switchyard.organize.deleteSelected",
+					"when": "view == switchyard.sessions && listMultiSelection && viewItem =~ /^session/",
 					"group": "5_bulk@3"
 				},
 				{
-					"command": "omp.organize.newSessionInGroup",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.newSessionInGroup",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.organize.newSessionInGroup",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.newSessionInGroup",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "1_group@1"
 				},
 				{
-					"command": "omp.organize.newSubgroup",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.newSubgroup",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "1_group@2"
 				},
 				{
-					"command": "omp.organize.renameGroup",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.renameGroup",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "1_group@3"
 				},
 				{
-					"command": "omp.organize.setGroupIcon",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.setGroupIcon",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "1_group@4"
 				},
 				{
-					"command": "omp.organize.deleteGroup",
-					"when": "view == omp.sessions && viewItem == orgGroup",
+					"command": "switchyard.organize.deleteGroup",
+					"when": "view == switchyard.sessions && viewItem == orgGroup",
 					"group": "9_delete@1"
 				},
 				{
-					"command": "omp.newWorktreeSession",
-					"when": "view == omp.sessions && viewItem == project",
+					"command": "switchyard.newWorktreeSession",
+					"when": "view == switchyard.sessions && viewItem == project",
 					"group": "1_project@2"
 				},
 				{
-					"command": "omp.bestOfN",
-					"when": "view == omp.sessions && viewItem == project",
+					"command": "switchyard.bestOfN",
+					"when": "view == switchyard.sessions && viewItem == project",
 					"group": "1_project@3"
 				},
 				{
-					"command": "omp.worktree.diff",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"command": "switchyard.worktree.diff",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
 					"group": "3_worktree@1"
 				},
 				{
-					"command": "omp.worktree.merge",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"command": "switchyard.worktree.merge",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
 					"group": "3_worktree@2"
 				},
 				{
-					"command": "omp.worktree.openFolder",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"command": "switchyard.worktree.openFolder",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
 					"group": "3_worktree@3"
 				},
 				{
-					"command": "omp.worktree.remove",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
+					"command": "switchyard.worktree.remove",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.[a-z]+\\.worktree/",
 					"group": "3_worktree@4"
 				},
 				{
-					"command": "omp.openInSidebar",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.openInSidebar",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "0_open@1"
 				},
 				{
-					"command": "omp.openInEditor",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.openInEditor",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "0_open@2"
 				},
 				{
-					"command": "omp.tasks.add",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"command": "switchyard.tasks.add",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.tasks.start",
-					"when": "view == omp.tasks && viewItem == tasks.session.paused",
+					"command": "switchyard.tasks.start",
+					"when": "view == switchyard.tasks && viewItem == tasks.session.paused",
 					"group": "inline@2"
 				},
 				{
-					"command": "omp.tasks.pause",
-					"when": "view == omp.tasks && viewItem == tasks.session.auto",
+					"command": "switchyard.tasks.pause",
+					"when": "view == switchyard.tasks && viewItem == tasks.session.auto",
 					"group": "inline@2"
 				},
 				{
-					"command": "omp.tasks.openChat",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"command": "switchyard.tasks.openChat",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "inline@3"
 				},
 				{
-					"command": "omp.tasks.clearDone",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"command": "switchyard.tasks.clearDone",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "1_session@1"
 				},
 				{
-					"command": "omp.tasks.schedule",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"command": "switchyard.tasks.schedule",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "1_session@2"
 				},
 				{
-					"command": "omp.tasks.retryFailed",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session/",
+					"command": "switchyard.tasks.retryFailed",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session/",
 					"group": "1_session@3"
 				},
 				{
 					"command": "switchyard.tasks.setPriority",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@4"
 				},
 				{
 					"command": "switchyard.tasks.completeLane",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@5"
 				},
 				{
 					"command": "switchyard.tasks.cleanBranches",
-					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"when": "view == switchyard.tasks && viewItem == tasks.kept",
 					"group": "inline@1"
 				},
 				{
 					"command": "switchyard.tasks.cleanBranches",
-					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"when": "view == switchyard.tasks && viewItem == tasks.kept",
 					"group": "1_kept@1"
 				},
 				{
 					"command": "switchyard.tasks.copyBranch",
-					"when": "view == omp.tasks && viewItem == tasks.keptBranch",
+					"when": "view == switchyard.tasks && viewItem == tasks.keptBranch",
 					"group": "1_kept@1"
 				},
 				{
 					"command": "switchyard.tasks.undo",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
 					"group": "3_status@6"
 				},
 				{
 					"command": "switchyard.tasks.rerun",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.(done|failed)$/",
 					"group": "3_status@4"
 				},
 				{
 					"command": "switchyard.tasks.sync",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "3_status@5"
 				},
 				{
-					"command": "omp.tasks.add",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(free|ompSession)$/",
+					"command": "switchyard.tasks.add",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(free|ompSession)$/",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.tasks.openChat",
-					"when": "view == omp.tasks && viewItem == tasks.ompSession",
+					"command": "switchyard.tasks.openChat",
+					"when": "view == switchyard.tasks && viewItem == tasks.ompSession",
 					"group": "inline@3"
 				},
 				{
-					"command": "omp.tasks.clearDone",
-					"when": "view == omp.tasks && viewItem == tasks.free",
+					"command": "switchyard.tasks.clearDone",
+					"when": "view == switchyard.tasks && viewItem == tasks.free",
 					"group": "1_session@1"
 				},
 				{
-					"command": "omp.tasks.schedule",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"command": "switchyard.tasks.schedule",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
 					"group": "1_edit@5"
 				},
 				{
 					"command": "switchyard.tasks.setDependencies",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "1_edit@6"
 				},
 				{
 					"command": "switchyard.tasks.setPriority",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.pending$/",
 					"group": "1_edit@7"
 				},
 				{
-					"command": "omp.tasks.runNow",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped|done)$/",
+					"command": "switchyard.tasks.runNow",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped|done)$/",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.tasks.addSubtask",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"command": "switchyard.tasks.addSubtask",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "inline@2"
 				},
 				{
-					"command": "omp.tasks.delete",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
+					"command": "switchyard.tasks.delete",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
 					"group": "inline@3"
 				},
 				{
-					"command": "omp.tasks.edit",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"command": "switchyard.tasks.edit",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
 					"group": "1_edit@1"
 				},
 				{
-					"command": "omp.tasks.editNotes",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"command": "switchyard.tasks.editNotes",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "1_edit@2"
 				},
 				{
-					"command": "omp.tasks.editOptions",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"command": "switchyard.tasks.editOptions",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "1_edit@3"
 				},
 				{
-					"command": "omp.tasks.duplicate",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"command": "switchyard.tasks.duplicate",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "1_edit@4"
 				},
 				{
-					"command": "omp.tasks.moveUp",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"command": "switchyard.tasks.moveUp",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
 					"group": "2_move@1"
 				},
 				{
-					"command": "omp.tasks.moveDown",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
+					"command": "switchyard.tasks.moveDown",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(task\\.|subtask)/",
 					"group": "2_move@2"
 				},
 				{
-					"command": "omp.tasks.markDone",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped)$/",
+					"command": "switchyard.tasks.markDone",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.(pending|failed|skipped)$/",
 					"group": "3_status@1"
 				},
 				{
-					"command": "omp.tasks.markPending",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\.(done|failed|skipped)$/",
+					"command": "switchyard.tasks.markPending",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\.(done|failed|skipped)$/",
 					"group": "3_status@2"
 				},
 				{
-					"command": "omp.tasks.skip",
-					"when": "view == omp.tasks && viewItem == tasks.task.pending",
+					"command": "switchyard.tasks.skip",
+					"when": "view == switchyard.tasks && viewItem == tasks.task.pending",
 					"group": "3_status@3"
 				},
 				{
-					"command": "omp.tasks.openChat",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.task\\./",
+					"command": "switchyard.tasks.openChat",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.task\\./",
 					"group": "4_open@1"
 				},
 				{
-					"command": "omp.tasks.delete",
-					"when": "view == omp.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
+					"command": "switchyard.tasks.delete",
+					"when": "view == switchyard.tasks && viewItem =~ /^tasks\\.(task\\.(pending|failed|skipped|done)|subtask)$/",
 					"group": "5_delete@1"
 				},
 				{
-					"command": "omp.stopSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
+					"command": "switchyard.stopSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.running/",
 					"group": "inline@2"
 				},
 				{
-					"command": "omp.resumeSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.stopped/",
+					"command": "switchyard.resumeSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.stopped/",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.deleteSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.stopped/",
+					"command": "switchyard.deleteSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.stopped/",
 					"group": "inline@2"
 				},
 				{
-					"command": "omp.newSession",
-					"when": "view == omp.sessions && viewItem == project",
+					"command": "switchyard.newSession",
+					"when": "view == switchyard.sessions && viewItem == project",
 					"group": "inline@0"
 				},
 				{
-					"command": "omp.newSessionWithOptions",
-					"when": "view == omp.sessions && viewItem == project",
+					"command": "switchyard.newSessionWithOptions",
+					"when": "view == switchyard.sessions && viewItem == project",
 					"group": "1_project@1"
 				},
 				{
-					"command": "omp.reviewChanges",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.reviewChanges",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "inline@0"
 				},
 				{
-					"command": "omp.reviewChanges",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.reviewChanges",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@0"
 				},
 				{
 					"command": "switchyard.undo",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@1"
 				},
 				{
 					"command": "switchyard.redo",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@2"
 				},
 				{
-					"command": "omp.setPermissionMode",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.setPermissionMode",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@8"
 				},
 				{
-					"command": "omp.showChanges",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.showChanges",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@1"
 				},
 				{
-					"command": "omp.renameSession",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"command": "switchyard.renameSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@2"
 				},
 				{
 					"command": "switchyard.setDependencies",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "1_session@3"
 				},
 				{
-					"command": "omp.hermes.openCard",
-					"when": "view == omp.sessions && viewItem =~ /\\.hermesCard/",
+					"command": "switchyard.hermes.openCard",
+					"when": "view == switchyard.sessions && viewItem =~ /\\.hermesCard/",
 					"group": "1_hermes@1"
 				},
 				{
-					"command": "omp.hermes.showCard",
-					"when": "view == omp.sessions && viewItem =~ /\\.hermesCard/",
+					"command": "switchyard.hermes.showCard",
+					"when": "view == switchyard.sessions && viewItem =~ /\\.hermesCard/",
 					"group": "1_hermes@2"
 				},
 				{
-					"command": "omp.stopSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.running/",
+					"command": "switchyard.stopSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.running/",
 					"group": "2_lifecycle@1"
 				},
 				{
-					"command": "omp.resumeSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.stopped/",
+					"command": "switchyard.resumeSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.stopped/",
 					"group": "2_lifecycle@1"
 				},
 				{
-					"command": "omp.deleteSession",
-					"when": "view == omp.sessions && viewItem =~ /^session\\.stopped/",
+					"command": "switchyard.deleteSession",
+					"when": "view == switchyard.sessions && viewItem =~ /^session\\.stopped/",
 					"group": "2_lifecycle@2"
 				},
 				{
-					"command": "omp.revertFile",
-					"when": "view == omp.sessions && viewItem == file",
+					"command": "switchyard.revertFile",
+					"when": "view == switchyard.sessions && viewItem == file",
 					"group": "inline@1"
 				},
 				{
-					"command": "omp.revertFile",
-					"when": "view == omp.sessions && viewItem == file",
+					"command": "switchyard.revertFile",
+					"when": "view == switchyard.sessions && viewItem == file",
 					"group": "1_file@1"
 				},
 				{
-					"command": "omp.continueInTerminal",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "3_omp@1"
+					"command": "switchyard.continueInTerminal",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
+					"group": "3_switchyard@1"
 				},
 				{
-					"command": "omp.exportHtml",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "3_omp@2"
+					"command": "switchyard.exportHtml",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
+					"group": "3_switchyard@2"
 				},
 				{
-					"command": "omp.share",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "3_omp@3"
+					"command": "switchyard.share",
+					"when": "view == switchyard.sessions && viewItem =~ /^session/",
+					"group": "3_switchyard@3"
 				}
 			],
 			"editor/context": [
 				{
-					"command": "omp.sendSelection",
+					"command": "switchyard.sendSelection",
 					"when": "editorHasSelection",
-					"group": "omp@1"
+					"group": "switchyard@1"
 				},
 				{
-					"command": "omp.explainSelection",
+					"command": "switchyard.explainSelection",
 					"when": "editorHasSelection && resourceScheme == file",
-					"group": "omp@2"
+					"group": "switchyard@2"
 				},
 				{
-					"command": "omp.askAboutSelection",
+					"command": "switchyard.askAboutSelection",
 					"when": "editorHasSelection && resourceScheme == file",
-					"group": "omp@3"
+					"group": "switchyard@3"
 				},
 				{
-					"command": "omp.addToChat",
+					"command": "switchyard.addToChat",
 					"when": "!editorHasSelection && resourceScheme == file",
-					"group": "omp@4"
+					"group": "switchyard@4"
 				},
 				{
-					"command": "omp.editWithOmp",
+					"command": "switchyard.editWithOmp",
 					"when": "resourceScheme == file && !editorReadonly",
-					"group": "omp@5"
+					"group": "switchyard@5"
 				},
 				{
-					"command": "omp.writeTests",
+					"command": "switchyard.writeTests",
 					"when": "resourceScheme == file",
-					"group": "omp@6"
+					"group": "switchyard@6"
 				},
 				{
-					"command": "omp.addDocs",
+					"command": "switchyard.addDocs",
 					"when": "resourceScheme == file && !editorReadonly",
-					"group": "omp@7"
+					"group": "switchyard@7"
 				},
 				{
-					"command": "omp.fixFileProblems",
+					"command": "switchyard.fixFileProblems",
 					"when": "resourceScheme == file",
-					"group": "omp@8"
+					"group": "switchyard@8"
 				}
 			],
 			"scm/title": [
 				{
-					"command": "omp.scm.commit",
+					"command": "switchyard.scm.commit",
 					"when": "scmProvider == git",
-					"group": "omp@1"
+					"group": "switchyard@1"
 				},
 				{
-					"command": "omp.scm.review",
+					"command": "switchyard.scm.review",
 					"when": "scmProvider == git",
-					"group": "omp@2"
+					"group": "switchyard@2"
 				},
 				{
-					"command": "omp.scm.pr",
+					"command": "switchyard.scm.pr",
 					"when": "scmProvider == git",
-					"group": "omp@3"
+					"group": "switchyard@3"
 				},
 				{
-					"command": "omp.commitInTerminal",
+					"command": "switchyard.commitInTerminal",
 					"when": "scmProvider == git",
-					"group": "omp@4"
+					"group": "switchyard@4"
 				},
 				{
-					"command": "omp.gitUi",
+					"command": "switchyard.gitUi",
 					"when": "scmProvider == git",
-					"group": "omp@5"
+					"group": "switchyard@5"
 				}
 			],
 			"explorer/context": [
 				{
-					"command": "omp.newSession",
+					"command": "switchyard.newSession",
 					"when": "explorerResourceIsFolder",
-					"group": "omp@1"
+					"group": "switchyard@1"
 				},
 				{
-					"command": "omp.newSessionWithOptions",
+					"command": "switchyard.newSessionWithOptions",
 					"when": "explorerResourceIsFolder",
-					"group": "omp@2"
+					"group": "switchyard@2"
 				},
 				{
-					"command": "omp.addToChat",
+					"command": "switchyard.addToChat",
 					"when": "resourceScheme == file",
-					"group": "omp@3"
+					"group": "switchyard@3"
 				},
 				{
-					"command": "omp.explainFile",
+					"command": "switchyard.explainFile",
 					"when": "resourceScheme == file && !explorerResourceIsFolder",
-					"group": "omp@4"
+					"group": "switchyard@4"
 				},
 				{
-					"command": "omp.fixFileProblems",
+					"command": "switchyard.fixFileProblems",
 					"when": "resourceScheme == file && !explorerResourceIsFolder",
-					"group": "omp@5"
+					"group": "switchyard@5"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "omp.showOmpMissing",
+					"command": "switchyard.showOmpMissing",
 					"when": "false"
 				},
 				{
-					"command": "omp.hermes.openCard",
+					"command": "switchyard.hermes.openCard",
 					"when": "false"
 				},
 				{
-					"command": "omp.hermes.showCard",
+					"command": "switchyard.hermes.showCard",
 					"when": "false"
 				},
 				{
-					"command": "omp.hermes.update",
+					"command": "switchyard.hermes.update",
 					"when": "false"
 				},
 				{
-					"command": "omp.hermes.enable",
+					"command": "switchyard.hermes.enable",
 					"when": "false"
 				},
 				{
-					"command": "omp.hermes.lane",
+					"command": "switchyard.hermes.lane",
 					"when": "false"
 				},
 				{
-					"command": "omp.organize.moveUp",
+					"command": "switchyard.organize.moveUp",
 					"when": "false"
 				},
 				{
-					"command": "omp.organize.moveDown",
+					"command": "switchyard.organize.moveDown",
 					"when": "false"
 				},
 				{
-					"command": "omp.organize.moveToTop",
+					"command": "switchyard.organize.moveToTop",
 					"when": "false"
 				},
 				{
-					"command": "omp.organize.clearFilter",
-					"when": "omp.sessions.filtered"
+					"command": "switchyard.organize.clearFilter",
+					"when": "switchyard.sessions.filtered"
 				},
 				{
-					"command": "omp.organize.hideFinished",
-					"when": "!omp.sessions.hideFinished"
+					"command": "switchyard.organize.hideFinished",
+					"when": "!switchyard.sessions.hideFinished"
 				},
 				{
-					"command": "omp.organize.showFinished",
-					"when": "omp.sessions.hideFinished"
+					"command": "switchyard.organize.showFinished",
+					"when": "switchyard.sessions.hideFinished"
 				},
 				{
-					"command": "omp.sessions.showAll",
-					"when": "!omp.sessions.scopeAll && workspaceFolderCount != 0"
+					"command": "switchyard.sessions.showAll",
+					"when": "!switchyard.sessions.scopeAll && workspaceFolderCount != 0"
 				},
 				{
-					"command": "omp.sessions.showWorkspace",
-					"when": "omp.sessions.scopeAll && workspaceFolderCount != 0"
+					"command": "switchyard.sessions.showWorkspace",
+					"when": "switchyard.sessions.scopeAll && workspaceFolderCount != 0"
 				},
 				{
-					"command": "omp.organize.showArchived",
-					"when": "!omp.sessions.showArchived"
+					"command": "switchyard.organize.showArchived",
+					"when": "!switchyard.sessions.showArchived"
 				},
 				{
-					"command": "omp.organize.hideArchived",
-					"when": "omp.sessions.showArchived"
+					"command": "switchyard.organize.hideArchived",
+					"when": "switchyard.sessions.showArchived"
 				},
 				{
-					"command": "omp.organize.hideCompleted",
-					"when": "!omp.sessions.hideCompleted"
+					"command": "switchyard.organize.hideCompleted",
+					"when": "!switchyard.sessions.hideCompleted"
 				},
 				{
-					"command": "omp.organize.showCompleted",
-					"when": "omp.sessions.hideCompleted"
+					"command": "switchyard.organize.showCompleted",
+					"when": "switchyard.sessions.hideCompleted"
 				},
 				{
-					"command": "omp.tasks.addSubtask",
+					"command": "switchyard.tasks.addSubtask",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.edit",
+					"command": "switchyard.tasks.edit",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.editNotes",
+					"command": "switchyard.tasks.editNotes",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.delete",
+					"command": "switchyard.tasks.delete",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.runNow",
+					"command": "switchyard.tasks.runNow",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.markDone",
+					"command": "switchyard.tasks.markDone",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.markPending",
+					"command": "switchyard.tasks.markPending",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.skip",
+					"command": "switchyard.tasks.skip",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.moveUp",
+					"command": "switchyard.tasks.moveUp",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.moveDown",
+					"command": "switchyard.tasks.moveDown",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.openChat",
+					"command": "switchyard.tasks.openChat",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.editOptions",
+					"command": "switchyard.tasks.editOptions",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.duplicate",
+					"command": "switchyard.tasks.duplicate",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.retryFailed",
+					"command": "switchyard.tasks.retryFailed",
 					"when": "false"
 				},
 				{
-					"command": "omp.tasks.schedule",
+					"command": "switchyard.tasks.schedule",
 					"when": "false"
 				},
 				{
@@ -2012,157 +2014,157 @@
 					"when": "false"
 				},
 				{
-					"command": "omp.openSessionFileDiff",
+					"command": "switchyard.openSessionFileDiff",
 					"when": "false"
 				},
 				{
-					"command": "omp.revertFile",
+					"command": "switchyard.revertFile",
 					"when": "false"
 				},
 				{
-					"command": "omp.explainSelection",
+					"command": "switchyard.explainSelection",
 					"when": "editorHasSelection && resourceScheme == file"
 				},
 				{
-					"command": "omp.askAboutSelection",
+					"command": "switchyard.askAboutSelection",
 					"when": "editorHasSelection && resourceScheme == file"
 				},
 				{
-					"command": "omp.fixDiagnostics",
+					"command": "switchyard.fixDiagnostics",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.editWithOmp",
+					"command": "switchyard.editWithOmp",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.writeTests",
+					"command": "switchyard.writeTests",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.addDocs",
+					"command": "switchyard.addDocs",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.explainFile",
+					"command": "switchyard.explainFile",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.fixFileProblems",
+					"command": "switchyard.fixFileProblems",
 					"when": "editorIsOpen && resourceScheme == file"
 				},
 				{
-					"command": "omp.cleanse",
+					"command": "switchyard.cleanse",
 					"when": "workspaceFolderCount > 0"
 				},
 				{
-					"command": "omp.commitInTerminal",
+					"command": "switchyard.commitInTerminal",
 					"when": "workspaceFolderCount > 0"
 				},
 				{
-					"command": "omp.gitUi",
+					"command": "switchyard.gitUi",
 					"when": "workspaceFolderCount > 0"
 				}
 			],
 			"editor/title/context": [
 				{
-					"command": "omp.addToChat",
+					"command": "switchyard.addToChat",
 					"when": "resourceScheme == file",
-					"group": "omp@1"
+					"group": "switchyard@1"
 				},
 				{
-					"command": "omp.explainFile",
+					"command": "switchyard.explainFile",
 					"when": "resourceScheme == file",
-					"group": "omp@2"
+					"group": "switchyard@2"
 				},
 				{
-					"command": "omp.fixFileProblems",
+					"command": "switchyard.fixFileProblems",
 					"when": "resourceScheme == file",
-					"group": "omp@3"
+					"group": "switchyard@3"
 				}
 			],
 			"terminal/context": [
 				{
-					"command": "omp.sendTerminalSelection",
+					"command": "switchyard.sendTerminalSelection",
 					"when": "terminalTextSelected",
-					"group": "omp@1"
+					"group": "switchyard@1"
 				},
 				{
-					"command": "omp.fixLastFailedCommand",
-					"when": "omp.hasFailedCommand",
-					"group": "omp@2"
+					"command": "switchyard.fixLastFailedCommand",
+					"when": "switchyard.hasFailedCommand",
+					"group": "switchyard@2"
 				}
 			],
 			"terminal/title/context": [
 				{
-					"command": "omp.fixLastFailedCommand",
-					"when": "omp.hasFailedCommand",
-					"group": "omp@1"
+					"command": "switchyard.fixLastFailedCommand",
+					"when": "switchyard.hasFailedCommand",
+					"group": "switchyard@1"
 				}
 			]
 		},
 		"walkthroughs": [
 			{
-				"id": "omp.gettingStarted",
-				"title": "omp: background coding agent",
-				"description": "Run omp sessions on Agent Orchestrator: they keep working while VS Code is closed, each in its own git worktree; review their changes, queue work, follow them from your phone.",
+				"id": "switchyard.gettingStarted",
+				"title": "Switchyard: plan work for coding agents",
+				"description": "Run coding-agent sessions on Agent Orchestrator: they keep working while VS Code is closed, each in its own git worktree; review their changes, queue work, follow them from your phone.",
 				"steps": [
 					{
 						"id": "daemon",
 						"title": "Agent Orchestrator runs the sessions",
-						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:omp.server.start)",
+						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:switchyard.server.start)",
 						"media": {
 							"markdown": "media/walkthrough/daemon.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.server.start",
-							"onCommand:omp.newSession"
+							"onCommand:switchyard.server.start",
+							"onCommand:switchyard.newSession"
 						]
 					},
 					{
 						"id": "start",
 						"title": "Start a background session",
-						"description": "Sessions survive VS Code, sleep and SSH drops, each in its own git worktree.\n[Start a session](command:omp.newSession)",
+						"description": "Sessions survive VS Code, sleep and SSH drops, each in its own git worktree.\n[Start a session](command:switchyard.newSession)",
 						"media": {
 							"markdown": "media/walkthrough/start.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.newSession",
-							"onCommand:omp.newSessionWithOptions"
+							"onCommand:switchyard.newSession",
+							"onCommand:switchyard.newSessionWithOptions"
 						]
 					},
 					{
 						"id": "chat",
 						"title": "Talk to omp",
-						"description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:omp.focus)",
+						"description": "Commands, files, images, PDFs, shell, history.\n[Open chat](command:switchyard.focus)",
 						"media": {
 							"markdown": "media/walkthrough/chat.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.focus",
-							"onCommand:omp.openSession"
+							"onCommand:switchyard.focus",
+							"onCommand:switchyard.openSession"
 						]
 					},
 					{
 						"id": "review",
 						"title": "Review and revert changes",
-						"description": "Inline diffs, VS Code diffs, change markers, revert.\n[Review changes](command:omp.reviewChanges)",
+						"description": "Inline diffs, VS Code diffs, change markers, revert.\n[Review changes](command:switchyard.reviewChanges)",
 						"media": {
 							"markdown": "media/walkthrough/review.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.reviewChanges"
+							"onCommand:switchyard.reviewChanges"
 						]
 					},
 					{
 						"id": "tasks",
 						"title": "Queue tasks",
-						"description": "Tasks with subtasks that run one after another in the background.\n[Add a task](command:omp.tasks.add)",
+						"description": "Tasks with subtasks that run one after another in the background.\n[Add a task](command:switchyard.tasks.add)",
 						"media": {
 							"markdown": "media/walkthrough/tasks.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.tasks.add"
+							"onCommand:switchyard.tasks.add"
 						]
 					},
 					{
@@ -2173,20 +2175,20 @@
 							"markdown": "media/walkthrough/editor.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.fixDiagnostics",
-							"onCommand:omp.addToChat",
-							"onCommand:omp.scm.commit"
+							"onCommand:switchyard.fixDiagnostics",
+							"onCommand:switchyard.addToChat",
+							"onCommand:switchyard.scm.commit"
 						]
 					},
 					{
 						"id": "phone",
 						"title": "Follow sessions from your phone",
-						"description": "Pair the Orchestrator mobile app with this machine.\n[Connect Phone](command:omp.remote.connectPhone)",
+						"description": "Pair the Orchestrator mobile app with this machine.\n[Connect Phone](command:switchyard.remote.connectPhone)",
 						"media": {
 							"markdown": "media/walkthrough/phone.md"
 						},
 						"completionEvents": [
-							"onCommand:omp.remote.connectPhone"
+							"onCommand:switchyard.remote.connectPhone"
 						]
 					}
 				]
@@ -2194,48 +2196,48 @@
 		],
 		"keybindings": [
 			{
-				"command": "omp.focus",
+				"command": "switchyard.focus",
 				"key": "ctrl+alt+o",
 				"mac": "cmd+alt+o"
 			},
 			{
-				"command": "omp.sendSelection",
+				"command": "switchyard.sendSelection",
 				"key": "ctrl+alt+k",
 				"mac": "cmd+alt+k",
 				"when": "editorTextFocus"
 			},
 			{
-				"command": "omp.editWithOmp",
+				"command": "switchyard.editWithOmp",
 				"key": "ctrl+alt+e",
 				"mac": "cmd+alt+e",
 				"when": "editorTextFocus && !editorReadonly && resourceScheme == file"
 			},
 			{
-				"command": "omp.commandCenter",
+				"command": "switchyard.commandCenter",
 				"key": "ctrl+alt+p",
 				"mac": "cmd+alt+p"
 			}
 		],
 		"configuration": {
-			"title": "omp",
+			"title": "Switchyard",
 			"properties": {
-				"omp.showTodayCost": {
+				"switchyard.showTodayCost": {
 					"type": "boolean",
 					"default": true,
 					"description": "Show today's omp spend (from session transcripts) in the status bar. Hidden on days without model calls."
 				},
-				"omp.dashboard.includeTerminalSessions": {
+				"switchyard.dashboard.includeTerminalSessions": {
 					"type": "boolean",
 					"default": false,
-					"description": "Usage dashboard and today's spend also count omp sessions run without omp Sessions, e.g. plain omp in a terminal (all transcripts under ~/.omp/agent/sessions)."
+					"description": "Usage dashboard and today's spend also count omp sessions run without Switchyard, e.g. plain omp in a terminal (all transcripts under ~/.omp/agent/sessions)."
 				},
-				"omp.snapshotRetentionDays": {
+				"switchyard.snapshotRetentionDays": {
 					"type": "number",
 					"default": 14,
 					"minimum": 0,
-					"markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
+					"markdownDescription": "Days a stopped session must be unused before **Switchyard: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
 				},
-				"omp.extraArgs": {
+				"switchyard.extraArgs": {
 					"type": "array",
 					"items": {
 						"type": "string"
@@ -2244,13 +2246,13 @@
 					"scope": "machine",
 					"description": "Extra omp CLI arguments for every omp session on this machine, from any client, e.g. [\"--profile\", \"work\"]. Mirrored to ~/.switchyard/config.json and applied by the Switchyard omp shim when AO launches omp. Can't be set per workspace."
 				},
-				"omp.vscodeTools": {
+				"switchyard.vscodeTools": {
 					"type": "boolean",
 					"default": true,
 					"scope": "machine",
 					"markdownDescription": "Lets omp sessions started in a terminal read your open VS Code windows' language data (diagnostics, symbols, definitions, references, implementations, call hierarchy, hover and signature docs, the active editor's file and selection: **read-only**) through the VS Code bridge. Off: sessions start without the VS Code tools, and the bridge's local socket is not served. Can't be set per workspace."
 				},
-				"omp.sendWhileBusy": {
+				"switchyard.sendWhileBusy": {
 					"type": "string",
 					"enum": [
 						"steer",
@@ -2263,7 +2265,7 @@
 					],
 					"description": "What Enter does while the agent is working."
 				},
-				"omp.panelLocation": {
+				"switchyard.panelLocation": {
 					"type": "string",
 					"enum": [
 						"beside",
@@ -2272,7 +2274,7 @@
 					"default": "beside",
 					"description": "Editor column for chat panels."
 				},
-				"omp.chatLocation": {
+				"switchyard.chatLocation": {
 					"type": "string",
 					"enum": [
 						"editor",
@@ -2281,11 +2283,11 @@
 					"default": "editor",
 					"enumDescriptions": [
 						"Open chats as editor tabs (several side by side).",
-						"Open chats in the omp Chat view (move it to the secondary side bar to keep it next to your code)."
+						"Open chats in the Switchyard Chat view (move it to the secondary side bar to keep it next to your code)."
 					],
 					"description": "Where clicking a session opens its chat."
 				},
-				"omp.groupBy": {
+				"switchyard.groupBy": {
 					"type": "string",
 					"enum": [
 						"project",
@@ -2302,7 +2304,7 @@
 					],
 					"description": "How the Sessions view organizes sessions."
 				},
-				"omp.sortBy": {
+				"switchyard.sortBy": {
 					"type": "string",
 					"enum": [
 						"auto",
@@ -2329,18 +2331,18 @@
 					],
 					"description": "How sessions are sorted within each group of the Sessions view."
 				},
-				"omp.server.autoStart": {
+				"switchyard.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **omp: Start Planner and AO Daemon** starts both."
+					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **Switchyard: Start Planner and AO Daemon** starts both."
 				},
-				"omp.server.installService": {
+				"switchyard.server.installService": {
 					"type": "boolean",
 					"default": true,
 					"scope": "machine",
 					"markdownDescription": "Run the planner and the AO daemon as user services the first time they start (systemd user units, a launchd agent for the planner), so they come back after a crash or reboot. Off: they still start on demand but not at login; AO then runs as a detached process. The planner service is never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
 				},
-				"omp.sessionScope": {
+				"switchyard.sessionScope": {
 					"type": "string",
 					"enum": [
 						"workspace",
@@ -2353,22 +2355,22 @@
 					"default": "workspace",
 					"description": "Which sessions the Sessions view, Tasks view, Sessions Board and status bar list. A window without folders lists all sessions."
 				},
-				"omp.saveBeforePrompt": {
+				"switchyard.saveBeforePrompt": {
 					"type": "boolean",
 					"default": true,
 					"description": "Save unsaved editors inside the session folder before sending a prompt, so omp sees what you see."
 				},
-				"omp.notifications": {
+				"switchyard.notifications": {
 					"type": "boolean",
 					"default": true,
 					"description": "Notify when a session finishes or needs input while its chat is not visible."
 				},
-				"omp.notifyAllSessions": {
+				"switchyard.notifyAllSessions": {
 					"type": "boolean",
 					"default": false,
-					"markdownDescription": "Notify about every omp session on this machine, including those started from `omp-sessions`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
+					"markdownDescription": "Notify about every omp session on this machine, including those started from `switchyard`, the phone app or Hermes in folders this window doesn't have open. Off: only sessions in this window's workspace folders."
 				},
-				"omp.sound.completion": {
+				"switchyard.sound.completion": {
 					"type": "string",
 					"enum": [
 						"None",
@@ -2388,9 +2390,9 @@
 						"Music box"
 					],
 					"default": "Two-note comfort",
-					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open omp chat or the Sessions Board, on the computer you run VS Code on, for the sessions `omp.notifyAllSessions` covers; with several omp chats or windows open only one plays it. Listen to them all with **omp: Test Completion Sound**."
+					"markdownDescription": "Sound when a session finishes its turn (the cues of Hermes Desktop; **None**: silent). It plays in an open omp chat or the Sessions Board, on the computer you run VS Code on, for the sessions `switchyard.notifyAllSessions` covers; with several omp chats or windows open only one plays it. Listen to them all with **Switchyard: Test Completion Sound**."
 				},
-				"omp.sound.input": {
+				"switchyard.sound.input": {
 					"type": "string",
 					"enum": [
 						"None",
@@ -2410,31 +2412,31 @@
 						"Music box"
 					],
 					"default": "Glass ping",
-					"markdownDescription": "Sound when a session needs input (a question or approval); **None**: silent. Same rules as `omp.sound.completion`."
+					"markdownDescription": "Sound when a session needs input (a question or approval); **None**: silent. Same rules as `switchyard.sound.completion`."
 				},
-				"omp.sound.volume": {
+				"switchyard.sound.volume": {
 					"type": "number",
 					"default": 1,
 					"minimum": 0,
 					"maximum": 1,
 					"markdownDescription": "Volume of the session sounds, 0–1 (1: Hermes Desktop's level, 0: silent)."
 				},
-				"omp.showChangeDecorations": {
+				"switchyard.showChangeDecorations": {
 					"type": "boolean",
 					"default": true,
 					"description": "Mark files changed by omp sessions in the Explorer and show their changed lines (gutter + CodeLens with diff/revert) in editors."
 				},
-				"omp.hermes.dashboardUrl": {
+				"switchyard.hermes.dashboardUrl": {
 					"type": "string",
 					"default": "",
 					"markdownDescription": "Hermes Agent dashboard that **Open Hermes Card** opens (its Kanban page) for sessions started by the Hermes kanban lane. Empty: the dashboard Hermes records as running on the machine omp runs on (any port), else `http://localhost:9119`. In a remote window a `localhost` address is forwarded to your machine."
 				},
-				"omp.chat.toolCardsCollapsed": {
+				"switchyard.chat.toolCardsCollapsed": {
 					"type": "boolean",
 					"default": true,
 					"description": "Show tool cards collapsed in the chat (edits and questions always start open). Alt+T or the chat menu collapses/expands all."
 				},
-				"omp.chat.snippets": {
+				"switchyard.chat.snippets": {
 					"type": "array",
 					"default": [],
 					"items": {
@@ -2459,10 +2461,10 @@
 					},
 					"markdownDescription": "Prompt snippets offered in the chat composer as `/p:<name>`. Markdown files in the session folder's `.omp/prompts/` are added too (file name = snippet name, optional `description:` front matter). `{{selection}}` and `{{file}}` are filled in from the active editor."
 				},
-				"omp.terminalHints": {
+				"switchyard.terminalHints": {
 					"type": "boolean",
 					"default": true,
-					"description": "After a command fails in a terminal inside a running session's folder, show \"omp: fix failed command?\" in the status bar for 15 seconds. (Fix Failed Command with omp works either way; needs VS Code shell integration.)"
+					"description": "After a command fails in a terminal inside a running session's folder, show \"Switchyard: fix failed command?\" in the status bar for 15 seconds. (Fix Failed Command with omp works either way; needs VS Code shell integration.)"
 				}
 			}
 		}

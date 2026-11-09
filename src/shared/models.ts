@@ -18,7 +18,7 @@ export interface ModelEntry {
 	contextWindow?: number;
 	reasoning?: boolean;
 	input?: string[];
-	/** The omp Sessions default model. */
+	/** The Switchyard default model. */
 	default: boolean;
 }
 
@@ -80,7 +80,7 @@ function runOmp(omp: string, args: string[], cwd: string): Promise<string> {
 	return promise;
 }
 
-/** omp's chat models (`search`: `omp models find <search>`), the omp Sessions default marked. */
+/** omp's chat models (`search`: `omp models find <search>`), the Switchyard default marked. */
 export async function listModels(cwd: string, search?: string): Promise<ModelList> {
 	const settings = readSwitchyardConfig();
 	const omp = findOmp();

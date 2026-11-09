@@ -35,7 +35,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 	};
 	const edit = (ops: PlanOp[]) => editOrWarn(deps, ops);
 
-	reg("omp.tasks.editOptions", async (arg?: unknown) => {
+	reg("switchyard.tasks.editOptions", async (arg?: unknown) => {
 		if (!isNode(arg) || arg.kind !== "task") return;
 		const task = arg.task;
 		const o: TaskOptions = { ...(task.options ?? {}) };
@@ -103,18 +103,18 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		await edit([{ op: "update", id: task.id, options: Object.keys(o).length ? o : null }]);
 	});
 
-	reg("omp.tasks.duplicate", async (arg?: unknown) => {
+	reg("switchyard.tasks.duplicate", async (arg?: unknown) => {
 		if (isNode(arg) && arg.kind === "task") await edit([{ op: "duplicate", id: arg.task.id }]);
 	});
 
-	reg("omp.tasks.retryFailed", async (arg?: unknown) => {
+	reg("switchyard.tasks.retryFailed", async (arg?: unknown) => {
 		if (!isNode(arg)) return;
 		if (arg.kind === "lane") await edit([{ op: "lane.retryFailed", id: arg.lane.id }]);
 		else if (arg.kind === "task") await edit([{ op: "requeue", id: arg.task.id }]);
 	});
 
 	// A queue's start time (lane node) or one task's "not before" time (task node).
-	reg("omp.tasks.schedule", async (arg?: unknown) => {
+	reg("switchyard.tasks.schedule", async (arg?: unknown) => {
 		if (!isNode(arg) || (arg.kind !== "lane" && arg.kind !== "task")) return;
 		const node: TaskNode = arg;
 		const at = node.kind === "lane" ? node.lane.startAt : node.task.startAt;
@@ -142,7 +142,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 		});
 		const time = input === undefined ? undefined : parseStartTime(input);
 		if (time === undefined) return;
-		if (await edit([set(time)])) void vscode.window.setStatusBarMessage(`omp: “${name}” starts ${formatStartTime(time)}`, 5000);
+		if (await edit([set(time)])) void vscode.window.setStatusBarMessage(`Switchyard: “${name}” starts ${formatStartTime(time)}`, 5000);
 	});
 
 	reg("switchyard.tasks.setDependencies", async (arg?: unknown) => {

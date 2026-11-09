@@ -8,7 +8,7 @@ import { globalInstallAllowed, installOmpExtensions, removeLegacyOmpExtensions }
 test("installs the shipped modules as one omp package, refreshes them, and drops ones no longer shipped", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-ext-install-"));
 	const src = path.join(root, "out");
-	const dst = path.join(root, "agent", "extensions", "omp-sessions");
+	const dst = path.join(root, "agent", "extensions", "switchyard");
 	fs.mkdirSync(src);
 	fs.writeFileSync(path.join(src, "todos.js"), "export default () => {};\n");
 	fs.writeFileSync(path.join(src, "todos.js.map"), "{}");

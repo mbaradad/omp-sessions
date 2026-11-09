@@ -1,4 +1,4 @@
-// Prompt snippets: `omp.chat.snippets` (settings) and `.omp/prompts/*.md` (workspace) appear in
+// Prompt snippets: `switchyard.chat.snippets` (settings) and `.omp/prompts/*.md` (workspace) appear in
 // the composer's `/` completion as `/p:<name>`; their text is inserted with `{{selection}}` and
 // `{{file}}` expanded by the extension. Pure helpers; file IO lives in src/ext/prompt-snippets.ts.
 
@@ -21,7 +21,7 @@ export function snippetSlug(name: string): string {
 		.replace(/^-+|-+$/g, "");
 }
 
-/** Snippets from the `omp.chat.snippets` setting; malformed entries are skipped. */
+/** Snippets from the `switchyard.chat.snippets` setting; malformed entries are skipped. */
 export function snippetsFromSettings(value: unknown): PromptSnippet[] {
 	if (!Array.isArray(value)) return [];
 	const out: PromptSnippet[] = [];

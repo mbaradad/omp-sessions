@@ -107,10 +107,10 @@ test("assessSession: AO sessions — running and plain stops are ok; a stop with
 	const failed = assessSession(meta({ status: "stopped", exitReason: "provisioning failed: no default branch" }));
 	assert.equal(failed.level, "warn");
 	assert.match(failed.title, /stopped unexpectedly/);
-	assert.deepEqual(failed.fixes?.map(f => [f.command, f.args]), [["omp.resumeSession", ["abc123"]]]);
+	assert.deepEqual(failed.fixes?.map(f => [f.command, f.args]), [["switchyard.resumeSession", ["abc123"]]]);
 	const auth = assessSession(meta({ authProblem: "no model is available" }));
 	assert.equal(auth.level, "warn");
-	assert.deepEqual(auth.fixes?.map(f => f.command), ["omp.login"]);
+	assert.deepEqual(auth.fixes?.map(f => f.command), ["switchyard.login"]);
 	assert.equal(assessSession(meta({ status: "stopped", authProblem: "x" })).level, "ok");
 });
 
@@ -118,16 +118,16 @@ test("aoChecks: unreachable daemon is an error; AO's view of omp; supervision", 
 	const down = aoChecks({ error: "connect ECONNREFUSED", serviceAvailable: true });
 	assert.equal(down.length, 1);
 	assert.equal(down[0].level, "error");
-	assert.deepEqual(down[0].fixes?.map(f => f.command), ["omp.server.start", "omp.server.showLog"]);
+	assert.deepEqual(down[0].fixes?.map(f => f.command), ["switchyard.server.start", "switchyard.server.showLog"]);
 	assert.deepEqual(aoChecks(AO_OK).map(c => c.level), ["ok", "ok", "ok"]);
 	const noOmp = aoChecks({ ...AO_OK, omp: { installation: "not_installed", installationReason: "OMP is not installed.", authentication: "unknown" } }).at(-1);
 	assert.equal(noOmp?.level, "error");
-	assert.deepEqual(noOmp?.fixes?.map(f => f.command), ["omp.installOmp"]);
+	assert.deepEqual(noOmp?.fixes?.map(f => f.command), ["switchyard.installOmp"]);
 	const loggedOut = aoChecks({ ...AO_OK, omp: { installation: "installed", authentication: "unauthorized" } }).at(-1);
 	assert.equal(loggedOut?.level, "warn");
-	assert.deepEqual(loggedOut?.fixes?.map(f => f.command), ["omp.login"]);
+	assert.deepEqual(loggedOut?.fixes?.map(f => f.command), ["switchyard.login"]);
 	const plain = aoChecks({ ...AO_OK, unit: undefined })[1];
-	assert.deepEqual(plain.fixes?.map(f => f.command), ["omp.server.install"]);
+	assert.deepEqual(plain.fixes?.map(f => f.command), ["switchyard.server.install"]);
 	assert.equal(aoChecks({ ...AO_OK, unit: undefined, serviceAvailable: false })[1].fixes, undefined);
 });
 
@@ -146,7 +146,7 @@ test("plannerChecks: a planner that doesn't answer warns with Start", () => {
 	assert.equal(plannerChecks({ version: "0.7.0", pid: 1 })[0].level, "ok");
 	const down = plannerChecks({ error: "No planner answers on its socket." })[0];
 	assert.equal(down.level, "warn");
-	assert.deepEqual(down.fixes?.map(f => f.command), ["omp.server.start", "omp.server.showLog"]);
+	assert.deepEqual(down.fixes?.map(f => f.command), ["switchyard.server.start", "switchyard.server.showLog"]);
 });
 
 // ---------- cleanup / misc ----------
@@ -197,7 +197,7 @@ test("buildReport: missing omp is an error with an install fix", () => {
 	const omp = report.sections[0].checks[0];
 	assert.equal(omp.level, "error");
 	assert.match(omp.title, /not installed/);
-	assert.deepEqual(omp.fixes?.map(f => f.command), ["omp.installOmp"]);
+	assert.deepEqual(omp.fixes?.map(f => f.command), ["switchyard.installOmp"]);
 	const broken = buildReport(doctorFacts({ omp: { resolved: "/nope/omp", exists: false } }));
 	assert.match(broken.sections[0].checks[0].title, /executable is missing/);
 	const failing = buildReport(doctorFacts({ omp: { resolved: "/x/omp", exists: true, versionError: "/usr/bin/env: 'bun': No such file or directory" }, bun: undefined }));
@@ -226,7 +226,7 @@ test("buildReport: healthy setup has no errors; problems are counted and sorted 
 	const sessions = sick.sections.find(s => s.title.startsWith("Sessions"));
 	assert.ok(sessions);
 	assert.equal(sessions.checks[0].level, "warn");
-	assert.ok(reportCommands(sick).includes("omp.server.start"));
+	assert.ok(reportCommands(sick).includes("switchyard.server.start"));
 	assert.match(buildReport(doctorFacts({ ao: { serviceAvailable: false } })).sections.find(s => s.title.startsWith("Sessions"))?.checks[0].title ?? "", /AO is not reachable/);
 });
 
@@ -235,7 +235,7 @@ test("buildReport: disk section offers cleanup of the old session host's snapsho
 	const disk = report.sections.find(s => s.title === "Disk");
 	assert.ok(disk);
 	assert.match(disk.checks[1].title, /2\.0 KB in 1 session\(s\) stopped for over 14 days/);
-	assert.deepEqual(disk.checks[1].fixes?.map(f => f.command), ["omp.cleanUpSnapshots"]);
+	assert.deepEqual(disk.checks[1].fixes?.map(f => f.command), ["switchyard.cleanUpSnapshots"]);
 });
 
 test("reportToMarkdown: icons, details, secrets redacted, no command links", () => {
@@ -256,6 +256,6 @@ test("reportToHtml: escapes content, links fixes as command URIs, no scripts", (
 	assert.ok(!html.includes("<img src=x"));
 	assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"));
 	assert.ok(!/<script/i.test(html));
-	assert.ok(html.includes(`href="command:omp.resumeSession?${encodeURIComponent(JSON.stringify(["abc123"])).replace(/"/g, "&quot;")}"`));
-	assert.equal(commandLink({ label: "x", command: "omp.doctor" }), "command:omp.doctor");
+	assert.ok(html.includes(`href="command:switchyard.resumeSession?${encodeURIComponent(JSON.stringify(["abc123"])).replace(/"/g, "&quot;")}"`));
+	assert.equal(commandLink({ label: "x", command: "switchyard.doctor" }), "command:switchyard.doctor");
 });

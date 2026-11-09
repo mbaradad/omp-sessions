@@ -1,4 +1,4 @@
-// Argument parsing for `omp-sessions` (no side effects, unit-tested).
+// Argument parsing for `switchyard` (no side effects, unit-tested).
 
 export class UsageError extends Error {}
 

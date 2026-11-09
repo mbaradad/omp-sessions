@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 version=$(node -p 'require("./package.json").version')
-vsix="dist/omp-sessions-$version.vsix"
+vsix="dist/switchyard-$version.vsix"
 [ -f "$vsix" ] || { echo "missing $vsix; run npm run package" >&2; exit 1; }
 
 servers="$HOME/.vscode-server/cli/servers"

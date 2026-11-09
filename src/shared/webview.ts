@@ -88,7 +88,7 @@ export type ToWebview =
 	| { type: "attachFiles"; images: ImageAttachment[]; files: FileAttachment[] }
 	| { type: "commands"; commands: SlashCommand[] }
 	| { type: "queue"; queue: TaskQueue }
-	/** `omp.chat.*` settings the webview applies (sent after init and on change). */
+	/** `switchyard.chat.*` settings the webview applies (sent after init and on change). */
 	| { type: "chatConfig"; toolCardsCollapsed: boolean }
 	/** Checkpoint redo stack of this chat (non-empty after restoring a checkpoint). */
 	| { type: "checkpoints"; redo: number }

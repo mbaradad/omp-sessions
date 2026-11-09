@@ -1,5 +1,5 @@
 // Switchyard's omp extension and the `omp` shim on a machine without VS Code (GAPS.md G38). The VS Code
-// extension installs them at activation; `omp-sessions omp-extension install|status|uninstall` does it for a
+// extension installs them at activation; `switchyard omp-extension install|status|uninstall` does it for a
 // machine that only has the command (a headless server, Hermes), and `new`/`status` refresh them when they
 // are missing or older (off with `config set omp-extension off`). The bundles ship next to cli.js:
 //   omp-extension/*.js   the modules of omp's `switchyard` package (mode gate, checkpoints, todo mirror, bridge)

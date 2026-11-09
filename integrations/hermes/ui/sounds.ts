@@ -1,4 +1,4 @@
-// Session sounds on the omp Sessions page: when a polled session finishes its turn or starts waiting for input,
+// Session sounds on the Switchyard page: when a polled session finishes its turn or starts waiting for input,
 // the cue Hermes Desktop plays for its own turns (src/shared/completion-sound.ts). A header toggle mutes them;
 // the choice is kept in this browser's localStorage.
 import { DEFAULT_COMPLETION_SOUND, DEFAULT_INPUT_SOUND, playSound, unlockAudioOnGesture } from "../../../src/shared/completion-sound";

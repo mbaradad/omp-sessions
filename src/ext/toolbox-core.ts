@@ -143,33 +143,33 @@ export const GROUPS = ["Sessions", "Chat", "Tasks", "Review & git", "omp account
 export type CommandGroup = (typeof GROUPS)[number];
 
 const EXPLICIT: Record<string, CommandGroup> = {
-	"omp.refresh": "Sessions",
-	"omp.toggleGrouping": "Sessions",
-	"omp.exportHtml": "Sessions",
-	"omp.share": "Sessions",
-	"omp.continueInTerminal": "Sessions",
-	"omp.setPermissionMode": "Sessions",
-	"omp.importClaude": "Sessions",
-	"omp.importCodex": "Sessions",
-	"omp.remote.connectPhone": "Sessions",
-	"omp.remote.disable": "Sessions",
-	"omp.remote.rotateToken": "Sessions",
-	"omp.installAgentSkill": "Sessions",
-	"omp.hermes.install": "Sessions",
-	"omp.focus": "Chat",
-	"omp.fixDiagnostics": "Chat",
-	"omp.addToChat": "Chat",
-	"omp.reviewChanges": "Review & git",
-	"omp.showChanges": "Review & git",
-	"omp.revertFile": "Review & git",
-	"omp.cleanse": "Review & git",
-	"omp.gitUi": "Review & git",
-	"omp.commitInTerminal": "Review & git",
+	"switchyard.refresh": "Sessions",
+	"switchyard.toggleGrouping": "Sessions",
+	"switchyard.exportHtml": "Sessions",
+	"switchyard.share": "Sessions",
+	"switchyard.continueInTerminal": "Sessions",
+	"switchyard.setPermissionMode": "Sessions",
+	"switchyard.importClaude": "Sessions",
+	"switchyard.importCodex": "Sessions",
+	"switchyard.remote.connectPhone": "Sessions",
+	"switchyard.remote.disable": "Sessions",
+	"switchyard.remote.rotateToken": "Sessions",
+	"switchyard.installAgentSkill": "Sessions",
+	"switchyard.hermes.install": "Sessions",
+	"switchyard.focus": "Chat",
+	"switchyard.fixDiagnostics": "Chat",
+	"switchyard.addToChat": "Chat",
+	"switchyard.reviewChanges": "Review & git",
+	"switchyard.showChanges": "Review & git",
+	"switchyard.revertFile": "Review & git",
+	"switchyard.cleanse": "Review & git",
+	"switchyard.gitUi": "Review & git",
+	"switchyard.commitInTerminal": "Review & git",
 	"switchyard.setDependencies": "Sessions",
 	"switchyard.installOmpIntegration": "Help",
-	"omp.openConfig": "Help",
-	"omp.openDocs": "Help",
-	"omp.keyboardShortcuts": "Help",
+	"switchyard.openConfig": "Help",
+	"switchyard.openDocs": "Help",
+	"switchyard.keyboardShortcuts": "Help",
 };
 
 /** Ordered keyword rules for commands without an explicit group (e.g. ones added later). */
@@ -199,7 +199,7 @@ export interface CommandCenterEntry {
 }
 
 /** Commands that make no sense from a list (they need a tree item, a file, or are this list itself). */
-const ALWAYS_HIDDEN = new Set(["omp.commandCenter", "omp.openSessionFileDiff"]);
+const ALWAYS_HIDDEN = new Set(["switchyard.commandCenter", "switchyard.openSessionFileDiff"]);
 
 function prettyKey(key: string, platform: NodeJS.Platform): string {
 	const mac: Record<string, string> = { cmd: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
@@ -215,7 +215,7 @@ function prettyKey(key: string, platform: NodeJS.Platform): string {
 }
 
 /**
- * Command center entries from the extension manifest (`package.json`): every contributed `omp.*`
+ * Command center entries from the extension manifest (`package.json`): every contributed `switchyard.*`
  * command except the ones hidden from the Command Palette (`"when": "false"`), sorted by group
  * (in `GROUPS` order) and then manifest order.
  */
@@ -238,7 +238,7 @@ export function commandCenterEntries(manifest: unknown, platform: NodeJS.Platfor
 		if (!isRecord(c)) continue;
 		const command = str(c.command);
 		const title = str(c.title);
-		if (!command || !title || !command.startsWith("omp.") || hidden.has(command) || seen.has(command)) continue;
+		if (!command || !title || !command.startsWith("switchyard.") || hidden.has(command) || seen.has(command)) continue;
 		seen.add(command);
 		const icon = typeof c.icon === "string" ? /^\$\(([\w~-]+)\)$/.exec(c.icon)?.[1] : undefined;
 		entries.push({ command, title, group: commandGroup(command), icon, keybinding: keys.get(command) });

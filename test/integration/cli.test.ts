@@ -1,5 +1,5 @@
-// The CLI (the bundled cli.js; still `omp-sessions` until the rename pass, with planner.js beside it) against an isolated AO
-// daemon running the scripted ACP fake (test/ao-fixture.mjs): the skills/omp-sessions/SKILL.md
+// The CLI (the bundled cli.js, with planner.js beside it) against an isolated AO
+// daemon running the scripted ACP fake (test/ao-fixture.mjs): the skills/switchyard/SKILL.md
 // contract — `new --json`, `wait` exit codes 0/3/4/5/124, `show --json`, `answer [--question]`,
 // `send [--steer]`, `stop`/`resume`, `ls` filters, queued and scheduled tasks through the planner.
 import assert from "node:assert/strict";
@@ -118,7 +118,7 @@ function installGate(): void {
 }
 
 test("cli: usage errors exit 2; status says what runs and never starts the planner", { skip }, () => {
-	assert.match(cli("--version").stdout, /^omp-sessions \S+/);
+	assert.match(cli("--version").stdout, /^switchyard \S+/);
 	assert.equal(cli("ls", "--bogus").status, 2);
 	assert.equal(cli("new", repo, "--title", "--json").status, 2, "a value flag doesn't swallow the next flag");
 	assert.equal(cli("new", repo, "--task", "x", "--at", "2020-01-01T08:00:00Z").status, 2, "a past time");

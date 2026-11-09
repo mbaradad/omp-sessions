@@ -1,5 +1,5 @@
 // Which session state changes deserve a sound: shared by the VS Code extension (session status transitions),
-// the phone app (the live sessions stream) and the Hermes omp Sessions page (polled sessions). Browser-safe.
+// the phone app (the live sessions stream) and the Hermes Switchyard page (polled sessions). Browser-safe.
 
 /** `complete`: a working session finished its turn; `input`: a session asks something. */
 export type AlertKind = "complete" | "input";
@@ -60,7 +60,7 @@ export function cueFor(alerts: readonly SessionAlert[]): AlertKind | undefined {
 	return alerts.length ? "complete" : undefined;
 }
 
-const CLAIMS_KEY = "omp.sound.claims";
+const CLAIMS_KEY = "switchyard.sound.claims";
 /** Claims older than this are forgotten. */
 const CLAIM_TTL_MS = 60_000;
 

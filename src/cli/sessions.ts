@@ -236,7 +236,7 @@ export function resolveSession(query: string, sessions: readonly Session[], cwd:
 	return { error: `no session matches "${q}"` };
 }
 
-// ---------- JSON shapes (skills/omp-sessions/SKILL.md; the report itself is src/ao's) ----------
+// ---------- JSON shapes (skills/switchyard/SKILL.md; the report itself is src/ao's) ----------
 
 /** The `queue` of `ls`/`show --json`: the session's planner lane (none: an empty, paused queue). */
 export function queueSummary(s: Session): AoReportQueue {

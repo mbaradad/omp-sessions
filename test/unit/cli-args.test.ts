@@ -1,4 +1,4 @@
-// `omp-sessions` argument parsing: value flags, per-command flag checks, start times.
+// `switchyard` argument parsing: value flags, per-command flag checks, start times.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UsageError, checkFlags, parseArgs, parseWhen } from "../../src/cli/args";

@@ -1,6 +1,6 @@
 // Boards: the kanban lane per board (folder, group, mode, model, assignee, comment authors), the cards
 // it runs as omp sessions and the ready cards it will take next, with the lane's switches; and the
-// omp Sessions default model.
+// Switchyard default model.
 import { type ArchiveDoneCards, type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
 import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
 import { defaultLabel, ModelPicker, ModelsError, useModels } from "./models";
@@ -89,7 +89,7 @@ function BoardCard(p: {
 			h(Field, {
 				label: "Comment authors",
 				htmlFor: id("authors"),
-				hint: "Whose card comments reach omp and whose @omp assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
+				hint: "Whose card comments reach omp and whose @switchyard assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
 				children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e: Event) => setAuthors((e.target as HTMLInputElement).value) }),
 			}),
 			h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty })),
@@ -270,7 +270,7 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 					{ className: "omps-muted" },
 					view.enabled
 						? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.`
-						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the omp Sessions scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
+						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the Switchyard scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
 					tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null,
 				),
 				notes.length ? h(Notes, { notes }) : null,
@@ -290,7 +290,7 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 				label: "Default model",
 				htmlFor: "omps-default-model",
 				hint: `New sessions that name no model (and lane cards without a card or board model) use ${models.models?.default ?? `omp's default${models.models?.ompDefault ? ` (${models.models.ompDefault})` : ""}`}. Shared with the CLI and VS Code.`,
-				children: h(ModelPicker, { id: "omps-default-model", models: models.models, value: defaultModel, onChange: setDefaultModel, placeholder: defaultLabel(models.models), label: "omp Sessions default model" }),
+				children: h(ModelPicker, { id: "omps-default-model", models: models.models, value: defaultModel, onChange: setDefaultModel, placeholder: defaultLabel(models.models), label: "Switchyard default model" }),
 			}),
 			h(Button, { type: "submit", small: true, label: "Set", busy: busy === "model", disabled: !defaultModel.trim() }),
 			models.models?.default ? h(Button, { small: true, kind: "ghost", label: "Use omp's default", busy: busy === "model", onClick: () => void saveDefaultModel(null) }) : null,

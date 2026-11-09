@@ -1,4 +1,4 @@
-// Normalizes a task queue read from disk or the wire (the legacy queue.json files `omp-sessions migrate` imports)
+// Normalizes a task queue read from disk or the wire (the legacy queue.json files `switchyard migrate` imports)
 // into a well-formed one, and the limits the CLI applies to a task it adds. Pure.
 import * as crypto from "node:crypto";
 import type { QueueTask, QueueTaskOptions, QueueTaskStatus, TaskQueue } from "./protocol";

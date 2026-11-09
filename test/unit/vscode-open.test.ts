@@ -5,9 +5,9 @@ import * as path from "node:path";
 import { after, test } from "node:test";
 import { OPEN_REQUEST_TTL_MS, type VscodeWindow, checkoutRoot, clearOpenRequest, folderProblem, isSessionId, readWindow, readWindows, recordWindow, requestOpen, takeOpenRequest, uriPath, vscodeFolderLink, vscodeLink } from "../../src/shared/vscode-open";
 
-// stateRoot() reads OMP_VSCODE_HOME on every call.
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vscode-open-"));
-process.env.OMP_VSCODE_HOME = home;
+// stateRoot() reads SWITCHYARD_HOME on every call.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "switchyard-open-"));
+process.env.SWITCHYARD_HOME = home;
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 
 const win = (w: Partial<VscodeWindow>): VscodeWindow => ({ id: "w", authority: "", scheme: "vscode", at: 1, folders: [], ...w });
@@ -15,8 +15,8 @@ const win = (w: Partial<VscodeWindow>): VscodeWindow => ({ id: "w", authority: "
 test("links: a remote window gets a folder over its authority; a local one (or none) the extension's handler", () => {
 	const s = { id: "mw6aaja98f08a3", cwd: "/home/me/projects/my app" };
 	assert.equal(vscodeLink(s, win({ authority: "ssh-remote+ws" })), "vscode://vscode-remote/ssh-remote+ws/home/me/projects/my%20app");
-	assert.equal(vscodeLink(s, win({ scheme: "vscode-insiders" })), "vscode-insiders://mbaradad.omp-sessions/open?session=mw6aaja98f08a3");
-	assert.equal(vscodeLink(s, undefined), "vscode://mbaradad.omp-sessions/open?session=mw6aaja98f08a3");
+	assert.equal(vscodeLink(s, win({ scheme: "vscode-insiders" })), "vscode-insiders://mbaradad.switchyard/open?session=mw6aaja98f08a3");
+	assert.equal(vscodeLink(s, undefined), "vscode://mbaradad.switchyard/open?session=mw6aaja98f08a3");
 	// The window's own folder (or its .code-workspace) when it holds the session: that focuses the window.
 	assert.equal(vscodeLink({ id: "x", cwd: "/home/me/projects/my app/sub" }, win({ authority: "ssh-remote+ws", folders: ["/home/me/projects"] })), "vscode://vscode-remote/ssh-remote+ws/home/me/projects");
 	assert.equal(vscodeLink({ id: "x", cwd: "/home/me/projects/a" }, win({ authority: "ssh-remote+ws", folders: ["/home/me/projects"], workspace: "/home/me/all.code-workspace" })), "vscode://vscode-remote/ssh-remote+ws/home/me/all.code-workspace");
@@ -58,7 +58,7 @@ test("window records: one per window; the caller's authority, then the window ho
 	assert.equal(readWindow({}, {})?.id, "local", "last used");
 	assert.equal(readWindow({ cwd: "/srv/a/x" }, {})?.id, "laptop", "the window holding the session's folder");
 	assert.equal(readWindow({ cwd: "/srv/a/x", authority: "ssh-remote+box" }, {})?.id, "desktop", "the caller's authority wins");
-	assert.equal(readWindow({ cwd: "/srv/a/x" }, { OMP_SESSIONS_VSCODE_AUTHORITY: "ssh-remote+box" })?.id, "desktop", "authority from a VS Code terminal");
+	assert.equal(readWindow({ cwd: "/srv/a/x" }, { SWITCHYARD_VSCODE_AUTHORITY: "ssh-remote+box" })?.id, "desktop", "authority from a VS Code terminal");
 	assert.equal(readWindow({ authority: "ssh-remote+nowhere" }, {})?.id, "local", "an unknown authority falls back to all windows");
 
 	recordWindow({ id: "laptop", authority: "ssh-remote+ws", scheme: "vscode", folders: ["/srv/a"] }, 4000);

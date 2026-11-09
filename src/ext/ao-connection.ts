@@ -1,5 +1,5 @@
 // The extension's one connection to the AO daemon (src/ao): found through its run file, or started
-// (a systemd user unit where available, else a detached process) when `omp.server.autoStart` allows.
+// (a systemd user unit where available, else a detached process) when `switchyard.server.autoStart` allows.
 // Every module that talks to AO asks `client()`; a failed attempt is retried on the next ask.
 import * as vscode from "vscode";
 import { type AoEvent, type AoEventSubscription, type AoStreamStatus, AoClient } from "../ao/client";
@@ -39,21 +39,21 @@ export class AoConnection implements vscode.Disposable {
 		return this.current;
 	}
 
-	/** Whether this window may start the daemon itself (`omp.server.autoStart`; tests set OMP_SESSIONS_NO_SERVER). */
+	/** Whether this window may start the daemon itself (`switchyard.server.autoStart`; tests set SWITCHYARD_NO_SERVER). */
 	mayStart(): boolean {
-		return !process.env.OMP_SESSIONS_NO_SERVER && vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true);
+		return !process.env.SWITCHYARD_NO_SERVER && vscode.workspace.getConfiguration("switchyard").get<boolean>("server.autoStart", true);
 	}
 
 	/**
 	 * A client for the local daemon. `start` (default: `mayStart()`) starts it when none answers; with
-	 * `omp.server.installService` off it runs as a detached process instead of a systemd user unit.
+	 * `switchyard.server.installService` off it runs as a detached process instead of a systemd user unit.
 	 */
 	client(start = this.mayStart()): Promise<AoClient> {
 		if (this.current) return Promise.resolve(this.current);
 		if (this.connecting) return this.connecting;
 		const attempt = AoClient.connect({
 			start,
-			supervisor: vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) ? "auto" : "detached",
+			supervisor: vscode.workspace.getConfiguration("switchyard").get<boolean>("server.installService", true) ? "auto" : "detached",
 			log: m => this.log.info(m),
 		}).then(
 			client => {

@@ -1,4 +1,4 @@
-// Prompt snippets from `omp.chat.snippets` and `<session folder>/.omp/prompts/*.md`, offered in
+// Prompt snippets from `switchyard.chat.snippets` and `<session folder>/.omp/prompts/*.md`, offered in
 // the composer as `/p:<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -37,7 +37,7 @@ function workspaceSnippets(cwd: string | undefined): PromptSnippet[] {
 }
 
 export function loadSnippets(cwd: string | undefined): PromptSnippet[] {
-	return mergeSnippets(snippetsFromSettings(vscode.workspace.getConfiguration("omp.chat").get("snippets")), workspaceSnippets(cwd));
+	return mergeSnippets(snippetsFromSettings(vscode.workspace.getConfiguration("switchyard.chat").get("snippets")), workspaceSnippets(cwd));
 }
 
 export function snippetCommands(snippets: PromptSnippet[]): SlashCommand[] {

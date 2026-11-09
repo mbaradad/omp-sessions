@@ -9,5 +9,5 @@ export function modeProblem(mode: PermissionMode, flag = `--mode ${mode}`): stri
 	if (mode === "auto") return undefined;
 	const { gate, extensionDir } = gateStatus();
 	if (gate) return undefined;
-	return `${flag} needs Switchyard's omp extension, which is not installed (${extensionDir}): without it nothing asks and the session would run unrestricted. Use auto, or install it: omp-sessions omp-extension install`;
+	return `${flag} needs Switchyard's omp extension, which is not installed (${extensionDir}): without it nothing asks and the session would run unrestricted. Use auto, or install it: switchyard omp-extension install`;
 }

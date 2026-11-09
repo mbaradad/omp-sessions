@@ -10,7 +10,7 @@ import { type AoClient, findDaemon } from "../ao/client";
 import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
 import { aoCheckpointDir } from "../shared/checkpoints";
-import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
+import { PLUGIN_BUNDLE, findHermes, findSwitchyard, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
 import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import type { AoFacts, PlannerFacts } from "./doctor-ao";
@@ -20,7 +20,7 @@ import { plain } from "./plain";
 import { installedUnit } from "./server";
 import { resolveOmpPath } from "./sessions";
 
-const HIDE_MISSING_KEY = "omp.doctor.hideOmpMissing";
+const HIDE_MISSING_KEY = "switchyard.doctor.hideOmpMissing";
 const LEARN_MORE = "https://omp.sh";
 const IS_WINDOWS = process.platform === "win32";
 
@@ -183,14 +183,14 @@ async function gatherHermes(extensionPath: string): Promise<HermesFacts | undefi
 	const lane = hermes && ask ? await laneStatus(hermes, ask.label) : undefined;
 	// The plugin runs in a gateway: search the PATH of the first enabled profile's gateway with a readable
 	// record (a per-profile gateway has its own), else the default home's (the multiplexed gateway).
-	const homes = [...enabled.map(r => ({ setting: r.ompSessions, home: targets[profiles.indexOf(r)]?.home })), { setting: undefined, home: hermesRoot() }];
+	const homes = [...enabled.map(r => ({ setting: r.switchyard, home: targets[profiles.indexOf(r)]?.home })), { setting: undefined, home: hermesRoot() }];
 	const gateway = homes.map(h => ({ setting: h.setting, path: h.home ? gatewayPath(h.home) : undefined })).find(g => g.path !== undefined);
-	const ompSessions = findOmpSessions(gateway?.setting ?? enabled.find(r => r.ompSessions)?.ompSessions, gateway?.path);
-	return { hermes, lookup: hermesLookup(), profiles, lane, ompSessions, gatewayPath: gateway !== undefined, now: Date.now() };
+	const switchyard = findSwitchyard(gateway?.setting ?? enabled.find(r => r.switchyard)?.switchyard, gateway?.path);
+	return { hermes, lookup: hermesLookup(), profiles, lane, switchyard, gatewayPath: gateway !== undefined, now: Date.now() };
 }
 
 function retentionDays(): number {
-	const days = vscode.workspace.getConfiguration("omp").get<number>("snapshotRetentionDays", 14);
+	const days = vscode.workspace.getConfiguration("switchyard").get<number>("snapshotRetentionDays", 14);
 	return Number.isFinite(days) && days >= 0 ? days : 14;
 }
 
@@ -223,12 +223,12 @@ export function registerDoctor(api: OmpApi): void {
 		const actions = ["Install omp", "Learn More"];
 		if (automatic) actions.push("Don't Show Again");
 		const pick = await vscode.window.showWarningMessage(plain(message), ...actions);
-		if (pick === "Install omp") await vscode.commands.executeCommand("omp.installOmp");
+		if (pick === "Install omp") await vscode.commands.executeCommand("switchyard.installOmp");
 		else if (pick === "Learn More") await vscode.env.openExternal(vscode.Uri.parse(LEARN_MORE));
 		else if (pick === "Don't Show Again") await context.globalState.update(HIDE_MISSING_KEY, true);
 	}
 
-	reg("omp.showOmpMissing", () => showOmpMissing(false));
+	reg("switchyard.showOmpMissing", () => showOmpMissing(false));
 	context.subscriptions.push(sessions.onOmpMissing(() => void showOmpMissing(false)));
 	if (!ompStatus().exists) void showOmpMissing(true);
 
@@ -243,13 +243,13 @@ export function registerDoctor(api: OmpApi): void {
 			installWatch = undefined;
 			if (!st.exists) return;
 			void vscode.window.showInformationMessage(plain(`omp is installed (${st.resolved}). Next, log in to a model provider.`), "Log In", "New Session").then(a => {
-				if (a === "Log In") void vscode.commands.executeCommand("omp.login");
-				else if (a === "New Session") void vscode.commands.executeCommand("omp.newSession");
+				if (a === "Log In") void vscode.commands.executeCommand("switchyard.login");
+				else if (a === "New Session") void vscode.commands.executeCommand("switchyard.newSession");
 			});
 		}, 3000);
 	}
 
-	reg("omp.installOmp", async () => {
+	reg("switchyard.installOmp", async () => {
 		const command = installCommand(process.platform, findExecutable("bun"), findExecutable("npm"));
 		const pick = await vscode.window.showInformationMessage(
 			"Install omp",
@@ -274,9 +274,9 @@ export function registerDoctor(api: OmpApi): void {
 			if (m.status === "stopped" || !m.authProblem || authNotified.has(m.id) || !sessions.notifies(m)) continue;
 			authNotified.add(m.id);
 			void vscode.window.showWarningMessage(plain(`omp can't use a model in "${m.title}" (${m.authProblem}). Log in to a model provider?`), "Log In", "Open Chat", "Run Doctor").then(a => {
-				if (a === "Log In") void vscode.commands.executeCommand("omp.login");
+				if (a === "Log In") void vscode.commands.executeCommand("switchyard.login");
 				else if (a === "Open Chat") api.openPanel(m.id);
-				else if (a === "Run Doctor") void vscode.commands.executeCommand("omp.doctor");
+				else if (a === "Run Doctor") void vscode.commands.executeCommand("switchyard.doctor");
 			});
 		}
 	}
@@ -330,9 +330,9 @@ export function registerDoctor(api: OmpApi): void {
 	}
 
 	async function runDoctor(): Promise<void> {
-		const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "omp: running Doctor…" }, makeReport);
+		const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Switchyard: running Doctor…" }, makeReport);
 		if (!doctorPanel) {
-			doctorPanel = vscode.window.createWebviewPanel("omp.doctor", "omp Doctor", vscode.ViewColumn.Active, { enableCommandUris: reportCommands(report), enableFindWidget: true });
+			doctorPanel = vscode.window.createWebviewPanel("switchyard.doctor", "Switchyard Doctor", vscode.ViewColumn.Active, { enableCommandUris: reportCommands(report), enableFindWidget: true });
 			doctorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 			doctorPanel.onDidDispose(() => {
 				doctorPanel = undefined;
@@ -343,15 +343,15 @@ export function registerDoctor(api: OmpApi): void {
 		}
 		doctorPanel.webview.html = reportToHtml(report, os.homedir());
 	}
-	reg("omp.doctor", runDoctor);
+	reg("switchyard.doctor", runDoctor);
 
-	reg("omp.copyDiagnostics", async () => {
+	reg("switchyard.copyDiagnostics", async () => {
 		const markdown = reportToMarkdown(await makeReport(), os.homedir());
 		await vscode.env.clipboard.writeText(markdown);
 		void vscode.window.showInformationMessage("omp diagnostics copied to the clipboard (secrets and your home folder are redacted).");
 	});
 
-	reg("omp.reportIssue", async () => {
+	reg("switchyard.reportIssue", async () => {
 		const markdown = reportToMarkdown(await makeReport(), os.homedir());
 		const url = bugsUrl(api);
 		if (!url) {
@@ -372,7 +372,7 @@ export function registerDoctor(api: OmpApi): void {
 	});
 
 	// ---------- snapshot cleanup ----------
-	reg("omp.cleanUpSnapshots", async () => {
+	reg("switchyard.cleanUpSnapshots", async () => {
 		const input = await vscode.window.showInputBox({
 			title: "Clean up file snapshots",
 			prompt: "Delete snapshots of stopped sessions not used for this many days",

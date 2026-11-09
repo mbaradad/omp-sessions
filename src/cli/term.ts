@@ -1,4 +1,4 @@
-// Terminal output helpers for `omp-sessions`: ANSI colors (off for NO_COLOR, non-TTY, TERM=dumb or
+// Terminal output helpers for `switchyard`: ANSI colors (off for NO_COLOR, non-TTY, TERM=dumb or
 // --no-color), width-aware truncation, relative times, prompts. Node built-ins only.
 import * as readline from "node:readline";
 
@@ -105,9 +105,9 @@ export async function confirm(question: string, assumeYes = false): Promise<bool
 	return /^y(es)?$/i.test((await ask(`${question} ${c.dim("[y/N]")} `)).trim());
 }
 
-/** Error to stderr with the omp-sessions prefix. */
+/** Error to stderr with the switchyard prefix. */
 export function errorLine(message: string): void {
-	process.stderr.write(`${c.red("omp-sessions:")} ${message}\n`);
+	process.stderr.write(`${c.red("switchyard:")} ${message}\n`);
 }
 
 export const PRIORITY_MARK: Record<string, string> = { urgent: "!!", high: "! ", normal: "  ", low: "↓ " };

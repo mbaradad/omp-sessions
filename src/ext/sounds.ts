@@ -42,12 +42,12 @@ const SETTING: Record<AlertKind, { key: string; fallback: SoundVariant }> = {
 
 function configured(kind: AlertKind): SoundVariant {
 	const s = SETTING[kind];
-	return soundVariant(vscode.workspace.getConfiguration("omp").get(s.key), s.fallback);
+	return soundVariant(vscode.workspace.getConfiguration("switchyard").get(s.key), s.fallback);
 }
 
 /** Plays in one webview only (two open omp webviews must not both sound): visible ones first. */
 async function play(variant: SoundVariant): Promise<boolean> {
-	const volume = soundVolume(vscode.workspace.getConfiguration("omp").get("sound.volume"));
+	const volume = soundVolume(vscode.workspace.getConfiguration("switchyard").get("sound.volume"));
 	const ordered = [...sinks].sort((a, b) => Number(b.visible) - Number(a.visible));
 	for (const sink of ordered) {
 		if (await sink.post({ type: "sound", variant, volume }).then(ok => ok, () => false)) return true;
@@ -59,11 +59,11 @@ async function play(variant: SoundVariant): Promise<boolean> {
 async function audition(api: OmpApi, kind: AlertKind): Promise<void> {
 	if (!sinks.size) {
 		const open = await vscode.window.showWarningMessage(
-			"Switchyard plays its sounds in an omp chat or the Sessions Board (VS Code has no API for extensions to play sounds). Open one, then test again.",
+			"Switchyard plays its sounds in a Switchyard chat or the Sessions Board (VS Code has no API for extensions to play sounds). Open one, then test again.",
 			"Open Sessions Board",
 		);
 		if (open) {
-			await vscode.commands.executeCommand("omp.board");
+			await vscode.commands.executeCommand("switchyard.board");
 			await audition(api, kind);
 		}
 		return;
@@ -86,7 +86,7 @@ async function audition(api: OmpApi, kind: AlertKind): Promise<void> {
 	qp.onDidAccept(() => {
 		const item = qp.selectedItems[0];
 		qp.hide();
-		if (item && item.variant !== current) void vscode.workspace.getConfiguration("omp").update(SETTING[kind].key, item.variant, vscode.ConfigurationTarget.Global);
+		if (item && item.variant !== current) void vscode.workspace.getConfiguration("switchyard").update(SETTING[kind].key, item.variant, vscode.ConfigurationTarget.Global);
 	});
 	qp.onDidHide(() => {
 		qp.dispose();
@@ -107,7 +107,7 @@ export function registerSounds(api: OmpApi): void {
 	const cue = (kind: AlertKind, sessionId: string, claimKey: string) => {
 		const variant = configured(kind);
 		// A window that would stay silent (cue off, no omp webview) must not claim the cue from one that sounds.
-		if (variant === "None" || soundVolume(vscode.workspace.getConfiguration("omp").get("sound.volume")) === 0 || !sinks.size) return;
+		if (variant === "None" || soundVolume(vscode.workspace.getConfiguration("switchyard").get("sound.volume")) === 0 || !sinks.size) return;
 		const now = Date.now();
 		const key = `${sessionId}.${kind}`;
 		if (now - (recent.get(key) ?? 0) < SAME_EVENT_MS) return;
@@ -115,7 +115,7 @@ export function registerSounds(api: OmpApi): void {
 		if (claimSound(claims, claimKey)) void play(variant);
 	};
 	api.context.subscriptions.push(
-		vscode.commands.registerCommand("omp.testSound", () => audition(api, "complete")),
+		vscode.commands.registerCommand("switchyard.testSound", () => audition(api, "complete")),
 		sessions.onDidTransition(({ meta, from }) => {
 			const kind = alertFor(from, meta.status);
 			if (kind && sessions.notifies(meta)) cue(kind, meta.id, `${meta.id}.${kind}.${meta.updatedAt}`);

@@ -1,9 +1,9 @@
-// Packs the standalone `omp-sessions` command: the CLI with everything it runs or installs next to it
+// Packs the standalone `switchyard` command: the CLI with everything it runs or installs next to it
 // (the planner, agent skill, omp extensions and shim, Hermes plugin), the same layout as the extension's
 // runtime folder, as an npm tarball. Install it without VS Code:
-//   npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/omp-sessions-<version>.tgz
+//   npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/switchyard-<version>.tgz
 // Usage: node build.mjs [--production] && node packaging/cli/pack.mjs [out dir] [--dest <dir>]
-// Writes <dest>/omp-sessions-<version>.tgz (default dest: dist/) and prints its path.
+// Writes <dest>/switchyard-<version>.tgz (default dest: dist/) and prints its path.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -18,17 +18,17 @@ const positional = argv.filter((a, i) => !a.startsWith("--") && !(destAt >= 0 &&
 const out = path.resolve(positional[0] ?? path.join(root, "out"));
 
 /** What cli.js uses next to itself; the same files the extension copies into its runtime folder (RUNTIME_FILES in src/ext/server.ts). */
-const FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
-/** Folders `omp-sessions omp-extension install` copies from next to cli.js (G38): the omp extension modules and the `omp` shim. */
+const FILES = ["cli.js", "planner.js", "switchyard.SKILL.md"];
+/** Folders `switchyard omp-extension install` copies from next to cli.js (G38): the omp extension modules and the `omp` shim. */
 const BUNDLE_DIRS = ["omp-extension", "omp-shim"];
-/** The Hermes plugin `omp-sessions hermes install` copies (PLUGIN_BUNDLE). */
-const PLUGIN = path.join("hermes-plugin", "omp-sessions");
+/** The Hermes plugin `switchyard hermes install` copies (PLUGIN_BUNDLE). */
+const PLUGIN = path.join("hermes-plugin", "switchyard");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const missing = [...FILES, ...BUNDLE_DIRS, path.join(PLUGIN, "plugin.yaml")].filter(f => !fs.existsSync(path.join(out, f)));
 if (missing.length) throw new Error(`missing in ${out}: ${missing.join(", ")} (run node build.mjs first)`);
 
-const stage = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-pack-"));
+const stage = fs.mkdtempSync(path.join(os.tmpdir(), "switchyard-pack-"));
 try {
 	for (const f of FILES) fs.copyFileSync(path.join(out, f), path.join(stage, f));
 	fs.chmodSync(path.join(stage, "cli.js"), 0o755);
@@ -37,13 +37,13 @@ try {
 	fs.copyFileSync(path.join(root, "LICENSE"), path.join(stage, "LICENSE"));
 	// cli.js reads its version from the package.json next to it (src/cli/main.ts).
 	const manifest = {
-		name: "omp-sessions",
+		name: "switchyard",
 		version: pkg.version,
-		description: "omp Sessions without VS Code: the omp-sessions command, its planner (task queues and scheduled starts), the agent skill and the Hermes Agent plugin.",
+		description: "Switchyard without VS Code: the switchyard command, its planner (task queues and scheduled starts), the agent skill and the Hermes Agent plugin.",
 		license: pkg.license,
 		repository: pkg.repository,
 		homepage: pkg.homepage,
-		bin: { "omp-sessions": "cli.js" },
+		bin: { "switchyard": "cli.js" },
 		engines: { node: ">=22" },
 	};
 	fs.writeFileSync(path.join(stage, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);

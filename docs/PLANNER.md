@@ -402,7 +402,7 @@ planner-dispatched tasks (difference of AO's conversation `usage.cost` before/af
 its lane or `PlannerConfig.defaults`) has no known provider and is gated by the budget only: set `defaults.model`
 to gate such tasks (and `usage: "spare"` ones) on a provider. A task is `held` while its provider is limited, any of its windows is ≥
 `holdAtPercent`, or a budget cap is reached; a `usage: "spare"` task also waits until every window of
-its provider is < `spareBelowPercent`. `waitUntil` is the earliest known reset. `OMP_PLANNER_USAGE=off`
+its provider is < `spareBelowPercent`. `waitUntil` is the earliest known reset. `SWITCHYARD_PLANNER_USAGE=off`
 disables the omp poll.
 
 ## Changelog

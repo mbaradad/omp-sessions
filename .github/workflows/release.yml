@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "vsix=omp-sessions-$version.vsix" >> "$GITHUB_OUTPUT"
+          echo "vsix=switchyard-$version.vsix" >> "$GITHUB_OUTPUT"
 
       - name: Release notes from CHANGELOG.md
         run: |
@@ -58,7 +58,7 @@ jobs:
       - name: Package (vscode:prepublish typechecks and builds minified)
         run: npx vsce package --no-dependencies -o "${{ steps.version.outputs.vsix }}"
 
-      # The standalone `omp-sessions` command (npm install -g <release asset URL>), from the same minified out/.
+      # The standalone `switchyard` command (npm install -g <release asset URL>), from the same minified out/.
       - name: Package the standalone CLI
         id: cli
         run: echo "tgz=$(node packaging/cli/pack.mjs out --dest .)" >> "$GITHUB_OUTPUT"

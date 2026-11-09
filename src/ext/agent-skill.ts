@@ -1,4 +1,4 @@
-// "Install omp Sessions Skill for Agents…": copies the omp-sessions skill to the agent platforms the
+// "Install Switchyard Skill for Agents…": copies the switchyard skill to the agent platforms the
 // user picks, and keeps copies it installed earlier current when the extension updates.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -25,10 +25,10 @@ export function registerAgentSkill(api: OmpApi): void {
 		}
 	}
 	api.context.subscriptions.push(
-		vscode.commands.registerCommand("omp.installAgentSkill", async () => {
+		vscode.commands.registerCommand("switchyard.installAgentSkill", async () => {
 			const text = skillContent(api);
 			if (!text) {
-				void vscode.window.showErrorMessage(`omp: ${SKILL_FILE} is missing from the extension; reinstall it.`);
+				void vscode.window.showErrorMessage(`Switchyard: ${SKILL_FILE} is missing from the extension; reinstall it.`);
 				return;
 			}
 			const found = new Set(detectedPlatforms());
@@ -40,8 +40,8 @@ export function registerAgentSkill(api: OmpApi): void {
 			}));
 			const picked = await vscode.window.showQuickPick(items, {
 				canPickMany: true,
-				title: "Install the omp-sessions skill",
-				placeHolder: "Agents that should learn to start, schedule and check omp sessions through omp-sessions",
+				title: "Install the switchyard skill",
+				placeHolder: "Agents that should learn to start, schedule and check omp sessions through switchyard",
 			});
 			if (!picked?.length) return;
 			const lines: string[] = [];
@@ -60,7 +60,7 @@ export function registerAgentSkill(api: OmpApi): void {
 					}
 				}
 			}
-			void vscode.window.showInformationMessage("omp-sessions skill", { modal: true, detail: `${lines.join("\n")}\n\nAgents use it through the omp-sessions command; install that with "omp: Install omp-sessions Command" if you haven't.` });
+			void vscode.window.showInformationMessage("switchyard skill", { modal: true, detail: `${lines.join("\n")}\n\nAgents use it through the switchyard command; install that with "Switchyard: Install switchyard Command" if you haven't.` });
 		}),
 	);
 }

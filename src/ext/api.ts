@@ -14,7 +14,7 @@ export interface OmpApi {
 	readonly ao: AoConnection;
 	readonly sessions: SessionManager;
 	readonly snapshots: SnapshotProvider;
-	/** Open (or reveal) a session's chat; `where` overrides `omp.chatLocation`. */
+	/** Open (or reveal) a session's chat; `where` overrides `switchyard.chatLocation`. */
 	openPanel(id: string, where?: "editor" | "sidebar"): ChatPanel | undefined;
 	/** Start a session in AO (or resume `opts.id`), open its chat. Shows errors itself. */
 	launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined>;

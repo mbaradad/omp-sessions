@@ -1,4 +1,4 @@
-// The omp Sessions page, written once for both hosts (the Hermes dashboard tab and the Hermes
+// The Switchyard page, written once for both hosts (the Hermes dashboard tab and the Hermes
 // Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph.
 import { type ArchiveDone, errorMessage, type Host, type Overview, type Session, type Started } from "./api";
 import { type CardAction, SessionBoard } from "./board";
@@ -46,16 +46,16 @@ function StatusStrip(p: { o: Overview | null; error: string | null; sessions: Se
 	const { o } = p;
 	const items: Child[] = [];
 	if (!o) {
-		items.push(h("span", { key: "l", className: "omps-strip-item omps-muted" }, p.error ? `Status unavailable: ${p.error}` : "Checking omp-sessions…"));
+		items.push(h("span", { key: "l", className: "omps-strip-item omps-muted" }, p.error ? `Status unavailable: ${p.error}` : "Checking switchyard…"));
 	} else {
-		const v = o.ompSessions;
+		const v = o.switchyard;
 		const server = o.scheduler?.server ?? Boolean(v.server);
 		items.push(
 			h(
 				"span",
 				{ key: "omp", className: "omps-strip-item", title: v.command ?? v.hint ?? "" },
 				h("span", { className: cx("omps-led", v.found && !v.error ? (server ? "is-ok" : "is-warn") : "is-bad") }),
-				h("strong", null, "omp-sessions"),
+				h("strong", null, "switchyard"),
 				v.found ? (v.cli ? ` ${v.cli}` : "") : " not installed",
 				v.found ? h("span", { className: "omps-muted" }, server ? ` · server ${v.server ?? "running"}` : " · server not running") : null,
 			),
@@ -68,7 +68,7 @@ function StatusStrip(p: { o: Overview | null; error: string | null; sessions: Se
 			items.push(
 				h(
 					"span",
-					{ key: "sched", className: "omps-strip-item", title: limit ? `The omp Sessions scheduler runs at most ${limit} queued tasks at once` : "No concurrency limit" },
+					{ key: "sched", className: "omps-strip-item", title: limit ? `The Switchyard scheduler runs at most ${limit} queued tasks at once` : "No concurrency limit" },
 					icon("slots", 13),
 					slots ? h("span", { className: "omps-slots", "aria-hidden": true }, ...slots) : null,
 					h("span", null, limit ? `${running}/${limit} slots` : `${running} running · no limit`),
@@ -125,7 +125,7 @@ function Select(p: { label: string; value: string; all: string; options: string[
 
 export function createPage(host: Host): () => ReactElement {
 	setReact(host.React);
-	return function OmpSessionsPage(): ReactElement {
+	return function SwitchyardPage(): ReactElement {
 		const [view, setView] = useState<View>("sessions");
 		const [overview, setOverview] = useState<Overview | null>(null);
 		const [overviewError, setOverviewError] = useState<string | null>(null);
@@ -260,21 +260,21 @@ export function createPage(host: Host): () => ReactElement {
 			await loadSessions();
 		};
 
-		const notInstalled = overview && !overview.ompSessions.found;
+		const notInstalled = overview && !overview.switchyard.found;
 		let main: Child;
 		if (view === "boards") {
 			main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
 		} else if (view === "graph") {
 			main = h(GraphPanel, { host, onOpenSession: setSelected });
 		} else if (notInstalled) {
-			main = h(Empty, { icon: "terminal", title: "omp-sessions is not installed", body: overview.ompSessions.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
+			main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
 		} else if (!sessions) {
 			main = error ? h(ErrorBox, { message: error, onRetry: refresh }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading sessions…");
 		} else if (all.length === 0) {
 			main = h(Empty, {
 				icon: "sparkle",
 				title: "No omp sessions yet",
-				body: "Start one here, with omp-sessions new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the omp_session_start tool). Kanban cards assigned to omp show up here too once the lane is on.",
+				body: "Start one here, with switchyard new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the switchyard_session_start tool). Kanban cards assigned to switchyard show up here too once the lane is on.",
 				action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) }),
 			});
 		} else {
@@ -313,7 +313,7 @@ export function createPage(host: Host): () => ReactElement {
 				"header",
 				{ className: "omps-head" },
 				logo(30),
-				h("div", { className: "omps-head-titles" }, h("h1", { className: "omps-title" }, "omp Sessions"), overview ? h("span", { className: "omps-profile", title: "Hermes profile" }, overview.profile) : null),
+				h("div", { className: "omps-head-titles" }, h("h1", { className: "omps-title" }, "Switchyard"), overview ? h("span", { className: "omps-profile", title: "Hermes profile" }, overview.profile) : null),
 				h(Segmented<View>, {
 					label: "View",
 					value: view,
@@ -344,7 +344,7 @@ export function createPage(host: Host): () => ReactElement {
 				? h(Notes, {
 						className: "omps-page-note",
 						notes: [
-							`This page is omp Sessions ${PAGE_VERSION}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → omp Sessions: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`,
+							`This page is Switchyard ${PAGE_VERSION}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → Switchyard: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`,
 						],
 					})
 				: null,

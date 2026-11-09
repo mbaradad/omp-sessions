@@ -1,4 +1,4 @@
-// Which sessions a window lists (`omp.sessionScope`): those in its workspace folders, or every session on the
+// Which sessions a window lists (`switchyard.sessionScope`): those in its workspace folders, or every session on the
 // machine. Pure path logic (no vscode import): unit-tested.
 import * as path from "node:path";
 

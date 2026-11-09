@@ -1,5 +1,5 @@
 // "New Session with Options…": model, thinking, permission mode and a first prompt for the AO spawn; and
-// the omp Sessions defaults for new sessions (`model`/`mode` in ~/.switchyard/config.json, shared with the CLI's `config set`).
+// the Switchyard defaults for new sessions (`model`/`mode` in ~/.switchyard/config.json, shared with the CLI's `config set`).
 import * as vscode from "vscode";
 import { THINKING_LEVELS } from "../planner/types";
 import { type ModelList, listModels } from "../shared/models";
@@ -36,16 +36,16 @@ export async function loadModels(cwd: string, sessions?: ModelChoices): Promise<
 	}
 }
 
-/** "provider/model · omp Sessions default" for the default-model row of a picker. */
+/** "provider/model · Switchyard default" for the default-model row of a picker. */
 export function defaultModelLabel(list: Pick<ModelList, "default" | "ompDefault">): string {
-	if (list.default) return `${list.default} · omp Sessions default`;
+	if (list.default) return `${list.default} · Switchyard default`;
 	return list.ompDefault ? `${list.ompDefault} · omp's default` : "omp's default";
 }
 
-/** `omp.setDefaultModel`: the model new sessions start with when none is picked, for every client. */
+/** `switchyard.setDefaultModel`: the model new sessions start with when none is picked, for every client. */
 export async function chooseDefaultModel(cwd: string, sessions?: ModelChoices): Promise<void> {
 	const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { selector: string | null }>();
-	qp.title = "Default model for new omp sessions (VS Code, omp-sessions, phone, Hermes)";
+	qp.title = "Default model for new omp sessions (VS Code, switchyard, phone, Hermes)";
 	qp.placeholder = "Model";
 	qp.matchOnDescription = true;
 	qp.busy = true;
@@ -70,10 +70,10 @@ export async function chooseDefaultModel(cwd: string, sessions?: ModelChoices): 
 	void vscode.window.showInformationMessage(plain(pick.selector ? `New omp sessions start with ${pick.selector} unless another model is picked.` : "New omp sessions start with omp's own default model."));
 }
 
-/** `omp.setDefaultMode`: the permission mode new sessions start in when they ask for none, for every client. */
+/** `switchyard.setDefaultMode`: the permission mode new sessions start in when they ask for none, for every client. */
 export async function chooseDefaultMode(): Promise<void> {
 	const current = readSwitchyardConfig().mode;
-	const mode = await pickPermissionMode(current, "Default permission mode for new omp sessions (VS Code, omp-sessions, phone, Hermes)", "omp's tools.approvalMode, else Auto");
+	const mode = await pickPermissionMode(current, "Default permission mode for new omp sessions (VS Code, switchyard, phone, Hermes)", "omp's tools.approvalMode, else Auto");
 	if (mode === undefined) return;
 	writeSwitchyardConfig({ mode: mode ?? undefined });
 	void vscode.window.showInformationMessage(mode ? `New omp sessions start in ${PERMISSION_MODE_INFO[mode].label} mode unless another mode is picked.` : "New omp sessions start in omp's tools.approvalMode (Auto when unset).");
@@ -84,7 +84,7 @@ export interface LaunchChoices {
 	model?: string;
 	effort?: string;
 	mode?: PermissionMode;
-	/** Extra `omp acp` flags for this session (G34: `--plan-yolo`, `--advisor`, …), on top of `omp.extraArgs`. */
+	/** Extra `omp acp` flags for this session (G34: `--plan-yolo`, `--advisor`, …), on top of `switchyard.extraArgs`. */
 	ompArgs?: string[];
 	prompt?: string;
 }
@@ -142,7 +142,7 @@ export async function askLaunchOptions(cwd: string, sessions?: ModelChoices): Pr
 
 	const flags = await vscode.window.showInputBox({
 		title: step(4),
-		prompt: "Extra omp flags for this session (optional), e.g. --plan-yolo --advisor. The session restarts once to apply them; omp.extraArgs applies on top.",
+		prompt: "Extra omp flags for this session (optional), e.g. --plan-yolo --advisor. The session restarts once to apply them; switchyard.extraArgs applies on top.",
 		ignoreFocusOut: true,
 		validateInput: v => (splitArgs(v).some(a => /^--(model|thinking|approval-mode)\b/.test(a)) ? "Pick the model, thinking level and mode in the steps before this one." : undefined),
 	});

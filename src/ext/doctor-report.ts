@@ -137,11 +137,11 @@ export function assessSession(m: SessionMeta): Check {
 	if (m.status === "stopped") {
 		if (!m.exitReason) return { level: "ok", title: `${name}: stopped`, detail: lines.join("\n") };
 		lines.unshift(`Stopped: ${m.exitReason}`);
-		return { level: "warn", title: `${name}: stopped unexpectedly`, detail: lines.join("\n"), fixes: [{ label: "Resume", command: "omp.resumeSession", args: [m.id] }] };
+		return { level: "warn", title: `${name}: stopped unexpectedly`, detail: lines.join("\n"), fixes: [{ label: "Resume", command: "switchyard.resumeSession", args: [m.id] }] };
 	}
 	if (m.authProblem) {
 		lines.push(`omp reported: ${m.authProblem}`);
-		return { level: "warn", title: `${name}: omp can't use a model`, detail: lines.join("\n"), fixes: [{ label: "Log in", command: "omp.login" }] };
+		return { level: "warn", title: `${name}: omp can't use a model`, detail: lines.join("\n"), fixes: [{ label: "Log in", command: "switchyard.login" }] };
 	}
 	if (m.exitReason) lines.push(`Last turn: ${m.exitReason}`);
 	return { level: "ok", title: `${name}: ${m.status}`, detail: lines.join("\n") };
@@ -149,7 +149,7 @@ export function assessSession(m: SessionMeta): Check {
 
 export function buildReport(f: DoctorFacts): Report {
 	const omp: Check[] = [];
-	const install: Fix = { label: "Install omp", command: "omp.installOmp" };
+	const install: Fix = { label: "Install omp", command: "switchyard.installOmp" };
 	if (!f.omp.resolved) {
 		omp.push({ level: "error", title: "omp is not installed", detail: "No `omp` executable on PATH, in ~/.bun/bin, ~/.local/bin, ~/.npm-global/bin, /opt/homebrew/bin or /usr/local/bin.", fixes: [install] });
 	} else if (!f.omp.exists) {
@@ -164,12 +164,12 @@ export function buildReport(f: DoctorFacts): Report {
 	const unauthenticated = f.sessions.filter(m => m.status !== "stopped" && m.authProblem);
 	omp.push(
 		unauthenticated.length
-			? { level: "warn", title: `${unauthenticated.length} running session(s) can't use a model`, detail: "Not logged in to a provider, or the API key is missing or rejected.", fixes: [{ label: "Log in", command: "omp.login" }] }
-			: { level: "info", title: "Model providers", detail: "No running session reports a login problem.", fixes: [{ label: "Log in to a provider", command: "omp.login" }] },
+			? { level: "warn", title: `${unauthenticated.length} running session(s) can't use a model`, detail: "Not logged in to a provider, or the API key is missing or rejected.", fixes: [{ label: "Log in", command: "switchyard.login" }] }
+			: { level: "info", title: "Model providers", detail: "No running session reports a login problem.", fixes: [{ label: "Log in to a provider", command: "switchyard.login" }] },
 	);
 
 	const env: Check[] = [
-		{ level: "info", title: `omp Sessions ${f.extensionVersion}` },
+		{ level: "info", title: `Switchyard ${f.extensionVersion}` },
 		{ level: "info", title: `VS Code ${f.vscodeVersion}, Node ${f.nodeVersion}` },
 		{ level: "info", title: `Platform ${f.platform} ${f.arch} (${f.osRelease})` },
 		{ level: "info", title: f.remoteName ? `Remote: ${f.remoteName}` : "Local window", detail: f.remoteName ? "omp, AO and the planner run on the remote machine." : undefined },
@@ -187,7 +187,7 @@ export function buildReport(f: DoctorFacts): Report {
 	const disk: Check[] = [
 		{ level: "info", title: `File snapshots: ${formatBytes(total)} in ${f.snapshots.length} session folder(s) of the old session host` },
 		old.length
-			? { level: oldBytes > 512 * 1024 * 1024 ? "warn" : "info", title: `${formatBytes(oldBytes)} in ${old.length} session(s) stopped for over ${f.cleanupDays} days`, detail: "Deleting snapshots only loses the diffs/reverts of those sessions; transcripts stay.", fixes: [{ label: "Clean up…", command: "omp.cleanUpSnapshots" }] }
+			? { level: oldBytes > 512 * 1024 * 1024 ? "warn" : "info", title: `${formatBytes(oldBytes)} in ${old.length} session(s) stopped for over ${f.cleanupDays} days`, detail: "Deleting snapshots only loses the diffs/reverts of those sessions; transcripts stay.", fixes: [{ label: "Clean up…", command: "switchyard.cleanUpSnapshots" }] }
 			: { level: "ok", title: `Nothing to clean up (no stopped session older than ${f.cleanupDays} days with snapshots)` },
 	];
 
@@ -245,7 +245,7 @@ export function commandLink(fix: Fix): string {
 
 /** Commands the report may link to (the webview only enables these). */
 export function reportCommands(report: Report): string[] {
-	const ids = new Set(["omp.doctor", "omp.copyDiagnostics", "omp.reportIssue"]);
+	const ids = new Set(["switchyard.doctor", "switchyard.copyDiagnostics", "switchyard.reportIssue"]);
 	for (const s of report.sections) for (const c of s.checks) for (const f of c.fixes ?? []) ids.add(f.command);
 	return [...ids];
 }
@@ -277,7 +277,7 @@ pre{background:var(--vscode-textCodeBlock-background);padding:8px;overflow:auto;
 a.button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);padding:2px 10px;border-radius:3px;text-decoration:none}
 a.button:hover{background:var(--vscode-button-secondaryHoverBackground)}a.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
 </style></head><body><h1>omp Doctor</h1><p class="detail">${escapeHtml(headline)} · ${escapeHtml(new Date(report.generatedAt).toLocaleString())}</p>
-<div class="toolbar"><a class="button primary" href="command:omp.doctor">Re-run</a><a class="button" href="command:omp.copyDiagnostics">Copy diagnostics</a><a class="button" href="command:omp.reportIssue">Report issue…</a></div>
+<div class="toolbar"><a class="button primary" href="command:switchyard.doctor">Re-run</a><a class="button" href="command:switchyard.copyDiagnostics">Copy diagnostics</a><a class="button" href="command:switchyard.reportIssue">Report issue…</a></div>
 ${parts.join("\n")}</body></html>`;
 }
 

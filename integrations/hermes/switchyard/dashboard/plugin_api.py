@@ -1,12 +1,12 @@
-"""omp Sessions page backend for the Hermes dashboard and Hermes Desktop: /api/plugins/omp-sessions/.
+"""Switchyard page backend for the Hermes dashboard and Hermes Desktop: /api/plugins/switchyard/.
 
 Hermes imports this file on its own (importlib, outside any package), so it loads the plugin folder
-above it as a package and reuses the plugin's modules: omp-sessions calls (ompsessions), settings, the kanban
-lane's links and status (lane, store), and the place resolution of the omp_session_start tool.
-Settings are the requesting profile's (config.yaml `plugins.entries.omp-sessions.settings`); the
+above it as a package and reuses the plugin's modules: switchyard calls (switchyard), settings, the kanban
+lane's links and status (lane, store), and the place resolution of the switchyard_session_start tool.
+Settings are the requesting profile's (config.yaml `plugins.entries.switchyard.settings`); the
 lane's card links are machine-wide like the kanban boards.
 
-Every handler is async and moves its blocking work (omp-sessions subprocesses, sqlite) to a thread.
+Every handler is async and moves its blocking work (switchyard subprocesses, sqlite) to a thread.
 Errors come back as JSON {"error": message} with a 4xx/5xx status.
 """
 
@@ -30,8 +30,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 INSTALL_HINT = (
-    "omp-sessions is not installed. Install it with the omp Sessions extension (command “omp: Install omp-sessions Command”), "
-    "or set plugins.entries.omp-sessions.settings.omp_sessions to omp-sessions or its cli.js."
+    "switchyard is not installed. Install it with the Switchyard extension (command “Switchyard: Install switchyard Command”), "
+    "or set plugins.entries.switchyard.settings.switchyard to switchyard or its cli.js."
 )
 EXCERPT_MAX = 320
 VERSION_TTL_S = 30
@@ -54,12 +54,12 @@ PLUGIN_VERSION = _plugin_version()
 
 def _plugin_package() -> str:
     """Imports the plugin folder (the parent of dashboard/) as a package; returns its module name."""
-    name = "omp_sessions_dashboard_plugin"
+    name = "switchyard_dashboard_plugin"
     if name not in sys.modules:
         root = Path(__file__).resolve().parent.parent
         spec = importlib.util.spec_from_file_location(name, root / "__init__.py", submodule_search_locations=[str(root)])
         if spec is None or spec.loader is None:
-            raise ImportError(f"cannot load the omp-sessions plugin from {root}")
+            raise ImportError(f"cannot load the switchyard plugin from {root}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         try:
@@ -73,12 +73,12 @@ def _plugin_package() -> str:
 _PKG = _plugin_package()
 commands = importlib.import_module(f"{_PKG}.commands")
 lane_mod = importlib.import_module(f"{_PKG}.lane")
-ompsessions = importlib.import_module(f"{_PKG}.ompsessions")
+switchyard = importlib.import_module(f"{_PKG}.switchyard")
 settings_mod = importlib.import_module(f"{_PKG}.settings")
 store_mod = importlib.import_module(f"{_PKG}.store")
 tools_mod = importlib.import_module(f"{_PKG}.tools")
 
-OmpSessionsError = ompsessions.OmpSessionsError
+SwitchyardError = switchyard.SwitchyardError
 
 
 class ApiError(Exception):
@@ -92,7 +92,7 @@ class ApiError(Exception):
 
 class ProfileConfig:
     """ctx.get_config of the plugin, for the profile the request runs for (writes go through
-    settings.update_setting, like the plugin's own `hermes omp` commands)."""
+    settings.update_setting, like the plugin's own `hermes switchyard` commands)."""
 
     def get_config(self, key: str, default: Any = None) -> Any:
         from hermes_cli.config import load_config_readonly
@@ -110,7 +110,7 @@ def settings() -> Any:
 
 
 def omp() -> Any:
-    return ompsessions.OmpSessions(settings().omp_sessions)
+    return switchyard.Switchyard(settings().switchyard)
 
 
 def lane() -> Any:
@@ -124,16 +124,16 @@ def profile_name() -> str:
 
 
 def require_omp(s: Any) -> Any:
-    if not ompsessions.find_omp_sessions(s.omp_sessions):
+    if not switchyard.find_switchyard(s.switchyard):
         raise ApiError(503, INSTALL_HINT)
-    return ompsessions.OmpSessions(s.omp_sessions)
+    return switchyard.Switchyard(s.switchyard)
 
 
 # ---------- caches (per process; keyed so a change is never served stale) ----------
 
 _LOCK = threading.Lock()
 _VERSION: dict[str, tuple[float, dict]] = {}
-# session id -> (updatedAt, question): `omp-sessions show` only reruns when the session changed.
+# session id -> (updatedAt, question): `switchyard show` only reruns when the session changed.
 _QUESTIONS: dict[str, tuple[Any, Optional[dict]]] = {}
 
 
@@ -155,7 +155,7 @@ def questions_for(o: Any, infos: list[dict]) -> dict[str, Optional[dict]]:
     out: dict[str, Optional[dict]] = {}
     for info in infos:
         meta = info.get("meta") or {}
-        if ompsessions.agent_state(info) != "needs_input":
+        if switchyard.agent_state(info) != "needs_input":
             continue
         sid, stamp = str(meta.get("id")), meta.get("updatedAt")
         with _LOCK:
@@ -170,7 +170,7 @@ def questions_for(o: Any, infos: list[dict]) -> dict[str, Optional[dict]]:
             sid, stamp = item
             try:
                 report = o.show(sid)
-            except OmpSessionsError:
+            except SwitchyardError:
                 return sid, None, None  # not cached: tried again next time
             q = (report or {}).get("question")
             return sid, stamp, q if isinstance(q, dict) else None
@@ -296,7 +296,7 @@ def session_view(info: dict, card: Optional[dict], ref: Optional[tuple[str, str]
         "cwdLabel": tilde(cwd),
         # AO's project (its id names the repository); the cwd is the session's own worktree.
         "project": meta.get("project") or os.path.basename(cwd.rstrip("/\\")) or cwd,
-        "state": ompsessions.agent_state(info),
+        "state": switchyard.agent_state(info),
         "status": meta.get("status"),
         "mode": meta.get("permissionMode") or info.get("mode"),
         "model": meta.get("model"),
@@ -332,8 +332,8 @@ def upstream_view(edges: Any) -> list[dict]:
     """The session's parent edges (GRAPH-PROPAGATION.md), for the page: which parent, its sync state, the
     conflicting files."""
     out = []
-    for e in ompsessions.edges_of(edges):
-        if e.get("state") in ompsessions.SYNC_STATES:
+    for e in switchyard.edges_of(edges):
+        if e.get("state") in switchyard.SYNC_STATES:
             files = [f for f in e.get("files") or [] if isinstance(f, str)]
             out.append({"parent": e.get("parentSession") or e.get("parent"), "state": e["state"], "files": files[:50]})
     return out
@@ -364,7 +364,7 @@ def session_detail(sid: str) -> dict:
         raise ApiError(404, f"no session matches {sid}")
     info = next((i for i in o.sessions(all=True) if (i.get("meta") or {}).get("id") == report.get("id")), None)
     if info is None:
-        raise ApiError(404, f"session {ompsessions.short(sid)} is gone")
+        raise ApiError(404, f"session {switchyard.short(sid)} is gone")
     by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")}
     ref = card_ref(info, by_session)
     card = card_lookup({ref}).get(ref) if ref else None
@@ -427,15 +427,15 @@ def session_action(sid: str, action: str, body: dict) -> dict:
             raise ApiError(400, "name the question being answered")
         r = o.answer(sid, answer, question)
         if r.code != 0:
-            raise ApiError(400, ompsessions.error_text(r) or f"omp-sessions answer exited with {r.code}")
+            raise ApiError(400, switchyard.error_text(r) or f"switchyard answer exited with {r.code}")
         return {"ok": True, "output": r.stdout.strip()}
     if action == "mode":
         mode = _text(body, "mode")
         if mode not in settings_mod.MODES:
             raise ApiError(400, f"mode must be one of {', '.join(settings_mod.MODES)}")
-        return {"ok": True, "output": o.ok(["mode", ompsessions.free_text_ok(sid), mode]).strip()}
+        return {"ok": True, "output": o.ok(["mode", switchyard.free_text_ok(sid), mode]).strip()}
     if action == "stop":
-        return {"ok": True, "output": o.ok(["stop", ompsessions.free_text_ok(sid)], timeout=60).strip()}
+        return {"ok": True, "output": o.ok(["stop", switchyard.free_text_ok(sid)], timeout=60).strip()}
     if action == "model":
         model = _text(body, "model")
         if not model:
@@ -480,7 +480,7 @@ def session_board(info: dict, by_session: dict[str, dict]) -> Optional[str]:
 
 
 def archive_done(body: dict) -> dict:
-    """Archives every done session (ompsessions.is_done: completed, or idle with nothing queued) of a
+    """Archives every done session (switchyard.is_done: completed, or idle with nothing queued) of a
     board view in one request: `ids` (the sessions the page shows) and/or the view's filters `board`,
     `group`, `project` narrow it down; an empty body means every done session.
     {"archived": [id], "failed": [{id, error}]}."""
@@ -496,7 +496,7 @@ def archive_done(body: dict) -> dict:
     for info in o.sessions(all=True):
         meta = info.get("meta") if isinstance(info.get("meta"), dict) else {}
         sid = str(meta.get("id") or "")
-        if not sid or info.get("archived") is True or not ompsessions.is_done(info):
+        if not sid or info.get("archived") is True or not switchyard.is_done(info):
             continue
         if wanted is not None and sid not in wanted:
             continue
@@ -510,29 +510,29 @@ def archive_done(body: dict) -> dict:
         try:
             o.archive(sid)
             archived.append(sid)
-        except OmpSessionsError as exc:
+        except SwitchyardError as exc:
             failed.append({"id": sid, "error": str(exc)})
     return {"archived": archived, "failed": failed}
 
 
 def with_page(out: dict, base_url: str) -> dict:
-    """`out` ({url, …} from `omp-sessions vscode`) plus `page`: a page of this dashboard that opens the
+    """`out` ({url, …} from `switchyard vscode`) plus `page`: a page of this dashboard that opens the
     link, for hosts that only open web links (Hermes Desktop). It is served without sign-in and holds
     nothing but a redirect, so `base_url` is the address the caller reached this dashboard at."""
     url = out.get("url")
     if not isinstance(url, str) or not url:
-        raise ApiError(502, "omp-sessions vscode printed no link")
+        raise ApiError(502, "switchyard vscode printed no link")
     # The profile segment serves the requesting profile's copy (the page's own `?profile=`).
     profile = profile_name()
     scope = f"@{quote(profile, safe='')}/" if profile != "custom" else ""
-    page = f"{base_url.rstrip('/')}/dashboard-plugins/{scope}omp-sessions/open-vscode.html#{quote(url, safe='')}"
+    page = f"{base_url.rstrip('/')}/dashboard-plugins/{scope}switchyard/open-vscode.html#{quote(url, safe='')}"
     return {"url": url, "page": page, "folder": out.get("folder"), "authority": out.get("authority"), "windowAt": out.get("windowAt")}
 
 
 def open_in_vscode(sid: str, base_url: str) -> dict:
-    """Asks the VS Code window last used on omp's machine to open the session's chat (`omp-sessions vscode`)."""
+    """Asks the VS Code window last used on omp's machine to open the session's chat (`switchyard vscode`)."""
     o = require_omp(settings())
-    out = o.json(["vscode", ompsessions.free_text_ok(sid), "--json"])
+    out = o.json(["vscode", switchyard.free_text_ok(sid), "--json"])
     return with_page(out if isinstance(out, dict) else {}, base_url)
 
 
@@ -594,7 +594,7 @@ def open_project(sid: str, base_url: str) -> dict:
         raise ApiError(404, f"no session matches {sid}")
     info = next((i for i in o.sessions(all=True) if (i.get("meta") or {}).get("id") == report.get("id")), None)
     if info is None:
-        raise ApiError(404, f"session {ompsessions.short(sid)} is gone")
+        raise ApiError(404, f"session {switchyard.short(sid)} is gone")
     by_session = {str(l.get("session")): l for l in lane().links().values() if l.get("session")}
     ref = card_ref(info, by_session)
     card = card_lookup({ref}).get(ref) if ref else None
@@ -643,13 +643,13 @@ def set_default_model(body: dict) -> dict:
 def overview() -> dict:
     s = settings()
     ln = lane()
-    cmd = ompsessions.find_omp_sessions(s.omp_sessions)
+    cmd = switchyard.find_switchyard(s.switchyard)
     profile = profile_name()
     disp = ln.dispatcher()
     out: dict[str, Any] = {
         "profile": profile,
         "pluginVersion": PLUGIN_VERSION,
-        "ompSessions": {"found": bool(cmd), "command": " ".join(cmd) if cmd else None, "hint": None if cmd else INSTALL_HINT},
+        "switchyard": {"found": bool(cmd), "command": " ".join(cmd) if cmd else None, "hint": None if cmd else INSTALL_HINT},
         "scheduler": None,
         "notify": s.notify,
         "lane": {
@@ -663,15 +663,15 @@ def overview() -> dict:
         },
     }
     if cmd:
-        o = ompsessions.OmpSessions(s.omp_sessions)
+        o = switchyard.Switchyard(s.switchyard)
         try:
-            out["ompSessions"].update(omp_version(o))
-        except OmpSessionsError as exc:
-            out["ompSessions"]["error"] = str(exc)
+            out["switchyard"].update(omp_version(o))
+        except SwitchyardError as exc:
+            out["switchyard"]["error"] = str(exc)
         try:
             out["scheduler"] = o.scheduler()
-        except OmpSessionsError as exc:
-            out["ompSessions"]["error"] = str(exc)
+        except SwitchyardError as exc:
+            out["switchyard"]["error"] = str(exc)
     return out
 
 
@@ -695,12 +695,12 @@ def boards_view() -> dict:
     links = ln.links()
     ticks = ln.ticks()
     infos: list[dict] = []
-    if ompsessions.find_omp_sessions(s.omp_sessions):
+    if switchyard.find_switchyard(s.switchyard):
         try:
-            infos = [i for i in ompsessions.OmpSessions(s.omp_sessions).sessions(all=True) if isinstance(i.get("meta"), dict)]
-        except OmpSessionsError:
+            infos = [i for i in switchyard.Switchyard(s.switchyard).sessions(all=True) if isinstance(i.get("meta"), dict)]
+        except SwitchyardError:
             infos = []
-    states = {str(i["meta"]["id"]): ompsessions.agent_state(i) for i in infos}
+    states = {str(i["meta"]["id"]): switchyard.agent_state(i) for i in infos}
     # The omp session of each card: the lane's, else the latest one tagged hermes:<board> + card:<id>.
     by_session = {str(l.get("session")): l for l in links.values() if l.get("session")}
     session_of: dict[tuple[str, str], str] = {}
@@ -828,7 +828,7 @@ def update_board(slug: str, body: dict) -> dict:
 
 
 def archive_done_cards(slug: str) -> dict:
-    """Archives the board's done lane cards and their omp sessions (`hermes omp archive-done`)."""
+    """Archives the board's done lane cards and their omp sessions (`hermes switchyard archive-done`)."""
     if slug not in {b["slug"] for b in board_slugs()}:
         raise ApiError(404, f"no kanban board {slug}")
     require_omp(settings())
@@ -845,7 +845,7 @@ async def _run(fn: Callable[..., Any], *args: Any, write: bool = False) -> Any:
         return await asyncio.to_thread(fn, *args)
     except ApiError as exc:
         return JSONResponse({"error": str(exc)}, status_code=exc.status)
-    except OmpSessionsError as exc:
+    except SwitchyardError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400 if write else 502)
     except PermissionError as exc:
         return JSONResponse({"error": str(exc)}, status_code=403)

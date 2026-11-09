@@ -27,7 +27,7 @@ export type TaskNode =
 	| { kind: "keptBranch"; branch: KeptBranch }
 	| { kind: "planItem"; sessionId: string; phaseIndex: number; itemIndex: number; item: TodoItem; phaseName: string };
 
-const MIME = "application/vnd.code.tree.omp.tasks";
+const MIME = "application/vnd.code.tree.switchyard.tasks";
 
 const TASK_ICON: Record<TaskStatus, vscode.ThemeIcon> = {
 	pending: new vscode.ThemeIcon("circle-large-outline"),
@@ -341,7 +341,7 @@ export async function editOrWarn(deps: TasksDeps, ops: PlanOp[]): Promise<boolea
 export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	const { context } = api;
 	const provider = new TasksProvider(deps);
-	const view = vscode.window.createTreeView("omp.tasks", { treeDataProvider: provider, dragAndDropController: provider, canSelectMany: true, showCollapseAll: true });
+	const view = vscode.window.createTreeView("switchyard.tasks", { treeDataProvider: provider, dragAndDropController: provider, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(view);
 	registerTaskExtras(api, deps, provider);
 	registerTaskGraph(api, deps, provider, ops => editOrWarn(deps, ops));
@@ -357,7 +357,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 			const parent = plan.tasks.find(t => t.id === c.parentId)?.title ?? c.parentId;
 			const files = c.files.length ? ` (${c.files.slice(0, 3).join(", ")}${c.files.length > 3 ? ` and ${c.files.length - 3} more` : ""})` : "";
 			void vscode.window.showWarningMessage(`Switchyard: merging “${parent}” into “${c.task.title}” conflicted${files}. It needs a person.`, "Open chat", "Show Task Graph").then(pick => {
-				if (pick === "Open chat") void vscode.commands.executeCommand("omp.tasks.openChat", { kind: "task", task: c.task, index: 0 } satisfies TaskNode);
+				if (pick === "Open chat") void vscode.commands.executeCommand("switchyard.tasks.openChat", { kind: "task", task: c.task, index: 0 } satisfies TaskNode);
 				else if (pick === "Show Task Graph") void vscode.commands.executeCommand("switchyard.tasks.showGraph");
 			});
 		}
@@ -417,7 +417,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	const edit = (ops: PlanOp[]) => editOrWarn(deps, ops);
 	const reg = (name: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(name, fn));
 
-	reg("omp.tasks.add", async (arg?: unknown) => {
+	reg("switchyard.tasks.add", async (arg?: unknown) => {
 		const where = await laneFor(arg);
 		if (!where || (!where.lane && !where.cwd)) return;
 		const text = await vscode.window.showInputBox({
@@ -432,13 +432,13 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		await edit([{ op: "add", task: { title, subtasks, lane: where.lane, options: where.cwd ? { cwd: where.cwd } : undefined } }]);
 	});
 
-	reg("omp.tasks.addSubtask", async (arg?: unknown) => {
+	reg("switchyard.tasks.addSubtask", async (arg?: unknown) => {
 		if (!isNode(arg) || arg.kind !== "task") return;
 		const title = await vscode.window.showInputBox({ title: `Subtask of "${arg.task.title}"`, ignoreFocusOut: true });
 		if (title?.trim()) await edit([{ op: "addSubtask", id: arg.task.id, title }]);
 	});
 
-	reg("omp.tasks.edit", async (arg?: unknown) => {
+	reg("switchyard.tasks.edit", async (arg?: unknown) => {
 		if (!isNode(arg)) return;
 		if (arg.kind === "task") {
 			const title = await vscode.window.showInputBox({ title: "Task", value: arg.task.title, ignoreFocusOut: true });
@@ -449,13 +449,13 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		}
 	});
 
-	reg("omp.tasks.editNotes", async (arg?: unknown) => {
+	reg("switchyard.tasks.editNotes", async (arg?: unknown) => {
 		if (!isNode(arg) || arg.kind !== "task") return;
 		const notes = await vscode.window.showInputBox({ title: `Details for "${arg.task.title}"`, prompt: "Extra context omp gets with the task (acceptance criteria, files, constraints)", value: arg.task.notes ?? "", ignoreFocusOut: true });
 		if (notes !== undefined) await edit([{ op: "update", id: arg.task.id, notes }]);
 	});
 
-	reg("omp.tasks.delete", async (arg?: unknown, args?: unknown) => {
+	reg("switchyard.tasks.delete", async (arg?: unknown, args?: unknown) => {
 		const nodes = selected(arg, args);
 		const taskNodes = nodes.filter(n => n.kind === "task");
 		if (taskNodes.length > 1) {
@@ -467,16 +467,16 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		);
 	});
 
-	reg("omp.tasks.runNow", async (arg?: unknown) => {
+	reg("switchyard.tasks.runNow", async (arg?: unknown) => {
 		if (isNode(arg) && arg.kind === "task") await edit([{ op: "run", id: arg.task.id }]);
 	});
 
-	reg("omp.tasks.start", async (arg?: unknown) => {
+	reg("switchyard.tasks.start", async (arg?: unknown) => {
 		const lane = laneArg(arg);
 		if (lane) await edit([{ op: "lane.resume", id: lane }]);
 	});
 
-	reg("omp.tasks.pause", async (arg?: unknown) => {
+	reg("switchyard.tasks.pause", async (arg?: unknown) => {
 		const lane = laneArg(arg);
 		if (lane) await edit([{ op: "lane.pause", id: lane }]);
 	});
@@ -484,19 +484,19 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	const setStatus = (to: "done" | "requeue" | "skip") => async (arg?: unknown, args?: unknown) => {
 		await edit(selected(arg, args).flatMap((n): PlanOp[] => (n.kind === "task" && n.task.status !== "running" ? [{ op: to, id: n.task.id }] : [])));
 	};
-	reg("omp.tasks.markDone", setStatus("done"));
-	reg("omp.tasks.markPending", setStatus("requeue"));
-	reg("omp.tasks.skip", setStatus("skip"));
+	reg("switchyard.tasks.markDone", setStatus("done"));
+	reg("switchyard.tasks.markPending", setStatus("requeue"));
+	reg("switchyard.tasks.skip", setStatus("skip"));
 
 	const move = (delta: number) => async (arg?: unknown) => {
 		if (!isNode(arg)) return;
 		if (arg.kind === "task") await edit([{ op: "move", id: arg.task.id, index: Math.max(0, arg.index + delta) }]);
 		else if (arg.kind === "subtask") await edit([{ op: "moveSubtask", id: arg.taskId, subtaskId: arg.sub.id, index: Math.max(0, arg.index + delta) }]);
 	};
-	reg("omp.tasks.moveUp", move(-1));
-	reg("omp.tasks.moveDown", move(1));
+	reg("switchyard.tasks.moveUp", move(-1));
+	reg("switchyard.tasks.moveDown", move(1));
 
-	reg("omp.tasks.clearDone", async (arg?: unknown) => {
+	reg("switchyard.tasks.clearDone", async (arg?: unknown) => {
 		if (isNode(arg) && arg.kind === "free") {
 			const plan = deps.planner.plan;
 			await edit((plan ? tasksOf(plan, undefined) : []).filter(t => t.status === "done" || t.status === "skipped").map(t => ({ op: "remove", id: t.id })));
@@ -533,12 +533,12 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		if (lane) await edit([{ op: "lane.complete", id: lane.id, completed: !lane.completed }]);
 	});
 
-	reg("omp.tasks.openChat", (arg?: unknown) => {
+	reg("switchyard.tasks.openChat", (arg?: unknown) => {
 		if (!isNode(arg)) return;
 		const plan = deps.planner.plan;
 		const session =
 			arg.kind === "task" ? (arg.task.session ?? plan?.lanes.find(l => l.id === arg.task.lane)?.session) : arg.kind === "lane" ? (arg.lane.session ?? arg.lane.id) : arg.kind === "session" || arg.kind === "plan" || arg.kind === "planItem" ? arg.sessionId : undefined;
-		if (session && deps.aoSessions.get(session)) void vscode.commands.executeCommand("omp.openSession", session);
+		if (session && deps.aoSessions.get(session)) void vscode.commands.executeCommand("switchyard.openSession", session);
 		else void vscode.window.showInformationMessage("This task has not run yet, so it has no chat.");
 	});
 
@@ -566,7 +566,7 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 				try {
 					await deps.plans.set(await deps.ao(), id, phases);
 				} catch (err) {
-					void vscode.window.showWarningMessage(`omp: could not update omp's plan: ${err instanceof Error ? err.message : String(err)}`);
+					void vscode.window.showWarningMessage(`Switchyard: could not update omp's plan: ${err instanceof Error ? err.message : String(err)}`);
 				}
 			}
 		}),

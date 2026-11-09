@@ -1,22 +1,22 @@
-"""Plugin settings: config.yaml `plugins.entries.omp-sessions.settings` (read with ctx.get_config,
+"""Plugin settings: config.yaml `plugins.entries.switchyard.settings` (read with ctx.get_config,
 written with update_setting).
 
-    omp_sessions: /path/to/omp-sessions        # default: PATH, ~/.local/bin/omp-sessions, %LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd, ~/.omp/vscode/runtime/cli.js
+    switchyard: /path/to/switchyard        # default: PATH, ~/.local/bin/switchyard, %LOCALAPPDATA%\\switchyard\\switchyard.cmd, ~/.switchyard/runtime/cli.js
     notify: true                   # tell the Hermes session that started an omp session when it settles
-    agent_approvals: false         # let the Hermes agent answer omp's approval dialogs (omp_session_answer, omp_session_mode)
+    agent_approvals: false         # let the Hermes agent answer omp's approval dialogs (switchyard_session_answer, switchyard_session_mode)
     lane:
       enabled: false               # run kanban cards assigned to `assignee` as omp sessions
-      assignee: omp
+      assignee: switchyard
       mode: ask                    # starting permission mode of card sessions (unset: auto; ask/edits/plan need Switchyard's omp extension)
-      comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@omp` assigns cards ("*": anyone)
+      comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@switchyard` assigns cards ("*": anyone)
       archive_completed: false     # archive a card (and its omp session) once the lane completes it
       boards:                      # empty: every board, with the defaults above
         lightscale:
           folder: /home/me/src/lightscale   # cwd for cards with a scratch workspace
           group: Lightscale                 # omp group of the board's sessions (default: board name)
           mode: edits
-          assignee: omp
-          model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: omp Sessions' default)
+          assignee: switchyard
+          model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: Switchyard' default)
           comment_authors: [dashboard, alice]   # replaces the lane's list on this board
           archive_completed: true               # replaces the lane's archive_completed on this board
     projects:                      # Hermes project id/slug/name (or any name you like) -> folder
@@ -34,11 +34,11 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional
 
-PLUGIN_ID = "omp-sessions"
+PLUGIN_ID = "switchyard"
 MODES = ("ask", "edits", "plan", "auto")
 # Permission modes from most to least restrictive.
 MODE_ORDER = ("plan", "ask", "edits", "auto")
-DEFAULT_ASSIGNEE = "omp"
+DEFAULT_ASSIGNEE = "switchyard"
 DEFAULT_COMMENT_AUTHORS = ("dashboard",)
 ANY_AUTHOR = "*"
 
@@ -57,7 +57,7 @@ class BoardLane:
     archive_completed: bool = False
 
     def trusts(self, author: str) -> bool:
-        """Whether `author`'s comments reach omp and their `@omp` mentions assign cards."""
+        """Whether `author`'s comments reach omp and their `@switchyard` mentions assign cards."""
         return ANY_AUTHOR in self.comment_authors or author.strip().lower() in self.comment_authors
 
 
@@ -73,7 +73,7 @@ class LaneSettings:
 
 @dataclass
 class Settings:
-    omp_sessions: Optional[str] = None
+    switchyard: Optional[str] = None
     notify: bool = True
     agent_approvals: bool = False
     lane: LaneSettings = field(default_factory=LaneSettings)
@@ -129,7 +129,7 @@ def parse_settings(raw: Mapping[str, Any]) -> Settings:
     projects = {str(k): str(v) for k, v in projects_raw.items() if _str(v)} if isinstance(projects_raw, Mapping) else {}
     authors = parse_authors(lane_raw.get("comment_authors"))
     return Settings(
-        omp_sessions=_str(raw.get("omp_sessions")),
+        switchyard=_str(raw.get("switchyard")),
         notify=raw.get("notify") is not False,
         agent_approvals=raw.get("agent_approvals") is True,
         lane=LaneSettings(
@@ -171,7 +171,7 @@ def archive_completed(s: Settings, slug: str) -> bool:
 
 def read_settings(ctx: Any) -> Settings:
     raw: dict[str, Any] = {}
-    for key in ("omp_sessions", "notify", "agent_approvals", "lane", "projects"):
+    for key in ("switchyard", "notify", "agent_approvals", "lane", "projects"):
         v = ctx.get_config(key, None)
         if v is not None:
             raw[key] = v
@@ -179,7 +179,7 @@ def read_settings(ctx: Any) -> Settings:
 
 
 def update_setting(key: str, change: Callable[[Any], Any]) -> None:
-    """Read-modify-write of `plugins.entries.omp-sessions.settings.<key>` in the active profile's
+    """Read-modify-write of `plugins.entries.switchyard.settings.<key>` in the active profile's
     config.yaml: `change` gets the current value (a copy) and returns the new one, written as is.
 
     ctx.set_config deep-merges into what is on disk, so it can't drop a board or clear a field.

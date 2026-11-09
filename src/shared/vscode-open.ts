@@ -1,4 +1,4 @@
-// "Open in VS Code" from outside VS Code (the Hermes page, `omp-sessions vscode`): a session opens in a
+// "Open in VS Code" from outside VS Code (the Hermes page, `switchyard vscode`): a session opens in a
 // VS Code window on this machine, which may be a Remote-SSH window on another computer.
 //
 // - Every window records itself in vscode-window.json when it gains focus: its remote authority ("" for a
@@ -19,9 +19,9 @@ import { stateRoot } from "./protocol";
 
 /** A request older than this is ignored: the user gave up, or no window took it. */
 export const OPEN_REQUEST_TTL_MS = 2 * 60_000;
-export const EXTENSION_ID = "mbaradad.omp-sessions";
+export const EXTENSION_ID = "mbaradad.switchyard";
 /** Set in the extension's integrated terminals: the remote authority of their window ("" for a local one). */
-export const WINDOW_AUTHORITY_ENV = "OMP_SESSIONS_VSCODE_AUTHORITY";
+export const WINDOW_AUTHORITY_ENV = "SWITCHYARD_VSCODE_AUTHORITY";
 /** Windows kept in vscode-window.json; older records go first. */
 const MAX_WINDOWS = 16;
 

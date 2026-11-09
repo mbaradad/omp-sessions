@@ -1,10 +1,10 @@
-// Prints the Hermes plugin-catalog entry (plugin-catalog/omp-sessions.yaml in NousResearch/hermes-agent)
-// for the omp-sessions plugin pinned at a commit: `node scripts/hermes-catalog-entry.mjs [ref]` (default HEAD).
+// Prints the Hermes plugin-catalog entry (plugin-catalog/switchyard.yaml in NousResearch/hermes-agent)
+// for the switchyard plugin pinned at a commit: `node scripts/hermes-catalog-entry.mjs [ref]` (default HEAD).
 // See docs/PUBLISHING.md, "Hermes plugin catalog".
 import { execFileSync } from "node:child_process";
 
 const REPO = "https://github.com/mbaradad/omp-sessions";
-const SUBDIR = "integrations/hermes/omp-sessions";
+const SUBDIR = "integrations/hermes/switchyard";
 const SCREENSHOTS = ["site/assets/shots/hermes-dashboard.png", "site/assets/shots/hermes-detail.png", "site/assets/shots/hermes-desktop.png"];
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -47,11 +47,11 @@ category: tools
 requires_hermes: ${quote(scalar("requires_hermes"))}
 docs_url: ${REPO}/blob/main/docs/HERMES.md
 version: "${scalar("version")}"
-title: omp Sessions
+title: Switchyard
 screenshots:${yamlList(shots, "  ")}
 platforms: [linux, macos]
 known_issues:
-  - Needs the omp-sessions command on PATH, from the omp Sessions VS Code extension ("omp: Install omp-sessions Command") or the release tarball (npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/omp-sessions-<version>.tgz).
+  - Needs the switchyard command on PATH, from the Switchyard VS Code extension ("Switchyard: Install switchyard Command") or the release tarball (npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/switchyard-<version>.tgz).
 capabilities:
   provides_tools:${yamlList(list("provides_tools"), "    ")}
   provides_hooks:${yamlList(list("provides_hooks"), "    ")}

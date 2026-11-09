@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import ompSessionsTodos from "../../src/omp-extension/todos";
+import switchyardTodos from "../../src/omp-extension/todos";
 import { type TodoPhase, latestTodoPhases, phasesToMarkdown, readTodoMirror, todoMirrorFile } from "../../src/shared/omp-todos";
 
 const toolResult = (phases: unknown, extra: Record<string, unknown> = {}) => ({ type: "message", message: { role: "toolResult", toolName: "todo", details: { op: "replace", phases }, ...extra } });
@@ -71,7 +71,7 @@ describe("omp extension: todo mirror", () => {
 				return 1;
 			},
 		};
-		ompSessionsTodos({ on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler as (e: unknown, ctx: unknown) => unknown]) });
+		switchyardTodos({ on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler as (e: unknown, ctx: unknown) => unknown]) });
 		return { branch, start: () => handlers.get("session_start")?.forEach(h => h({}, ctx)), poll: () => poll?.(), handlers };
 	}
 

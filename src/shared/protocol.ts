@@ -3,6 +3,7 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
+import { switchyardHome } from "../ao/native";
 import type { PermissionMode } from "./permissions";
 
 export type SessionStatus = "starting" | "idle" | "working" | "waiting" | "stopped";
@@ -162,7 +163,7 @@ export interface OmpFrame {
 }
 
 export function stateRoot(): string {
-	return process.env.OMP_VSCODE_HOME || path.join(os.homedir(), ".omp", "vscode");
+	return switchyardHome();
 }
 
 export function sessionsRoot(): string {

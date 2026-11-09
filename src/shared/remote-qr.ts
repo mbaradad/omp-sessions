@@ -1,4 +1,4 @@
-// QR codes of the pairing URL: Unicode half blocks for `omp-sessions remote qr`, SVG for the VS Code
+// QR codes of the pairing URL: Unicode half blocks for `switchyard remote qr`, SVG for the VS Code
 // "Connect Phone" view. Encoding by qrcode-generator (MIT), bundled into out/ by esbuild.
 import qrcode from "qrcode-generator";
 

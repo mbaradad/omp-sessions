@@ -7,7 +7,7 @@ import * as readline from "node:readline";
 import { isRecord, MCP_INSTRUCTIONS, TOOL_DEFS } from "../shared/bridge";
 import { BridgeCaller } from "./call";
 
-const caller = new BridgeCaller(process.env.OMP_VSCODE_BRIDGE_CWD || process.cwd());
+const caller = new BridgeCaller(process.env.SWITCHYARD_BRIDGE_CWD || process.cwd());
 
 function send(msg: unknown): void {
 	process.stdout.write(`${JSON.stringify(msg)}\n`);
@@ -27,7 +27,7 @@ async function handle(msg: unknown): Promise<void> {
 	switch (msg.method) {
 		case "initialize": {
 			const requested = isRecord(msg.params) && typeof msg.params.protocolVersion === "string" ? msg.params.protocolVersion : "2025-06-18";
-			reply({ protocolVersion: requested, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "omp-vscode", version: "1" }, instructions: MCP_INSTRUCTIONS });
+			reply({ protocolVersion: requested, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "switchyard-vscode", version: "1" }, instructions: MCP_INSTRUCTIONS });
 			return;
 		}
 		case "ping":

@@ -1,5 +1,5 @@
 // Completion and needs-input cues, synthesized with Web Audio (no audio files): the VS Code webviews (chat,
-// Sessions Board), the phone app and the Hermes omp Sessions page play them. Browser-only at call time;
+// Sessions Board), the phone app and the Hermes Switchyard page play them. Browser-only at call time;
 // importing it is safe anywhere (the names are what the extension and the tests use).
 //
 // The presets and the signal path are ported from Hermes Desktop's completion sounds
@@ -28,7 +28,7 @@
 //   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //   SOFTWARE.
 
-/** The cue names, in Hermes's order; "None" is silence. package.json's `omp.sound.*` enums list the same names. */
+/** The cue names, in Hermes's order; "None" is silence. package.json's `switchyard.sound.*` enums list the same names. */
 export const SOUND_VARIANTS = [
 	"None",
 	"Two-note comfort",

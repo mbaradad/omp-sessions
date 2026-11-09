@@ -27,9 +27,9 @@ import { loadSnippets, promptsDir, snippetCommands } from "./prompt-snippets";
 import { slimFrame, slimMessage } from "./slim";
 import { readNativeSession, switchyardHome } from "../ao/native";
 
-const STARRED_MODELS_KEY = "omp.starredModels";
+const STARRED_MODELS_KEY = "switchyard.starredModels";
 
-export const VIEW_TYPE = "omp.chat";
+export const VIEW_TYPE = "switchyard.chat";
 
 /** Where a chat renders: an editor tab or the side bar view. */
 export interface ChatSurface {
@@ -282,8 +282,8 @@ export class ChatPanel implements vscode.Disposable {
 			decorationEmitter.event(() => this.updateTitle()),
 			organize.onDidChange(() => this.postOrigin()),
 			vscode.workspace.onDidChangeConfiguration(e => {
-				if (e.affectsConfiguration("omp.chat.snippets")) this.reloadSnippets();
-				if (e.affectsConfiguration("omp.chat.toolCardsCollapsed")) this.postChatConfig();
+				if (e.affectsConfiguration("switchyard.chat.snippets")) this.reloadSnippets();
+				if (e.affectsConfiguration("switchyard.chat.toolCardsCollapsed")) this.postChatConfig();
 			}),
 			{ dispose: () => this.stream?.close() },
 			...(tasks ? [tasks.onDidChange(() => (void this.postQueue(), this.postState()))] : []),
@@ -802,7 +802,7 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	private postChatConfig(): void {
-		this.post({ type: "chatConfig", toolCardsCollapsed: vscode.workspace.getConfiguration("omp.chat").get<boolean>("toolCardsCollapsed", true) });
+		this.post({ type: "chatConfig", toolCardsCollapsed: vscode.workspace.getConfiguration("switchyard.chat").get<boolean>("toolCardsCollapsed", true) });
 	}
 
 	private lastOrigin: string | undefined;
@@ -858,7 +858,7 @@ export class ChatPanel implements vscode.Disposable {
 	/** omp reads files from disk: save unsaved editors inside the session folder so it sees what the user sees. */
 	private async saveDirtyDocuments(): Promise<void> {
 		const cwd = this.meta?.cwd;
-		if (!cwd || !vscode.workspace.getConfiguration("omp").get<boolean>("saveBeforePrompt", true)) return;
+		if (!cwd || !vscode.workspace.getConfiguration("switchyard").get<boolean>("saveBeforePrompt", true)) return;
 		const dirty = vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === "file" && !path.relative(cwd, d.uri.fsPath).startsWith(".."));
 		await Promise.all(dirty.map(d => d.save()));
 	}
@@ -917,11 +917,11 @@ export class ChatPanel implements vscode.Disposable {
 		};
 	}
 
-	/** Sends a prompt: a new turn when omp is idle; while it works, steers the turn or queues behind it (`omp.sendWhileBusy`). */
+	/** Sends a prompt: a new turn when omp is idle; while it works, steers the turn or queues behind it (`switchyard.sendWhileBusy`). */
 	private async send(message: string, images: Array<{ data: string; mimeType: string }>): Promise<void> {
 		const ao = await this.client();
 		const attachments = images.map(i => ({ data: i.data, mimeType: i.mimeType }));
-		const steer = this.feed.isBusy() && (vscode.workspace.getConfiguration("omp").get<string>("sendWhileBusy") ?? "steer") === "steer";
+		const steer = this.feed.isBusy() && (vscode.workspace.getConfiguration("switchyard").get<string>("sendWhileBusy") ?? "steer") === "steer";
 		// The same id on a retry after a restart: AO answers a duplicate instead of sending twice. The wrappers add AO's upload-deadline header for images.
 		const body = { text: message, clientMessageId: crypto.randomUUID(), ...(attachments.length && { attachments }) };
 		await sendResuming(
@@ -951,7 +951,7 @@ export class ChatPanel implements vscode.Disposable {
 					return;
 				}
 				if (/^\/tasks\s*$/.test(m.text.trim())) {
-					await vscode.commands.executeCommand("omp.tasks.focus");
+					await vscode.commands.executeCommand("switchyard.tasks.focus");
 					return;
 				}
 				let text = m.text;
@@ -1088,7 +1088,7 @@ export class ChatPanel implements vscode.Disposable {
 				await this.editQueue(m.ops);
 				return;
 			case "focusTasks":
-				await vscode.commands.executeCommand("omp.tasks.focus");
+				await vscode.commands.executeCommand("switchyard.tasks.focus");
 				return;
 			case "command":
 				await this.runCommand(m.name);
@@ -1125,22 +1125,22 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			}
 			case "newSession":
-				await vscode.commands.executeCommand("omp.newSession", meta?.cwd);
+				await vscode.commands.executeCommand("switchyard.newSession", meta?.cwd);
 				return;
 			case "stopSession":
-				await vscode.commands.executeCommand("omp.stopSession", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.stopSession", this.sessionId);
 				return;
 			case "resumeSession":
-				await vscode.commands.executeCommand("omp.resumeSession", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.resumeSession", this.sessionId);
 				return;
 			case "rename":
-				await vscode.commands.executeCommand("omp.renameSession", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.renameSession", this.sessionId);
 				return;
 			case "sessionChanges":
-				await vscode.commands.executeCommand("omp.showChanges", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.showChanges", this.sessionId);
 				return;
 			case "reviewChanges":
-				await vscode.commands.executeCommand("omp.reviewChanges", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.reviewChanges", this.sessionId);
 				return;
 			case "undoTurn":
 				await this.undo();
@@ -1153,10 +1153,10 @@ export class ChatPanel implements vscode.Disposable {
 				await this.checkpoints.redo(this.sessionId);
 				return;
 			case "openHermesCard":
-				await vscode.commands.executeCommand("omp.hermes.openCard", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.hermes.openCard", this.sessionId);
 				return;
 			case "showHermesCard":
-				await vscode.commands.executeCommand("omp.hermes.showCard", this.sessionId);
+				await vscode.commands.executeCommand("switchyard.hermes.showCard", this.sessionId);
 				return;
 			case "exportMarkdownCopy":
 			case "exportMarkdownSave":

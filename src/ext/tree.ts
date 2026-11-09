@@ -16,7 +16,7 @@ export type Node = ViewNode | { kind: "file"; sessionId: string; cwd: string; fi
 /** Container nodes (everything with children computed by the layout). */
 export type ContainerNode = Exclude<Node, { kind: "session" } | { kind: "file" }>;
 
-const DND_MIME = "application/vnd.code.tree.omp.sessions.organize";
+const DND_MIME = "application/vnd.code.tree.switchyard.sessions.organize";
 const NO_QUEUE: NonNullable<SessionMeta["queue"]> = { pending: 0, running: 0, done: 0, total: 0, autoRun: false };
 
 export function isNode(v: unknown): v is Node {
@@ -156,7 +156,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 			const dir = path.relative(node.cwd, path.dirname(node.file));
 			item.description = `${dir.startsWith("..") ? path.dirname(node.file) : dir || "."} · ${node.op}${node.additions || node.deletions ? ` +${node.additions} −${node.deletions}` : ""}`;
 			item.tooltip = `${node.file}\nClick to diff against the content before the session touched it.`;
-			item.command = { command: "omp.openSessionFileDiff", title: "Open diff", arguments: [node.sessionId, node.file] };
+			item.command = { command: "switchyard.openSessionFileDiff", title: "Open diff", arguments: [node.sessionId, node.file] };
 			item.contextValue = "file";
 			return item;
 		}
@@ -178,7 +178,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.model) tip.appendMarkdown(`$(hubot) ${m.model}  \n`);
 		if (m.changedFiles) tip.appendMarkdown(`$(diff) ${m.changedFiles} file(s) changed  \n`);
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
-		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
+		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **Switchyard: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.queue?.waitReason) tip.appendMarkdown(`$(clock) ${m.queue.state ?? "waiting"}: ${m.queue.waitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.queue?.sync) {
@@ -193,7 +193,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
 		item.contextValue = `${m.status === "stopped" ? "session.stopped" : "session.running"}${worktree ? ".worktree" : ""}`;
-		item.command = { command: "omp.openSession", title: "Open", arguments: [m.id] };
+		item.command = { command: "switchyard.openSession", title: "Open", arguments: [m.id] };
 		this.organizeItem(item, node);
 		return item;
 	}
@@ -297,7 +297,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 
 	getChildren(node?: Node): Node[] | Promise<Node[]> {
 		if (!node) {
-			const cfg = vscode.workspace.getConfiguration("omp");
+			const cfg = vscode.workspace.getConfiguration("switchyard");
 			const noWorkspace = (vscode.workspace.workspaceFolders ?? []).length === 0;
 			const groupBy = cfg.get<string>("groupBy");
 			const sortBy = cfg.get<string>("sortBy");

@@ -1,15 +1,15 @@
-// Installs the omp-sessions skill (skills/omp-sessions/SKILL.md, shipped as out/omp-sessions.SKILL.md)
+// Installs the switchyard skill (skills/switchyard/SKILL.md, shipped as out/switchyard.SKILL.md)
 // where agent platforms look for skills, so Claude Code, Codex, omp itself and other tools that read
-// ~/.agents/skills can drive omp-sessions. Hermes gets the skill with its plugin (hermes-plugin.ts). Only
-// copies we wrote (frontmatter `managed-by: omp-sessions`) are replaced or removed. Node-only.
+// ~/.agents/skills can drive switchyard. Hermes gets the skill with its plugin (hermes-plugin.ts). Only
+// copies we wrote (frontmatter `managed-by: switchyard`) are replaced or removed. Node-only.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const SKILL_NAME = "omp-sessions";
+export const SKILL_NAME = "switchyard";
 /** File name of the skill next to the bundled CLI / extension (build.mjs copies it into out/). */
-export const SKILL_FILE = "omp-sessions.SKILL.md";
-const MARKER = "managed-by: omp-sessions";
+export const SKILL_FILE = "switchyard.SKILL.md";
+const MARKER = "managed-by: switchyard";
 
 export type SkillPlatform = "agents" | "claude" | "codex";
 export const SKILL_PLATFORMS: readonly SkillPlatform[] = ["agents", "claude", "codex"];

@@ -1,4 +1,4 @@
-"""`/omp` (sessions summary) and `hermes omp …` (status and lane settings)."""
+"""`/switchyard` (sessions summary) and `hermes switchyard …` (status and lane settings)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import time
 from typing import Any, Callable, Optional, Sequence
 
 from .lane import Lane
-from .ompsessions import OmpSessions, OmpSessionsError, agent_state, find_omp_sessions, short
+from .switchyard import Switchyard, SwitchyardError, agent_state, find_switchyard, short
 from .settings import MODES, Settings, board_lane, parse_authors, update_setting
 from .store import Store, profile_of
 
@@ -26,10 +26,10 @@ def _ago(ts: Any) -> str:
     return f"{s // 3600}h ago"
 
 
-def _session_map(omp: OmpSessions) -> dict[str, dict]:
+def _session_map(omp: Switchyard) -> dict[str, dict]:
     try:
         return {str(s["meta"]["id"]): s for s in omp.sessions(all=True) if isinstance(s.get("meta"), dict)}
-    except OmpSessionsError:
+    except SwitchyardError:
         return {}
 
 
@@ -38,7 +38,7 @@ DISPATCHER_STALE_S = 180
 
 
 def dispatcher_notes(disp: Optional[dict], *, profile: str, lane_on: bool, now: Optional[float] = None) -> list[str]:
-    """Problems with where Hermes's kanban dispatcher runs the plugin, for `hermes omp status` and the page.
+    """Problems with where Hermes's kanban dispatcher runs the plugin, for `hermes switchyard status` and the page.
 
     Hermes runs one dispatcher per machine, in the gateway holding its lock; its hook reaches the plugin
     instance of that gateway's profile, so the lane only works when it is on in that profile."""
@@ -53,20 +53,20 @@ def dispatcher_notes(disp: Optional[dict], *, profile: str, lane_on: bool, now: 
     where = str(disp.get("profile") or "unknown")
     if lane_on and where != profile:
         notes.append(f"The dispatcher runs the plugin in profile '{where}', but the lane is on in '{profile}': "
-                     f"turn it on there (`hermes -p {where} omp lane on`) and off here.")
+                     f"turn it on there (`hermes -p {where} switchyard lane on`) and off here.")
     elif not lane_on and where == profile and disp.get("lane_on") is False:
-        notes.append(f"The dispatcher runs in this profile ('{profile}') and the lane is off here: cards assigned to omp stay ready.")
+        notes.append(f"The dispatcher runs in this profile ('{profile}') and the lane is off here: cards assigned to switchyard stay ready.")
     return notes
 
 
-def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: OmpSessions) -> dict:
+def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Switchyard) -> dict:
     sessions = _session_map(omp)
     links = lane.links()
     try:
         sched: Optional[dict] = omp.scheduler()
-    except OmpSessionsError:
+    except SwitchyardError:
         sched = None
-    cmd = find_omp_sessions(settings.omp_sessions)
+    cmd = find_switchyard(settings.switchyard)
     profile = profile_of(store)
     disp = lane.dispatcher()
     linked = []
@@ -88,10 +88,10 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
     last_inject = store.get("last_inject")
     try:
         omp_info = omp.status().get("omp")
-    except OmpSessionsError:
+    except SwitchyardError:
         omp_info = None
     return {
-        "omp_sessions": " ".join(cmd) if cmd else None,
+        "switchyard": " ".join(cmd) if cmd else None,
         # `status --json` `omp`: installed/authenticated, Switchyard's omp extension (needed for ask/edits/plan), shim.
         "omp": omp_info if isinstance(omp_info, dict) else None,
         "scheduler": sched,
@@ -119,11 +119,11 @@ def status_data(ctx: Any, settings: Settings, store: Store, lane: Lane, omp: Omp
 
 def status_text(d: dict) -> str:
     lane = d["lane"]
-    lines = [f"omp-sessions: {d['omp_sessions'] or 'NOT FOUND (install it with the omp Sessions extension: omp: Install omp-sessions Command, or set the omp_sessions setting)'}"]
+    lines = [f"switchyard: {d['switchyard'] or 'NOT FOUND (install it with the Switchyard extension: Switchyard: Install switchyard Command, or set the switchyard setting)'}"]
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
-        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once omp-sessions starts it)'}")
+        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once switchyard starts it)'}")
     ext = (d.get("omp") or {}).get("extension")
     if isinstance(ext, dict) and ext.get("installed") is False:
         lines.append("omp extension: NOT INSTALLED: cards in mode ask, edits or plan can't be started (auto works); install Switchyard's omp extension (open VS Code with Switchyard)")
@@ -164,11 +164,11 @@ def status_text(d: dict) -> str:
     return "\n".join(lines)
 
 
-def sessions_summary(omp: OmpSessions) -> str:
+def sessions_summary(omp: Switchyard) -> str:
     try:
         infos = omp.sessions(all=False)
-    except OmpSessionsError as exc:
-        return f"omp-sessions: {exc}"
+    except SwitchyardError as exc:
+        return f"switchyard: {exc}"
     if not infos:
         return "No running omp sessions."
     lines = []
@@ -181,12 +181,12 @@ def sessions_summary(omp: OmpSessions) -> str:
     return "\n".join(lines)
 
 
-def sessions_brief(omp: OmpSessions) -> str:
-    """`/omp` in a chat: short enough for a phone (Hermes Console shows slash output as a brief notice)."""
+def sessions_brief(omp: Switchyard) -> str:
+    """`/switchyard` in a chat: short enough for a phone (Hermes Console shows slash output as a brief notice)."""
     try:
         infos = omp.sessions(all=False)
-    except OmpSessionsError as exc:
-        return f"omp-sessions: {exc}"
+    except SwitchyardError as exc:
+        return f"switchyard: {exc}"
     if not infos:
         return "No running omp sessions."
     by: dict[str, list[dict]] = {}
@@ -210,7 +210,7 @@ def sessions_brief(omp: OmpSessions) -> str:
 
 
 def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane) -> str:
-    """Assigns a kanban card to the omp lane (`/omp take <card> [board]`): the way to route a card to omp
+    """Assigns a kanban card to the Switchyard lane (`/switchyard take <card> [board]`): the way to route a card to omp
     from clients whose assignee picker only offers Hermes profiles (Hermes Console on Android)."""
     from hermes_cli import kanban_db as kb
     from hermes_cli import kanban_db_connect as kbc
@@ -233,20 +233,20 @@ def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane
                     return f"Hermes refused to reassign {card_id} on {slug}: {exc}"
         disp = lane.dispatcher()
         if disp and disp.get("lane_on") is False:
-            note = f" The omp lane is off in profile {disp.get('profile')}, where the kanban dispatcher runs: `hermes -p {disp.get('profile')} omp lane on`."
+            note = f" The Switchyard lane is off in profile {disp.get('profile')}, where the kanban dispatcher runs: `hermes -p {disp.get('profile')} switchyard lane on`."
         else:
-            note = " The omp lane starts it as an omp session once it is ready."
+            note = " The Switchyard lane starts it as an omp session once it is ready."
         return f"{card_id} on {slug} is assigned to {assignee}.{note}"
     return f"No card {card_id} on {'board ' + board if board else 'any open board'}."
 
 
 def archive_done_text(slugs: Sequence[str], lane: Lane) -> str:
-    """`hermes omp archive-done`: archives each board's done lane cards and their omp sessions."""
+    """`hermes switchyard archive-done`: archives each board's done lane cards and their omp sessions."""
     lines = []
     for slug in slugs:
         try:
             r = lane.archive_done(slug)
-        except OmpSessionsError as exc:
+        except SwitchyardError as exc:
             lines.append(f"{slug}: {exc}")
             continue
         n = len(r["archived"])
@@ -257,16 +257,16 @@ def archive_done_text(slugs: Sequence[str], lane: Lane) -> str:
 
 def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="omp_cmd")
-    st = sub.add_parser("status", help="omp-sessions, notifications, the kanban lane and linked cards")
+    st = sub.add_parser("status", help="switchyard, notifications, the kanban lane and linked cards")
     st.add_argument("--json", action="store_true")
     sub.add_parser("sessions", help="running omp sessions")
     lane = sub.add_parser("lane", help="the kanban lane: on, off, run")
     lane_sub = lane.add_subparsers(dest="lane_cmd")
     on = lane_sub.add_parser("on", help="run cards assigned to the assignee as omp sessions")
-    on.add_argument("--assignee", help="card assignee the lane takes (default omp)")
+    on.add_argument("--assignee", help="card assignee the lane takes (default switchyard)")
     on.add_argument("--mode", choices=MODES, help="starting permission mode of card sessions")
     on.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every board)")
-    on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach omp and whose @omp assigns cards (default dashboard; * anyone)")
+    on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach omp and whose @switchyard assigns cards (default dashboard; * anyone)")
     on.add_argument("--archive-completed", choices=("on", "off"), help="archive a card and its omp session once the lane completes it (default off)")
     lane_sub.add_parser("off", help="stop taking new cards (linked cards are still reported)")
     run = lane_sub.add_parser("run", help="one lane pass now (normally every dispatcher tick)")
@@ -277,7 +277,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     board.add_argument("--group", help="omp group of the board's sessions (default: board name)")
     board.add_argument("--mode", choices=MODES)
     board.add_argument("--assignee")
-    board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": omp Sessions' default)")
+    board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": Switchyard' default)")
     board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
     board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their omp sessions) once the lane completes them (default: the lane's setting)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
@@ -287,7 +287,7 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     project.add_argument("--remove", action="store_true")
     notify = sub.add_parser("notify", help="tell Hermes sessions when their omp sessions settle")
     notify.add_argument("value", choices=("on", "off"))
-    take = sub.add_parser("take", help="assign a kanban card to the omp lane")
+    take = sub.add_parser("take", help="assign a kanban card to the Switchyard lane")
     take.add_argument("card")
     take.add_argument("--board", help="the card's board (default: search every open board)")
     done = sub.add_parser("archive-done", help="archive the done lane cards of a board and their omp sessions")
@@ -403,7 +403,7 @@ def set_board_in_lane(slug: str, on: bool, all_slugs: Sequence[str]) -> None:
     update_setting("lane", change)
 
 
-def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings], store: Store, omp: Callable[[], OmpSessions], lane: Lane) -> int:
+def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings], store: Store, omp: Callable[[], Switchyard], lane: Lane) -> int:
     cmd = getattr(args, "omp_cmd", None) or "status"
     if cmd == "status":
         d = status_data(ctx, settings(), store, lane, omp())
@@ -425,7 +425,7 @@ def run_cli(args: argparse.Namespace, ctx: Any, settings: Callable[[], Settings]
             for slug in slugs:
                 lane.tick(slug)
         else:
-            print("usage: hermes omp lane on|off|run")
+            print("usage: hermes switchyard lane on|off|run")
             return 2
         print(status_text(status_data(ctx, settings(), store, lane, omp())))
         return 0

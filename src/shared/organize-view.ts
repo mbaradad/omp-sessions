@@ -97,7 +97,7 @@ export interface ViewInput {
 	showArchived: boolean;
 	/** Hide sessions marked completed (organize.ts). */
 	hideCompleted?: boolean;
-	/** Listed at all in this window (`omp.sessionScope`, hidden finished sessions). */
+	/** Listed at all in this window (`switchyard.sessionScope`, hidden finished sessions). */
 	visible(m: SessionMeta): boolean;
 	inWorkspace(m: SessionMeta): boolean;
 	project(m: SessionMeta): { root: string; isRepo: boolean };

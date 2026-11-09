@@ -95,11 +95,11 @@ test("claimSound: only the first VS Code window claims a cue key", () => {
 
 test("sound settings: package.json lists every cue, defaults match Hermes's; bad values fall back", () => {
 	const props = manifest.contributes.configuration.properties as Record<string, { enum?: string[]; default?: unknown }>;
-	assert.deepEqual(props["omp.sound.completion"].enum, [...SOUND_VARIANTS]);
-	assert.deepEqual(props["omp.sound.input"].enum, [...SOUND_VARIANTS]);
-	assert.equal(props["omp.sound.completion"].default, DEFAULT_COMPLETION_SOUND);
+	assert.deepEqual(props["switchyard.sound.completion"].enum, [...SOUND_VARIANTS]);
+	assert.deepEqual(props["switchyard.sound.input"].enum, [...SOUND_VARIANTS]);
+	assert.equal(props["switchyard.sound.completion"].default, DEFAULT_COMPLETION_SOUND);
 	assert.equal(DEFAULT_COMPLETION_SOUND, "Two-note comfort");
-	assert.equal(props["omp.sound.input"].default, DEFAULT_INPUT_SOUND);
+	assert.equal(props["switchyard.sound.input"].default, DEFAULT_INPUT_SOUND);
 	assert.equal(soundVariant("Glass ping", DEFAULT_COMPLETION_SOUND), "Glass ping");
 	assert.equal(soundVariant("Ding", DEFAULT_COMPLETION_SOUND), DEFAULT_COMPLETION_SOUND);
 	assert.equal(soundVolume(0.4), 0.4);

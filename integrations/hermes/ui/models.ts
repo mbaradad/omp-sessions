@@ -1,5 +1,5 @@
-// Models omp can use (GET /models, from `omp-sessions models --json`) and a searchable picker that
-// marks the omp Sessions default. An empty value means "the default".
+// Models omp can use (GET /models, from `switchyard models --json`) and a searchable picker that
+// marks the Switchyard default. An empty value means "the default".
 import { errorMessage, type Host, type Models } from "./api";
 import { Button } from "./components";
 import { h, type ReactElement, useEffect, useState } from "./react";

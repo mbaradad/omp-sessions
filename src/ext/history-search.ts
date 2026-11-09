@@ -1,4 +1,4 @@
-// `omp.searchHistory`: live full-text search over the user/assistant text of omp transcripts
+// `switchyard.searchHistory`: live full-text search over the user/assistant text of omp transcripts
 // (VS Code sessions and terminal sessions), scoped to the current workspace by default.
 
 import * as fs from "node:fs";
@@ -185,13 +185,13 @@ async function openCandidate(api: OmpApi, c: Candidate): Promise<void> {
 			return;
 		}
 		const choice = await vscode.window.showInformationMessage(`"${meta.title}" is stopped.`, { modal: true, detail: "Resume it to continue the conversation, or just read the transcript." }, "Resume", "View Transcript");
-		if (choice === "Resume") await vscode.commands.executeCommand("omp.resumeSession", meta.id);
+		if (choice === "Resume") await vscode.commands.executeCommand("switchyard.resumeSession", meta.id);
 		else if (choice === "View Transcript") api.openPanel(meta.id);
 		return;
 	}
 	const cwd = c.head.cwd;
 	const choice = await vscode.window.showInformationMessage(
-		`"${titleOf(c)}" was not started by omp Sessions.`,
+		`"${titleOf(c)}" was not started by Switchyard.`,
 		{ modal: true, detail: cwd ? `Folder: ${cwd}` : "The transcript does not record its folder." },
 		...(isArchivedTranscript(c.file) ? [] : ["Open Transcript File"]),
 	);

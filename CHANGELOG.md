@@ -1,8 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
-- **Hermes: dependency graph of a board's cards.** The omp Sessions page in the Hermes dashboard and Desktop has a **Graph** view: a board's kanban cards laid out left to right from parent to child (a child waits for its parents), coloured by card status, with the state of the omp session working on each card (the lane's, or a session tagged with the card). Edges from finished parents are solid, the rest dashed. By default it shows only cards linked to another card; **Linked cards only** switches to every card. Clicking a card shows what it waits for and unblocks, and opens its omp session's detail when it has one. The page's backend reports `parents` and `children` for every card it returns (`/boards` cards, linked and ready lists, and a session's `card`), read in one batch per board; a Hermes without card links reports none.
+**omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (omp through `omp acp`); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.
+
+**New names, no aliases.** Extension `mbaradad.switchyard` (a new Marketplace listing; it installs next to the old one), commands and settings `switchyard.*` (were `omp.*`), CLI `switchyard` (was `omp-sessions`), state in `~/.switchyard` (was `~/.omp/vscode`), env `SWITCHYARD_*`, agent skill `switchyard`, Hermes plugin `switchyard` with tools `switchyard_*` and `hermes switchyard …`. `switchyard migrate [--apply]` imports the old defaults, the concurrency settings and the organization (groups, colors, board lanes); it is a dry run without `--apply`. **No session is migrated**: old sessions stay reachable with `omp --resume <id>`, and `migrate` lists each one.
+
+### Architecture
+
+- **AO runs the agents.** Sessions are AO Chat sessions: detached per-session hosts that survive VS Code, the planner and the daemon restarting. Every session works in its own AO worktree and branch; a folder outside git runs in an empty scratch folder.
+- **The planner** (a user service that starts on demand and keeps running with no client open) holds the plans: task graphs with dependencies, queues per session, scheduled and recurring starts, usage-based auto-scheduling with spend budgets, priorities, a global concurrency limit and per-task options (model, thinking, fresh context, retries, timeout). It dispatches the next ready task to AO and reconciles with AO after a restart, so nothing runs twice and an interrupted task is marked, never silently rerun. Git tasks start from their parents' branches, and a merge conflict with a parent shows as needs-input.
+- **Switchyard's omp extension** (installed into `~/.omp/agent/extensions/switchyard/`) carries what AO lacks: checkpoints (`/undo` and `/redo` rewind the conversation and the files the edit tools changed), live permission modes (Ask, Edits, Plan, Auto), the todo mirror, and the VS Code language-tools bridge. A small `omp` shim passes extra launch flags.
+- **The phone uses AO's mobile app.** *Connect Phone* shows AO's pairing link and QR code. The old phone app, its HTTP API and `remote.json` are gone.
+- **Clients on `src/ao`:** the VS Code extension (Sessions, Tasks, board, graph, chat, review, dashboard), the `switchyard` CLI with the same commands, `--json` shapes and `wait` exit codes, the MCP bridge, the Hermes plugin with its kanban lane, and the agent skill.
+
+### Removed
+
+- The omp-sessions server, the per-session host, the phone app and the server's login service; the commands that upgraded session hosts.
+- Not carried over: Session Settings (per-session skills, tools and MCP servers), `omp.path`, user MCP servers inside AO sessions, voice mode, tokens per second and per-answer cost, subagent progress, *Resume omp Transcript in Background*, and the *open in VS Code* button of the phone app.
+
+### Also in this release
+
+- **Hermes: dependency graph of a board's cards.** The Switchyard page in the Hermes dashboard and Desktop has a **Graph** view: a board's kanban cards laid out left to right from parent to child (a child waits for its parents), coloured by card status, with the state of the omp session working on each card (the lane's, or a session tagged with the card). Edges from finished parents are solid, the rest dashed. By default it shows only cards linked to another card; **Linked cards only** switches to every card. Clicking a card shows what it waits for and unblocks, and opens its omp session's detail when it has one. The page's backend reports `parents` and `children` for every card it returns (`/boards` cards, linked and ready lists, and a session's `card`), read in one batch per board; a Hermes without card links reports none.
 
 ## 0.6.2
 

@@ -1,6 +1,6 @@
-"""Runs the omp-sessions CLI (the omp Sessions command line) and parses its JSON output.
+"""Runs the switchyard CLI (the Switchyard command line) and parses its JSON output.
 
-Free text (prompts, answers, comments, titles, tags) only ever reaches omp-sessions as one argv entry
+Free text (prompts, answers, comments, titles, tags) only ever reaches switchyard as one argv entry
 after `--`, in a `--flag=value` pair, or on stdin, and the CLI always runs as `node cli.js`: a Windows
 `.cmd` shim is resolved to the node and cli.js it runs, never executed (cmd.exe would re-parse the
 arguments)."""
@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-# Exit codes of `omp-sessions wait` (4: stopped or interrupted; the report's state says which).
+# Exit codes of `switchyard wait` (4: stopped or interrupted; the report's state says which).
 WAIT_EXIT = {0: "idle", 3: "needs_input", 4: "stopped", 5: "scheduled", 124: "timeout"}
-# `omp-sessions` exits 2 on a usage error, e.g. an answer that doesn't fit the question.
+# `switchyard` exits 2 on a usage error, e.g. an answer that doesn't fit the question.
 USAGE_EXIT = 2
 PRIORITIES = ("urgent", "high", "normal", "low")
 # Sync state of a graph edge (GRAPH-PROPAGATION.md): how far a parent's changes reached its child.
@@ -66,19 +66,19 @@ def edge_mark(edge: dict) -> str:
 
 def short(session_id: str) -> str:
     """A session id for messages: AO ids (`<project>-<n>`, already short and what every command takes)
-    in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8, the prefix it was known by."""
+    in full; a legacy Switchyard id (no `-`, 14 characters) by its first 8, the prefix it was known by."""
     return session_id[:8] if "-" not in session_id and len(session_id) > 12 else session_id
 
 
 def free_text_ok(value: str) -> str:
-    """A session reference or schedule for a positional argument: never something omp-sessions reads as a flag."""
+    """A session reference or schedule for a positional argument: never something switchyard reads as a flag."""
     if value.startswith("-"):
-        raise OmpSessionsError(f"invalid value {value[:40]!r}")
+        raise SwitchyardError(f"invalid value {value[:40]!r}")
     return value
 
 
 def agent_state(info: dict) -> str:
-    """The session's state from an `omp-sessions ls --json` entry (agentState in
+    """The session's state from an `switchyard ls --json` entry (agentState in
     src/shared/session-report.ts): queued, scheduled, starting, working, needs_input, idle, interrupted
     or stopped."""
     state = info.get("state")
@@ -86,7 +86,7 @@ def agent_state(info: dict) -> str:
 
 
 def is_done(info: dict) -> bool:
-    """A finished session the user can archive: marked completed (`omp-sessions complete`), or idle with
+    """A finished session the user can archive: marked completed (`switchyard complete`), or idle with
     nothing queued or running."""
     if info.get("completed") is True:
         return True
@@ -94,8 +94,8 @@ def is_done(info: dict) -> bool:
     return agent_state(info) == "idle" and not int(q.get("pending") or 0) and not int(q.get("running") or 0)
 
 
-class OmpSessionsError(RuntimeError):
-    """omp-sessions is missing, failed, or printed something that isn't the expected JSON."""
+class SwitchyardError(RuntimeError):
+    """switchyard is missing, failed, or printed something that isn't the expected JSON."""
 
 
 @dataclass
@@ -106,22 +106,22 @@ class Result:
 
 
 def runtime_cli() -> Path:
-    """cli.js in the omp-sessions runtime folder (<OMP_VSCODE_HOME or ~/.omp/vscode>/runtime)."""
-    home = os.environ.get("OMP_VSCODE_HOME") or str(Path.home() / ".omp" / "vscode")
+    """cli.js in the switchyard runtime folder (<SWITCHYARD_HOME or ~/.switchyard>/runtime)."""
+    home = os.environ.get("SWITCHYARD_HOME") or str(Path.home() / ".switchyard")
     return Path(home) / "runtime" / "cli.js"
 
 
 # The Windows launcher the extension writes (src/shared/cli-launcher.ts launcherText):
 #   @echo off / rem … / [set ELECTRON_RUN_AS_NODE=1] / "<node>" "<cli.js>" %*
 _SHIM_RUN = re.compile(r'^"([^"]+)" "([^"]+\.js)" %\*\s*$', re.MULTILINE)
-# The wrapper `npm install -g omp-sessions` writes next to the package (npm's cmd-shim):
-#   … "%_prog%"  "%dp0%\node_modules\omp-sessions\<bin>.js" %*  (older npm: "%~dp0\node_modules\…")
+# The wrapper `npm install -g switchyard` writes next to the package (npm's cmd-shim):
+#   … "%_prog%"  "%dp0%\node_modules\switchyard\<bin>.js" %*  (older npm: "%~dp0\node_modules\…")
 # with node from %dp0%\node.exe, else PATH.
-_NPM_SHIM_RUN = re.compile(r'"%(?:dp0%|~dp0)\\(node_modules\\omp-sessions\\[^"%]+\.js)"\s+%\*', re.IGNORECASE)
+_NPM_SHIM_RUN = re.compile(r'"%(?:dp0%|~dp0)\\(node_modules\\switchyard\\[^"%]+\.js)"\s+%\*', re.IGNORECASE)
 
 
 def npm_shim_command(path: Path, text: str) -> Optional[list[str]]:
-    """The argv npm's `omp-sessions.cmd` wrapper runs (node and the package's cli.js), or None."""
+    """The argv npm's `switchyard.cmd` wrapper runs (node and the package's cli.js), or None."""
     m = _NPM_SHIM_RUN.search(text)
     if not m:
         return None
@@ -135,7 +135,7 @@ def npm_shim_command(path: Path, text: str) -> Optional[list[str]]:
 
 
 def shim_command(path: Path) -> Optional[tuple[list[str], dict[str, str]]]:
-    """(argv, extra env) a `.cmd` launcher of omp-sessions runs, or None when it isn't one."""
+    """(argv, extra env) a `.cmd` launcher of switchyard runs, or None when it isn't one."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -151,19 +151,19 @@ def shim_command(path: Path) -> Optional[tuple[list[str], dict[str, str]]]:
 
 
 def resolve_command(configured: Optional[str] = None) -> Optional[tuple[list[str], dict[str, str]]]:
-    """(argv, extra env) that runs omp-sessions: the configured path, then PATH, then where `omp: Install
-    omp-sessions Command` puts it (~/.local/bin/omp-sessions; %LOCALAPPDATA%\\omp-sessions\\omp-sessions.cmd
+    """(argv, extra env) that runs switchyard: the configured path, then PATH, then where `Switchyard: Install
+    switchyard Command` puts it (~/.local/bin/switchyard; %LOCALAPPDATA%\\switchyard\\switchyard.cmd
     on Windows), then the runtime folder's cli.js.
 
     A .js path (out/cli.js, the runtime's cli.js) runs with node from PATH; a .cmd/.bat launcher is
     read for the node and cli.js it runs and never executed itself."""
     candidates = [configured] if configured else []
-    on_path = shutil.which("omp-sessions")
+    on_path = shutil.which("switchyard")
     if on_path:
         candidates.append(on_path)
-    candidates.append(str(Path.home() / ".local" / "bin" / "omp-sessions"))
+    candidates.append(str(Path.home() / ".local" / "bin" / "switchyard"))
     if os.environ.get("LOCALAPPDATA"):
-        candidates.append(str(Path(os.environ["LOCALAPPDATA"]) / "omp-sessions" / "omp-sessions.cmd"))
+        candidates.append(str(Path(os.environ["LOCALAPPDATA"]) / "switchyard" / "switchyard.cmd"))
     candidates.append(str(runtime_cli()))
     for c in candidates:
         if not c:
@@ -185,24 +185,24 @@ def resolve_command(configured: Optional[str] = None) -> Optional[tuple[list[str
     return None
 
 
-def find_omp_sessions(configured: Optional[str] = None) -> Optional[list[str]]:
-    """The argv that runs omp-sessions (see resolve_command), or None."""
+def find_switchyard(configured: Optional[str] = None) -> Optional[list[str]]:
+    """The argv that runs switchyard (see resolve_command), or None."""
     found = resolve_command(configured)
     return found[0] if found else None
 
 
 
 
-class OmpSessions:
+class Switchyard:
     def __init__(self, configured: Optional[str] = None) -> None:
         self.configured = configured
 
     def resolved(self) -> tuple[list[str], dict[str, str]]:
         found = resolve_command(self.configured)
         if not found:
-            raise OmpSessionsError(
-                "omp-sessions not found: install it (omp Sessions extension: omp: Install omp-sessions Command) "
-                "or set the plugin's omp_sessions setting to omp-sessions or its cli.js"
+            raise SwitchyardError(
+                "switchyard not found: install it (Switchyard extension: Switchyard: Install switchyard Command) "
+                "or set the plugin's switchyard setting to switchyard or its cli.js"
             )
         return found
 
@@ -225,16 +225,16 @@ class OmpSessions:
                 env=env,
             )
         except subprocess.TimeoutExpired as exc:
-            raise OmpSessionsError(f"omp-sessions {' '.join(args[:2])} timed out after {int(timeout)}s") from exc
+            raise SwitchyardError(f"switchyard {' '.join(args[:2])} timed out after {int(timeout)}s") from exc
         except OSError as exc:
-            raise OmpSessionsError(f"could not run omp-sessions: {exc}") from exc
+            raise SwitchyardError(f"could not run switchyard: {exc}") from exc
         return Result(p.returncode, p.stdout, p.stderr)
 
     def ok(self, args: Sequence[str], *, stdin: Optional[str] = None, timeout: float = 60) -> str:
         """Runs a command that must succeed; returns its stdout."""
         r = self.run(args, stdin=stdin, timeout=timeout)
         if r.code != 0:
-            raise OmpSessionsError(error_text(r) or f"omp-sessions {args[0]} exited with {r.code}")
+            raise SwitchyardError(error_text(r) or f"switchyard {args[0]} exited with {r.code}")
         return r.stdout
 
     def json(self, args: Sequence[str], *, stdin: Optional[str] = None, timeout: float = 60) -> Any:
@@ -253,12 +253,12 @@ class OmpSessions:
             msg = error_text(r)
             if "no session matches" in msg.lower():
                 return None
-            raise OmpSessionsError(msg or f"omp-sessions show exited with {r.code}")
+            raise SwitchyardError(msg or f"switchyard show exited with {r.code}")
         report = parse_json(r.stdout, ["show"])
         return report if isinstance(report, dict) else None
 
     def answer(self, session: str, text: str, question: Optional[str] = None) -> Result:
-        """`omp-sessions answer <session> [--question <id>] -- <text>`: exit 0 answered, USAGE_EXIT the
+        """`switchyard answer <session> [--question <id>] -- <text>`: exit 0 answered, USAGE_EXIT the
         text doesn't fit the question; with `question`, 1 when another dialog is first by now."""
         q = [f"--question={question}"] if question else []
         return self.run(["answer", free_text_ok(session), *q, "--", text])
@@ -318,7 +318,7 @@ class OmpSessions:
         CLI has no `plan status` or the planner isn't reachable: propagation is then simply not shown."""
         try:
             edges = self.plan_status()
-        except OmpSessionsError:
+        except SwitchyardError:
             return {}
         out: dict[str, list[dict]] = {}
         for e in edges:
@@ -334,7 +334,7 @@ class OmpSessions:
 
     def priority(self, session: str, priority: str) -> str:
         if priority not in PRIORITIES:
-            raise OmpSessionsError(f"priority must be one of {', '.join(PRIORITIES)}")
+            raise SwitchyardError(f"priority must be one of {', '.join(PRIORITIES)}")
         return self.ok(["prio", free_text_ok(session), priority]).strip()
 
     def scheduler(self) -> dict:
@@ -342,26 +342,26 @@ class OmpSessions:
         return out if isinstance(out, dict) else {}
 
     def status(self) -> dict:
-        """`omp-sessions status --json`: the server, omp, sessions by state, tasks, scheduler and remote
+        """`switchyard status --json`: the server, omp, sessions by state, tasks, scheduler and remote
         access, with `ok` and `problems` (it exits 1 when something is wrong, still printing the JSON)."""
         r = self.run(["status", "--json"], timeout=30)
         try:
             out = json.loads(r.stdout)
         except ValueError as exc:
-            raise OmpSessionsError(error_text(r) or f"omp-sessions status exited with {r.code}") from exc
+            raise SwitchyardError(error_text(r) or f"switchyard status exited with {r.code}") from exc
         if not isinstance(out, dict):
-            raise OmpSessionsError(f"omp-sessions status printed {r.stdout.strip()[:100]!r}")
+            raise SwitchyardError(f"switchyard status printed {r.stdout.strip()[:100]!r}")
         return out
 
     def archive(self, session: str) -> str:
-        """Hides the session from the default lists (`omp-sessions archive`); returns what it printed."""
+        """Hides the session from the default lists (`switchyard archive`); returns what it printed."""
         return self.ok(["archive", free_text_ok(session)]).strip()
 
     def unarchive(self, session: str) -> str:
         return self.ok(["unarchive", free_text_ok(session)]).strip()
 
     def complete(self, session: str) -> dict:
-        """Marks the session completed (`omp-sessions complete`): done, whatever its state. Returns
+        """Marks the session completed (`switchyard complete`): done, whatever its state. Returns
         {id, completed, completedAt?, changed}."""
         return self._completed("complete", session)
 
@@ -371,7 +371,7 @@ class OmpSessions:
     def _completed(self, cmd: str, session: str) -> dict:
         out = self.json([cmd, free_text_ok(session), "--json"])
         if not isinstance(out, dict):
-            raise OmpSessionsError(f"omp-sessions {cmd} printed {str(out)[:100]!r}")
+            raise SwitchyardError(f"switchyard {cmd} printed {str(out)[:100]!r}")
         return out
 
     def projects(self) -> list[dict]:
@@ -379,12 +379,12 @@ class OmpSessions:
         return [p for p in out if isinstance(p, dict)] if isinstance(out, list) else []
 
     def models(self, search: Optional[str] = None) -> dict:
-        """`omp-sessions models --json`: {"models": [{selector, provider, id, name, default, …}],
-        "default": the omp Sessions default selector or None, "ompDefault": omp's own default or None,
+        """`switchyard models --json`: {"models": [{selector, provider, id, name, default, …}],
+        "default": the Switchyard default selector or None, "ompDefault": omp's own default or None,
         "source": the running session whose omp's choices these are, else None with a "note" and no models}."""
         out = self.json(["models", "--json", *(["--", search] if search else [])], timeout=60)
         if not isinstance(out, dict) or not isinstance(out.get("models"), list):
-            raise OmpSessionsError(f"omp-sessions models printed {str(out)[:100]!r}")
+            raise SwitchyardError(f"switchyard models printed {str(out)[:100]!r}")
         return out
 
     def model(self, session: str, selector: Optional[str] = None) -> dict:
@@ -393,7 +393,7 @@ class OmpSessions:
         return out if isinstance(out, dict) else {}
 
     def default_model(self) -> Optional[str]:
-        """The omp Sessions default model (selector) new sessions get when they name none."""
+        """The Switchyard default model (selector) new sessions get when they name none."""
         out = self.json(["config", "get", "model", "--json"])
         return out if isinstance(out, str) and out else None
 
@@ -401,18 +401,18 @@ class OmpSessions:
         self.ok(["config", "set", "model", "--", selector or "none"])
 
     def open_folder(self, folder: str) -> dict:
-        """`omp-sessions vscode --folder=<dir> --json`: {folder, url, authority, windowAt}, a link that
+        """`switchyard vscode --folder=<dir> --json`: {folder, url, authority, windowAt}, a link that
         opens exactly that folder in VS Code (in the last-used window's remote, if any)."""
         out = self.json(["vscode", f"--folder={folder}", "--json"])
         if not isinstance(out, dict) or not isinstance(out.get("url"), str):
-            raise OmpSessionsError("omp-sessions vscode printed no link")
+            raise SwitchyardError("switchyard vscode printed no link")
         return out
 
     def version(self) -> dict:
         """{"cli": version, "server": version or None, "pid": server pid or None}."""
         out = self.json(["version", "--json"], timeout=20)
         if not isinstance(out, dict) or not isinstance(out.get("cli"), str):
-            raise OmpSessionsError(f"omp-sessions version printed {str(out)[:100]!r}")
+            raise SwitchyardError(f"switchyard version printed {str(out)[:100]!r}")
         return {"cli": out["cli"], "server": out.get("server"), "pid": out.get("pid")}
 
     def new(
@@ -435,11 +435,11 @@ class OmpSessions:
         """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?, after?}.
         `after` (task only): sessions whose work must finish before the task starts."""
         if bool(prompt) == bool(task):
-            raise OmpSessionsError("give either a prompt or a task")
+            raise SwitchyardError("give either a prompt or a task")
         if priority and priority not in PRIORITIES:
-            raise OmpSessionsError(f"priority must be one of {', '.join(PRIORITIES)}")
+            raise SwitchyardError(f"priority must be one of {', '.join(PRIORITIES)}")
         if prompt and after:
-            raise OmpSessionsError("after holds back a queued task: give a task, not a prompt")
+            raise SwitchyardError("after holds back a queued task: give a task, not a prompt")
         # `--flag=value`: a value starting with `--` stays a value.
         args = ["new", "--detach", "--json"]
         stdin = None
@@ -462,11 +462,11 @@ class OmpSessions:
         # The folder is a plain argument, not after `--`: what follows `--` is omp's own flags. It is
         # always an absolute path (resolve_place), so it never reads as a flag.
         if cwd.startswith("-"):
-            raise OmpSessionsError(f"not a folder: {cwd}")
+            raise SwitchyardError(f"not a folder: {cwd}")
         args.append(cwd)
         out = self.json(args, stdin=stdin, timeout=90)
         if not isinstance(out, dict) or not isinstance(out.get("id"), str):
-            raise OmpSessionsError(f"omp-sessions new printed no session id: {str(out)[:200]}")
+            raise SwitchyardError(f"switchyard new printed no session id: {str(out)[:200]}")
         return out
 
 
@@ -474,10 +474,10 @@ def parse_json(text: str, args: Sequence[str]) -> Any:
     try:
         return json.loads(text)
     except ValueError as exc:
-        raise OmpSessionsError(f"omp-sessions {' '.join(args[:1])} printed no JSON: {text.strip()[:200]}") from exc
+        raise SwitchyardError(f"switchyard {' '.join(args[:1])} printed no JSON: {text.strip()[:200]}") from exc
 
 
 def error_text(r: Result) -> str:
-    """The error omp-sessions printed (its last stderr line, else stdout's)."""
+    """The error switchyard printed (its last stderr line, else stdout's)."""
     text = (r.stderr.strip() or r.stdout.strip()).splitlines()
-    return text[-1].removeprefix("omp-sessions: ").strip() if text else ""
+    return text[-1].removeprefix("switchyard: ").strip() if text else ""

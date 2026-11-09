@@ -1,4 +1,4 @@
-// Plain-terminal rendering of AO conversations for `omp-sessions attach/tail`: messages and tool
+// Plain-terminal rendering of AO conversations for `switchyard attach/tail`: messages and tool
 // activity in sequence order, and a follower that prints only what changed between two snapshots
 // (AO streams by rewriting the assistant message in place; its events only say "refetch").
 import type { AoActivity, AoConversation, AoMessage } from "../ao/client";

@@ -1,4 +1,4 @@
-// `omp-sessions omp-extension` and the automatic refresh: the bundles that ship next to cli.js are copied into
+// `switchyard omp-extension` and the automatic refresh: the bundles that ship next to cli.js are copied into
 // omp's agent folder and the Switchyard bin folder, refreshed when they differ, and removed again (G38).
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

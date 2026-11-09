@@ -1,5 +1,5 @@
-// Installs the omp-sessions Hermes plugin (integrations/hermes/omp-sessions, bundled by build.mjs
-// as out/hermes-plugin/omp-sessions with its skill) into a Hermes home's `plugins/omp-sessions` and
+// Installs the switchyard Hermes plugin (integrations/hermes/switchyard, bundled by build.mjs
+// as out/hermes-plugin/switchyard with its skill) into a Hermes home's `plugins/switchyard` and
 // enables it with the hermes CLI. Plugins are per profile: the default home is `$HERMES_HOME`, else
 // ~/.hermes (%LOCALAPPDATA%\hermes on Windows); named profiles are `<root>/profiles/<name>`. hermes
 // always runs as `hermes -p <name>` (`-p default` too): without the flag it follows the sticky
@@ -11,18 +11,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { COMMAND } from "./cli-launcher";
 
-export const PLUGIN_NAME = "omp-sessions";
+export const PLUGIN_NAME = "switchyard";
 /** The bundled plugin, relative to the folder cli.js / extension.js runs from. */
 export const PLUGIN_BUNDLE = path.join("hermes-plugin", PLUGIN_NAME);
-const MARKER = ".managed-by-omp-sessions";
+const MARKER = ".managed-by-switchyard";
 /** Exclusive lock (a file, so Hermes's plugin scan ignores it) around installs into one plugins/ folder. */
-const INSTALL_LOCK = ".omp-sessions.install.lock";
+const INSTALL_LOCK = ".switchyard.install.lock";
 /** A lock older than this is from a crashed run, whatever its pid says (pids get reused). */
 const STALE_LOCK_MS = 10 * 60_000;
 /** Staging folders: dunder names, which Hermes's plugin discovery skips, so a leftover never loads. */
-const STAGING = /^__omp-sessions-(\d+)-(?:tmp|old)__$/;
+const STAGING = /^__switchyard-(\d+)-(?:tmp|old)__$/;
 /** Staging folders older versions used beside the plugin (they look like plugins to Hermes). */
-const LEGACY_STAGING = /^omp-sessions\.(\d+)\.(?:tmp|old)$/;
+const LEGACY_STAGING = /^switchyard\.(\d+)\.(?:tmp|old)$/;
 /** config.yaml key that lets the plugin message the Hermes session that started an omp session. */
 const INJECTION_KEY = `plugins.entries.${PLUGIN_NAME}.allow_gateway_injection`;
 const ENTRY = ["plugins", "entries", PLUGIN_NAME];
@@ -30,7 +30,7 @@ const ENTRY = ["plugins", "entries", PLUGIN_NAME];
 const PROFILE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const PROFILE_MARKERS = ["config.yaml", ".env", "SOUL.md", "profile.yaml", "auth.json", "state.db"];
 
-/** "busy": another window or omp-sessions holds the install lock; nothing was touched. */
+/** "busy": another window or switchyard holds the install lock; nothing was touched. */
 export type PluginInstallOutcome = "installed" | "updated" | "unchanged" | "skipped" | "busy";
 
 /** Hermes's own default home (hermes_constants._platform_default_hermes_home): ~/.hermes, %LOCALAPPDATA%\hermes on Windows. */
@@ -295,7 +295,7 @@ export function changedFiles(a: string, b: string): string[] | undefined {
 
 export interface PluginState {
 	installed: boolean;
-	/** Installed by omp-sessions (the marker file), so install/uninstall may replace it. */
+	/** Installed by switchyard (the marker file), so install/uninstall may replace it. */
 	managed: boolean;
 	/** Same files as the bundled copy. */
 	current: boolean;
@@ -425,7 +425,7 @@ function sweepStaging(pluginsDir: string): void {
 
 /**
  * Copies the bundled plugin to `target`, under the plugins/ folder's install lock ("busy" when another
- * window or omp-sessions holds it). A plugin folder we didn't write is left alone unless `force`;
+ * window or switchyard holds it). A plugin folder we didn't write is left alone unless `force`;
  * `onlyIfNewer` (automatic refreshes) replaces a managed copy only when the bundle is newer.
  */
 export function installPlugin(source: string, target: string, opts: { force?: boolean; onlyIfNewer?: boolean } = {}): PluginInstallOutcome {
@@ -443,7 +443,7 @@ export function installPlugin(source: string, target: string, opts: { force?: bo
 		if (state.current && state.managed) return "unchanged";
 		if (opts.onlyIfNewer && state.installed && !bundleNewer(source, target)) return "unchanged";
 		fs.cpSync(source, tmp, { recursive: true, filter: f => !f.includes("__pycache__") });
-		fs.writeFileSync(path.join(tmp, MARKER), `Installed by omp-sessions (omp-sessions hermes install); replaced on update.\nversion: ${pluginVersion(source) ?? "unknown"}\nstamp: ${buildStamp(source)}\n`);
+		fs.writeFileSync(path.join(tmp, MARKER), `Installed by switchyard (switchyard hermes install); replaced on update.\nversion: ${pluginVersion(source) ?? "unknown"}\nstamp: ${buildStamp(source)}\n`);
 		const existed = fs.existsSync(target);
 		if (existed) fs.renameSync(target, old);
 		fs.renameSync(tmp, target);
@@ -477,7 +477,7 @@ export function runHermes(hermes: string, target: HermesTarget, args: string[], 
 	return { ok: r.status === 0, output: r.error ? `${r.error.message}${output ? `\n${output}` : ""}` : output };
 }
 
-/** `hermes plugins enable omp-sessions` plus the config key that allows notifications into sessions. */
+/** `hermes plugins enable switchyard` plus the config key that allows notifications into sessions. */
 export function enablePlugin(hermes: string, target: HermesTarget, env: NodeJS.ProcessEnv = process.env): HermesRun {
 	const enable = runHermes(hermes, target, ["plugins", "enable", PLUGIN_NAME], env);
 	if (!enable.ok) return enable;
@@ -553,12 +553,12 @@ export function updatePlugin(
 
 /** Plain-text lines about one profile's update (CLI and VS Code). */
 export function updateLines(label: string, u: PluginUpdate): string[] {
-	if (u.outcome === "busy") return [`${label}: skipped, another window or omp-sessions is installing the plugin there right now`];
+	if (u.outcome === "busy") return [`${label}: skipped, another window or switchyard is installing the plugin there right now`];
 	const lines = [`${label}: ${u.outcome}${u.reload?.ok ? ", reloaded in the running gateway" : ""}`];
-	if (u.leftDisabled) lines.push(`${label}: the plugin was left DISABLED in profile ${label} (enabling it again failed twice): run hermes -p ${label} plugins enable omp-sessions. ${u.reload?.output ?? ""}`.trim());
-	else if (u.reload && !u.reload.ok) lines.push(`${label}: reloading it failed (hermes -p ${label} plugins disable/enable omp-sessions): ${u.reload.output}`);
+	if (u.leftDisabled) lines.push(`${label}: the plugin was left DISABLED in profile ${label} (enabling it again failed twice): run hermes -p ${label} plugins enable switchyard. ${u.reload?.output ?? ""}`.trim());
+	else if (u.reload && !u.reload.ok) lines.push(`${label}: reloading it failed (hermes -p ${label} plugins disable/enable switchyard): ${u.reload.output}`);
 	if (u.enable && !u.enable.ok) lines.push(u.enable.output);
-	if (u.dashboardChanged) lines.push(`${label}: the dashboard's omp Sessions page backend changed; it loads when the dashboard restarts`);
+	if (u.dashboardChanged) lines.push(`${label}: the dashboard's Switchyard page backend changed; it loads when the dashboard restarts`);
 	return lines;
 }
 
@@ -574,9 +574,9 @@ export interface PluginReport {
 	lane?: boolean;
 	/** `allow_gateway_injection`: notifications may reach Hermes sessions (only read where the plugin is enabled). */
 	injection?: boolean;
-	/** The plugin's `omp_sessions` setting, when set. */
-	ompSessions?: string;
-	/** A managed copy that differs because it is newer than the bundle (another editor's newer omp-sessions wrote it). */
+	/** The plugin's `switchyard` setting, when set. */
+	switchyard?: string;
+	/** A managed copy that differs because it is newer than the bundle (another editor's newer switchyard wrote it). */
 	ahead?: boolean;
 }
 
@@ -590,8 +590,8 @@ export function pluginReport(source: string | undefined, target: HermesTarget): 
 	if (state.managed && !state.current && source && !bundleNewer(source, dir)) report.ahead = true;
 	report.status = text === undefined ? "not enabled" : configPluginStatus(text);
 	if (text === undefined) return report;
-	const ompSessions = configValue(text, [...ENTRY, "settings", "omp_sessions"]);
-	if (typeof ompSessions === "string" && ompSessions) report.ompSessions = ompSessions;
+	const switchyard = configValue(text, [...ENTRY, "settings", "switchyard"]);
+	if (typeof switchyard === "string" && switchyard) report.switchyard = switchyard;
 	if (report.status === "enabled") {
 		report.lane = truthy(configValue(text, [...ENTRY, "settings", "lane", "enabled"]));
 		report.injection = truthy(configValue(text, [...ENTRY, "allow_gateway_injection"]));
@@ -622,12 +622,12 @@ function isExecutable(p: string): boolean {
 }
 
 /**
- * The omp-sessions the plugin runs, by its own rule (ompsessions.py find_omp_sessions): the `omp_sessions`
- * setting, then PATH, then where *omp: Install omp-sessions Command* puts it (~/.local/bin/omp-sessions;
- * %LOCALAPPDATA%\omp-sessions\omp-sessions.cmd). `pathEnv` is the PATH of the process that runs the
+ * The switchyard the plugin runs, by its own rule (switchyard.py find_switchyard): the `switchyard`
+ * setting, then PATH, then where *Switchyard: Install switchyard Command* puts it (~/.local/bin/switchyard;
+ * %LOCALAPPDATA%\switchyard\switchyard.cmd). `pathEnv` is the PATH of the process that runs the
  * plugin (the gateway); undefined skips the PATH lookup when it isn't known.
  */
-export function findOmpSessions(
+export function findSwitchyard(
 	setting: string | undefined,
 	pathEnv: string | undefined,
 	home = os.homedir(),
@@ -702,7 +702,7 @@ export function runningDashboardUrl(root: string, alive: (pid: number) => boolea
 	return undefined;
 }
 
-/** The kanban dispatcher heartbeat in `hermes omp status --json` (plugin 0.6.0+). */
+/** The kanban dispatcher heartbeat in `hermes switchyard status --json` (plugin 0.6.0+). */
 export interface DispatcherBeat {
 	/** Unix seconds of the last tick. */
 	at: number;
@@ -713,7 +713,7 @@ export interface DispatcherBeat {
 	board?: string;
 }
 
-/** The parts of `hermes -p <profile> omp status --json` the Doctor uses. */
+/** The parts of `hermes -p <profile> switchyard status --json` the Doctor uses. */
 export interface LaneStatus {
 	profile?: string;
 	/** undefined: an older plugin that doesn't report it; null: no tick seen yet. */
@@ -721,14 +721,14 @@ export interface LaneStatus {
 	dispatcherNotes: string[];
 	/** The last notification into a Hermes session; ok false: Hermes refused it. */
 	lastNotification?: { at: number; ok: boolean; session?: string } | null;
-	ompSessions?: string | null;
+	switchyard?: string | null;
 }
 
 function obj(v: unknown): Record<string, unknown> | undefined {
 	return v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v)) : undefined;
 }
 
-/** Parses `hermes omp status --json` output (hermes may print warnings before the JSON). */
+/** Parses `hermes switchyard status --json` output (hermes may print warnings before the JSON). */
 export function parseLaneStatus(text: string): LaneStatus | undefined {
 	const start = text.indexOf("{");
 	if (start < 0) return undefined;
@@ -741,7 +741,7 @@ export function parseLaneStatus(text: string): LaneStatus | undefined {
 	if (!data) return undefined;
 	const out: LaneStatus = { dispatcherNotes: Array.isArray(data.dispatcher_notes) ? data.dispatcher_notes.filter((n): n is string => typeof n === "string") : [] };
 	if (typeof data.profile === "string") out.profile = data.profile;
-	if (typeof data.omp_sessions === "string" || data.omp_sessions === null) out.ompSessions = data.omp_sessions;
+	if (typeof data.switchyard === "string" || data.switchyard === null) out.switchyard = data.switchyard;
 	if (data.dispatcher === null) out.dispatcher = null;
 	const d = obj(data.dispatcher);
 	if (d && typeof d.at === "number" && typeof d.profile === "string") {
@@ -759,13 +759,13 @@ export function parseLaneStatus(text: string): LaneStatus | undefined {
 /** One plain-text line per report (CLI and VS Code). */
 export function reportLine(r: PluginReport): string {
 	if (!r.state.installed) return `${r.label}: not installed (${r.target})`;
-	const freshness = r.state.current ? "current" : r.ahead ? "newer than this omp-sessions (left as is)" : r.state.managed ? "outdated, run install to update" : "not installed by omp-sessions";
+	const freshness = r.state.current ? "current" : r.ahead ? "newer than this switchyard (left as is)" : r.state.managed ? "outdated, run install to update" : "not installed by switchyard";
 	const lane = r.lane === undefined ? "" : ` · lane ${r.lane ? "on" : "off"}`;
 	const injection = r.injection === false ? " · notifications not allowed (allow_gateway_injection)" : "";
 	return `${r.label}: ${freshness}${r.status ? `, ${r.status}` : ""}${lane}${injection} (${r.target})`;
 }
 
 export const AFTER_INSTALL = [
-	"Plugin tools (omp_session_start, …) appear in new Hermes sessions. A running gateway picks the plugin up when it is enabled; if `hermes plugins list` shows it enabled but the tools are missing, restart the gateway (hermes gateway restart).",
-	"Kanban lane: turn it on in one profile, `hermes [-p <profile>] omp lane on` (cards assigned to omp run as omp sessions); `hermes omp status` shows it.",
+	"Plugin tools (switchyard_session_start, …) appear in new Hermes sessions. A running gateway picks the plugin up when it is enabled; if `hermes plugins list` shows it enabled but the tools are missing, restart the gateway (hermes gateway restart).",
+	"Kanban lane: turn it on in one profile, `hermes [-p <profile>] switchyard lane on` (cards assigned to switchyard run as omp sessions); `hermes switchyard status` shows it.",
 ];

@@ -44,7 +44,7 @@ before(() => {
 		GIT_AUTHOR_EMAIL: "test@example.com",
 		GIT_COMMITTER_NAME: "Test",
 		GIT_COMMITTER_EMAIL: "test@example.com",
-		OMP_VSCODE_HOME: path.join(tmp, "state"),
+		SWITCHYARD_HOME: path.join(tmp, "state"),
 	});
 });
 

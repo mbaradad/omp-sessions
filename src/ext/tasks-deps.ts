@@ -111,8 +111,8 @@ class LateSessions implements TaskSessions, vscode.Disposable {
 }
 
 export function createTasksDeps(context: vscode.ExtensionContext, shared?: SharedAo): TasksDeps {
-	// Start the planner when none runs, unless the person (`omp.server.autoStart`) or a test says not to.
-	const mayStart = !process.env.OMP_SESSIONS_NO_SERVER && vscode.workspace.getConfiguration("omp").get<boolean>("server.autoStart", true);
+	// Start the planner when none runs, unless the person (`switchyard.server.autoStart`) or a test says not to.
+	const mayStart = !process.env.SWITCHYARD_NO_SERVER && vscode.workspace.getConfiguration("switchyard").get<boolean>("server.autoStart", true);
 	const planner = new PlannerStore(mayStart ? path.join(context.extensionPath, "out", "planner.js") : undefined);
 	const plans = new OmpPlans();
 	context.subscriptions.push(planner, plans);

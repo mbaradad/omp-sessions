@@ -39,12 +39,12 @@ jobs:
       # Unit suite (no AO, no omp, no model calls). The integration suite (npm run test:integration) needs an `ao` binary,
       # and the desktop e2e (npm run test:e2e:desktop) needs AO, VS Code and a logged-in omp: both run on a developer machine.
       - run: npm test
-      # `hermes plugins install …/integrations/hermes/omp-sessions` installs the folder as committed.
+      # `hermes plugins install …/integrations/hermes/switchyard` installs the folder as committed.
       - name: Hermes plugin folder matches the build
         if: matrix.os == 'ubuntu-latest'
         run: |
           node build.mjs
-          git status --porcelain --ignored -- integrations/hermes/omp-sessions | grep . && { git diff -- integrations/hermes/omp-sessions; exit 1; } || true
+          git status --porcelain --ignored -- integrations/hermes/switchyard | grep . && { git diff -- integrations/hermes/switchyard; exit 1; } || true
 
   package:
     name: package vsix

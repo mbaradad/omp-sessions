@@ -79,7 +79,7 @@ let totalCost = 0;
 let redoCount = 0;
 /** Where Hermes started this session (its tags); null when it didn't. */
 let hermes: HermesOrigin | null = null;
-/** `omp.chat.toolCardsCollapsed`: new non-edit tool cards start closed. */
+/** `switchyard.chat.toolCardsCollapsed`: new non-edit tool cards start closed. */
 let toolCardsCollapsed = true;
 const logoUrl = document.body.dataset.logo ?? "";
 
@@ -1082,7 +1082,7 @@ function renderHeader(): void {
 		hermes
 			? hermes.card
 				? h("button", { class: "chip-btn hermes-chip", title: `Started by the Hermes kanban lane for card ${hermes.card}${hermes.board ? ` on board ${hermes.board}` : ""}. Click to open the Hermes Kanban.`, onclick: cmd("openHermesCard") }, originLabel(hermes))
-				: h("span", { class: "chip hermes-chip", title: "Started from a Hermes chat (omp_session_start)" }, "Hermes")
+				: h("span", { class: "chip hermes-chip", title: "Started from a Hermes chat (switchyard_session_start)" }, "Hermes")
 			: "",
 		files > 0 ? h("button", { class: "chip-btn", title: "Review every change in a multi-file diff", onclick: cmd("reviewChanges") }, icon("diff"), `${files} file${files === 1 ? "" : "s"} changed`) : "",
 		redoCount ? h("button", { class: "chip-btn", title: "Bring back what the last checkpoint restore removed (files + conversation)", onclick: cmd("redoTurn") }, icon("redo"), "Redo") : "",

@@ -26,7 +26,7 @@ interface ExtensionApiLike {
 
 const POLL_MS = 1000;
 
-export default function ompSessionsTodos(pi: ExtensionApiLike): void {
+export default function switchyardTodos(pi: ExtensionApiLike): void {
 	const aoSessionId = process.env.AO_SESSION_ID?.trim();
 	if (!aoSessionId) return;
 	let file: string;

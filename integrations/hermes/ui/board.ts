@@ -24,7 +24,7 @@ export const COLUMNS: readonly Column[] = [
 export type CardAction = "archive" | "unarchive" | "complete" | "uncomplete";
 
 /** A finished session "Archive all" takes: marked completed, or idle with nothing queued or running
- *  (is_done in the plugin's ompsessions.py). */
+ *  (is_done in the plugin's switchyard.py). */
 export function isDone(s: Session): boolean {
 	return s.completed || (s.state === "idle" && !s.queue.pending && !s.queue.running);
 }

@@ -35,9 +35,9 @@ export interface GateFacts {
 
 const INSTALL_GATE: Fix = { label: "Install gate and shim", command: "switchyard.installOmpIntegration" };
 
-const START: Fix = { label: "Start planner and AO", command: "omp.server.start" };
-const LOG: Fix = { label: "Show log", command: "omp.server.showLog" };
-const INSTALL_SERVICE: Fix = { label: "Install login services", command: "omp.server.install" };
+const START: Fix = { label: "Start planner and AO", command: "switchyard.server.start" };
+const LOG: Fix = { label: "Show log", command: "switchyard.server.showLog" };
+const INSTALL_SERVICE: Fix = { label: "Install login services", command: "switchyard.server.install" };
 
 export function aoChecks(f: AoFacts): Check[] {
 	if (!f.url) {
@@ -53,8 +53,8 @@ export function aoChecks(f: AoFacts): Check[] {
 	];
 	const omp = f.omp;
 	if (!omp) checks.push({ level: "warn", title: "AO doesn't report on omp", detail: "Its agent readiness list has no omp entry (an older AO?)." });
-	else if (omp.installation === "not_installed") checks.push({ level: "error", title: "AO can't find omp", detail: `${omp.installationReason ?? ""}\nAO runs the omp on the daemon's PATH.`.trim(), fixes: [{ label: "Install omp", command: "omp.installOmp" }] });
-	else if (omp.authentication === "unauthorized") checks.push({ level: "warn", title: "omp is not logged in to a model provider", detail: omp.authenticationReason, fixes: [{ label: "Log in", command: "omp.login" }] });
+	else if (omp.installation === "not_installed") checks.push({ level: "error", title: "AO can't find omp", detail: `${omp.installationReason ?? ""}\nAO runs the omp on the daemon's PATH.`.trim(), fixes: [{ label: "Install omp", command: "switchyard.installOmp" }] });
+	else if (omp.authentication === "unauthorized") checks.push({ level: "warn", title: "omp is not logged in to a model provider", detail: omp.authenticationReason, fixes: [{ label: "Log in", command: "switchyard.login" }] });
 	else checks.push({ level: "ok", title: "AO can run omp", detail: [omp.installationReason, omp.authenticationReason].filter(Boolean).join("\n") || undefined });
 	return checks;
 }
@@ -70,7 +70,7 @@ export function gateChecks(f: GateFacts): Check[] {
 			: { level: "error", title: "The permission gate is not installed", detail: `Sessions run in AO's bypass mode, so ask, edits and plan are NOT enforced (a session reports its mode but runs unrestricted).\nIt installs into ${f.extensionDir}.`, fixes: [INSTALL_GATE] },
 		f.shim
 			? { level: "ok", title: "The omp shim is installed", detail: `${f.shimFile}: extra omp flags reach omp when the AO daemon has its folder first on PATH.` }
-			: { level: "warn", title: "The omp shim is not installed", detail: `Extra omp flags (omp.extraArgs, New Session flags) do not reach omp.\nIt installs into ${f.shimFile}.`, fixes: [INSTALL_GATE] },
+			: { level: "warn", title: "The omp shim is not installed", detail: `Extra omp flags (switchyard.extraArgs, New Session flags) do not reach omp.\nIt installs into ${f.shimFile}.`, fixes: [INSTALL_GATE] },
 	];
 }
 

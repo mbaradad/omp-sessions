@@ -1,5 +1,5 @@
-// `omp-sessions attach`: a terminal chat on an AO session, and the read-only follower behind
-// `omp-sessions tail -f` and `send --wait`. AO's event stream only says that a session changed; each
+// `switchyard attach`: a terminal chat on an AO session, and the read-only follower behind
+// `switchyard tail -f` and `send --wait`. AO's event stream only says that a session changed; each
 // change refetches the conversation tail and prints what is new (render.ts ConversationFollower).
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
@@ -117,7 +117,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 	const dismiss = async (q: AoQuestion) => {
 		dialog = undefined;
 		settled.add(q.id);
-		// An approval has no dismiss: it stays pending for VS Code, the phone or `omp-sessions answer`.
+		// An approval has no dismiss: it stays pending for VS Code, the phone or `switchyard answer`.
 		if (q.kind === "input") await client.resolveInput(id, q.id, { action: "cancel" }).catch(() => undefined);
 		say(c.dim(q.kind === "input" ? "  (dismissed)" : "  (left for later)"));
 	};
@@ -149,7 +149,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 			if (!interactive) {
 				say(c.magenta(`? ${oneLine((q.message ?? q.title).split("\n")[0])} — waiting for an answer`));
 				if (opts.prompt !== undefined) {
-					say(c.dim(`answer: omp-sessions answer ${id} <choice>`));
+					say(c.dim(`answer: switchyard answer ${id} <choice>`));
 					finish(3);
 				}
 				continue;
@@ -220,7 +220,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 		first = await follow.ready;
 	} catch (err) {
 		follow.close();
-		process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
+		process.stderr.write(`${c.red("switchyard:")} ${err instanceof Error ? err.message : String(err)}\n`);
 		return 1;
 	}
 	conversation ??= first;
@@ -237,7 +237,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 	onQuestions(questionsOf(conversation));
 	// Changes AO's feed doesn't carry for this session (its agent exiting) still show within a few seconds.
 	const poll = setInterval(() => void check(), POLL_MS);
-	const viewId = `omp-sessions-cli-${randomUUID()}`;
+	const viewId = `switchyard-cli-${randomUUID()}`;
 	const lease = (active: boolean) => unwrap(client.api.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId: id } }, body: { viewId, active } })).catch(() => undefined);
 	void lease(true);
 	const leaseTimer = setInterval(() => void lease(true), VIEW_LEASE_MS);
@@ -255,7 +255,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 		try {
 			ourTurn = await send(opts.prompt, !!opts.steer);
 		} catch (err) {
-			process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`${c.red("switchyard:")} ${err instanceof Error ? err.message : String(err)}\n`);
 			finish(1);
 		}
 		void check();
@@ -279,7 +279,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 			}
 			if (text === "/stop") {
 				void client.exitAgent(id).then(
-					() => say(c.dim("stopped (omp-sessions resume to continue)")),
+					() => say(c.dim("stopped (switchyard resume to continue)")),
 					err => say(c.red(`✗ ${err instanceof Error ? err.message : String(err)}`)),
 				);
 				return;
@@ -310,7 +310,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 	} else if (!opts.readOnly && opts.prompt === undefined) {
 		process.stderr.write(c.dim("stdin is not a terminal: following output only\n"));
 	}
-	if (session.model.view.isTerminated && opts.prompt === undefined) say(c.dim("session stopped (omp-sessions resume to continue)"));
+	if (session.model.view.isTerminated && opts.prompt === undefined) say(c.dim("session stopped (switchyard resume to continue)"));
 
 	const code = await done;
 	finished = true;

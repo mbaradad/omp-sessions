@@ -2,8 +2,8 @@
 // the AO daemon it and every client need): the planner (`out/planner.js`, a user service; src/planner) that
 // holds queues and schedules, the AO daemon that runs every session (found through its run file, started as
 // the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts), the
-// `omp-sessions` command (`omp.installCli`) and the runtime folder the planner and CLI run from (the
-// extension folder changes with every update), and the `omp.extraArgs` mirror the CLI reads.
+// `switchyard` command (`switchyard.installCli`) and the runtime folder the planner and CLI run from (the
+// extension folder changes with every update), and the `switchyard.extraArgs` mirror the CLI reads.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -15,7 +15,7 @@ import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import { migrationPending } from "./migration-offer";
 import { type SwitchyardConfig, readSwitchyardConfig, writeSwitchyardConfig } from "../ao/config";
 import { switchyardHome } from "../ao/native";
-import { stateRoot } from "../shared/protocol";
+import { legacyHome } from "../migrate/legacy";
 import { ensurePlanner, stopPlanner } from "../planner/client";
 import { logPath as plannerLogPath } from "../planner/paths";
 import { installService as installPlannerService, serviceKind, serviceUnitPath } from "../planner/service";
@@ -23,7 +23,7 @@ import type { OmpApi } from "./api";
 import { plain } from "./plain";
 
 /** What the planner and CLI run from: their bundles and the agent skill the CLI installs (plus the Hermes plugin folder). */
-const RUNTIME_FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
+const RUNTIME_FILES = ["cli.js", "planner.js", "switchyard.SKILL.md"];
 const RUNTIME_FOLDERS = [PLUGIN_BUNDLE, "omp-extension", "omp-shim"];
 
 /** What other extension modules need from the machine side. */
@@ -61,7 +61,7 @@ export function installRuntime(outDir: string, version: string): string {
 	if (complete && runtimeVersion(dir) === version) return dir;
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	for (const f of RUNTIME_FILES) copyAtomic(path.join(outDir, f), path.join(dir, f));
-	// Folders swapped in whole: the Hermes plugin `omp-sessions hermes install` copies from, and the omp gate and shim the planner
+	// Folders swapped in whole: the Hermes plugin `switchyard hermes install` copies from, and the omp gate and shim the planner
 	// service installs from at its start (G46) when it outlives VS Code: they sit beside planner.js, where it looks.
 	for (const folder of RUNTIME_FOLDERS) {
 		const target = path.join(dir, folder);
@@ -72,7 +72,7 @@ export function installRuntime(outDir: string, version: string): string {
 		fs.renameSync(tmp, target);
 	}
 	const pkg = path.join(dir, "package.json");
-	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "omp-sessions-runtime", version, private: true }));
+	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "switchyard-runtime", version, private: true }));
 	fs.renameSync(`${pkg}.tmp`, pkg);
 	return dir;
 }
@@ -126,12 +126,12 @@ export function registerServer(api: OmpApi): ServerControl {
 	const version = api.sessions.version;
 
 	/**
-	 * Mirrors the user's own `omp.extraArgs`/`omp.server.installService` (never a workspace's: they apply to every
-	 * session on this machine) into ~/.switchyard/config.json (`omp.extraArgs`, which the omp shim reads, and `service`). A key the user hasn't set keeps config.json's value (the CLI's
+	 * Mirrors the user's own `switchyard.extraArgs`/`switchyard.server.installService` (never a workspace's: they apply to every
+	 * session on this machine) into ~/.switchyard/config.json (`switchyard.extraArgs`, which the omp shim reads, and `service`). A key the user hasn't set keeps config.json's value (the CLI's
 	 * `config set` may have set it), unless `cleared` lists it (the user just removed the setting).
 	 */
 	const syncLauncher = (cleared: { extraArgs?: boolean; service?: boolean } = {}) => {
-		const cfg = vscode.workspace.getConfiguration("omp");
+		const cfg = vscode.workspace.getConfiguration("switchyard");
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
 		const next: SwitchyardConfig = {};
@@ -149,7 +149,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	syncLauncher();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			const changed = { extraArgs: e.affectsConfiguration("omp.extraArgs"), service: e.affectsConfiguration("omp.server.installService") };
+			const changed = { extraArgs: e.affectsConfiguration("switchyard.extraArgs"), service: e.affectsConfiguration("switchyard.server.installService") };
 			if (changed.extraArgs || changed.service) syncLauncher(changed);
 		}),
 	);
@@ -158,7 +158,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	try {
 		runtime = installRuntime(outDir, version);
 	} catch (err) {
-		ao.log.error(`could not install the omp-sessions runtime: ${String(err)}`);
+		ao.log.error(`could not install the switchyard runtime: ${String(err)}`);
 	}
 	let node: { path: string; electron: boolean } | undefined;
 	const getNode = () => {
@@ -182,11 +182,11 @@ export function registerServer(api: OmpApi): ServerControl {
 	};
 
 	const plannerScript = () => {
-		if (!runtime) throw new Error("the omp-sessions runtime is not installed (see the AO output)");
+		if (!runtime) throw new Error("the switchyard runtime is not installed (see the AO output)");
 		return path.join(runtime, "planner.js");
 	};
 	/**
-	 * Starts the planner: through its user service, installed the first time when `omp.server.installService`
+	 * Starts the planner: through its user service, installed the first time when `switchyard.server.installService`
 	 * allows and a system Node runs it (VS Code's own runtime moves with every VS Code update), else detached.
 	 */
 	const startPlanner = async (): Promise<string> => {
@@ -195,7 +195,7 @@ export function registerServer(api: OmpApi): ServerControl {
 		// Auto-install policy (the planner never installs itself): once per machine, only for the default SWITCHYARD_HOME (a
 		// test or scratch home must never create a user unit), and never when the person said `service off` (setting or CLI).
 		const wantService =
-			vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) && readSwitchyardConfig().service !== "off" && !process.env.SWITCHYARD_HOME && !getNode().electron;
+			vscode.workspace.getConfiguration("switchyard").get<boolean>("server.installService", true) && readSwitchyardConfig().service !== "off" && !process.env.SWITCHYARD_HOME && !getNode().electron;
 		// A unit that pins another script (the runtime copy moved, e.g. from ~/.omp/vscode/runtime to ~/.switchyard/runtime) is
 		// installed again: the service would keep running the old planner.
 		const unitText = kind ? readIfExists(serviceUnitPath(kind)) : undefined;
@@ -217,11 +217,11 @@ export function registerServer(api: OmpApi): ServerControl {
 		return `${aoLine}; ${await startPlanner()}`;
 	};
 
-	/** Runs the runtime's CLI as the `omp-sessions` launcher would: this node (Electron as Node when it is VS Code's). */
+	/** Runs the runtime's CLI as the `switchyard` launcher would: this node (Electron as Node when it is VS Code's). */
 	const cliEnv = (): NodeJS.ProcessEnv => (getNode().electron ? { ELECTRON_RUN_AS_NODE: "1" } : {});
 
 	const showError = (err: unknown) =>
-		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
+		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("switchyard.server.showLog"));
 
 	/** Runs the runtime's CLI in a terminal (the launcher may not be on this terminal's PATH). */
 	const runCliInTerminal = (cliArgs: string[]) => {
@@ -232,9 +232,9 @@ export function registerServer(api: OmpApi): ServerControl {
 		terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : shellQuote(args));
 	};
 
-	/** Once per machine: omp Sessions data exists and `migrate` never ran: offer its dry run (it writes nothing). */
+	/** Once per machine: Switchyard data exists and `migrate` never ran: offer its dry run (it writes nothing). */
 	const offerMigration = async () => {
-		if (!runtime || context.globalState.get<boolean>("switchyard.migrateOffered") || !migrationPending(stateRoot(), switchyardHome())) return;
+		if (!runtime || context.globalState.get<boolean>("switchyard.migrateOffered") || !migrationPending(legacyHome(), switchyardHome())) return;
 		const pick = await vscode.window.showInformationMessage(
 			plain("Switchyard found data from omp Sessions (groups, board lanes, defaults). See what it would copy over?"),
 			"Preview (dry run)",
@@ -250,7 +250,7 @@ export function registerServer(api: OmpApi): ServerControl {
 		try {
 			refreshShim();
 		} catch (err) {
-			ao.log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
+			ao.log.warn(`could not refresh the switchyard command: ${String(err)}`);
 		}
 		void offerMigration();
 		if (!ao.mayStart()) return;
@@ -261,9 +261,9 @@ export function registerServer(api: OmpApi): ServerControl {
 	}, 1500);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("omp.installCli", async () => {
+		vscode.commands.registerCommand("switchyard.installCli", async () => {
 			if (!runtime) {
-				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the AO output.");
+				void vscode.window.showErrorMessage("The switchyard runtime could not be installed; see the AO output.");
 				return;
 			}
 			const file = launcherPath();
@@ -282,7 +282,7 @@ export function registerServer(api: OmpApi): ServerControl {
 				term.sendText(onPath(dir) ? `${COMMAND} help` : `${JSON.stringify(file)} help`);
 			}
 		}),
-		vscode.commands.registerCommand("omp.server.start", async () => {
+		vscode.commands.registerCommand("switchyard.server.start", async () => {
 			try {
 				void vscode.window.showInformationMessage(plain(await ensureRunning()));
 				api.sessions.refresh();
@@ -290,7 +290,7 @@ export function registerServer(api: OmpApi): ServerControl {
 				showError(err);
 			}
 		}),
-		vscode.commands.registerCommand("omp.server.install", async () => {
+		vscode.commands.registerCommand("switchyard.server.install", async () => {
 			try {
 				const kind = serviceKind();
 				if (!kind) {
@@ -324,9 +324,9 @@ export function registerServer(api: OmpApi): ServerControl {
 				showError(err);
 			}
 		}),
-		vscode.commands.registerCommand("omp.server.statusInTerminal", () => {
+		vscode.commands.registerCommand("switchyard.server.statusInTerminal", () => {
 			if (!runtime) {
-				void vscode.window.showErrorMessage("The omp-sessions runtime could not be installed; see the AO output.");
+				void vscode.window.showErrorMessage("The switchyard runtime could not be installed; see the AO output.");
 				return;
 			}
 			const args = [getNode().path, path.join(runtime, "cli.js"), "status"];
@@ -335,7 +335,7 @@ export function registerServer(api: OmpApi): ServerControl {
 			terminal.show();
 			terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : shellQuote(args));
 		}),
-		vscode.commands.registerCommand("omp.server.restart", async () => {
+		vscode.commands.registerCommand("switchyard.server.restart", async () => {
 			try {
 				await stopPlanner();
 				void vscode.window.showInformationMessage(plain(`Restarted: ${await startPlanner()}. The AO daemon keeps running (its sessions too).`));
@@ -343,7 +343,7 @@ export function registerServer(api: OmpApi): ServerControl {
 				showError(err);
 			}
 		}),
-		vscode.commands.registerCommand("omp.server.showLog", async () => {
+		vscode.commands.registerCommand("switchyard.server.showLog", async () => {
 			const unit = installedUnit();
 			const aoFile = path.join(path.dirname(defaultRunFile()), "daemon.log");
 			const pick = await vscode.window.showQuickPick(

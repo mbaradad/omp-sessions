@@ -133,7 +133,7 @@ function subtree(data: OrgData, id: string): Set<string> {
 export function registerOrganize(api: OmpApi): void {
 	const { context, organize: store, sessionTree: tree, sessionsView: view, sessions } = api;
 	const reg = (name: string, fn: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(name, fn));
-	const config = () => vscode.workspace.getConfiguration("omp");
+	const config = () => vscode.workspace.getConfiguration("switchyard");
 	const groupBy = (): GroupMode => {
 		const v = config().get<string>("groupBy");
 		return isGroupMode(v) ? v : "project";
@@ -150,9 +150,9 @@ export function registerOrganize(api: OmpApi): void {
 	};
 
 	// ---------- view state: filter, archived, context keys ----------
-	tree.showArchived = context.globalState.get<boolean>("omp.organize.showArchived") ?? false;
-	tree.hideFinished = context.globalState.get<boolean>("omp.organize.hideFinished") ?? false;
-	tree.hideCompleted = context.globalState.get<boolean>("omp.organize.hideCompleted") ?? false;
+	tree.showArchived = context.globalState.get<boolean>("switchyard.organize.showArchived") ?? false;
+	tree.hideFinished = context.globalState.get<boolean>("switchyard.organize.hideFinished") ?? false;
+	tree.hideCompleted = context.globalState.get<boolean>("switchyard.organize.hideCompleted") ?? false;
 	/** Description and empty message from the last render (no extra tree build). */
 	const updateDescription = () => {
 		const hidden = tree.hideFinished && tree.hiddenFinished ? `${tree.hiddenFinished} finished hidden` : "";
@@ -172,12 +172,12 @@ export function registerOrganize(api: OmpApi): void {
 	tree.onRender = updateDescription;
 	const updateChrome = () => {
 		updateDescription();
-		void vscode.commands.executeCommand("setContext", "omp.sessions.filtered", !!tree.filter);
-		void vscode.commands.executeCommand("setContext", "omp.sessions.showArchived", tree.showArchived);
-		void vscode.commands.executeCommand("setContext", "omp.sessions.hideFinished", tree.hideFinished);
-		void vscode.commands.executeCommand("setContext", "omp.sessions.hideCompleted", tree.hideCompleted);
-		void vscode.commands.executeCommand("setContext", "omp.sessions.scopeAll", config().get<string>("sessionScope") === "all");
-		void vscode.commands.executeCommand("setContext", "omp.sessions.groupBy", groupBy());
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.filtered", !!tree.filter);
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.showArchived", tree.showArchived);
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.hideFinished", tree.hideFinished);
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.hideCompleted", tree.hideCompleted);
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.scopeAll", config().get<string>("sessionScope") === "all");
+		void vscode.commands.executeCommand("setContext", "switchyard.sessions.groupBy", groupBy());
 	};
 	const setFilter = (text: string) => {
 		tree.filter = text.trim();
@@ -187,8 +187,8 @@ export function registerOrganize(api: OmpApi): void {
 	updateChrome();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sessionScope")) updateChrome();
-			if (e.affectsConfiguration("omp.sessionScope")) api.refreshTree();
+			if (e.affectsConfiguration("switchyard.groupBy") || e.affectsConfiguration("switchyard.sessionScope")) updateChrome();
+			if (e.affectsConfiguration("switchyard.sessionScope")) api.refreshTree();
 		}),
 	);
 
@@ -400,7 +400,7 @@ export function registerOrganize(api: OmpApi): void {
 	};
 
 	// ---------- view title ----------
-	reg("omp.toggleGrouping", async () => {
+	reg("switchyard.toggleGrouping", async () => {
 		const current = groupBy();
 		const pick = await vscode.window.showQuickPick(
 			GROUP_MODES.map(mode => ({ label: GROUP_MODE_INFO[mode].label, detail: GROUP_MODE_INFO[mode].detail, description: mode === current ? "current" : undefined, mode })),
@@ -409,7 +409,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (pick && pick.mode !== current) await updateSetting("groupBy", pick.mode);
 	});
 
-	reg("omp.organize.sortBy", async () => {
+	reg("switchyard.organize.sortBy", async () => {
 		const current = sortBy();
 		const pick = await vscode.window.showQuickPick(
 			SORT_MODES.map(mode => ({ label: SORT_MODE_INFO[mode].label, detail: SORT_MODE_INFO[mode].detail, description: mode === current ? "current" : undefined, mode })),
@@ -418,7 +418,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (pick && pick.mode !== current) await updateSetting("sortBy", pick.mode);
 	});
 
-	reg("omp.organize.filter", () => {
+	reg("switchyard.organize.filter", () => {
 		const before = tree.filter;
 		const box = vscode.window.createInputBox();
 		box.title = "Filter Sessions";
@@ -437,36 +437,36 @@ export function registerOrganize(api: OmpApi): void {
 		});
 		box.show();
 	});
-	reg("omp.organize.clearFilter", () => setFilter(""));
+	reg("switchyard.organize.clearFilter", () => setFilter(""));
 
 	const setShowArchived = (value: boolean) => {
 		tree.showArchived = value;
-		void context.globalState.update("omp.organize.showArchived", value);
+		void context.globalState.update("switchyard.organize.showArchived", value);
 		tree.refresh();
 		updateChrome();
 	};
-	reg("omp.organize.showArchived", () => setShowArchived(true));
-	reg("omp.organize.hideArchived", () => setShowArchived(false));
+	reg("switchyard.organize.showArchived", () => setShowArchived(true));
+	reg("switchyard.organize.hideArchived", () => setShowArchived(false));
 	const setHideFinished = (value: boolean) => {
 		tree.hideFinished = value;
-		void context.globalState.update("omp.organize.hideFinished", value);
+		void context.globalState.update("switchyard.organize.hideFinished", value);
 		tree.refresh();
 		updateChrome();
 	};
-	reg("omp.organize.hideFinished", () => setHideFinished(true));
-	reg("omp.organize.showFinished", () => setHideFinished(false));
+	reg("switchyard.organize.hideFinished", () => setHideFinished(true));
+	reg("switchyard.organize.showFinished", () => setHideFinished(false));
 	const setHideCompleted = (value: boolean) => {
 		tree.hideCompleted = value;
-		void context.globalState.update("omp.organize.hideCompleted", value);
+		void context.globalState.update("switchyard.organize.hideCompleted", value);
 		tree.refresh();
 		updateChrome();
 	};
-	reg("omp.organize.hideCompleted", () => setHideCompleted(true));
-	reg("omp.organize.showCompleted", () => setHideCompleted(false));
-	reg("omp.sessions.showAll", () => updateSetting("sessionScope", "all"));
-	reg("omp.sessions.showWorkspace", () => updateSetting("sessionScope", "workspace"));
+	reg("switchyard.organize.hideCompleted", () => setHideCompleted(true));
+	reg("switchyard.organize.showCompleted", () => setHideCompleted(false));
+	reg("switchyard.sessions.showAll", () => updateSetting("sessionScope", "all"));
+	reg("switchyard.sessions.showWorkspace", () => updateSetting("sessionScope", "workspace"));
 
-	reg("omp.organize.newGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.newGroup", async (arg?: unknown, all?: unknown) => {
 		const nodes = pickedNodes(arg, all);
 		const parent = groupsOf(nodes)[0];
 		const group = await createGroup(parent?.id);
@@ -477,7 +477,7 @@ export function registerOrganize(api: OmpApi): void {
 	});
 
 	// ---------- sessions (multi-select aware) ----------
-	reg("omp.organize.moveToGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.moveToGroup", async (arg?: unknown, all?: unknown) => {
 		const nodes = pickedNodes(arg, all);
 		const groups = groupsOf(nodes);
 		const metas = groups.length ? sessionIdsOf(nodes).flatMap(id => sessions.get(id) ?? []) : await targetSessions(arg, all, "Move which session to a group?");
@@ -493,7 +493,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (gid) offerGroupMode();
 	});
 
-	reg("omp.organize.removeFromGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.removeFromGroup", async (arg?: unknown, all?: unknown) => {
 		const metas = await targetSessions(arg, all, "Remove which session from its group?", m => !!store.session(m.id).groupId);
 		store.setGroup(
 			metas.map(m => m.id),
@@ -501,7 +501,7 @@ export function registerOrganize(api: OmpApi): void {
 		);
 	});
 
-	reg("omp.organize.setColor", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.setColor", async (arg?: unknown, all?: unknown) => {
 		const nodes = pickedNodes(arg, all);
 		const groups = groupsOf(nodes);
 		const metas = groups.length ? sessionIdsOf(nodes).flatMap(id => sessions.get(id) ?? []) : await targetSessions(arg, all, "Color which session?");
@@ -520,7 +520,7 @@ export function registerOrganize(api: OmpApi): void {
 		for (const g of groups) store.updateGroup(g.id, { color: pick.color ?? null });
 	});
 
-	reg("omp.organize.setPriority", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.setPriority", async (arg?: unknown, all?: unknown) => {
 		const metas = await targetSessions(arg, all, "Set the priority of which session?");
 		if (!metas.length) return;
 		const current = metas.length === 1 ? (store.session(metas[0].id).priority ?? "normal") : undefined;
@@ -544,10 +544,10 @@ export function registerOrganize(api: OmpApi): void {
 		store.setPinned(ids, pinned);
 		for (const id of ids) void sessions.setPinned(id, pinned).catch(err => api.ao.log.warn(`AO pin ${id}: ${String(err)}`));
 	};
-	flagCommand("omp.organize.pin", "Pin which session?", ids => pin(ids, true), m => !store.session(m.id).pinned);
-	flagCommand("omp.organize.unpin", "Unpin which session?", ids => pin(ids, false), m => !!store.session(m.id).pinned);
+	flagCommand("switchyard.organize.pin", "Pin which session?", ids => pin(ids, true), m => !store.session(m.id).pinned);
+	flagCommand("switchyard.organize.unpin", "Unpin which session?", ids => pin(ids, false), m => !!store.session(m.id).pinned);
 	flagCommand(
-		"omp.organize.archive",
+		"switchyard.organize.archive",
 		"Archive which session?",
 		ids => {
 			store.setArchived(ids, true);
@@ -555,9 +555,9 @@ export function registerOrganize(api: OmpApi): void {
 		},
 		m => !store.session(m.id).archived,
 	);
-	flagCommand("omp.organize.unarchive", "Unarchive which session?", ids => store.setArchived(ids, false), m => !!store.session(m.id).archived);
+	flagCommand("switchyard.organize.unarchive", "Unarchive which session?", ids => store.setArchived(ids, false), m => !!store.session(m.id).archived);
 	flagCommand(
-		"omp.markCompleted",
+		"switchyard.markCompleted",
 		"Mark which session completed?",
 		ids => {
 			void sessions.setCompleted(ids, true).catch(err => vscode.window.showWarningMessage(plain(`Could not mark completed: ${err instanceof Error ? err.message : String(err)}`)));
@@ -565,9 +565,9 @@ export function registerOrganize(api: OmpApi): void {
 		},
 		m => !m.queue?.completed,
 	);
-	flagCommand("omp.markNotCompleted", "Reopen which completed session?", ids => void sessions.setCompleted(ids, false).catch(err => vscode.window.showWarningMessage(plain(`Could not reopen: ${err instanceof Error ? err.message : String(err)}`))), m => !!m.queue?.completed);
+	flagCommand("switchyard.markNotCompleted", "Reopen which completed session?", ids => void sessions.setCompleted(ids, false).catch(err => vscode.window.showWarningMessage(plain(`Could not reopen: ${err instanceof Error ? err.message : String(err)}`))), m => !!m.queue?.completed);
 
-	reg("omp.organize.editTags", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.editTags", async (arg?: unknown, all?: unknown) => {
 		const metas = await targetSessions(arg, all, "Tag which session?");
 		if (!metas.length) return;
 		if (metas.length === 1) {
@@ -590,7 +590,7 @@ export function registerOrganize(api: OmpApi): void {
 		});
 	});
 
-	reg("omp.organize.setLane", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.setLane", async (arg?: unknown, all?: unknown) => {
 		const metas = await targetSessions(arg, all, "Move which session to a board lane?");
 		if (!metas.length) return;
 		const current = metas.length === 1 ? store.session(metas[0].id).lane : undefined;
@@ -621,24 +621,24 @@ export function registerOrganize(api: OmpApi): void {
 			if (delta === "top") store.moveToTop([sessionNode.meta.id], siblings);
 			else store.move(sessionNode.meta.id, delta, siblings);
 		});
-	moveCommand("omp.organize.moveUp", -1);
-	moveCommand("omp.organize.moveDown", 1);
-	moveCommand("omp.organize.moveToTop", "top");
+	moveCommand("switchyard.organize.moveUp", -1);
+	moveCommand("switchyard.organize.moveDown", 1);
+	moveCommand("switchyard.organize.moveToTop", "top");
 
 	// ---------- groups ----------
-	reg("omp.organize.newSubgroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.newSubgroup", async (arg?: unknown, all?: unknown) => {
 		const parent = await pickGroupFrom(arg, all, "New sub-group inside which group?");
 		if (parent && (await createGroup(parent.id))) offerGroupMode();
 	});
 
-	reg("omp.organize.renameGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.renameGroup", async (arg?: unknown, all?: unknown) => {
 		const g = await pickGroupFrom(arg, all, "Rename which group?");
 		if (!g) return;
 		const name = (await vscode.window.showInputBox({ prompt: "Group name", value: g.name }))?.trim();
 		if (name && name !== g.name) store.updateGroup(g.id, { name });
 	});
 
-	reg("omp.organize.setGroupIcon", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.setGroupIcon", async (arg?: unknown, all?: unknown) => {
 		const g = await pickGroupFrom(arg, all, "Change the icon of which group?");
 		if (!g) return;
 		const pick = await vscode.window.showQuickPick(
@@ -653,7 +653,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (icon) store.updateGroup(g.id, { icon: icon === "folder" ? null : icon });
 	});
 
-	reg("omp.organize.deleteGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.deleteGroup", async (arg?: unknown, all?: unknown) => {
 		const g = await pickGroupFrom(arg, all, "Delete which group?");
 		if (!g) return;
 		const ids = subtree(store.data, g.id);
@@ -670,7 +670,7 @@ export function registerOrganize(api: OmpApi): void {
 		store.deleteGroup(g.id);
 	});
 
-	reg("omp.organize.newSessionInGroup", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.newSessionInGroup", async (arg?: unknown, all?: unknown) => {
 		const g = await pickGroupFrom(arg, all, "New session in which group?");
 		if (!g) return;
 		const cwd = await api.pickFolder();
@@ -680,7 +680,7 @@ export function registerOrganize(api: OmpApi): void {
 	});
 
 	// ---------- bulk lifecycle ----------
-	reg("omp.organize.stopSelected", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.stopSelected", async (arg?: unknown, all?: unknown) => {
 		const metas = (await targetSessions(arg, all, "Stop which session?", m => m.status !== "stopped")).filter(m => m.status !== "stopped");
 		if (!metas.length) return;
 		const working = metas.filter(m => m.status === "working").length;
@@ -696,7 +696,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (failed.length) void vscode.window.showErrorMessage(plain(`Could not stop ${failed.length} session(s): ${String((failed[0] as PromiseRejectedResult).reason)}`));
 	});
 
-	reg("omp.organize.resumeSelected", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.resumeSelected", async (arg?: unknown, all?: unknown) => {
 		const metas = (await targetSessions(arg, all, "Resume which session?", m => m.status === "stopped")).filter(m => m.status === "stopped");
 		if (metas.length === 1) {
 			await api.launchAndOpen({ cwd: metas[0].cwd, id: metas[0].id });
@@ -715,7 +715,7 @@ export function registerOrganize(api: OmpApi): void {
 		if (started) vscode.window.setStatusBarMessage(`$(debug-start) Resumed ${started} session${started === 1 ? "" : "s"}`, 4000);
 	});
 
-	reg("omp.organize.deleteSelected", async (arg?: unknown, all?: unknown) => {
+	reg("switchyard.organize.deleteSelected", async (arg?: unknown, all?: unknown) => {
 		const picked = await targetSessions(arg, all, "Delete which stopped session?", m => m.status === "stopped");
 		const metas = picked.filter(m => m.status === "stopped");
 		const running = picked.length - metas.length;

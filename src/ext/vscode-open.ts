@@ -1,8 +1,8 @@
-// "Open in VS Code" from the Hermes page or `omp-sessions vscode` (src/shared/vscode-open.ts): this window
+// "Open in VS Code" from the Hermes page or `switchyard vscode` (src/shared/vscode-open.ts): this window
 // records itself (authority, scheme, folders) when it gains focus, tells its terminals its authority so
-// `omp-sessions vscode` run there targets a matching window, takes pending open requests when it gains focus
+// `switchyard vscode` run there targets a matching window, takes pending open requests when it gains focus
 // or a new session shows up (the request's link focused or opened it), and handles
-// vscode://mbaradad.omp-sessions/open?session=<id>.
+// vscode://mbaradad.switchyard/open?session=<id>.
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import { stateRoot } from "../shared/protocol";
@@ -76,7 +76,7 @@ export function registerVscodeOpen(api: OmpApi): void {
 				if (uri.path !== "/open") return;
 				const query = new URLSearchParams(uri.query).get("session")?.trim() ?? "";
 				if (!isSessionId(query)) {
-					void vscode.window.showWarningMessage("That omp Sessions link names no valid session id.");
+					void vscode.window.showWarningMessage("That Switchyard link names no valid session id.");
 					return;
 				}
 				const all = api.sessions.all();

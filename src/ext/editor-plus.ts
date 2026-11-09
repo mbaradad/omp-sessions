@@ -38,14 +38,14 @@ import type { ChatPanel } from "./panel";
 import { checkoutRoot, inCheckout } from "./checkout";
 import { plain } from "./plain";
 
-const HISTORY_KEY = "omp.editWithOmp.history";
+const HISTORY_KEY = "switchyard.editWithOmp.history";
 const HISTORY_MAX = 20;
 /** Give up waiting for an "Edit with omp" turn that never started. */
 const EDIT_START_TIMEOUT_MS = 60_000;
 const HINT_MS = 15_000;
 const FILE_DIAGNOSTICS_CAP = 40;
 const WORKSPACE_ERRORS_CAP = 50;
-const FAILED_COMMAND_CONTEXT = "omp.hasFailedCommand";
+const FAILED_COMMAND_CONTEXT = "switchyard.hasFailedCommand";
 
 export function registerEditorPlus(api: OmpApi): void {
 	const { context, sessions } = api;
@@ -166,8 +166,8 @@ export function registerEditorPlus(api: OmpApi): void {
 		column: vscode.ViewColumn | undefined;
 	}
 	const pendingEdits = new Set<PendingEdit>();
-	const editStatus = vscode.window.createStatusBarItem("omp.editWithOmp", vscode.StatusBarAlignment.Left, 49);
-	editStatus.name = "omp Edit";
+	const editStatus = vscode.window.createStatusBarItem("switchyard.editWithOmp", vscode.StatusBarAlignment.Left, 49);
+	editStatus.name = "Switchyard Edit";
 	context.subscriptions.push(editStatus);
 
 	function updateEditStatus(): void {
@@ -176,9 +176,9 @@ export function registerEditorPlus(api: OmpApi): void {
 			editStatus.hide();
 			return;
 		}
-		editStatus.text = all.length === 1 ? `$(sync~spin) omp: editing ${all[0].label}` : `$(sync~spin) omp: ${all.length} edits`;
+		editStatus.text = all.length === 1 ? `$(sync~spin) Switchyard: editing ${all[0].label}` : `$(sync~spin) Switchyard: ${all.length} edits`;
 		editStatus.tooltip = `${all.map(e => `${e.label} — ${sessions.get(e.sessionId)?.title ?? e.sessionId}`).join("\n")}\nClick to open the chat.`;
-		editStatus.command = { command: "omp.openSession", title: "Open chat", arguments: [all[all.length - 1].sessionId] };
+		editStatus.command = { command: "switchyard.openSession", title: "Open chat", arguments: [all[all.length - 1].sessionId] };
 		editStatus.show();
 	}
 
@@ -198,7 +198,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		}
 		const why = outcome === "stopped" ? "The session stopped before changing" : outcome === "timeout" ? "omp did not start working on" : "omp finished without changing";
 		const choice = await vscode.window.showInformationMessage(plain(`${why} ${edit.label}.`), "Open Chat");
-		if (choice) await vscode.commands.executeCommand("omp.openSession", edit.sessionId);
+		if (choice) await vscode.commands.executeCommand("switchyard.openSession", edit.sessionId);
 	}
 
 	function checkEdits(): void {
@@ -232,7 +232,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		{ dispose: () => clearInterval(editPoll) },
 	);
 
-	reg("omp.editWithOmp", async () => {
+	reg("switchyard.editWithOmp", async () => {
 		const editor = fileEditor();
 		if (!editor) return;
 		const doc = editor.document;
@@ -272,10 +272,10 @@ export function registerEditorPlus(api: OmpApi): void {
 		await panel.sendPrompt(inCheckout(build(codeRef(editor.document, target, undefined)), editor.document.uri.fsPath));
 	}
 
-	reg("omp.writeTests", () => sendUnitPrompt(writeTestsPrompt, "write tests"));
-	reg("omp.addDocs", () => sendUnitPrompt(addDocsPrompt, "add docs"));
+	reg("switchyard.writeTests", () => sendUnitPrompt(writeTestsPrompt, "write tests"));
+	reg("switchyard.addDocs", () => sendUnitPrompt(addDocsPrompt, "add docs"));
 
-	reg("omp.explainFile", async (arg?: unknown) => {
+	reg("switchyard.explainFile", async (arg?: unknown) => {
 		const uri = arg instanceof vscode.Uri ? arg : fileEditor()?.document.uri;
 		if (!uri || uri.scheme !== "file") return;
 		const panel = await panelFor(folderOf(uri));
@@ -313,7 +313,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		};
 	}
 
-	reg("omp.fixFileProblems", async (arg?: unknown) => {
+	reg("switchyard.fixFileProblems", async (arg?: unknown) => {
 		const uri = arg instanceof vscode.Uri ? arg : fileEditor()?.document.uri;
 		if (!uri || uri.scheme !== "file") return;
 		const diagnostics = vscode.languages.getDiagnostics(uri).map(diagnosticInfo);
@@ -328,7 +328,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		if (prompt) await panel.sendPrompt(inCheckout(prompt, uri.fsPath));
 	});
 
-	reg("omp.fixWorkspaceProblems", async () => {
+	reg("switchyard.fixWorkspaceProblems", async () => {
 		const withErrors = vscode.languages
 			.getDiagnostics()
 			.filter(([uri, diags]) => uri.scheme === "file" && diags.some(d => d.severity === vscode.DiagnosticSeverity.Error))
@@ -362,10 +362,10 @@ export function registerEditorPlus(api: OmpApi): void {
 	const captures = new Map<vscode.TerminalShellExecution, { output: CappedOutput; done: Promise<void> }>();
 	const failures = new Map<vscode.Terminal, Failure>();
 	let lastFailure: Failure | undefined;
-	const hint = vscode.window.createStatusBarItem("omp.fixFailedCommand", vscode.StatusBarAlignment.Left, 48);
-	hint.name = "omp Failed Command";
-	hint.text = "$(lightbulb) omp: fix failed command?";
-	hint.command = "omp.fixLastFailedCommand";
+	const hint = vscode.window.createStatusBarItem("switchyard.fixFailedCommand", vscode.StatusBarAlignment.Left, 48);
+	hint.name = "Switchyard Failed Command";
+	hint.text = "$(lightbulb) Switchyard: fix failed command?";
+	hint.command = "switchyard.fixLastFailedCommand";
 	let hintTimer: NodeJS.Timeout | undefined;
 	context.subscriptions.push(hint, { dispose: () => clearTimeout(hintTimer) });
 
@@ -418,7 +418,7 @@ export function registerEditorPlus(api: OmpApi): void {
 			failures.set(e.terminal, failure);
 			lastFailure = failure;
 			setHasFailure();
-			if (!vscode.workspace.getConfiguration("omp").get<boolean>("terminalHints", true)) return;
+			if (!vscode.workspace.getConfiguration("switchyard").get<boolean>("terminalHints", true)) return;
 			hint.tooltip = `\`${excerpt(failure.commandLine, 60)}\` exited with ${failure.exitCode}. Send it to "${meta.title}".`;
 			hint.show();
 			clearTimeout(hintTimer);
@@ -434,7 +434,7 @@ export function registerEditorPlus(api: OmpApi): void {
 		}),
 	);
 
-	reg("omp.fixLastFailedCommand", async (arg?: unknown) => {
+	reg("switchyard.fixLastFailedCommand", async (arg?: unknown) => {
 		const terminal = [...failures.keys()].find(t => t === arg) ?? vscode.window.activeTerminal;
 		const failure = (terminal && failures.get(terminal)) ?? lastFailure;
 		if (!failure) {
@@ -547,7 +547,7 @@ export function registerEditorPlus(api: OmpApi): void {
 			{ scheme: "file" },
 			{
 				async provideHover(doc, position) {
-					if (!vscode.workspace.getConfiguration("omp").get<boolean>("showChangeDecorations", true)) return undefined;
+					if (!vscode.workspace.getConfiguration("switchyard").get<boolean>("showChangeDecorations", true)) return undefined;
 					const file = doc.uri.fsPath;
 					const candidates = sessions.all().filter(m => m.changedFiles > 0 && (m.status !== "stopped" || sessions.inWorkspace(m)));
 					for (const meta of candidates) {
@@ -567,7 +567,7 @@ export function registerEditorPlus(api: OmpApi): void {
 						const { change } = found.edits[index];
 						const prompt = await promptOf(meta, change.toolCallId);
 						const md = new vscode.MarkdownString();
-						md.isTrusted = { enabledCommands: ["omp.openSession", "omp.openSessionFileDiff", "omp.revertFile"] };
+						md.isTrusted = { enabledCommands: ["switchyard.openSession", "switchyard.openSessionFileDiff", "switchyard.revertFile"] };
 						md.supportThemeIcons = true;
 						md.appendMarkdown("$(sparkle) **Changed by omp** — ");
 						md.appendText(meta.title);
@@ -579,9 +579,9 @@ export function registerEditorPlus(api: OmpApi): void {
 						md.appendText(`${change.toolName} · ${relativeTime(change.timestamp)}`);
 						md.appendMarkdown(
 							`\n\n${[
-								commandLink("Open chat", "omp.openSession", [meta.id], "Open the session's chat"),
-								commandLink("Diff", "omp.openSessionFileDiff", [meta.id, file], "Diff against the content before the session touched this file"),
-								commandLink("Revert file", "omp.revertFile", [meta.id, file], "Restore the content from before the session touched this file"),
+								commandLink("Open chat", "switchyard.openSession", [meta.id], "Open the session's chat"),
+								commandLink("Diff", "switchyard.openSessionFileDiff", [meta.id, file], "Diff against the content before the session touched this file"),
+								commandLink("Revert file", "switchyard.revertFile", [meta.id, file], "Restore the content from before the session touched this file"),
 							].join(" · ")}`,
 						);
 						return new vscode.Hover(md, doc.lineAt(position.line).range);

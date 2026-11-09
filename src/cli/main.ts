@@ -1,4 +1,4 @@
-// omp-sessions: the terminal client of Switchyard. Sessions are AO sessions (the AO daemon runs omp
+// switchyard: the terminal client of Switchyard. Sessions are AO sessions (the AO daemon runs omp
 // through `omp acp`, src/ao); queues, schedules, priorities and the concurrency limit belong to the
 // planner service (PLANNER-API.md, plan.ts); groups, colors, tags and archive to organize.json.
 import * as fs from "node:fs";
@@ -56,7 +56,7 @@ async function planner(): Promise<Planner> {
 	const running = await plannerIfRunning();
 	if (running) return running;
 	const started = await connectPlanner({ start: true });
-	if (!started) throw new Error("the planner service did not start (omp-sessions server log)");
+	if (!started) throw new Error("the planner service did not start (switchyard server log)");
 	plannerPromise = Promise.resolve(started);
 	return started;
 }
@@ -173,7 +173,7 @@ async function cmdList(args: Args): Promise<void> {
 	if (shown.length === 0) process.stdout.write(c.dim(filtered ? "No matching sessions.\n" : all ? "No sessions.\n" : "No active sessions.\n"));
 	else printTable(shown);
 	const hidden = sessions.length - shown.length;
-	if (hidden > 0) process.stdout.write(c.dim(`${hidden} finished session${hidden === 1 ? "" : "s"} hidden · omp-sessions ls --all\n`));
+	if (hidden > 0) process.stdout.write(c.dim(`${hidden} finished session${hidden === 1 ? "" : "s"} hidden · switchyard ls --all\n`));
 	if (shown.some(s => s.lane?.waiting)) {
 		const p = await plannerIfRunning();
 		const st = p ? await p.call("status", {}) : undefined;
@@ -283,7 +283,7 @@ async function cmdNew(args: Args): Promise<number> {
 	const ompArgs = args.dashes;
 	if (ompArgs.length) {
 		const report = extensionReport((await findDaemon().catch(() => undefined))?.pid);
-		if (!report.shim.installed) throw new Error(`omp flags after -- need Switchyard's omp shim (${report.shim.path}), which is not installed: it appends them to omp acp (omp-sessions omp-extension install)`);
+		if (!report.shim.installed) throw new Error(`omp flags after -- need Switchyard's omp shim (${report.shim.path}), which is not installed: it appends them to omp acp (switchyard omp-extension install)`);
 		if (report.shim.onDaemonPath === false) throw new Error(`the AO daemon was not started with ${path.dirname(report.shim.path)} first on its PATH, so omp flags after -- would be ignored: restart AO through Switchyard (it starts it that way)`);
 	}
 	const model = value(args, "model") ?? defaults.model;
@@ -391,7 +391,7 @@ async function cmdTail(args: Args): Promise<number> {
 	for (const item of items.slice(-lines)) for (const l of itemLines(item, width)) process.stdout.write(`${l}\n`);
 	if (stopped) {
 		process.stdout.write(c.dim(`session stopped${s.model.exitReason ? `: ${s.model.exitReason}` : ""} (${ago(s.model.updatedAt)} ago)\n`));
-		if (flag(args, "follow")) process.stdout.write(c.dim(`omp-sessions resume ${s.id} to continue it\n`));
+		if (flag(args, "follow")) process.stdout.write(c.dim(`switchyard resume ${s.id} to continue it\n`));
 	}
 	return 0;
 }
@@ -418,10 +418,10 @@ function printReport(r: CliReport): void {
 			process.stdout.write(`  ${c.bold(`${i + 1})`)} ${q.question}\n`);
 			q.options.forEach((o, k) => process.stdout.write(`     ${c.bold(String(k + 1))}. ${o}\n`));
 		});
-		process.stdout.write(c.dim(`answer: omp-sessions answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
+		process.stdout.write(c.dim(`answer: switchyard answer ${r.id} <choice>${r.question.questions && r.question.questions.length > 1 ? " (one per question, separated by |)" : ""}\n`));
 	}
 	if (r.waitReason) process.stdout.write(c.blue(`held: ${r.waitReason}\n`));
-	if (r.upstream?.length && r.upstreamState && r.upstreamState !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstreamState] ?? c.dim)(`upstream ${r.upstreamState}`)} ${c.dim(r.upstream.map(e => `${e.parentSession ?? e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstreamState === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: omp-sessions plan sync ${r.id} --rerun`) : ""}\n`);
+	if (r.upstream?.length && r.upstreamState && r.upstreamState !== "in-sync") process.stdout.write(`${(EDGE_COLOR[r.upstreamState] ?? c.dim)(`upstream ${r.upstreamState}`)} ${c.dim(r.upstream.map(e => `${e.parentSession ?? e.parent} ${e.state}${e.files?.length ? ` (${e.files.join(", ")})` : ""}`).join(" · "))}${r.upstreamState === "upstream-changed" ? c.dim(`\nre-run with the parents' changes: switchyard plan sync ${r.id} --rerun`) : ""}\n`);
 	if (r.exitReason) process.stdout.write(c.dim(`stopped: ${r.exitReason}\n`));
 	if (r.reply && !r.question) process.stdout.write(`\n${r.reply}\n`);
 }
@@ -563,7 +563,7 @@ async function cmdAnswer(args: Args): Promise<number> {
 		const after = await client.getConversation(s.id, { limit: 5 });
 		const still = after.activities.some(a => a.requestId === question.id && a.status === "pending");
 		if (!still) break;
-		if (performance.now() > deadline) throw new Error("the session did not take the answer (answer it in VS Code, the phone app or omp-sessions attach)");
+		if (performance.now() > deadline) throw new Error("the session did not take the answer (answer it in VS Code, the phone app or switchyard attach)");
 		await sleep(250);
 	}
 	const title = (question.message ?? question.title).split("\n")[0];
@@ -595,7 +595,7 @@ async function cmdProjects(args: Args): Promise<number> {
 
 function skillContent(): string {
 	const file = path.join(__dirname, SKILL_FILE);
-	if (!fs.existsSync(file)) throw new Error(`${SKILL_FILE} is missing next to the CLI (${__dirname}); reinstall omp-sessions`);
+	if (!fs.existsSync(file)) throw new Error(`${SKILL_FILE} is missing next to the CLI (${__dirname}); reinstall switchyard`);
 	return fs.readFileSync(file, "utf8");
 }
 
@@ -626,7 +626,7 @@ function cmdSkill(args: Args): number {
 				const mark = outcome === "skipped" ? c.yellow(outcome) : outcome === "unchanged" ? c.dim(outcome) : c.green(outcome);
 				process.stdout.write(`${pad(mark, 10)} ${t.platform}  ${c.dim(path.join(t.dir, "SKILL.md"))}\n`);
 			}
-			if (skipped) process.stdout.write(c.dim("skipped: a SKILL.md omp-sessions didn't write is in the way (--force replaces it)\n"));
+			if (skipped) process.stdout.write(c.dim("skipped: a SKILL.md switchyard didn't write is in the way (--force replaces it)\n"));
 			return 0;
 		}
 		case "uninstall": {
@@ -671,24 +671,24 @@ function cmdHermes(args: Args): number {
 				const mark = u.outcome === "skipped" || u.outcome === "busy" ? c.yellow(u.outcome) : u.outcome === "unchanged" ? c.dim(u.outcome) : c.green(u.outcome);
 				process.stdout.write(`${pad(mark, 10)} ${several || t.label !== "default" ? `${c.bold(t.label)} ` : ""}${dir}\n`);
 				if (u.outcome === "skipped") {
-					process.stdout.write(c.dim("a plugin folder omp-sessions didn't write is in the way (--force replaces it)\n"));
+					process.stdout.write(c.dim("a plugin folder switchyard didn't write is in the way (--force replaces it)\n"));
 					failed = true;
 					continue;
 				}
 				if (u.outcome === "busy") {
-					process.stdout.write(c.dim("another omp-sessions or VS Code window is installing the plugin there right now; run it again in a moment\n"));
+					process.stdout.write(c.dim("another switchyard or VS Code window is installing the plugin there right now; run it again in a moment\n"));
 					failed = true;
 					continue;
 				}
 				const run = u.reload ?? u.enable;
 				if (run?.output) process.stdout.write(`${run.output}\n`);
 				if (u.reload?.ok) process.stdout.write(`${c.green("reloaded in the running gateway")} ${c.dim("(hooks and commands now, tools in new Hermes sessions)")}\n`);
-				if (u.dashboardChanged) process.stdout.write(c.dim("the dashboard's omp Sessions page backend changed: it loads when the dashboard restarts\n"));
-				if (u.leftDisabled) process.stdout.write(`${c.red(`the plugin was left DISABLED in profile ${t.label}`)} (enabling it again failed twice): run ${c.bold(`hermes -p ${t.label} plugins enable omp-sessions`)}\n`);
+				if (u.dashboardChanged) process.stdout.write(c.dim("the dashboard's Switchyard page backend changed: it loads when the dashboard restarts\n"));
+				if (u.leftDisabled) process.stdout.write(`${c.red(`the plugin was left DISABLED in profile ${t.label}`)} (enabling it again failed twice): run ${c.bold(`hermes -p ${t.label} plugins enable switchyard`)}\n`);
 				if (run && !run.ok) failed = true;
 			}
 			if (!hermes) {
-				process.stdout.write(`${c.yellow("hermes not found")}: enable it with ${c.bold("hermes [-p <profile>] plugins enable omp-sessions")}\n`);
+				process.stdout.write(`${c.yellow("hermes not found")}: enable it with ${c.bold("hermes [-p <profile>] plugins enable switchyard")}\n`);
 				return 1;
 			}
 			if (!failed) for (const line of AFTER_INSTALL) process.stdout.write(`${c.dim(line)}\n`);
@@ -701,7 +701,7 @@ function cmdHermes(args: Args): number {
 					const res = disablePlugin(hermes, t);
 					if (res.output) process.stdout.write(`${res.output}\n`);
 				}
-				process.stdout.write(uninstallPlugin(dir) ? `${c.yellow("removed")} ${dir}\n` : c.dim(`nothing omp-sessions installed at ${dir}\n`));
+				process.stdout.write(uninstallPlugin(dir) ? `${c.yellow("removed")} ${dir}\n` : c.dim(`nothing switchyard installed at ${dir}\n`));
 			}
 			return 0;
 		}
@@ -741,8 +741,8 @@ async function cmdStop(args: Args): Promise<number> {
 		results.push({ id: s.id, title: s.title, stopped: live, unqueued });
 		if (flag(args, "json")) continue;
 		if (live) process.stdout.write(`${c.green("stopped")} ${s.id} ${s.title}${unqueued ? c.dim(" (its queue is paused)") : ""}\n`);
-		else if (unqueued) process.stdout.write(`${c.green("unqueued")} ${s.id} ${s.title} ${c.dim("(it won't start by itself; omp-sessions queue <session> start)")}\n`);
-		else process.stderr.write(`omp-sessions: ${s.id} ${s.title} is not running (already stopped)\n`);
+		else if (unqueued) process.stdout.write(`${c.green("unqueued")} ${s.id} ${s.title} ${c.dim("(it won't start by itself; switchyard queue <session> start)")}\n`);
+		else process.stderr.write(`switchyard: ${s.id} ${s.title} is not running (already stopped)\n`);
 	}
 	if (flag(args, "json")) process.stdout.write(`${JSON.stringify(results)}\n`);
 	return results.every(r => r.stopped || r.unqueued) ? 0 : 1;
@@ -797,7 +797,7 @@ async function cmdAbort(args: Args): Promise<number> {
 	const discarded = busy ? (await (await ao()).interruptWithQueue(s.id)).discarded : [];
 	if (flag(args, "json")) process.stdout.write(`${JSON.stringify({ id: s.id, aborted: busy, discarded })}\n`);
 	else if (busy) process.stdout.write(`${c.yellow("aborted")} ${s.id} ${s.title}\n`);
-	if (!busy) process.stderr.write(`omp-sessions: ${s.id} ${s.title} is not working\n`);
+	if (!busy) process.stderr.write(`switchyard: ${s.id} ${s.title} is not working\n`);
 	else if (discarded.length && !flag(args, "json")) {
 		process.stderr.write(c.yellow(`AO discarded ${discarded.length} queued message${discarded.length === 1 ? "" : "s"}; send ${discarded.length === 1 ? "it" : "them"} again if still wanted:\n`));
 		for (const d of discarded) process.stderr.write(c.dim(`  ${truncate(oneLine(d.text), 100)}\n`));
@@ -834,7 +834,7 @@ async function switchMode(client: AoClient, s: Session, mode: PermissionMode): P
 }
 
 async function cmdMode(args: Args): Promise<void> {
-	// `omp-sessions mode plan` = the latest session in this folder.
+	// `switchyard mode plan` = the latest session in this folder.
 	const [ref, want] = args._.length === 1 && permissionModeOf(args._[0].toLowerCase()) ? [".", args._[0]] : [args._[0] ?? ".", args._[1]];
 	const s = await findSession(ref);
 	const client = await ao();
@@ -878,7 +878,7 @@ async function cmdModel(args: Args): Promise<number> {
 	// A running omp says which models it offers (its own choices, not the catalog): refuse another one before changing the setting.
 	if (live) {
 		const choices = await sessionModelChoices(client, s.id);
-		if (choices?.length && !choices.some(m => m.value === want)) throw new Error(`omp offers no model ${want} to ${s.id} (omp-sessions models --session ${s.id} lists them)`);
+		if (choices?.length && !choices.some(m => m.value === want)) throw new Error(`omp offers no model ${want} to ${s.id} (switchyard models --session ${s.id} lists them)`);
 	}
 	await client.setTurnSettings(s.id, { model: want });
 	const applied = live ? "live" : "next-resume";
@@ -895,7 +895,7 @@ const TASK_MARK: Record<QueueTask["status"], string> = { pending: "·", running:
 function printQueue(s: Session, q: PlannerQueue): void {
 	const state = q.tasks.some(t => t.status === "running") ? c.yellow("running") : q.autoRun ? c.blue("auto-run on") : q.startAt ? c.blue(`starts ${new Date(q.startAt).toLocaleString()}`) : c.dim("paused");
 	process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${state}\n`);
-	if (q.tasks.length === 0) process.stdout.write(c.dim("  no tasks · omp-sessions queue <session> add <task>\n"));
+	if (q.tasks.length === 0) process.stdout.write(c.dim("  no tasks · switchyard queue <session> add <task>\n"));
 	const width = termWidth();
 	q.tasks.forEach((t, i) => {
 		const color = t.status === "done" ? c.green : t.status === "failed" ? c.red : t.status === "running" ? c.yellow : t.status === "skipped" ? c.dim : (x: string) => x;
@@ -1210,7 +1210,7 @@ async function cmdSched(args: Args): Promise<void> {
 		return;
 	}
 	if (!s) {
-		process.stdout.write(`${c.yellow("planner not running")} ${c.dim("· omp-sessions server start (queue and sched commands start it)")}\n`);
+		process.stdout.write(`${c.yellow("planner not running")} ${c.dim("· switchyard server start (queue and sched commands start it)")}\n`);
 		return;
 	}
 	const yes = (v: boolean) => (v ? c.green("yes") : c.dim("no"));
@@ -1257,7 +1257,7 @@ async function cmdServer(args: Args): Promise<number> {
 				return info ? 0 : 3;
 			}
 			if (!info) {
-				process.stdout.write(`${c.yellow("not running")} ${c.dim("· omp-sessions server start (queue and sched commands start it on demand)")}\n`);
+				process.stdout.write(`${c.yellow("not running")} ${c.dim("· switchyard server start (queue and sched commands start it on demand)")}\n`);
 				return 3;
 			}
 			process.stdout.write(`${c.green("running")} pid ${info.pid} · ${info.version} · up ${ago(info.startedAt)}\n${c.dim(`socket ${svc.socket() ?? "(not recorded)"}\nlog    ${svc.logPath()}`)}\n`);
@@ -1323,7 +1323,7 @@ function printRemote(s: MobileStatus, json: boolean): void {
 	if (s.securePairing.enabled && !s.securePairing.active && s.securePairing.reason) rows.push(c.yellow(`secure pairing: ${s.securePairing.reason}`));
 	if (s.tunnel.lastError) rows.push(c.red(`tunnel: ${s.tunnel.lastError}`));
 	if (s.enabled && s.warning) rows.push(c.yellow(s.warning));
-	if (s.enabled) rows.push(c.dim("pair a phone: omp-sessions remote qr (scan it with the AO mobile app)"));
+	if (s.enabled) rows.push(c.dim("pair a phone: switchyard remote qr (scan it with the AO mobile app)"));
 	process.stdout.write(`${rows.join("\n")}\n`);
 }
 
@@ -1365,15 +1365,15 @@ async function cmdRemote(args: Args): Promise<number> {
 		}
 		case "qr": {
 			const s = await status();
-			if (!s.enabled) throw new Error("remote access is off (omp-sessions remote on)");
+			if (!s.enabled) throw new Error("remote access is off (switchyard remote on)");
 			const url = pairingLink(s);
-			if (!url) throw new Error("AO has no address to offer the phone yet (omp-sessions remote status)");
+			if (!url) throw new Error("AO has no address to offer the phone yet (switchyard remote status)");
 			process.stdout.write(`${qrHalfBlocks(url, colorEnabled())}\n${url}\n${c.dim("Scan with the AO mobile app. Anyone with this code can control your sessions.")}\n`);
 			return 0;
 		}
 		case "rotate": {
 			const s = await mobile(client, "/api/v1/mobile/regenerate");
-			process.stdout.write(`${c.green("new password")} · paired phones must pair again${s.enabled ? c.dim(" (omp-sessions remote qr)") : ""}\n`);
+			process.stdout.write(`${c.green("new password")} · paired phones must pair again${s.enabled ? c.dim(" (switchyard remote qr)") : ""}\n`);
 			return 0;
 		}
 		default:
@@ -1397,7 +1397,7 @@ function refreshBundles(): void {
 	try {
 		const done = ensureBundles();
 		if (done?.error) process.stderr.write(c.yellow(`warning: ${done.error}\n`));
-		else if (done?.firstInstall) process.stderr.write(c.dim(`installed Switchyard's omp extension into ${done.dir} (omp-sessions omp-extension status; config set omp-extension off stops this)\n`));
+		else if (done?.firstInstall) process.stderr.write(c.dim(`installed Switchyard's omp extension into ${done.dir} (switchyard omp-extension status; config set omp-extension off stops this)\n`));
 	} catch (err) {
 		process.stderr.write(c.yellow(`warning: could not install Switchyard's omp extension: ${err instanceof Error ? err.message : String(err)}\n`));
 	}
@@ -1436,7 +1436,7 @@ async function cmdOmpExtension(args: Args): Promise<number> {
 		if (report.modules.length) process.stdout.write(c.dim(`  modules: ${report.modules.join(", ")}\n`));
 		process.stdout.write(`${c.bold("shim")}      ${report.shim.installed ? (report.shim.current ? c.green("installed") : c.yellow("installed, older than this build")) : c.red("not installed")} ${c.dim(report.shim.path)}${report.shim.onDaemonPath === false ? c.yellow(" (not first on the running AO daemon's PATH)") : ""}\n`);
 		process.stdout.write(c.dim(`auto-install ${report.auto}${report.shipped ? "" : " · this build ships neither (no omp-extension/ or omp-shim/ next to cli.js)"}\n`));
-		if (!ok) process.stdout.write(c.dim("omp-sessions omp-extension install\n"));
+		if (!ok) process.stdout.write(c.dim("switchyard omp-extension install\n"));
 	}
 	return ok ? 0 : 1;
 }
@@ -1446,12 +1446,12 @@ async function cmdStatus(args: Args): Promise<number> {
 	const problems: string[] = [];
 	const daemon = await findDaemon().catch(() => undefined);
 	const client = daemon ? await aoIfRunning() : undefined;
-	if (!client) problems.push("the AO daemon is not running: sessions can't start (any omp-sessions command starts it, or: systemctl --user start ao-daemon)");
+	if (!client) problems.push("the AO daemon is not running: sessions can't start (any switchyard command starts it, or: systemctl --user start ao-daemon)");
 	const svc = plannerService();
 	const p = await plannerIfRunning();
 	const plannerStatus = p ? await p.call("status", {}).catch(() => undefined) : undefined;
 	const plannerInfo = await svc.status();
-	if (!plannerInfo) problems.push("the planner is not running: queued and scheduled tasks won't start until a command starts it (omp-sessions server start)");
+	if (!plannerInfo) problems.push("the planner is not running: queued and scheduled tasks won't start until a command starts it (switchyard server start)");
 	let omp: Readiness | undefined;
 	let sessions: Session[] = [];
 	let remote: MobileStatus | undefined;
@@ -1483,13 +1483,13 @@ async function cmdStatus(args: Args): Promise<number> {
 	const extReport = extensionReport(daemon?.pid);
 	const extensionInstalled = extReport.installed;
 	const shimInstalled = extReport.shim.installed;
-	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror (omp-sessions omp-extension install)");
-	else if (!extReport.current) problems.push("Switchyard's omp extension is older than this build (omp-sessions omp-extension install)");
+	if (!extensionInstalled) problems.push("Switchyard's omp extension is not installed: the ask, edits and plan modes cannot be enforced (auto works); no /undo, no todo mirror (switchyard omp-extension install)");
+	else if (!extReport.current) problems.push("Switchyard's omp extension is older than this build (switchyard omp-extension install)");
 	if (extReport.shim.onDaemonPath === false) problems.push(`the AO daemon was not started with ${path.dirname(extReport.shim.path)} first on its PATH: omp flags (config omp.extraArgs, new -- …) are ignored until AO is restarted through Switchyard`);
 	const HIBERNATION_FIX = `curl -X PATCH ${daemon?.baseUrl ?? "http://127.0.0.1:3001"}/api/v1/settings/chat-hibernation -H 'content-type: application/json' -d '{"enabled":true}'`;
 	const notes: string[] = [];
-	if (hibernation === false && config.hibernation === "on") notes.push(`config.json says hibernation on but AO's chat hibernation reads off: it has not been applied yet (the daemon was not started by Switchyard, or was restarted by systemd). Apply it now: omp-sessions config set hibernation on`);
-	else if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or omp-sessions config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
+	if (hibernation === false && config.hibernation === "on") notes.push(`config.json says hibernation on but AO's chat hibernation reads off: it has not been applied yet (the daemon was not started by Switchyard, or was restarted by systemd). Apply it now: switchyard config set hibernation on`);
+	else if (hibernation === false) notes.push(`AO's chat hibernation is off: idle omp hosts stay running. ${HIBERNATION_FIX} (docs/SETUP.md#idle-sessions-and-chat-hibernation). AO keeps the setting in memory only, so it reads off again after every AO restart, even if you turned it on: apply the fix again, or switchyard config set hibernation on, which Switchyard re-applies whenever it starts the daemon or the planner reconnects`);
 	const status = {
 		cli: VERSION,
 		ok: problems.length === 0,
@@ -1517,17 +1517,17 @@ async function cmdStatus(args: Args): Promise<number> {
 		return status.ok ? 0 : 1;
 	}
 	const row = (label: string, text: string) => `${c.dim(pad(label, 10))}${text}`;
-	const rows = [`${c.bold("omp-sessions")} ${VERSION} ${c.dim(`· home ${status.home}`)}`];
+	const rows = [`${c.bold("switchyard")} ${VERSION} ${c.dim(`· home ${status.home}`)}`];
 	rows.push(row("ao", daemon ? `${c.green("running")} ${daemon.baseUrl} pid ${daemon.pid}` : `${c.red("not running")} ${c.dim("(systemctl --user start ao-daemon)")}`));
 	rows.push(row("idle", hibernation === undefined ? c.dim("unknown") : hibernation ? c.green("hibernation on") + c.dim(" (AO stops the omp of a chat nobody views after 90 s)") : `hibernation off ${c.dim("(idle omp hosts stay up; a note, not a problem)")}`));
-	if (hibernation === false && config.hibernation === "on") rows.push(`${" ".repeat(10)}${c.yellow("config says on but AO reads off: not applied yet")} ${c.dim("(the daemon wasn't started by Switchyard, or was restarted by systemd) · apply it now: omp-sessions config set hibernation on")}`);
-	else if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · lost when AO restarts (it reads off after every boot, even if you turned it on); omp-sessions config set hibernation on makes Switchyard re-apply it`)}`);
-	rows.push(row("planner", plannerInfo ? `${c.green("running")} pid ${plannerInfo.pid} · ${plannerInfo.version} · up ${ago(plannerInfo.startedAt)}` : `${c.red("not running")} ${c.dim("(omp-sessions server start)")}`));
+	if (hibernation === false && config.hibernation === "on") rows.push(`${" ".repeat(10)}${c.yellow("config says on but AO reads off: not applied yet")} ${c.dim("(the daemon wasn't started by Switchyard, or was restarted by systemd) · apply it now: switchyard config set hibernation on")}`);
+	else if (hibernation === false) rows.push(`${" ".repeat(10)}${c.dim(`${HIBERNATION_FIX} · lost when AO restarts (it reads off after every boot, even if you turned it on); switchyard config set hibernation on makes Switchyard re-apply it`)}`);
+	rows.push(row("planner", plannerInfo ? `${c.green("running")} pid ${plannerInfo.pid} · ${plannerInfo.version} · up ${ago(plannerInfo.startedAt)}` : `${c.red("not running")} ${c.dim("(switchyard server start)")}`));
 	const sv = status.service;
-	rows.push(row("service", sv.installed ? `${sv.kind} ${c.green("installed")}${sv.file ? c.dim(` · ${sv.file}`) : ""}` : c.dim(sv.kind ? `not installed (omp-sessions server install sets up a ${sv.kind} service)` : "none on this platform (the planner starts on demand)")));
+	rows.push(row("service", sv.installed ? `${sv.kind} ${c.green("installed")}${sv.file ? c.dim(` · ${sv.file}`) : ""}` : c.dim(sv.kind ? `not installed (switchyard server install sets up a ${sv.kind} service)` : "none on this platform (the planner starts on demand)")));
 	rows.push(row("omp", !omp ? c.dim("unknown (AO not running)") : omp.effectiveReadiness === "ready" ? c.green("ready") : c.yellow(`${omp.effectiveReadiness}: ${omp.installation.reason || omp.authentication.reason || ""}`)));
-	rows.push(row("model", config.model ?? c.dim("omp's default (omp-sessions config set model <provider/id>)")));
-	rows.push(row("mode", config.mode ?? c.dim("auto (omp-sessions config set mode <auto|edits|ask|plan>)")));
+	rows.push(row("model", config.model ?? c.dim("omp's default (switchyard config set model <provider/id>)")));
+	rows.push(row("mode", config.mode ?? c.dim("auto (switchyard config set mode <auto|edits|ask|plan>)")));
 	rows.push(row("extension", extensionInstalled ? c.green("installed") : c.red("not installed") + c.dim(" (ask, edits and plan modes need it; auto does not)")));
 	const inEffect = extReport.shim.inEffect;
 	rows.push(row("shim", !shimInstalled ? c.dim("not installed (omp flags per session or machine are not applied)") : inEffect === true ? c.green("in effect") + c.dim(" (installed, first on the AO daemon's PATH)") : inEffect === false ? c.yellow("installed, not in effect") + c.dim(" (not first on the running AO daemon's PATH)") : c.green("installed") + c.dim(" (the daemon's PATH can't be read here)")));
@@ -1602,7 +1602,7 @@ async function cmdConfig(args: Args): Promise<number> {
 			if (rest.length !== 1 || !rest[0].trim()) throw new UsageError(key === "model" ? "config set model <provider/id | none> [--force]" : key === "mode" ? "config set mode <auto|edits|ask|plan|none>" : `config set ${key} <on|off>`);
 			const v = rest[0].trim();
 			if (key === "model") {
-				if (v !== "none" && !/^[^/\s]+\/\S+$/.test(v)) throw new UsageError(`a model is provider/id (omp-sessions models lists them), not "${v}"`);
+				if (v !== "none" && !/^[^/\s]+\/\S+$/.test(v)) throw new UsageError(`a model is provider/id (switchyard models lists them), not "${v}"`);
 				// Every new session would start with it: only a model omp offers, unless --force.
 				if (v !== "none" && !flag(args, "force")) {
 					let known: boolean;
@@ -1611,7 +1611,7 @@ async function cmdConfig(args: Args): Promise<number> {
 					} catch (err) {
 						throw new Error(`could not check the model with AO (${err instanceof Error ? err.message : String(err)}); --force saves it anyway`);
 					}
-					if (!known) throw new Error(`omp has no model ${v} in its catalog (omp-sessions models lists what a running session offers); --force saves it anyway`);
+					if (!known) throw new Error(`omp has no model ${v} in its catalog (switchyard models lists what a running session offers); --force saves it anyway`);
 				}
 				writeSwitchyardConfig({ model: v === "none" ? undefined : v });
 			} else if (key === "mode") {
@@ -1642,7 +1642,7 @@ async function cmdConfig(args: Args): Promise<number> {
 		return 0;
 	}
 	if (key === "service") {
-		process.stdout.write(`${c.green("saved")} service ${configValue("service")} ${c.dim(configValue("service") === "off" ? "(the planner still starts on demand; omp-sessions server uninstall removes an installed service)" : "(installed on the next on-demand start)")}\n`);
+		process.stdout.write(`${c.green("saved")} service ${configValue("service")} ${c.dim(configValue("service") === "off" ? "(the planner still starts on demand; switchyard server uninstall removes an installed service)" : "(installed on the next on-demand start)")}\n`);
 		return 0;
 	}
 	if (key === "hibernation") {
@@ -1687,9 +1687,9 @@ async function cmdModels(args: Args): Promise<number> {
 	const choices = chosen ? await sessionModelChoices(client, chosen.id) : undefined;
 	if (!chosen || !choices) {
 		// omp offers its models per running session: with none there is no exact list to show.
-		const note = chosen ? `${chosen.id}'s omp is not running, so it can't say which models it offers (omp-sessions resume ${chosen.id}, or use --session with a running one)` : "no running session to read omp's model choices from: omp offers them per session. Start one (omp-sessions new …) or pass --session <session>";
+		const note = chosen ? `${chosen.id}'s omp is not running, so it can't say which models it offers (switchyard resume ${chosen.id}, or use --session with a running one)` : "no running session to read omp's model choices from: omp offers them per session. Start one (switchyard new …) or pass --session <session>";
 		if (json) process.stdout.write(`${JSON.stringify({ models: [], default: def ?? null, ompDefault: null, source: null, note }, null, 2)}\n`);
-		else process.stderr.write(`omp-sessions: ${note}\n`);
+		else process.stderr.write(`switchyard: ${note}\n`);
 		return json ? 0 : 1;
 	}
 	const catalog = new Map((await agentModels().catch(() => [])).map(m => [m.id, m]));
@@ -1712,13 +1712,13 @@ async function cmdModels(args: Args): Promise<number> {
 		process.stdout.write(`  ${m.default ? c.green("●") : " "} ${pad(m.selector, 40)} ${c.dim(m.name)}${ctx}\n`);
 	}
 	if (!models.length) process.stdout.write(c.dim("no models (log in to a provider in omp)\n"));
-	process.stdout.write(c.dim(`default: ${def ?? "omp's own"} · omp-sessions config set model <provider/id>\n`));
+	process.stdout.write(c.dim(`default: ${def ?? "omp's own"} · switchyard config set model <provider/id>\n`));
 	return 0;
 }
 
 // ---------- help ----------
 
-const HELP = `${c.bold("omp-sessions")} — omp sessions on Agent Orchestrator, from the terminal ${c.dim(`(${VERSION})`)}
+const HELP = `${c.bold("switchyard")} — omp sessions on Agent Orchestrator, from the terminal ${c.dim(`(${VERSION})`)}
 
 ${c.bold("Machine")}
   status [--json]                 AO daemon, planner, omp, sessions by state, queued tasks, scheduler and
@@ -1836,13 +1836,13 @@ ${c.bold("Remote")}  ${c.dim("(AO's mobile app pairing; the phone talks to the A
                                   lan on this network, tunnel through AO's Cloudflare tunnel, all: every way
   remote off|status|qr|rotate     turn off · show state · pairing QR for the AO app · new password (unpairs phones)
 
-${c.bold("Agents")}  ${c.dim("(the omp-sessions skill teaches other agents to use the omp-sessions command)")}
+${c.bold("Agents")}  ${c.dim("(the switchyard skill teaches other agents to use the switchyard command)")}
   skill [status]                  where it is installed
   skill install [agents|claude|codex]… [--dir d] [--force]
                                   install or update it (default: every platform found)
   skill uninstall [platform]… | print | path
 
-${c.bold("Hermes")}  ${c.dim("(omp-sessions plugin: omp tools, notifications and a kanban lane in Hermes Agent; docs/HERMES.md)")}
+${c.bold("Hermes")}  ${c.dim("(switchyard plugin: switchyard tools, notifications and a kanban lane in Hermes Agent; docs/HERMES.md)")}
   hermes install [--force]        copy the plugin into $HERMES_HOME/plugins (~/.hermes) and enable it
   hermes uninstall | status [--json]
       [--profile <name>]… [--all-profiles]
@@ -1854,7 +1854,7 @@ ${c.bold("Omp extension")}  ${c.dim("(permission modes, /undo and the todo mirro
   omp-extension install|uninstall copy them into omp's agent folder and ~/.switchyard/bin (new and status do it
                                   by themselves unless: config set omp-extension off)
 
-${c.bold("Migration")}  ${c.dim("(from omp Sessions to Switchyard on AO)")}
+${c.bold("Migration")}  ${c.dim("(from Switchyard to Switchyard on AO)")}
 ${MIGRATE_HELP}
 
   --no-color, NO_COLOR=1          plain output
@@ -1880,7 +1880,7 @@ function commandHelp(cmd: string): string | undefined {
 		} else if (!/^ {4,}\S/.test(line)) taking = false;
 		if (taking) out.push(line);
 	}
-	return out.length ? `${out.join("\n")}\n${c.dim("omp-sessions help lists every command")}\n` : undefined;
+	return out.length ? `${out.join("\n")}\n${c.dim("switchyard help lists every command")}\n` : undefined;
 }
 
 // ---------- main ----------
@@ -1889,7 +1889,7 @@ async function cmdVersion(json: boolean): Promise<number> {
 	const info = await plannerService().status();
 	const daemon = await findDaemon().catch(() => undefined);
 	if (json) process.stdout.write(`${JSON.stringify({ cli: VERSION, server: info?.version ?? null, pid: info?.pid ?? null, ao: daemon ? { url: daemon.baseUrl, pid: daemon.pid } : null })}\n`);
-	else process.stdout.write(`omp-sessions ${VERSION}${info ? c.dim(` · planner ${info.version} (pid ${info.pid})`) : ""}${daemon ? c.dim(` · AO ${daemon.baseUrl} (pid ${daemon.pid})`) : ""}\n`);
+	else process.stdout.write(`switchyard ${VERSION}${info ? c.dim(` · planner ${info.version} (pid ${info.pid})`) : ""}${daemon ? c.dim(` · AO ${daemon.baseUrl} (pid ${daemon.pid})`) : ""}\n`);
 	return 0;
 }
 
@@ -1953,20 +1953,20 @@ async function main(argv: string[]): Promise<number> {
 			return 0;
 		}
 		const text = commandHelp(resolve(about));
-		if (!text) throw new UsageError(`unknown command "${about}" (omp-sessions help)`);
+		if (!text) throw new UsageError(`unknown command "${about}" (switchyard help)`);
 		process.stdout.write(text);
 		return 0;
 	}
 	const cmd = resolve(name);
 	const command = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : undefined;
-	if (!command) throw new UsageError(`unknown command "${name}" (omp-sessions help)`);
+	if (!command) throw new UsageError(`unknown command "${name}" (switchyard help)`);
 	checkFlags(args, name, command.flags);
 	return command.run(args, cmd);
 }
 
 /** Errors as one line: AO's error envelope reads well as is. */
 function errorText(err: unknown): string {
-	if (err instanceof AoError && err.code === "DAEMON_UNREACHABLE") return `${err.message} (is the AO daemon installed? omp-sessions status)`;
+	if (err instanceof AoError && err.code === "DAEMON_UNREACHABLE") return `${err.message} (is the AO daemon installed? switchyard status)`;
 	return err instanceof Error ? err.message : String(err);
 }
 

@@ -126,7 +126,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 
 	const showPanel = (ao: AoClient, status: PairingStatus) => {
 		if (!panel) {
-			const created = vscode.window.createWebviewPanel("omp.remote", "Connect Phone", vscode.ViewColumn.Active, { enableScripts: true });
+			const created = vscode.window.createWebviewPanel("switchyard.remote", "Connect Phone", vscode.ViewColumn.Active, { enableScripts: true });
 			created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 			created.onDidDispose(() => {
 				if (panel !== created) return;
@@ -140,8 +140,8 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 					void vscode.window.showInformationMessage("Copied the pairing link. Treat it like a password.");
 				} else if (msg.type === "anywhere") await setReach(ao, "anywhere");
 				else if (msg.type === "lanOnly") await setReach(ao, "lan");
-				else if (msg.type === "rotate") await vscode.commands.executeCommand("omp.remote.rotateToken");
-				else if (msg.type === "disable") await vscode.commands.executeCommand("omp.remote.disable");
+				else if (msg.type === "rotate") await vscode.commands.executeCommand("switchyard.remote.rotateToken");
+				else if (msg.type === "disable") await vscode.commands.executeCommand("switchyard.remote.disable");
 			});
 			panel = created;
 		}
@@ -200,7 +200,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 
 	context.subscriptions.push(
 		{ dispose: stopPolling },
-		vscode.commands.registerCommand("omp.remote.connectPhone", async () => {
+		vscode.commands.registerCommand("switchyard.remote.connectPhone", async () => {
 			let ao: AoClient;
 			let status: PairingStatus;
 			try {
@@ -208,7 +208,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 				status = await mobileStatus(ao);
 			} catch (err) {
 				const pick = await vscode.window.showErrorMessage(plain(`Could not reach the AO daemon: ${err instanceof Error ? err.message : String(err)}`), "Show Log");
-				if (pick) void vscode.commands.executeCommand("omp.server.showLog");
+				if (pick) void vscode.commands.executeCommand("switchyard.server.showLog");
 				return;
 			}
 			// Already on: show the code it serves (picking again would only matter to switch, which the panel offers).
@@ -219,7 +219,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 			const reach = await pickReach();
 			if (reach) await setReach(ao, reach);
 		}),
-		vscode.commands.registerCommand("omp.remote.disable", async () => {
+		vscode.commands.registerCommand("switchyard.remote.disable", async () => {
 			try {
 				await mobilePost(await server.client(), "/api/v1/mobile/disable");
 			} catch (err) {
@@ -229,7 +229,7 @@ export function registerRemote(api: OmpApi, server: ServerControl): void {
 			panel?.dispose();
 			void vscode.window.showInformationMessage("Phone access is off. Paired phones reconnect when you turn it on again, until you rotate the password.");
 		}),
-		vscode.commands.registerCommand("omp.remote.rotateToken", async () => {
+		vscode.commands.registerCommand("switchyard.remote.rotateToken", async () => {
 			let ao: AoClient;
 			let status: PairingStatus;
 			try {

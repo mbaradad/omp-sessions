@@ -15,11 +15,11 @@ type GraphAction = Extract<FromGraph, { type: "action" }>["action"];
 
 /** Tasks view command that implements each graph action; `rerun` and `sync` are planner ops instead. */
 const COMMAND: Record<Exclude<GraphAction, "rerun" | "sync">, string> = {
-	openChat: "omp.tasks.openChat",
-	runNow: "omp.tasks.runNow",
-	requeue: "omp.tasks.markPending",
+	openChat: "switchyard.tasks.openChat",
+	runNow: "switchyard.tasks.runNow",
+	requeue: "switchyard.tasks.markPending",
 	dependencies: "switchyard.tasks.setDependencies",
-	schedule: "omp.tasks.schedule",
+	schedule: "switchyard.tasks.schedule",
 };
 
 function html(api: OmpApi, webview: vscode.Webview): string {

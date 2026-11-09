@@ -1,5 +1,5 @@
-// Hermes dashboard entry (bundled as an IIFE to omp-sessions/dashboard/dist/index.js): the page as the
-// "omp Sessions" tab, on the dashboard's React and authenticated fetch (window.__HERMES_PLUGIN_SDK__).
+// Hermes dashboard entry (bundled as an IIFE to switchyard/dashboard/dist/index.js): the page as the
+// "Switchyard" tab, on the dashboard's React and authenticated fetch (window.__HERMES_PLUGIN_SDK__).
 // The dashboard loads dist/style.css itself (manifest "css").
 import { createPage } from "./app";
 import type { ReactLike } from "./react";
@@ -20,12 +20,12 @@ declare global {
 	}
 }
 
-const BASE = "/api/plugins/omp-sessions";
+const BASE = "/api/plugins/switchyard";
 const sdk = window.__HERMES_PLUGIN_SDK__;
 const registry = window.__HERMES_PLUGINS__;
 if (sdk && registry) {
 	registry.register(
-		"omp-sessions",
+		"switchyard",
 		createPage({
 			kind: "dashboard",
 			React: sdk.React,

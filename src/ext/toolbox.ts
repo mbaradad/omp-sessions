@@ -26,7 +26,7 @@ import {
 } from "./toolbox-core";
 
 const OUTPUT_SCHEME = "omp-output";
-const RECENT_KEY = "omp.commandCenter.recent";
+const RECENT_KEY = "switchyard.commandCenter.recent";
 const DOCS_URL = "https://omp.sh";
 const GROUP_ICON: Record<CommandGroup, string> = {
 	Sessions: "hubot",
@@ -93,7 +93,7 @@ function runOmp(args: string[], cwd: string, timeoutMs: number, token?: vscode.C
 }
 
 /** Doctor's "omp is not installed" notification (install / set path / learn more). */
-const showOmpMissing = () => vscode.commands.executeCommand("omp.showOmpMissing");
+const showOmpMissing = () => vscode.commands.executeCommand("switchyard.showOmpMissing");
 
 /** Folder for workspace-level commands: the active editor's folder, else the first one, else home. */
 function workspaceCwd(): string {
@@ -234,7 +234,7 @@ export function registerToolbox(api: OmpApi): void {
 	}
 
 	// ---------- command center ----------
-	reg("omp.commandCenter", async () => {
+	reg("switchyard.commandCenter", async () => {
 		type Item = vscode.QuickPickItem & { command?: string };
 		const entries = commandCenterEntries(context.extension.packageJSON, process.platform);
 		const byId = new Map(entries.map(e => [e.command, e]));
@@ -251,22 +251,22 @@ export function registerToolbox(api: OmpApi): void {
 			}
 			items.push(toItem(e));
 		}
-		const pick = await vscode.window.showQuickPick(items, { placeHolder: "omp: search every omp command", matchOnDescription: true });
+		const pick = await vscode.window.showQuickPick(items, { placeHolder: "Switchyard: search every Switchyard command", matchOnDescription: true });
 		if (!pick?.command) return;
 		await context.globalState.update(RECENT_KEY, pushRecent(recent, pick.command));
 		await vscode.commands.executeCommand(pick.command);
 	});
 
 	// ---------- omp account & tools ----------
-	reg("omp.login", () => runInTerminal("login", ["login"], workspaceCwd()));
-	reg("omp.update", () => runInTerminal("update", ["update"], workspaceCwd()));
-	reg("omp.setup", () => runInTerminal("setup", ["setup"], workspaceCwd()));
+	reg("switchyard.login", () => runInTerminal("login", ["login"], workspaceCwd()));
+	reg("switchyard.update", () => runInTerminal("update", ["update"], workspaceCwd()));
+	reg("switchyard.setup", () => runInTerminal("setup", ["setup"], workspaceCwd()));
 
 	type Action = vscode.QuickPickItem & { run: () => unknown };
 	const pickAction = async (placeHolder: string, actions: Action[]) => (await vscode.window.showQuickPick(actions, { placeHolder }))?.run();
 	const ask = async (prompt: string, placeHolder: string) => (await vscode.window.showInputBox({ prompt, placeHolder, ignoreFocusOut: true }))?.trim() || undefined;
 
-	reg("omp.plugins", () => {
+	reg("switchyard.plugins", () => {
 		const cwd = workspaceCwd();
 		return pickAction("omp plugins", [
 			{ label: "$(list-unordered) List Installed Plugins", run: () => showCaptured("plugin list", ["plugin", "list"], cwd) },
@@ -289,7 +289,7 @@ export function registerToolbox(api: OmpApi): void {
 		]);
 	});
 
-	reg("omp.skills", () => {
+	reg("switchyard.skills", () => {
 		const cwd = workspaceCwd();
 		const scope = async (verb: string) =>
 			(
@@ -336,9 +336,9 @@ export function registerToolbox(api: OmpApi): void {
 		]);
 	});
 
-	reg("omp.usage", () => showCaptured("usage", ["usage"]));
+	reg("switchyard.usage", () => showCaptured("usage", ["usage"]));
 
-	reg("omp.stats", async () => {
+	reg("switchyard.stats", async () => {
 		const cwd = workspaceCwd();
 		const out = await capture("stats", ["stats", "--summary"], cwd);
 		if (out === undefined) return;
@@ -347,7 +347,7 @@ export function registerToolbox(api: OmpApi): void {
 		if (action) runInTerminal("stats", ["stats"], cwd);
 	});
 
-	reg("omp.models", async () => {
+	reg("switchyard.models", async () => {
 		const out = await capture("models", ["models", "--json"], workspaceCwd());
 		if (out === undefined) return;
 		let models: ModelInfo[];
@@ -359,7 +359,7 @@ export function registerToolbox(api: OmpApi): void {
 		}
 		if (models.length === 0) {
 			const action = await vscode.window.showInformationMessage("omp has no models available. Log in to a provider first.", "Log In");
-			if (action) await vscode.commands.executeCommand("omp.login");
+			if (action) await vscode.commands.executeCommand("switchyard.login");
 			return;
 		}
 		type ModelItem = vscode.QuickPickItem & { selector?: string };
@@ -395,7 +395,7 @@ export function registerToolbox(api: OmpApi): void {
 	});
 
 	// ---------- review & git ----------
-	reg("omp.cleanse", async (arg?: unknown) => {
+	reg("switchyard.cleanse", async (arg?: unknown) => {
 		const cwd = await folderFrom(arg);
 		if (!cwd) return;
 		const request = await vscode.window.showInputBox({
@@ -407,7 +407,7 @@ export function registerToolbox(api: OmpApi): void {
 		runInTerminal("cleanse", ["cleanse", ...(request.trim() ? [request.trim()] : [])], cwd);
 	});
 
-	reg("omp.commitInTerminal", async (arg?: unknown) => {
+	reg("switchyard.commitInTerminal", async (arg?: unknown) => {
 		const cwd = await folderFrom(arg);
 		if (!cwd) return;
 		if (!projectRoot(cwd).isRepo) {
@@ -425,7 +425,7 @@ export function registerToolbox(api: OmpApi): void {
 		if (mode) runInTerminal("commit", ["commit", ...mode.args], cwd);
 	});
 
-	reg("omp.gitUi", async (arg?: unknown) => {
+	reg("switchyard.gitUi", async (arg?: unknown) => {
 		const cwd = await folderFrom(arg);
 		if (!cwd) return;
 		if (!projectRoot(cwd).isRepo) {
@@ -436,7 +436,7 @@ export function registerToolbox(api: OmpApi): void {
 	});
 
 	// ---------- sessions ----------
-	reg("omp.exportHtml", async (arg?: unknown) => {
+	reg("switchyard.exportHtml", async (arg?: unknown) => {
 		const meta = await transcriptSession(arg, "Export which session as HTML?");
 		if (!meta) return;
 		const dir = path.join(context.globalStorageUri.fsPath, "exports");
@@ -467,7 +467,7 @@ export function registerToolbox(api: OmpApi): void {
 		}
 	});
 
-	reg("omp.share", async (arg?: unknown) => {
+	reg("switchyard.share", async (arg?: unknown) => {
 		const meta = await transcriptSession(arg, "Share which session?");
 		if (!meta) return;
 		const how = await vscode.window.showQuickPick(
@@ -480,7 +480,7 @@ export function registerToolbox(api: OmpApi): void {
 		if (how) runInTerminal("share", ["share", meta.ompSessionFile, ...how.args], meta.cwd);
 	});
 
-	reg("omp.continueInTerminal", async (arg?: unknown) => {
+	reg("switchyard.continueInTerminal", async (arg?: unknown) => {
 		const meta = await transcriptSession(arg, "Continue which session in omp's terminal UI?");
 		if (!meta) return;
 		if (meta.status === "working" || meta.status === "waiting") {
@@ -504,7 +504,7 @@ export function registerToolbox(api: OmpApi): void {
 		onTerminalClosed(terminal, () => {
 			// omp exited (or the terminal was closed): the session goes back to the background.
 			if (api.sessions.get(meta.id)?.status !== "stopped") return;
-			void vscode.commands.executeCommand("omp.resumeSession", meta.id);
+			void vscode.commands.executeCommand("switchyard.resumeSession", meta.id);
 			void vscode.window.showInformationMessage(plain(`"${meta.title}" is back in the background.`));
 		});
 	});
@@ -515,13 +515,13 @@ export function registerToolbox(api: OmpApi): void {
 		if (!terminal) return;
 		void vscode.window.showInformationMessage(`Pick a ${name} session in the terminal; omp imports it and continues it there.`);
 	};
-	reg("omp.importClaude", importFrom("claude", "Claude Code"));
-	reg("omp.importCodex", importFrom("codex", "Codex"));
+	reg("switchyard.importClaude", importFrom("claude", "Claude Code"));
+	reg("switchyard.importCodex", importFrom("codex", "Codex"));
 
 	// ---------- help ----------
-	reg("omp.openDocs", () => vscode.env.openExternal(vscode.Uri.parse(DOCS_URL)));
-	reg("omp.keyboardShortcuts", () => vscode.commands.executeCommand("workbench.action.openGlobalKeybindings", "omp."));
-	reg("omp.openConfig", async () => {
+	reg("switchyard.openDocs", () => vscode.env.openExternal(vscode.Uri.parse(DOCS_URL)));
+	reg("switchyard.keyboardShortcuts", () => vscode.commands.executeCommand("workbench.action.openGlobalKeybindings", "switchyard."));
+	reg("switchyard.openConfig", async () => {
 		let dir = path.join(os.homedir(), ".omp", "agent");
 		try {
 			const res = await runOmp(["config", "path"], os.homedir(), 15_000);

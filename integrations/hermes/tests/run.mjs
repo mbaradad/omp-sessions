@@ -1,5 +1,5 @@
-// `npm run test:hermes`: the omp-sessions Hermes plugin tests (integrations/hermes/tests) with
-// Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built omp-sessions
+// `npm run test:hermes`: the switchyard Hermes plugin tests (integrations/hermes/tests) with
+// Hermes Agent's own Python, against real Hermes code in a temp HERMES_HOME and the built switchyard
 // (out/cli.js) with the fake omp. Skips when Hermes isn't installed. Not part of `npm test`.
 // HERMES_PYTHON=<python> picks the interpreter (default: the venv of the installed Hermes).
 import { spawn, spawnSync } from "node:child_process";
@@ -50,7 +50,7 @@ if (build.status !== 0) {
 	process.exit(build.status ?? 1);
 }
 
-// The plugin drives the real omp-sessions CLI, which runs on AO: an isolated `ao daemon` with the
+// The plugin drives the real switchyard CLI, which runs on AO: an isolated `ao daemon` with the
 // scripted fake omp (test/ao-fixture.mjs), never the dev daemon or the real ~/.omp.
 const { aoAvailable, startAoFixture } = await import(path.join(root, "test/ao-fixture.mjs"));
 if (!aoAvailable()) {
@@ -62,7 +62,7 @@ const ao = await startAoFixture();
 // SWITCHYARD_HOME set (the CLI's spawn writes <SWITCHYARD_HOME>/sessions/<id>/mode client-side).
 // (The fixture sets HOME/XDG/SWITCHYARD_HOME of this process too, so read the env the subprocess gets.)
 const stack = { ...process.env, ...ao.stackEnv };
-for (const key of ["HOME", "SWITCHYARD_HOME", "OMP_VSCODE_HOME"]) {
+for (const key of ["HOME", "SWITCHYARD_HOME"]) {
 	const value = stack[key];
 	if (!value || !path.resolve(value).startsWith(path.resolve(os.tmpdir()) + path.sep)) {
 		await ao.stop();

@@ -61,12 +61,12 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	// The permission-mode gate (Switchyard omp extension): a switch rewrites the session's mode file.
 	const modes = { read: readMode, set: (id: string, mode: PermissionMode) => ao.client().then(client => setSessionMode(client, id, mode)) };
 	// Sessions that finished or asked something while their chat was not in view.
-	const unread = new Set<string>(context.globalState.get<string[]>("omp.unread") ?? []);
+	const unread = new Set<string>(context.globalState.get<string[]>("switchyard.unread") ?? []);
 	const setUnread = (id: string, value: boolean) => {
 		if (unread.has(id) === value) return;
 		if (value) unread.add(id);
 		else unread.delete(id);
-		void context.globalState.update("omp.unread", [...unread]);
+		void context.globalState.update("switchyard.unread", [...unread]);
 		tree.refresh();
 		updateStatus();
 	};
@@ -75,7 +75,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	const organizeWatch = organize.watch();
 	context.subscriptions.push({ dispose: () => organizeWatch.dispose() });
 	const tree = new SessionTree(sessions, id => unread.has(id), organize);
-	const treeView = vscode.window.createTreeView("omp.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
+	const treeView = vscode.window.createTreeView("switchyard.sessions", { treeDataProvider: tree, dragAndDropController: tree, canSelectMany: true, showCollapseAll: true });
 	context.subscriptions.push(ao, sessions, checkpoints, treeView, vscode.workspace.registerTextDocumentContentProvider(SNAPSHOT_SCHEME, snapshots));
 
 	// ---------- panels ----------
@@ -105,14 +105,14 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		view.webview.options = { enableCommandUris: true };
 		view.description = undefined;
 		view.webview.html = `<!DOCTYPE html><html><body style="font-family:var(--vscode-font-family);color:var(--vscode-descriptionForeground);padding:16px;line-height:1.6">
-<p>Open an omp session here: pick one in the Sessions view and choose <b>Open in Side Bar</b>, or set <code>omp.chatLocation</code> to <code>sidebar</code>.</p>
-<p><a href="command:omp.openInSidebar">Choose a session…</a> · <a href="command:omp.newSession">New session</a></p></body></html>`;
+<p>Open an omp session here: pick one in the Sessions view and choose <b>Open in Side Bar</b>, or set <code>switchyard.chatLocation</code> to <code>sidebar</code>.</p>
+<p><a href="command:switchyard.openInSidebar">Choose a session…</a> · <a href="command:switchyard.newSession">New session</a></p></body></html>`;
 	};
 	function showInSidebar(id: string): ChatPanel | undefined {
 		pendingSide = id;
-		void context.workspaceState.update("omp.sidebarSession", id);
+		void context.workspaceState.update("switchyard.sidebarSession", id);
 		if (!sideView) {
-			void vscode.commands.executeCommand("omp.chatView.focus");
+			void vscode.commands.executeCommand("switchyard.chatView.focus");
 			return undefined;
 		}
 		if (sideChat?.sessionId !== id) {
@@ -132,7 +132,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	}
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(
-			"omp.chatView",
+			"switchyard.chatView",
 			{
 				resolveWebviewView(view) {
 					sideView = view;
@@ -147,7 +147,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 							setUnread(sideChat.sessionId, false);
 						}
 					});
-					const id = pendingSide ?? context.workspaceState.get<string>("omp.sidebarSession");
+					const id = pendingSide ?? context.workspaceState.get<string>("switchyard.sidebarSession");
 					if (id && sessions.get(id)) showInSidebar(id);
 					else sidePlaceholder(view);
 				},
@@ -162,13 +162,13 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			void vscode.window.showWarningMessage("That omp session no longer exists.");
 			return undefined;
 		}
-		if ((where ?? vscode.workspace.getConfiguration("omp").get<string>("chatLocation")) === "sidebar") return showInSidebar(id);
+		if ((where ?? vscode.workspace.getConfiguration("switchyard").get<string>("chatLocation")) === "sidebar") return showInSidebar(id);
 		const existing = panels.get(id);
 		if (existing) {
 			existing.reveal();
 			return existing;
 		}
-		const column = vscode.workspace.getConfiguration("omp").get<string>("panelLocation") === "active" ? vscode.ViewColumn.Active : vscode.ViewColumn.Beside;
+		const column = vscode.workspace.getConfiguration("switchyard").get<string>("panelLocation") === "active" ? vscode.ViewColumn.Active : vscode.ViewColumn.Beside;
 		const webviewPanel = vscode.window.createWebviewPanel(
 			VIEW_TYPE,
 			meta.title,
@@ -218,7 +218,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	async function launchAndOpen(opts: NewSessionOptions): Promise<ChatPanel | undefined> {
 		let id: string;
 		try {
-			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "omp: resuming the session" : "omp: starting a session in AO" }, () => sessions.launch(opts));
+			id = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: opts.id ? "Switchyard: resuming the session" : "Switchyard: starting a session in AO" }, () => sessions.launch(opts));
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			// G46: a mode other than auto is refused while the permission gate is not installed; the message is shown as it is, with the fix.
@@ -276,36 +276,36 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		}
 	};
 
-	reg("omp.newSession", async (arg?: unknown) => {
+	reg("switchyard.newSession", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (cwd) await launchAndOpen({ cwd });
 	});
 
-	reg("omp.newSessionWithOptions", async (arg?: unknown) => {
+	reg("switchyard.newSessionWithOptions", async (arg?: unknown) => {
 		const cwd = await pickFolder(arg);
 		if (!cwd) return;
 		const opts = await askLaunchOptions(cwd, sessions);
 		if (opts) await launchAndOpen({ cwd, ...opts });
 	});
-	reg("omp.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), sessions));
-	reg("omp.setDefaultMode", () => chooseDefaultMode());
+	reg("switchyard.setDefaultModel", () => chooseDefaultModel(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), sessions));
+	reg("switchyard.setDefaultMode", () => chooseDefaultMode());
 
-	reg("omp.openSession", async (arg?: unknown) => {
+	reg("switchyard.openSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open omp session"));
 		if (id) openPanel(id)?.focusComposer();
 	});
 
-	reg("omp.openInSidebar", async (arg?: unknown) => {
+	reg("switchyard.openInSidebar", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open which session in the side bar?"));
 		if (id) showInSidebar(id)?.focusComposer();
 	});
 
-	reg("omp.openInEditor", async (arg?: unknown) => {
+	reg("switchyard.openInEditor", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Open which session in an editor tab?"));
 		if (id) openPanel(id, "editor")?.focusComposer();
 	});
 
-	reg("omp.focus", async () => {
+	reg("switchyard.focus", async () => {
 		if (lastActive) {
 			lastActive.reveal();
 			lastActive.focusComposer();
@@ -313,10 +313,10 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		}
 		const running = sessions.all().find(m => m.status !== "stopped" && sessions.inWorkspace(m));
 		if (running) openPanel(running.id)?.focusComposer();
-		else await vscode.commands.executeCommand("omp.newSession");
+		else await vscode.commands.executeCommand("switchyard.newSession");
 	});
 
-	reg("omp.stopSession", async (arg?: unknown) => {
+	reg("switchyard.stopSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Stop which session?", m => m.status !== "stopped"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta || meta.status === "stopped") return;
@@ -327,7 +327,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		await act(`stop "${meta.title}"`, () => sessions.stop(meta.id));
 	});
 
-	reg("omp.resumeSession", async (arg?: unknown) => {
+	reg("switchyard.resumeSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Resume which session?", m => m.status === "stopped"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta) return;
@@ -338,7 +338,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		if (await act(`resume "${meta.title}"`, () => sessions.resume(meta.id))) openPanel(meta.id);
 	});
 
-	reg("omp.deleteSession", async (arg?: unknown) => {
+	reg("switchyard.deleteSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Delete which stopped session?", m => m.status === "stopped"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta) return;
@@ -356,7 +356,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		await act(`remove "${meta.title}"`, () => sessions.remove(meta.id));
 	});
 
-	reg("omp.renameSession", async (arg?: unknown) => {
+	reg("switchyard.renameSession", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Rename which session?"));
 		const meta = id ? sessions.get(id) : undefined;
 		if (!meta) return;
@@ -375,7 +375,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 				() => id,
 			));
 
-	reg("omp.showChanges", async (arg?: unknown) => {
+	reg("switchyard.showChanges", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Show changes of which session?"));
 		if (!id) return;
 		const files = [...checkpoints.baselines(id).keys()];
@@ -391,14 +391,14 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		if (pick) await checkpoints.openFileDiff(id, pick.file, snapshots, panels.get(id)?.surface.viewColumn);
 	});
 
-	reg("omp.openSessionFileDiff", async (sessionId: unknown, file: unknown) => {
+	reg("switchyard.openSessionFileDiff", async (sessionId: unknown, file: unknown) => {
 		if (typeof sessionId !== "string" || typeof file !== "string") return;
 		await checkpoints.openFileDiff(sessionId, file, snapshots, panels.get(sessionId)?.surface.viewColumn);
 	});
 
-	reg("omp.reviewChanges", async (arg?: unknown) => {
+	reg("switchyard.reviewChanges", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Review changes of which session?"));
-		if (id) await checkpoints.review(id, `omp: ${await titleOf(id)}`, snapshots);
+		if (id) await checkpoints.review(id, `Switchyard: ${await titleOf(id)}`, snapshots);
 	});
 
 	// `switchyard.undo(sessionId, turnId?)`: the session's last prompt, or the one AO turn `turnId` sent and
@@ -417,7 +417,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		return id ? checkpoints.redo(id) : undefined;
 	});
 
-	reg("omp.sendSelection", async () => {
+	reg("switchyard.sendSelection", async () => {
 		const editor = vscode.window.activeTextEditor;
 		if (!editor) return;
 		const doc = editor.document;
@@ -443,7 +443,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.groupBy") || e.affectsConfiguration("omp.sortBy") || e.affectsConfiguration("omp.sessionScope")) tree.refresh();
+			if (e.affectsConfiguration("switchyard.groupBy") || e.affectsConfiguration("switchyard.sortBy") || e.affectsConfiguration("switchyard.sessionScope")) tree.refresh();
 		}),
 	);
 
@@ -462,15 +462,15 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		await panel.sendPrompt(root ? inCheckout(prompt, root) : prompt);
 	};
 	reg(
-		"omp.scm.commit",
+		"switchyard.scm.commit",
 		scmPrompt(
 			"Look at the git changes in this repository (`git status`, `git diff`, `git diff --staged`). Group them into sensible commits if they are unrelated; for each, stage the files and commit with a concise, conventional commit message explaining why. Don't push. Report the commits you made.",
 		),
 	);
-	reg("omp.scm.review", scmPrompt("Review the uncommitted changes in this repository (`git diff` and `git diff --staged`) like a senior reviewer: correctness bugs, edge cases, security, missing tests. Report findings with file:line references, most severe first. Don't change files."));
-	reg("omp.scm.pr", scmPrompt("Write a pull request title and description for the work on the current branch compared to its upstream/main (`git log` and `git diff` against the merge base): summary, motivation, notable changes, testing done, risks. Don't push or open anything."));
+	reg("switchyard.scm.review", scmPrompt("Review the uncommitted changes in this repository (`git diff` and `git diff --staged`) like a senior reviewer: correctness bugs, edge cases, security, missing tests. Report findings with file:line references, most severe first. Don't change files."));
+	reg("switchyard.scm.pr", scmPrompt("Write a pull request title and description for the work on the current branch compared to its upstream/main (`git log` and `git diff` against the merge base): summary, motivation, notable changes, testing done, risks. Don't push or open anything."));
 
-	reg("omp.refresh", () => {
+	reg("switchyard.refresh", () => {
 		sessions.refresh();
 		tree.refresh();
 	});
@@ -535,27 +535,27 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 
 	// ---------- status bar ----------
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-	status.command = "omp.openSession";
+	status.command = "switchyard.openSession";
 	context.subscriptions.push(status);
-	const COMMAND_CENTER_HINT = `\n\nAll omp commands: omp: Command Center (${process.platform === "darwin" ? "⌘⌥P" : "Ctrl+Alt+P"})`;
+	const COMMAND_CENTER_HINT = `\n\nAll Switchyard commands: Switchyard: Command Center (${process.platform === "darwin" ? "⌘⌥P" : "Ctrl+Alt+P"})`;
 	const updateStatus = () => {
 		const local = sessions.all().filter(m => m.status !== "stopped" && sessions.inScope(m));
 		const working = local.filter(m => m.status === "working" || m.status === "starting").length;
 		const waiting = local.filter(m => m.status === "waiting").length;
 		const idle = local.length - working - waiting;
 		if (!ao.connected) {
-			status.text = "$(hubot) omp $(debug-disconnect)";
-			status.tooltip = `The AO daemon isn't reachable${ao.mayStart() ? "" : " (omp.server.autoStart is off)"}. Click to start it.${COMMAND_CENTER_HINT}`;
-			status.command = "omp.server.start";
+			status.text = "$(hubot) Switchyard $(debug-disconnect)";
+			status.tooltip = `The AO daemon isn't reachable${ao.mayStart() ? "" : " (switchyard.server.autoStart is off)"}. Click to start it.${COMMAND_CENTER_HINT}`;
+			status.command = "switchyard.server.start";
 		} else if (local.length === 0) {
-			status.text = "$(hubot) omp";
+			status.text = "$(hubot) Switchyard";
 			status.tooltip = `No omp sessions running${sessions.scope() === "all" ? "" : " for this workspace"}. Click to open one.${COMMAND_CENTER_HINT}`;
-			status.command = "omp.focus";
+			status.command = "switchyard.focus";
 		} else {
 			const parts = [working ? `$(loading~spin) ${working}` : "", waiting ? `$(bell-dot) ${waiting}` : "", idle ? `$(pass) ${idle}` : ""].filter(Boolean);
-			status.text = `$(hubot) omp ${parts.join(" ")}`;
+			status.text = `$(hubot) Switchyard ${parts.join(" ")}`;
 			status.tooltip = local.map(m => `${m.status.padEnd(8)} ${m.title}`).join("\n") + COMMAND_CENTER_HINT;
-			status.command = "omp.openSession";
+			status.command = "switchyard.openSession";
 		}
 		status.backgroundColor = waiting ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
 		status.show();
@@ -568,7 +568,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	context.subscriptions.push(
 		ao.onDidConnect(updateStatus),
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.sessionScope")) updateStatus();
+			if (e.affectsConfiguration("switchyard.sessionScope")) updateStatus();
 		}),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => {
 			updateStatus();
@@ -583,7 +583,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			const panel = panels.get(meta.id);
 			const attended = !!panel?.isVisible && vscode.window.state.focused;
 			if (!attended && (meta.status === "waiting" || (meta.status === "idle" && from === "working"))) setUnread(meta.id, true);
-			if (!vscode.workspace.getConfiguration("omp").get<boolean>("notifications", true)) return;
+			if (!vscode.workspace.getConfiguration("switchyard").get<boolean>("notifications", true)) return;
 			if (!sessions.notifies(meta)) return;
 			if (attended) return;
 			let message: string | undefined;
@@ -601,11 +601,11 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 }
 
 /**
- * 0.5's `omp.showAllSessions: true` (user or workspace settings) becomes `omp.sessionScope: "all"` there, once
+ * 0.5's `switchyard.showAllSessions: true` (user or workspace settings) becomes `switchyard.sessionScope: "all"` there, once
  * per target; the old key is then removed where VS Code still lets the extension write it.
  */
 async function migrateShowAllSessions(context: vscode.ExtensionContext): Promise<void> {
-	const cfg = vscode.workspace.getConfiguration("omp");
+	const cfg = vscode.workspace.getConfiguration("switchyard");
 	const old = cfg.inspect<boolean>("showAllSessions");
 	const scope = cfg.inspect<string>("sessionScope");
 	const targets = [
@@ -613,10 +613,10 @@ async function migrateShowAllSessions(context: vscode.ExtensionContext): Promise
 		{ target: vscode.ConfigurationTarget.Workspace, state: context.workspaceState, oldValue: old?.workspaceValue, newValue: scope?.workspaceValue },
 	];
 	for (const t of targets) {
-		if (t.oldValue === undefined || t.state.get<boolean>("omp.migrated.showAllSessions")) continue;
+		if (t.oldValue === undefined || t.state.get<boolean>("switchyard.migrated.showAllSessions")) continue;
 		try {
 			if (t.oldValue === true && t.newValue === undefined) await cfg.update("sessionScope", "all", t.target);
-			await t.state.update("omp.migrated.showAllSessions", true);
+			await t.state.update("switchyard.migrated.showAllSessions", true);
 			await cfg.update("showAllSessions", undefined, t.target);
 		} catch {
 			/* an unregistered key may not be writable: it is ignored from now on */

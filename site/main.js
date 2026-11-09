@@ -1,4 +1,4 @@
-// omp Sessions site: copy buttons, permission-mode demo, scroll reveal, terminal typing.
+// Switchyard site: copy buttons, permission-mode demo, scroll reveal, terminal typing.
 // Everything degrades to static content without JS or with reduced motion.
 (() => {
 	"use strict";

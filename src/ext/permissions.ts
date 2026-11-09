@@ -20,14 +20,14 @@ export async function pickPermissionMode(current: PermissionMode | undefined, ti
 
 export function registerPermissions(api: OmpApi): void {
 	api.context.subscriptions.push(
-		vscode.commands.registerCommand("omp.setPermissionMode", async (arg?: unknown, modeArg?: unknown) => {
+		vscode.commands.registerCommand("switchyard.setPermissionMode", async (arg?: unknown, modeArg?: unknown) => {
 			const id = api.idFrom(arg) ?? (await api.pickSession("Set the permission mode of which session?", m => m.status !== "stopped"));
 			const meta = id ? api.sessions.get(id) : undefined;
 			if (!meta) return;
 			const mode = isPermissionMode(modeArg) ? modeArg : await pickPermissionMode(meta.permissionMode, `Permission mode · ${meta.title}`);
 			if (!mode) return;
 			try {
-				await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `omp: ${PERMISSION_MODE_INFO[mode].label} mode for "${meta.title}"` }, () => api.sessions.setMode(meta.id, mode));
+				await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Switchyard: ${PERMISSION_MODE_INFO[mode].label} mode for "${meta.title}"` }, () => api.sessions.setMode(meta.id, mode));
 			} catch (err) {
 				void vscode.window.showWarningMessage(plain(`Could not switch "${meta.title}" to ${PERMISSION_MODE_INFO[mode].label}: ${err instanceof Error ? err.message : String(err)}.`));
 			}

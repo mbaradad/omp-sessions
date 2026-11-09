@@ -1,4 +1,4 @@
-/* omp Sessions page: one stylesheet for the Hermes dashboard (--color-* tokens) and Hermes Desktop
+/* Switchyard page: one stylesheet for the Hermes dashboard (--color-* tokens) and Hermes Desktop
  * (--ui-* tokens). Everything is scoped under .omps; colors come from the host theme, with the omp
  * brand (pink → violet → cyan) for state accents. */
 

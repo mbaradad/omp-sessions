@@ -1,4 +1,4 @@
-// Usage dashboard (`omp.dashboard`), today's spend (`omp.todayCost` + status bar item) and the
+// Usage dashboard (`switchyard.dashboard`), today's spend (`switchyard.todayCost` + status bar item) and the
 // history search command. Usage comes from omp's own transcripts, parsed incrementally by the same
 // aggregation the session host uses for `meta.cost` (src/shared/cost.ts), so it covers turns made
 // while VS Code was closed, subagents, side calls and earlier transcripts of a session.
@@ -36,7 +36,7 @@ interface UsageSnapshot {
 const INCLUDE_ALL = "dashboard.includeTerminalSessions";
 const THROTTLE_MS = 60_000;
 
-const includeAllSetting = () => vscode.workspace.getConfiguration("omp").get<boolean>(INCLUDE_ALL, false);
+const includeAllSetting = () => vscode.workspace.getConfiguration("switchyard").get<boolean>(INCLUDE_ALL, false);
 
 /** Collects usage from transcripts on demand; results are reused for `maxAgeMs`. */
 class UsageService {
@@ -144,13 +144,13 @@ export function registerDashboard(api: OmpApi): void {
 		if (panel?.visible) void render(THROTTLE_MS);
 	});
 
-	reg("omp.dashboard", () => {
+	reg("switchyard.dashboard", () => {
 		if (panel) {
 			panel.reveal();
 			void render(0);
 			return;
 		}
-		const created = vscode.window.createWebviewPanel("omp.dashboard", "omp Usage", vscode.ViewColumn.Active, { enableScripts: true, enableFindWidget: true });
+		const created = vscode.window.createWebviewPanel("switchyard.dashboard", "Switchyard Usage", vscode.ViewColumn.Active, { enableScripts: true, enableFindWidget: true });
 		panel = created;
 		created.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "omp-color.svg");
 		created.webview.html = messageHtml(created.webview, "Reading omp transcripts…");
@@ -168,26 +168,26 @@ export function registerDashboard(api: OmpApi): void {
 	const onMessage = async (msg: unknown) => {
 		if (typeof msg !== "object" || msg === null || !("type" in msg)) return;
 		if (msg.type === "refresh") return render(0);
-		if (msg.type === "search") return vscode.commands.executeCommand("omp.searchHistory");
+		if (msg.type === "search") return vscode.commands.executeCommand("switchyard.searchHistory");
 		if (msg.type === "includeAll" && "value" in msg && typeof msg.value === "boolean") {
-			await vscode.workspace.getConfiguration("omp").update(INCLUDE_ALL, msg.value, vscode.ConfigurationTarget.Global);
+			await vscode.workspace.getConfiguration("switchyard").update(INCLUDE_ALL, msg.value, vscode.ConfigurationTarget.Global);
 			return render(0);
 		}
 		// Rows are looked up by key, so the webview can only act on what it was shown.
 		const row = "key" in msg && typeof msg.key === "string" ? shown?.rows.find(r => r.key === msg.key) : undefined;
 		if (!row) return;
 		const meta = row.meta ? sessions.get(row.meta.id) : undefined;
-		if (msg.type === "open" && meta) return vscode.commands.executeCommand("omp.openSession", meta.id);
+		if (msg.type === "open" && meta) return vscode.commands.executeCommand("switchyard.openSession", meta.id);
 		if (msg.type === "resume") {
-			if (meta) return vscode.commands.executeCommand(meta.status === "stopped" ? "omp.resumeSession" : "omp.openSession", meta.id);
+			if (meta) return vscode.commands.executeCommand(meta.status === "stopped" ? "switchyard.resumeSession" : "switchyard.openSession", meta.id);
 		}
 	};
 
 	// ---------- today's spend ----------
-	const item = vscode.window.createStatusBarItem("omp.todayCost", vscode.StatusBarAlignment.Left, 49);
-	item.name = "omp: Today's Spend";
-	item.command = "omp.dashboard";
-	const statusEnabled = () => vscode.workspace.getConfiguration("omp").get<boolean>("showTodayCost", true);
+	const item = vscode.window.createStatusBarItem("switchyard.todayCost", vscode.StatusBarAlignment.Left, 49);
+	item.name = "Switchyard: Today's Spend";
+	item.command = "switchyard.dashboard";
+	const statusEnabled = () => vscode.workspace.getConfiguration("switchyard").get<boolean>("showTodayCost", true);
 	const updateItem = async () => {
 		if (!statusEnabled()) {
 			item.hide();
@@ -224,7 +224,7 @@ export function registerDashboard(api: OmpApi): void {
 			autoRefresh();
 		}),
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration("omp.showTodayCost") || e.affectsConfiguration(`omp.${INCLUDE_ALL}`)) void updateItem();
+			if (e.affectsConfiguration("switchyard.showTodayCost") || e.affectsConfiguration(`switchyard.${INCLUDE_ALL}`)) void updateItem();
 		}),
 		{
 			dispose: () => {
@@ -236,16 +236,16 @@ export function registerDashboard(api: OmpApi): void {
 		},
 	);
 
-	reg("omp.todayCost", async () => {
-		const { summary } = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "omp: reading transcripts" }, () => usage.get(THROTTLE_MS));
+	reg("switchyard.todayCost", async () => {
+		const { summary } = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Switchyard: reading transcripts" }, () => usage.get(THROTTLE_MS));
 		const { today, week } = summary.periods;
-		const scope = includeAllSetting() ? "all omp sessions" : "omp Sessions only";
+		const scope = includeAllSetting() ? "all omp sessions" : "Switchyard only";
 		const text = today.turns ? `omp today: ${spend(today)} (${scope}). Last 7 days: ${formatCost(week.cost)}.` : `No omp model calls today (${scope}). Last 7 days: ${formatCost(week.cost)}.`;
-		if ((await vscode.window.showInformationMessage(text, "Open Dashboard")) === "Open Dashboard") await vscode.commands.executeCommand("omp.dashboard");
+		if ((await vscode.window.showInformationMessage(text, "Open Dashboard")) === "Open Dashboard") await vscode.commands.executeCommand("switchyard.dashboard");
 	});
 
 	// ---------- history search ----------
-	reg("omp.searchHistory", () => searchHistory(api));
+	reg("switchyard.searchHistory", () => searchHistory(api));
 }
 
 function spend(t: Totals): string {
@@ -292,11 +292,11 @@ function dashboardHtml(webview: vscode.Webview, snap: UsageSnapshot): string {
 	const nonce = crypto.randomBytes(16).toString("base64");
 	const { summary: s, includeAll } = snap;
 	const toolbar = `<div class="toolbar"><h1>omp usage</h1>
-<label title="Also count omp sessions run without omp Sessions (plain omp in a terminal), from ~/.omp/agent/sessions"><input type="checkbox" id="all"${includeAll ? " checked" : ""}> Include terminal sessions</label>
+<label title="Also count omp sessions run without Switchyard (plain omp in a terminal), from ~/.omp/agent/sessions"><input type="checkbox" id="all"${includeAll ? " checked" : ""}> Include terminal sessions</label>
 <button id="search" class="secondary">Search history…</button><button id="refresh">Refresh</button>
 <span class="muted">Updated ${esc(new Date(snap.at).toLocaleTimeString())}</span></div>`;
 	if (s.periods.all.turns === 0) {
-		const none = includeAll ? "No omp transcripts with usage were found." : "No usage recorded by omp Sessions yet. Tick “Include terminal sessions” to count omp sessions run elsewhere.";
+		const none = includeAll ? "No omp transcripts with usage were found." : "No usage recorded by Switchyard yet. Tick “Include terminal sessions” to count omp sessions run elsewhere.";
 		return page(webview, `${toolbar}<p class="muted">${none}</p>`, nonce, SCRIPT);
 	}
 	const cards = `<div class="cards">${card("Today", s.periods.today)}${card("Last 7 days", s.periods.week)}${card("Last 30 days", s.periods.month)}${card("All time", s.periods.all)}</div>`;

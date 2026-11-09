@@ -1,6 +1,6 @@
-// Where a session came from in Hermes Agent, read from its tags (organize.json): the omp-sessions
+// Where a session came from in Hermes Agent, read from its tags (organize.json): the switchyard
 // plugin's kanban lane tags its sessions `hermes`, `hermes:<board>` and `card:<task id>`
-// (integrations/hermes/omp-sessions/lane.py). Pure; shared by the Sessions view and the chat.
+// (integrations/hermes/switchyard/lane.py). Pure; shared by the Sessions view and the chat.
 
 export interface HermesOrigin {
 	/** Kanban board slug. */

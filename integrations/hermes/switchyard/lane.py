@@ -1,9 +1,9 @@
-"""Kanban lane: cards assigned to the lane's assignee (default `omp`) run as omp sessions.
+"""Kanban lane: cards assigned to the lane's assignee (default `switchyard`) run as omp sessions.
 
 Hermes's dispatcher leaves cards whose assignee is not a Hermes profile in `ready`
 (`skipped_nonspawnable`). On every dispatch tick this lane claims them with Hermes's own kanban API,
 resolves the workspace the way a Hermes worker would (worktree on the card's branch, dir, scratch,
-or the board/project folder for scratch cards), queues an omp session there with `omp-sessions new --task`
+or the board/project folder for scratch cards), queues an omp session there with `switchyard new --task`
 (so omp's global concurrency limit applies), and then mirrors the session onto the card: heartbeat
 while it is queued or works, `needs_input` block while it waits on a question or approval, `complete`
 with its final reply, `transient` block when it fails, stops, is interrupted (host crash or reboot) or
@@ -12,7 +12,7 @@ is removed.
 Cards are also a way to talk to the session from clients that only show kanban (Hermes Console on
 Android): a comment on a linked card from a trusted author (the board's `comment_authors`, default
 `dashboard`) answers omp's open question or reaches the session as a message marked as a kanban
-comment from that author, and `@omp` from a trusted author on any card of a lane board assigns that
+comment from that author, and `@switchyard` from a trusted author on any card of a lane board assigns that
 card to the lane. Approval dialogs are never answered from comments. A comment that can't be
 delivered is retried on later passes (a few times) instead of being dropped. With `archive_completed`
 on (the lane's or the board's setting), a card the lane completes is archived on the board right away,
@@ -35,13 +35,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .ompsessions import USAGE_EXIT, OmpSessions, OmpSessionsError, edge_mark, edges_of, error_text, is_approval, short
+from .switchyard import USAGE_EXIT, Switchyard, SwitchyardError, edge_mark, edges_of, error_text, is_approval, short
 from .settings import ANY_AUTHOR, BoardLane, Settings, archive_completed, board_lane
 from .store import Busy, Store
 
 log = logging.getLogger(__name__)
 
-AUTHOR = "omp"
+AUTHOR = "switchyard"
 # The claim is renewed (heartbeat_claim) every tick; this only matters while the gateway is down.
 CLAIM_TTL_S = 2 * 3600
 # heartbeat_worker adds an event to the card; once in a while is enough (stale detection is hourly).
@@ -58,14 +58,14 @@ MAX_SEND_TRIES = 5
 REPLY_WAIT_PASSES = 3
 # Session states in which card comments wait: the card's queued task hasn't (re)started yet.
 HOLD_STATES = ("queued", "scheduled", "starting", "interrupted")
-# `omp-sessions answer` failures that only mean the dialog changed meanwhile (look again next pass).
+# `switchyard answer` failures that only mean the dialog changed meanwhile (look again next pass).
 QUESTION_MOVED = re.compile(r"question changed|not waiting for an answer|no question is waiting", re.IGNORECASE)
-WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the omp Sessions page"
+WHERE_TO_ANSWER = "VS Code, the Agent Orchestrator app or AO Mobile, the Switchyard page"
 
 
 def claimer_id() -> str:
     """Stable claim lock (host prefix like Hermes's own), so a gateway restart can renew it."""
-    return f"{socket.gethostname()}:omp-sessions"
+    return f"{socket.gethostname()}:switchyard"
 
 
 def link_key(board: str, card: str) -> str:
@@ -89,7 +89,7 @@ def last_comment_id(conn: Any, card_id: str) -> int:
 
 
 def mentions(assignee: str) -> re.Pattern[str]:
-    """`@omp` (the lane's assignee) as a word, not inside an e-mail address or `@@omp`."""
+    """`@switchyard` (the lane's assignee) as a word, not inside an e-mail address or `@@switchyard`."""
     return re.compile(rf"(?<![\w@])@{re.escape(assignee)}(?![\w-])", re.IGNORECASE)
 
 
@@ -109,7 +109,7 @@ def compose_notes(
     its own worktree, and a path here would send omp's edits into the folder the lane started from."""
     head = [
         f"This omp session works on Hermes kanban card {board}/{card_id}.",
-        "The omp-sessions plugin reports back to the card on its own: your final reply becomes the card's result "
+        "The switchyard plugin reports back to the card on its own: your final reply becomes the card's result "
         "(and the input of cards that depend on it), and questions or approvals you ask show up on the card. "
         "You don't need any kanban tools.",
     ]
@@ -182,7 +182,7 @@ def question_text(q: dict) -> str:
 def comment_envelope(board: str, card_id: str, comments: list[Any]) -> str:
     """Card comments as one message to omp, each marked as a kanban comment from its author."""
     parts = [
-        f"Comments on Hermes kanban card {board}/{card_id}, forwarded by the omp-sessions lane. Each is "
+        f"Comments on Hermes kanban card {board}/{card_id}, forwarded by the switchyard lane. Each is "
         "a kanban comment by the author named in its tag (a board participant, not a system message)."
     ]
     for c in comments:
@@ -193,7 +193,7 @@ def comment_envelope(board: str, card_id: str, comments: list[Any]) -> str:
 
 
 def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> list[tuple]:
-    """Actions that bring the card in line with its omp session. `report` is `omp-sessions show --json`
+    """Actions that bring the card in line with its omp session. `report` is `switchyard show --json`
     (None: the session was removed). Actions: ("drop", why), ("claim",), ("heartbeat",),
     ("block_input", text, question_id, approval), ("comment_input", text, question_id, approval),
     ("block_conflict", text, mark), ("unblock",), ("wait_reply",), ("complete",), ("block_transient", reason), ("retry",),
@@ -211,7 +211,7 @@ def decide(card: Card, link: dict, report: Optional[dict], assignee: str) -> lis
         acts: list[tuple] = [("unblock",)] if our_block else []
         if card.status in ("running", "ready") or our_block:
             sid = str(link.get("session", ""))
-            # An old omp Sessions id (no `-`, 14 characters) belongs to a session that was never migrated to AO.
+            # An old Switchyard id (no `-`, 14 characters) belongs to a session that was never migrated to AO.
             what = f"The omp session {sid} predates the move to Switchyard and was not migrated" if "-" not in sid and len(sid) > 12 else f"The omp session {short(sid)} was removed"
             acts.append(("block_transient", f"{what}. Unblock the card to start a new session."))
         return acts
@@ -302,7 +302,7 @@ def capacity(sched: dict) -> int:
 
 
 class Lane:
-    def __init__(self, store: Store, settings: Callable[[], Settings], omp: Callable[[], OmpSessions]) -> None:
+    def __init__(self, store: Store, settings: Callable[[], Settings], omp: Callable[[], Switchyard]) -> None:
         self.store = store
         self.settings = settings
         self.omp = omp
@@ -338,7 +338,7 @@ class Lane:
 
     def heartbeat(self, board: Optional[str], *, profile: str, lane_on: bool) -> None:
         """Records that the kanban dispatcher ticked this plugin (machine-wide, so every profile's
-        `hermes omp status` and page can tell where the dispatcher runs and whether the lane is there)."""
+        `hermes switchyard status` and page can tell where the dispatcher runs and whether the lane is there)."""
         self.store.set(
             "dispatcher",
             {"at": time.time(), "pid": os.getpid(), "profile": profile, "lane_on": lane_on, "board": board},
@@ -359,9 +359,9 @@ class Lane:
             with self.store.lock("lane", blocking=False):
                 self._tick(slug)
         except Busy:
-            log.debug("omp lane: another process is on board %s", slug)
+            log.debug("Switchyard lane: another process is on board %s", slug)
         except Exception as exc:  # never break the dispatcher
-            log.warning("omp lane: board %s: %s", slug, exc, exc_info=True)
+            log.warning("Switchyard lane: board %s: %s", slug, exc, exc_info=True)
             try:
                 self._status(slug, error=str(exc))
             except Exception:
@@ -387,14 +387,14 @@ class Lane:
                 try:
                     self._track(conn, slug, links, key, cfg, settings, omp)
                 except Exception as exc:
-                    log.warning("omp lane: %s: %s", key, exc, exc_info=True)
+                    log.warning("Switchyard lane: %s: %s", key, exc, exc_info=True)
                     errors.append(f"{key}: {exc}")
                 self._save(links)
             if cfg is not None:
                 try:
                     self._mentions(conn, slug, links, cfg)
                 except Exception as exc:
-                    log.warning("omp lane: mentions on %s: %s", slug, exc, exc_info=True)
+                    log.warning("Switchyard lane: mentions on %s: %s", slug, exc, exc_info=True)
                     errors.append(f"mentions: {exc}")
                 free = capacity(omp.scheduler())
                 for task in kb.list_tasks(conn, assignee=cfg.assignee, status="ready"):
@@ -408,16 +408,16 @@ class Lane:
                             started.append(task.id)
                             free -= 1
                     except Exception as exc:
-                        log.warning("omp lane: %s: %s", key, exc, exc_info=True)
+                        log.warning("Switchyard lane: %s: %s", key, exc, exc_info=True)
                         errors.append(f"{key}: {exc}")
                     self._save(links)
                 try:
                     self._upstream_notes(conn, slug, omp)
-                except OmpSessionsError as exc:  # e.g. a CLI without `plan status`
-                    log.debug("omp lane: plan status on %s: %s", slug, exc)
+                except SwitchyardError as exc:  # e.g. a CLI without `plan status`
+                    log.debug("Switchyard lane: plan status on %s: %s", slug, exc)
         self._status(slug, started=started, error="; ".join(errors) or None)
 
-    def _upstream_notes(self, conn: Any, slug: str, omp: OmpSessions) -> None:
+    def _upstream_notes(self, conn: Any, slug: str, omp: Switchyard) -> None:
         """A done card whose parent card changed afterwards (edge state upstream-changed,
         GRAPH-PROPAGATION.md): the planner merged the change into its worktree but doesn't re-run it, so
         say so once on the card, with how to re-run it."""
@@ -443,12 +443,12 @@ class Lane:
                 AUTHOR,
                 f"Parent {what} changed after this card was done. Its changes are merged into omp session {short(child)}'s worktree, "
                 f"but this card's task was not run again. To re-run it with them: `switchyard plan sync {short(child)} --rerun`, "
-                f"the omp Sessions page (Re-run with parent changes), or ask Hermes (switchyard_plan_sync with rerun).",
+                f"the Switchyard page (Re-run with parent changes), or ask Hermes (switchyard_plan_sync with rerun).",
             )
             noted.append(mark)
         self.store.set("upstream_noted", noted[-500:])
 
-    def _card_sessions(self, omp: OmpSessions, slug: str) -> dict[str, str]:
+    def _card_sessions(self, omp: Switchyard, slug: str) -> dict[str, str]:
         """{card id: omp session id} of the board's cards, from the sessions' `hermes:<board>` + `card:<id>` tags."""
         out: dict[str, str] = {}
         for s in omp.sessions(all=True):
@@ -462,7 +462,7 @@ class Lane:
 
     # -- new cards --
 
-    def _start(self, conn: Any, slug: str, links: dict, task: Any, cfg: BoardLane, settings: Settings, omp: OmpSessions) -> bool:
+    def _start(self, conn: Any, slug: str, links: dict, task: Any, cfg: BoardLane, settings: Settings, omp: Switchyard) -> bool:
         from hermes_cli import kanban_db as kb
 
         key = link_key(slug, task.id)
@@ -474,12 +474,12 @@ class Lane:
         if existing:
             link.update(session=existing["meta"]["id"], cwd=existing["meta"].get("cwd"), comment_seen=last_comment_id(conn, task.id))
             links[key] = link
-            log.info("omp lane: %s re-linked to existing session %s", key, short(link["session"]))
+            log.info("Switchyard lane: %s re-linked to existing session %s", key, short(link["session"]))
             return True
         try:
             cwd, branch = self._workspace(conn, slug, claimed, cfg, settings)
         except Exception as exc:
-            kb.block_task(conn, task.id, reason=f"omp lane could not prepare the workspace: {exc}", kind="transient")
+            kb.block_task(conn, task.id, reason=f"Switchyard lane could not prepare the workspace: {exc}", kind="transient")
             return False
         link.update(cwd=cwd, branch=branch)
         links[key] = link
@@ -487,7 +487,7 @@ class Lane:
         self._create(conn, slug, link, claimed, cfg, omp)
         return True
 
-    def _tagged_session(self, omp: OmpSessions, slug: str, card_id: str) -> Optional[dict]:
+    def _tagged_session(self, omp: Switchyard, slug: str, card_id: str) -> Optional[dict]:
         want = {f"card:{card_id}", f"hermes:{slug}"}
         for s in omp.sessions(all=True):
             tags = s.get("tags") if isinstance(s.get("tags"), list) else []
@@ -518,7 +518,7 @@ class Lane:
         kbw.set_workspace_path(conn, task.id, str(path))
         return str(path), None
 
-    def _create(self, conn: Any, slug: str, link: dict, task: Any, cfg: Optional[BoardLane], omp: OmpSessions) -> None:
+    def _create(self, conn: Any, slug: str, link: dict, task: Any, cfg: Optional[BoardLane], omp: Switchyard) -> None:
         from hermes_cli import kanban_db as kb
         from hermes_constants import get_hermes_home
 
@@ -549,15 +549,15 @@ class Lane:
                 model=card_model(task) or (cfg.model if cfg else None),
                 after=after,
             )
-        except OmpSessionsError as exc:
+        except SwitchyardError as exc:
             link["state"] = "failed"
             link["error"] = str(exc)
-            kb.block_task(conn, task.id, reason=f"omp lane could not start a session: {exc}", kind="transient")
+            kb.block_task(conn, task.id, reason=f"Switchyard lane could not start a session: {exc}", kind="transient")
             return
         sid = str(res["id"])
         link.update(session=sid, state="active", asked=[], heartbeat_at=time.time())
         link.pop("error", None)
-        log.info("omp lane: %s/%s -> omp session %s in %s", slug, task.id, short(sid), link["cwd"])
+        log.info("Switchyard lane: %s/%s -> omp session %s in %s", slug, task.id, short(sid), link["cwd"])
         trusted = (cfg or board_lane_fallback(self.settings(), slug)).comment_authors
         authors = "anyone" if ANY_AUTHOR in trusted else ", ".join(trusted) or "nobody (comments are off)"
         link["comment_seen"] = kb.add_comment(
@@ -567,12 +567,12 @@ class Lane:
             # Where omp really works: AO's worktree for the session, not the folder the lane gave it.
             f"Queued as omp session {short(sid)} in {res.get('cwd') or link['cwd']}"
             + (f" (branch {link['branch']})" if link.get("branch") and res.get("cwd") in (None, link["cwd"]) else "")
-            + f". It starts when omp has a free slot. Follow or steer it in {WHERE_TO_ANSWER}, or with `omp-sessions attach {short(sid)}`; "
+            + f". It starts when omp has a free slot. Follow or steer it in {WHERE_TO_ANSWER}, or with `switchyard attach {short(sid)}`; "
             f"comments here by {authors} reach the session too. This card is updated when it finishes or needs input.",
         )
 
     def _mentions(self, conn: Any, slug: str, links: dict, cfg: BoardLane) -> None:
-        """`@omp` in a comment assigns the card to the lane: the way to hand a card to omp from Hermes
+        """`@switchyard` in a comment assigns the card to the lane: the way to hand a card to omp from Hermes
         Console, whose assignee picker only lists Hermes profiles. Watermark per board (comment row id)."""
         from hermes_cli import kanban_db as kb
 
@@ -594,7 +594,7 @@ class Lane:
             if author == AUTHOR or not pattern.search(str(row["body"])) or link_key(slug, card_id) in links:
                 continue
             if not cfg.trusts(author):
-                log.info("omp lane: %s/%s: ignored @%s from %s (not a trusted comment author)", slug, card_id, cfg.assignee, author)
+                log.info("Switchyard lane: %s/%s: ignored @%s from %s (not a trusted comment author)", slug, card_id, cfg.assignee, author)
                 continue
             task = kb.get_task(conn, card_id)
             if task is None or task.status in ("done", "archived") or (task.assignee or "").lower() == cfg.assignee:
@@ -605,13 +605,13 @@ class Lane:
                 kb.add_comment(conn, card_id, AUTHOR, f"Couldn't assign this card to {cfg.assignee}: {exc}")
                 continue
             when = "now" if task.status == "ready" else f"once the card is ready (it is {task.status})"
-            kb.add_comment(conn, card_id, AUTHOR, f"Assigned to {cfg.assignee} because {author} mentioned @{cfg.assignee}. The omp lane runs it as an omp session {when}.")
-            log.info("omp lane: %s/%s assigned to %s by a mention from %s", slug, card_id, cfg.assignee, author)
+            kb.add_comment(conn, card_id, AUTHOR, f"Assigned to {cfg.assignee} because {author} mentioned @{cfg.assignee}. The Switchyard lane runs it as an omp session {when}.")
+            log.info("Switchyard lane: %s/%s assigned to %s by a mention from %s", slug, card_id, cfg.assignee, author)
         self.store.set("mention_seen", marks)
 
     # -- linked cards --
 
-    def _track(self, conn: Any, slug: str, links: dict, key: str, cfg: Optional[BoardLane], settings: Settings, omp: OmpSessions) -> None:
+    def _track(self, conn: Any, slug: str, links: dict, key: str, cfg: Optional[BoardLane], settings: Settings, omp: Switchyard) -> None:
         from hermes_cli import kanban_db as kb
 
         link = links[key]
@@ -645,7 +645,7 @@ class Lane:
             if key not in links:
                 return
 
-    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: OmpSessions, cfg: BoardLane) -> bool:
+    def _forward_comments(self, conn: Any, link: dict, report: Optional[dict], omp: Switchyard, cfg: BoardLane) -> bool:
         """New comments on the card by trusted authors (cfg.comment_authors) go to the omp session: while
         omp waits on a question they are tried as its answer in order (one that doesn't fit is
         reported and the next one tried), the rest arrive as one message (a follow-up while omp works).
@@ -693,7 +693,7 @@ class Lane:
                     card_id,
                     AUTHOR,
                     f"omp session {short(sid)} waits for an approval ({one_line(str(question.get('title') or 'a dialog'), 120)}), which card comments can't give. "
-                    f"Approve or deny it in {WHERE_TO_ANSWER}, or with `omp-sessions answer {short(sid)} <choice>`; your comment reaches the session after that.",
+                    f"Approve or deny it in {WHERE_TO_ANSWER}, or with `switchyard answer {short(sid)} <choice>`; your comment reaches the session after that.",
                 )
             return False
         done: list[str] = []
@@ -704,14 +704,14 @@ class Lane:
                 c = rest[0]
                 try:
                     r = omp.answer(sid, c.body.strip(), str(question.get("id") or "") or None)
-                except OmpSessionsError as exc:
+                except SwitchyardError as exc:
                     return self._undelivered(conn, link, last, str(exc), refused)
                 if r.code == 0:
                     rest.pop(0)
                     link["comment_seen"] = c.id
                     done.append(f"answered omp's question with \"{one_line(c.body, 80)}\"")
                     break
-                err = one_line(error_text(r) or f"omp-sessions answer exited with {r.code}", 300)
+                err = one_line(error_text(r) or f"switchyard answer exited with {r.code}", 300)
                 if r.code != USAGE_EXIT:
                     if QUESTION_MOVED.search(err):  # answered elsewhere or a new dialog: look again next pass
                         if refused:
@@ -724,7 +724,7 @@ class Lane:
         if rest:
             try:
                 omp.send(sid, comment_envelope(link["board"], card_id, rest))
-            except OmpSessionsError as exc:
+            except SwitchyardError as exc:
                 return self._undelivered(conn, link, last, str(exc), refused, done)
             n = "comments" if len(rest) > 1 else "comment"
             done.append(f"passed the {n} on" + (" as a follow-up" if state not in ("idle", "stopped") else ""))
@@ -732,9 +732,9 @@ class Lane:
         link.pop("send_failures", None)
         lines = [f"omp session {short(sid)}: {' and '.join(done)}."] if done else []
         if refused:
-            lines += [*refused, f"Reply with one of the options, or answer in {WHERE_TO_ANSWER}, or with `omp-sessions answer {short(sid)} -- <answer>`."]
+            lines += [*refused, f"Reply with one of the options, or answer in {WHERE_TO_ANSWER}, or with `switchyard answer {short(sid)} -- <answer>`."]
         kb.add_comment(conn, card_id, AUTHOR, "\n".join(lines))
-        log.info("omp lane: %s/%s: %s", link["board"], card_id, "; ".join(done) or "answer refused")
+        log.info("Switchyard lane: %s/%s: %s", link["board"], card_id, "; ".join(done) or "answer refused")
         return bool(done)
 
     def _undelivered(self, conn: Any, link: dict, last: int, err: str, refused: list[str], done: Optional[list[str]] = None) -> bool:
@@ -756,7 +756,7 @@ class Lane:
                 lines.append(f"Couldn't reach omp session {sid} ({one_line(err, 300)}); trying again on the next lane pass.")
         if lines:
             kb.add_comment(conn, link["card"], AUTHOR, "\n".join(lines))
-        log.warning("omp lane: %s/%s: comment not delivered (try %d): %s", link["board"], link["card"], tries, err)
+        log.warning("Switchyard lane: %s/%s: comment not delivered (try %d): %s", link["board"], link["card"], tries, err)
         return False
 
     def _untrusted(self, conn: Any, link: dict, author: str, cfg: BoardLane) -> None:
@@ -772,17 +772,17 @@ class Lane:
             link["card"],
             AUTHOR,
             f"Comments by {author} don't reach the omp session: comment authors trusted on this board are {', '.join(cfg.comment_authors) or 'none'} "
-            f"(`hermes omp board {cfg.slug} --comment-authors …`).",
+            f"(`hermes switchyard board {cfg.slug} --comment-authors …`).",
         )
 
-    def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: OmpSessions) -> None:
+    def _apply(self, conn: Any, slug: str, links: dict, key: str, link: dict, act: tuple, report: Optional[dict], cfg: Optional[BoardLane], omp: Switchyard) -> None:
         from hermes_cli import kanban_db as kb
         from hermes_cli import kanban_db_dispatch as kbd
 
         card_id = link["card"]
         kind = act[0]
         if kind == "drop":
-            log.info("omp lane: %s no longer tracked (%s); session %s left alone", key, act[1], short(str(link.get("session", ""))))
+            log.info("Switchyard lane: %s no longer tracked (%s); session %s left alone", key, act[1], short(str(link.get("session", ""))))
             links.pop(key, None)
         elif kind == "claim":
             if kb.claim_task(conn, card_id, ttl_seconds=CLAIM_TTL_S, claimer=claimer_id()) is not None:
@@ -799,9 +799,9 @@ class Lane:
         elif kind in ("block_input", "comment_input"):
             sid = short(link["session"])
             how = (
-                f"approve or deny in {WHERE_TO_ANSWER}, or with `omp-sessions answer {sid} <choice>`; card comments can't approve"
+                f"approve or deny in {WHERE_TO_ANSWER}, or with `switchyard answer {sid} <choice>`; card comments can't approve"
                 if act[3]
-                else f"answer with a comment on this card, in {WHERE_TO_ANSWER}, or with `omp-sessions answer {sid} -- <answer>`"
+                else f"answer with a comment on this card, in {WHERE_TO_ANSWER}, or with `switchyard answer {sid} -- <answer>`"
             )
             what = "omp asks for approval" if act[3] else "omp needs input"
             if kind == "comment_input":
@@ -827,7 +827,7 @@ class Lane:
             ok = kb.complete_task(conn, card_id, result=clip(reply, RESULT_MAX), summary=clip(reply, SUMMARY_MAX), metadata={k: v for k, v in meta.items() if v is not None})
             after = kb.get_task(conn, card_id)
             if ok or (after and after.status == "done"):
-                log.info("omp lane: %s completed from omp session %s", key, short(link["session"]))
+                log.info("Switchyard lane: %s completed from omp session %s", key, short(link["session"]))
                 links.pop(key, None)
                 if (cfg or board_lane_fallback(self.settings(), slug)).archive_completed:
                     self.archive_card(conn, slug, card_id, [str(link["session"])], omp)
@@ -858,7 +858,7 @@ class Lane:
 
     # -- archiving --
 
-    def archive_card(self, conn: Any, slug: str, card_id: str, sessions: list[str], omp: OmpSessions) -> Optional[str]:
+    def archive_card(self, conn: Any, slug: str, card_id: str, sessions: list[str], omp: Switchyard) -> Optional[str]:
         """Archives a done card on Hermes's board and its omp sessions; returns what failed, or None.
         The card is archived even when an omp session can't be (it is then still listed by omp)."""
         from hermes_cli import kanban_db as kb
@@ -871,16 +871,16 @@ class Lane:
         for sid in sessions:
             try:
                 omp.archive(sid)
-            except OmpSessionsError as exc:
+            except SwitchyardError as exc:
                 failed.append(f"omp session {short(sid)}: {exc}")
         if failed:
-            log.warning("omp lane: archiving %s/%s: %s", slug, card_id, "; ".join(failed))
+            log.warning("Switchyard lane: archiving %s/%s: %s", slug, card_id, "; ".join(failed))
             return "; ".join(failed)
-        log.info("omp lane: %s/%s archived with omp session(s) %s", slug, card_id, ", ".join(short(s) for s in sessions) or "none")
+        log.info("Switchyard lane: %s/%s archived with omp session(s) %s", slug, card_id, ", ".join(short(s) for s in sessions) or "none")
         return None
 
     def archive_done(self, slug: str) -> dict:
-        """Archives every done lane card on `slug` (`hermes omp archive-done`): done cards assigned to the
+        """Archives every done lane card on `slug` (`hermes switchyard archive-done`): done cards assigned to the
         lane's assignee or worked by an omp session (tagged `hermes:<slug>` + `card:<id>`), together
         with those sessions. {"archived": [card id], "sessions": [session id], "failed": {card id: why}}."""
         from hermes_cli import kanban_db as kb

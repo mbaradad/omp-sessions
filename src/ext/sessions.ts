@@ -389,10 +389,10 @@ export class SessionManager implements vscode.Disposable {
 		return withinAny(dirs, folders) || withinAny(dirs.map(realPath), folders.map(realPath));
 	}
 
-	/** `omp.sessionScope`, or "all" in a window without folders. */
+	/** `switchyard.sessionScope`, or "all" in a window without folders. */
 	scope(): SessionScope {
 		if (!vscode.workspace.workspaceFolders?.length) return "all";
-		const v = vscode.workspace.getConfiguration("omp").get<string>("sessionScope");
+		const v = vscode.workspace.getConfiguration("switchyard").get<string>("sessionScope");
 		return isSessionScope(v) ? v : "workspace";
 	}
 
@@ -401,9 +401,9 @@ export class SessionManager implements vscode.Disposable {
 		return this.scope() === "all" || this.inWorkspace(meta);
 	}
 
-	/** Whether this window notifies about the session: its workspace's sessions, or every one with `omp.notifyAllSessions`. */
+	/** Whether this window notifies about the session: its workspace's sessions, or every one with `switchyard.notifyAllSessions`. */
 	notifies(meta: SessionMeta): boolean {
-		return vscode.workspace.getConfiguration("omp").get<boolean>("notifyAllSessions", false) || this.inWorkspace(meta);
+		return vscode.workspace.getConfiguration("switchyard").get<boolean>("notifyAllSessions", false) || this.inWorkspace(meta);
 	}
 
 	/** The session's edits still in effect, as the Switchyard omp extension recorded them. */
@@ -559,9 +559,9 @@ export interface HistoryEntry {
 	archived: boolean;
 }
 
-/** omp's folders for the sessions this extension starts (`--profile`/`--session-dir` in `omp.extraArgs` count). */
+/** omp's folders for the sessions this extension starts (`--profile`/`--session-dir` in `switchyard.extraArgs` count). */
 export function configuredOmpPaths(): OmpPaths {
-	return ompPathsForArgs(vscode.workspace.getConfiguration("omp").get<string[]>("extraArgs") ?? []);
+	return ompPathsForArgs(vscode.workspace.getConfiguration("switchyard").get<string[]>("extraArgs") ?? []);
 }
 
 /** omp session transcripts recorded for `cwd` (from TUI or other hosts, archived ones included), newest first. */

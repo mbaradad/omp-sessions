@@ -176,7 +176,7 @@ const baseUrl = `http://127.0.0.1:${port}`;
 
 // Canary for CONTRACT.md "Isolated HOME": the real ~/.switchyard and the shared omp extensions dir must come out as they went in.
 const realHome = fs.realpathSync(os.userInfo().homedir);
-const watched = [".switchyard", ".omp/agent/extensions", ".local/bin/omp-sessions", ".local/bin/switchyard"].map(p => path.join(realHome, p));
+const watched = [".switchyard", ".omp/agent/extensions", ".local/bin/switchyard"].map(p => path.join(realHome, p));
 const fingerprint = p => {
 	try {
 		const st = fs.lstatSync(p);
@@ -221,7 +221,7 @@ try {
 				OMP_VSCODE_HOME: ompHome,
 				SWITCHYARD_HOME: switchyardHome,
 				// Never start (or find) the user's own daemon: the run file above is the only one.
-				OMP_SESSIONS_NO_SERVER: "1",
+				SWITCHYARD_NO_SERVER: "1",
 				SWITCHYARD_E2E_REPO: dirs.repo,
 				SWITCHYARD_E2E_SHOTS: dirs.shots,
 				SWITCHYARD_E2E_AO_URL: baseUrl,

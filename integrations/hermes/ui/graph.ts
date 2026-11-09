@@ -149,7 +149,7 @@ export function GraphPanel(p: { host: Host; onOpenSession: (id: string) => void 
 
 	let body: ReactElement;
 	if (!cards) {
-		body = h(Empty, { icon: "alert", title: "The graph needs a newer omp Sessions plugin", body: "This Hermes runs an omp Sessions backend that doesn't report card links; update the plugin and restart Hermes." });
+		body = h(Empty, { icon: "alert", title: "The graph needs a newer Switchyard plugin", body: "This Hermes runs an Switchyard backend that doesn't report card links; update the plugin and restart Hermes." });
 	} else if (layout.nodes.length === 0) {
 		body = h(Empty, {
 			icon: "kanban",

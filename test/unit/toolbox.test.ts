@@ -115,47 +115,47 @@ test("parseModels: keeps valid entries, derives selector, rejects other shapes",
 });
 
 test("commandGroup: explicit ids and keyword fallbacks", () => {
-	assert.equal(commandGroup("omp.newSession"), "Sessions");
-	assert.equal(commandGroup("omp.tasks.add"), "Tasks");
-	assert.equal(commandGroup("omp.scm.commit"), "Review & git");
-	assert.equal(commandGroup("omp.reviewChanges"), "Review & git");
-	assert.equal(commandGroup("omp.login"), "omp account & tools");
-	assert.equal(commandGroup("omp.models"), "omp account & tools");
-	assert.equal(commandGroup("omp.openDocs"), "Help");
-	assert.equal(commandGroup("omp.focus"), "Chat");
-	assert.equal(commandGroup("omp.sendSelection"), "Chat");
-	assert.equal(commandGroup("omp.continueInTerminal"), "Sessions");
-	assert.equal(commandGroup("omp.somethingNew"), "Sessions");
+	assert.equal(commandGroup("switchyard.newSession"), "Sessions");
+	assert.equal(commandGroup("switchyard.tasks.add"), "Tasks");
+	assert.equal(commandGroup("switchyard.scm.commit"), "Review & git");
+	assert.equal(commandGroup("switchyard.reviewChanges"), "Review & git");
+	assert.equal(commandGroup("switchyard.login"), "omp account & tools");
+	assert.equal(commandGroup("switchyard.models"), "omp account & tools");
+	assert.equal(commandGroup("switchyard.openDocs"), "Help");
+	assert.equal(commandGroup("switchyard.focus"), "Chat");
+	assert.equal(commandGroup("switchyard.sendSelection"), "Chat");
+	assert.equal(commandGroup("switchyard.continueInTerminal"), "Sessions");
+	assert.equal(commandGroup("switchyard.somethingNew"), "Sessions");
 });
 
 test("commandCenterEntries: filters hidden/internal commands, groups in order, adds keybindings", () => {
 	const manifest = {
 		contributes: {
 			commands: [
-				{ command: "omp.openDocs", title: "Open Documentation", icon: "$(book)" },
-				{ command: "omp.newSession", title: "New Session", icon: "$(add)" },
-				{ command: "omp.tasks.delete", title: "Delete" },
-				{ command: "omp.commandCenter", title: "Command Center" },
-				{ command: "omp.openSessionFileDiff", title: "Open Session Diff" },
-				{ command: "omp.focus", title: "Focus Chat" },
-				{ command: "omp.newSession", title: "Duplicate" },
+				{ command: "switchyard.openDocs", title: "Open Documentation", icon: "$(book)" },
+				{ command: "switchyard.newSession", title: "New Session", icon: "$(add)" },
+				{ command: "switchyard.tasks.delete", title: "Delete" },
+				{ command: "switchyard.commandCenter", title: "Command Center" },
+				{ command: "switchyard.openSessionFileDiff", title: "Open Session Diff" },
+				{ command: "switchyard.focus", title: "Focus Chat" },
+				{ command: "switchyard.newSession", title: "Duplicate" },
 				{ command: "other.thing", title: "Not ours" },
-				{ command: "omp.iconObject", title: "Icon Object", icon: { light: "a.svg", dark: "b.svg" } },
+				{ command: "switchyard.iconObject", title: "Icon Object", icon: { light: "a.svg", dark: "b.svg" } },
 				{ title: "no id" },
 			],
-			menus: { commandPalette: [{ command: "omp.tasks.delete", when: "false" }, { command: "omp.focus", when: "editorIsOpen" }] },
-			keybindings: [{ command: "omp.focus", key: "ctrl+alt+o", mac: "cmd+alt+o" }],
+			menus: { commandPalette: [{ command: "switchyard.tasks.delete", when: "false" }, { command: "switchyard.focus", when: "editorIsOpen" }] },
+			keybindings: [{ command: "switchyard.focus", key: "ctrl+alt+o", mac: "cmd+alt+o" }],
 		},
 	};
 	const linux = commandCenterEntries(manifest, "linux");
 	assert.deepEqual(
 		linux.map(e => e.command),
-		["omp.newSession", "omp.iconObject", "omp.focus", "omp.openDocs"],
+		["switchyard.newSession", "switchyard.iconObject", "switchyard.focus", "switchyard.openDocs"],
 	);
 	assert.equal(linux[0].icon, "add");
 	assert.equal(linux[1].icon, undefined);
-	assert.equal(linux.find(e => e.command === "omp.focus")?.keybinding, "Ctrl+Alt+O");
-	assert.equal(commandCenterEntries(manifest, "darwin").find(e => e.command === "omp.focus")?.keybinding, "⌘⌥O");
+	assert.equal(linux.find(e => e.command === "switchyard.focus")?.keybinding, "Ctrl+Alt+O");
+	assert.equal(commandCenterEntries(manifest, "darwin").find(e => e.command === "switchyard.focus")?.keybinding, "⌘⌥O");
 	const order = linux.map(e => GROUPS.indexOf(e.group));
 	assert.deepEqual(order, [...order].sort((a, b) => a - b));
 	assert.deepEqual(commandCenterEntries(undefined, "linux"), []);
@@ -165,8 +165,8 @@ test("commandCenterEntries: filters hidden/internal commands, groups in order, a
 test("commandCenterEntries: the real package.json lists our commands and hides internal ones", () => {
 	const entries = commandCenterEntries(manifest, "linux");
 	const ids = new Set(entries.map(e => e.command));
-	for (const id of ["omp.newSession", "omp.login", "omp.models", "omp.exportHtml", "omp.continueInTerminal", "omp.openDocs", "omp.tasks.add"]) assert.ok(ids.has(id), id);
-	for (const id of ["omp.commandCenter", "omp.openSessionFileDiff", "omp.tasks.delete"]) assert.ok(!ids.has(id), id);
+	for (const id of ["switchyard.newSession", "switchyard.login", "switchyard.models", "switchyard.exportHtml", "switchyard.continueInTerminal", "switchyard.openDocs", "switchyard.tasks.add"]) assert.ok(ids.has(id), id);
+	for (const id of ["switchyard.commandCenter", "switchyard.openSessionFileDiff", "switchyard.tasks.delete"]) assert.ok(!ids.has(id), id);
 	for (const g of GROUPS) assert.ok(entries.some(e => e.group === g), `group ${g} not empty`);
 });
 

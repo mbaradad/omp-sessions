@@ -48,7 +48,7 @@ export function money(cost: number): string {
 	return `$${cost < 10 ? cost.toFixed(2) : cost.toFixed(0)}`;
 }
 
-/** AO ids (`<project>-<n>`) in full; a legacy omp Sessions id (no `-`, 14 characters) by its first 8. */
+/** AO ids (`<project>-<n>`) in full; a legacy Switchyard id (no `-`, 14 characters) by its first 8. */
 export function shortId(id: string): string {
 	return !id.includes("-") && id.length > 12 ? id.slice(0, 8) : id;
 }
@@ -249,7 +249,7 @@ export function icon(name: IconName, size = 14, title?: string): ReactElement {
 	);
 }
 
-/** The omp Sessions app mark (as in the extension icon): the π glyph in the brand gradient on a
+/** The Switchyard app mark (as in the extension icon): the π glyph in the brand gradient on a
  *  dark rounded tile with a corner glow, so it reads at sidebar sizes on light and dark themes. */
 export function logo(size = 22): ReactElement {
 	return h(

@@ -61,8 +61,8 @@ function parseLimit(text: string): number | undefined {
 export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 	const { context } = api;
 	source = planner;
-	const status = vscode.window.createStatusBarItem("omp.scheduler", vscode.StatusBarAlignment.Left, 49);
-	status.name = "omp: queued task slots";
+	const status = vscode.window.createStatusBarItem("switchyard.scheduler", vscode.StatusBarAlignment.Left, 49);
+	status.name = "Switchyard: queued task slots";
 	status.command = "switchyard.scheduler.configure";
 	context.subscriptions.push(status);
 
@@ -93,7 +93,7 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 	};
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("omp.scheduler.setConcurrency", async (arg?: unknown) => {
+		vscode.commands.registerCommand("switchyard.scheduler.setConcurrency", async (arg?: unknown) => {
 			if (typeof arg === "number" && Number.isFinite(arg)) {
 				await set({ maxConcurrent: Math.max(0, Math.min(MAX_CONCURRENT, Math.trunc(arg))) });
 				return;
@@ -108,13 +108,13 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			const n = text === undefined ? undefined : parseLimit(text);
 			if (n !== undefined) await set({ maxConcurrent: n });
 		}),
-		vscode.commands.registerCommand("omp.scheduler.increase", () => set({ maxConcurrent: Math.min(MAX_CONCURRENT, schedulerSnapshot().maxConcurrent + 1) })),
-		vscode.commands.registerCommand("omp.scheduler.decrease", async () => {
+		vscode.commands.registerCommand("switchyard.scheduler.increase", () => set({ maxConcurrent: Math.min(MAX_CONCURRENT, schedulerSnapshot().maxConcurrent + 1) })),
+		vscode.commands.registerCommand("switchyard.scheduler.decrease", async () => {
 			// Going below 1 would mean "unlimited" (0): stop at 1.
 			const n = schedulerSnapshot().maxConcurrent;
 			if (n > 1) await set({ maxConcurrent: n - 1 });
 		}),
-		vscode.commands.registerCommand("omp.scheduler.togglePause", async () => {
+		vscode.commands.registerCommand("switchyard.scheduler.togglePause", async () => {
 			const paused = schedulerSnapshot().paused;
 			if (await set({ paused: !paused })) void vscode.window.showInformationMessage(paused ? "Queued tasks may start again." : "No new queued task will start (running ones finish). Run the command again to resume.");
 		}),
@@ -192,8 +192,8 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			const budget = Object.entries(st?.budget ?? {}).map(([w, usd]) => `${w} $${usd}`).join(", ");
 			const limited = (st?.limits ?? []).filter(l => l.until > Date.now()).length;
 			const items = [
-				{ label: `Concurrency: ${snap.maxConcurrent || "unlimited"}`, detail: "how many planner tasks may run at once", id: "omp.scheduler.setConcurrency" },
-				{ label: snap.paused ? "Resume the planner" : "Pause the planner", detail: snap.paused ? "queued tasks may start again" : "no new task starts; running ones finish", id: "omp.scheduler.togglePause" },
+				{ label: `Concurrency: ${snap.maxConcurrent || "unlimited"}`, detail: "how many planner tasks may run at once", id: "switchyard.scheduler.setConcurrency" },
+				{ label: snap.paused ? "Resume the planner" : "Pause the planner", detail: snap.paused ? "queued tasks may start again" : "no new task starts; running ones finish", id: "switchyard.scheduler.togglePause" },
 				{ label: `Spend budget: ${budget || "none"}`, detail: "cap on what planner tasks spend per hour / day / week", id: "switchyard.scheduler.setBudget" },
 				{ label: `Usage limits: hold at ${st?.usage.holdAtPercent ?? 95}%, spare below ${st?.usage.spareBelowPercent ?? 60}%`, detail: "when provider usage holds work, and when a spare task may start", id: "switchyard.scheduler.setUsage" },
 				{ label: `Default model: ${st?.defaults?.model ?? "none"}`, detail: "names the provider whose usage to watch for tasks without a model", id: "switchyard.scheduler.setDefaultModel" },
