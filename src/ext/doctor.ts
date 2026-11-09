@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, findDaemon } from "../ao/client";
+import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
 import { aoCheckpointDir } from "../shared/checkpoints";
 import { PLUGIN_BUNDLE, findHermes, findOmpSessions, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
@@ -317,6 +318,7 @@ export function registerDoctor(api: OmpApi): void {
 			writeError,
 			ao: aoFacts,
 			planner,
+			gate: gateStatus(),
 			sessions: sessions.all(),
 			snapshots,
 			cleanupDays: retentionDays(),

@@ -307,6 +307,11 @@
 				"icon": "$(edit)"
 			},
 			{
+				"command": "switchyard.installOmpIntegration",
+				"title": "Install omp Permission Gate and Shim",
+				"category": "Switchyard"
+			},
+			{
 				"command": "switchyard.setDependencies",
 				"title": "Dependencies…",
 				"category": "omp",
@@ -537,6 +542,18 @@
 				"title": "Mark Queue Completed / Reopen",
 				"category": "Switchyard",
 				"icon": "$(check)"
+			},
+			{
+				"command": "switchyard.tasks.cleanBranches",
+				"title": "Clean Up Kept Branches",
+				"category": "Switchyard",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "switchyard.tasks.copyBranch",
+				"title": "Copy Branch Name",
+				"category": "Switchyard",
+				"icon": "$(copy)"
 			},
 			{
 				"command": "switchyard.tasks.undo",
@@ -965,6 +982,30 @@
 				"icon": "$(credit-card)"
 			},
 			{
+				"command": "switchyard.scheduler.configure",
+				"title": "Planner Settings…",
+				"category": "Switchyard",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "switchyard.scheduler.setUsage",
+				"title": "Set Usage Limits for Queued Tasks…",
+				"category": "Switchyard",
+				"icon": "$(pulse)"
+			},
+			{
+				"command": "switchyard.scheduler.setDefaultModel",
+				"title": "Set Default Model for Queued Tasks…",
+				"category": "Switchyard",
+				"icon": "$(hubot)"
+			},
+			{
+				"command": "switchyard.scheduler.clearLimits",
+				"title": "Clear Provider Limits…",
+				"category": "Switchyard",
+				"icon": "$(clear-all)"
+			},
+			{
 				"command": "omp.installCli",
 				"title": "Install omp-sessions Command (Terminal CLI)",
 				"category": "omp",
@@ -1134,6 +1175,26 @@
 					"command": "switchyard.scheduler.setBudget",
 					"when": "view == omp.tasks",
 					"group": "2_scheduler@3"
+				},
+				{
+					"command": "switchyard.scheduler.configure",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@4"
+				},
+				{
+					"command": "switchyard.scheduler.setUsage",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@5"
+				},
+				{
+					"command": "switchyard.scheduler.setDefaultModel",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@6"
+				},
+				{
+					"command": "switchyard.scheduler.clearLimits",
+					"when": "view == omp.tasks",
+					"group": "2_scheduler@7"
 				},
 				{
 					"command": "switchyard.tasks.showGraph",
@@ -1446,6 +1507,21 @@
 					"command": "switchyard.tasks.completeLane",
 					"when": "view == omp.tasks && viewItem =~ /^tasks\\.session\\.(auto|paused)$/",
 					"group": "1_session@5"
+				},
+				{
+					"command": "switchyard.tasks.cleanBranches",
+					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"group": "inline@1"
+				},
+				{
+					"command": "switchyard.tasks.cleanBranches",
+					"when": "view == omp.tasks && viewItem == tasks.kept",
+					"group": "1_kept@1"
+				},
+				{
+					"command": "switchyard.tasks.copyBranch",
+					"when": "view == omp.tasks && viewItem == tasks.keptBranch",
+					"group": "1_kept@1"
 				},
 				{
 					"command": "switchyard.tasks.undo",
@@ -1917,6 +1993,10 @@
 				},
 				{
 					"command": "switchyard.tasks.completeLane",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.tasks.copyBranch",
 					"when": "false"
 				},
 				{

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskTransitions, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskBaseOf, taskTransitions, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
+import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/ao/mobile";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -119,8 +119,7 @@ test("laneQueue: a session's queue summary from the planner lanes that continue 
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
-		keptBranches: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-1", pending: 2, done: 1, total: 3 }), lane({ id: "l_2", session: "repo-1", autoRun: false, startAt: 9000, pending: 1, total: 1 }), lane({ id: "l_3", session: "repo-2", pending: 4, total: 4 })],
 		tasks: [task({ id: "a", lane: "repo-1", position: 2, createdAt: 7 }), task({ id: "b", lane: "repo-1", state: "interrupted" }), task({ id: "c", lane: "l_2", state: "scheduled", waitUntil: 8000 }), task({ id: "d", lane: "l_3", position: 1 })],
 		recurring: [],
@@ -136,8 +135,7 @@ test("laneQueue: dependencies map planner task ids to sessions; failed tasks are
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
-		keptBranches: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-2", pending: 1, total: 1 }), lane({ id: "l_a", session: "repo-1", failed: 1, total: 1 })],
 		tasks: [
 			task({ id: "b", lane: "repo-2", state: "blocked", after: ["a", "free"], blockedBy: ["a"] }),
@@ -183,8 +181,7 @@ test("laneQueue: the worst parent-edge sync state of a session's tasks, with the
 	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "done", createdAt: 5, state: "done", ...t });
 	const plan = {
 		rev: 1,
-		edges: [],
-		keptBranches: [],
+		edges: [], keptBranches: [],
 		lanes: [lane({ id: "repo-3", done: 1, total: 1 }), lane({ id: "repo-1" }), lane({ id: "repo-2" })],
 		tasks: [
 			task({ id: "c", lane: "repo-3", after: ["a", "b"], sync: { a: { state: "upstream-changed", at: 1 }, b: { state: "conflict", at: 1, files: ["x.ts"] } } }),
@@ -222,8 +219,7 @@ test("dependencyOps: pending tasks wait for every task of the picked sessions; o
 	const lane = (id: string) => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 1, running: 0, done: 0, failed: 0, total: 1 });
 	const plan = {
 		rev: 1,
-		edges: [],
-		keptBranches: [],
+		edges: [], keptBranches: [],
 		lanes: [lane("a"), lane("b"), lane("c")],
 		tasks: [
 			{ id: "ta1", lane: "a", status: "done", state: "done" },
@@ -259,8 +255,11 @@ test("taskTransitions: only tasks that were known and changed state; the next ma
 	const second = taskTransitions(first.next, plan(task("a", "done", { session: "S1" }), task("b", "waiting", { lane: "l" }), task("c", "running")));
 	assert.deepEqual(second.changes.map(c => [c.task.id, c.from, c.sessionId]), [["a", "running", "S1"]]);
 	assert.deepEqual([...second.next], [["a", "done"], ["b", "waiting"], ["c", "running"]]);
-	// No plan (planner unreachable): nothing fires and what was known is kept.
-	assert.deepEqual(taskTransitions(second.next, undefined), { next: second.next, changes: [] });
+	// No plan (planner unreachable): nothing fires and the map is emptied, so the first plan after the reconnect is a baseline
+	// (a task that finished while disconnected does not replay as a cue).
+	const gone = taskTransitions(second.next, undefined);
+	assert.deepEqual(gone, { next: new Map(), changes: [] });
+	assert.deepEqual(taskTransitions(gone.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }))).changes, []);
 	// A task in a lane resolves its session through the lane.
 	const third = taskTransitions(second.next, plan(task("a", "done"), task("b", "failed", { lane: "l" }), task("c", "running")));
 	assert.deepEqual(third.changes.map(c => [c.task.id, c.sessionId]), [["b", "S"]]);
@@ -272,8 +271,7 @@ test("parentBranches: the branches of the tasks another session's tasks build on
 	const git = (branch: string) => ({ repo: "/r", branch });
 	const plan: PlanView = {
 		rev: 1,
-		edges: [],
-		keptBranches: [],
+		edges: [], keptBranches: [],
 		lanes: [lane("p"), lane("q"), lane("c")],
 		tasks: [task("tp", { lane: "p", git: git("switchyard/tp") }), task("tq", { lane: "q" }), task("tc1", { lane: "c", git: git("switchyard/tc1") }), task("tc2", { lane: "c", after: ["tc1", "tp", "tq"] })],
 		recurring: [],
@@ -299,4 +297,30 @@ test("laneQueue: the lane's own state, reason and wait time come from the planne
 	assert.deepEqual([held?.state, held?.waitReason], ["held", "provider usage limit until 21:00"]);
 	assert.equal(laneQueue(plan(lane({ state: "scheduled", waitUntil: 5000 })), "S")?.startAt, 5000);
 	assert.equal(laneQueue(plan(lane({})), "S")?.state, undefined);
+});
+
+test("taskBaseOf: the first task with a recorded base wins; a root task in a planner-created session has none (the manifest is exact)", () => {
+	const lane = (id: string): LaneView => ({ id, session: id.toUpperCase(), autoRun: true, createdAt: 0, pending: 0, running: 0, done: 1, failed: 0, total: 1 });
+	const task = (id: string, extra: Partial<TaskView>): TaskView => ({ id, title: id, subtasks: [], status: "done", createdAt: 0, state: "done", ...extra });
+	const git = (base?: string) => ({ repo: "/r", branch: "b", ...(base && { base }) });
+	const plan: PlanView = {
+		rev: 1,
+		edges: [],
+		keptBranches: [],
+		lanes: [lane("c"), lane("r")],
+		tasks: [task("t2", { lane: "c", createdAt: 2, git: git("bbb") }), task("t1", { lane: "c", createdAt: 1, git: git("aaa") }), task("root", { lane: "r", git: git() })],
+		recurring: [],
+		status: {} as PlanView["status"],
+	};
+	assert.equal(taskBaseOf(plan, "C"), "aaa");
+	assert.equal(taskBaseOf(plan, "R"), undefined);
+	assert.equal(taskBaseOf(undefined, "C"), undefined);
+});
+
+test("asChangedFile: git's letters as AO's manifest words them", () => {
+	assert.deepEqual(asChangedFile({ status: "A", path: "a" }), { path: "a", status: "added", additions: 0, deletions: 0 });
+	assert.equal(asChangedFile({ status: "?", path: "u" }).status, "added");
+	assert.equal(asChangedFile({ status: "D", path: "d" }).status, "deleted");
+	assert.deepEqual(asChangedFile({ status: "R", path: "new", from: "old" }), { path: "new", oldPath: "old", status: "renamed", additions: 0, deletions: 0 });
+	assert.equal(asChangedFile({ status: "M", path: "m" }).status, "modified");
 });

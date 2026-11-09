@@ -14,7 +14,7 @@ import type { PlanOp, PlanView } from "../../../src/planner/types";
 import type { Node } from "../../../src/ext/tree";
 import { readMode } from "../../../src/shared/session-mode";
 import { writeSwitchyardConfig } from "../../../src/ao/config";
-import { pairingLink, type PairingStatus } from "../../../src/shared/phone-pairing";
+import { pairingLink, type PairingStatus } from "../../../src/ao/mobile";
 import type { SessionMeta } from "../../../src/shared/protocol";
 
 const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
@@ -187,6 +187,36 @@ describe("AO views", () => {
 		await waitFor("checkpoints state.json", () => fs.existsSync(file), 30_000);
 	});
 
+	it("a graph child's changed files are git diff <Task.git.base>, not AO's manifest (which lists its parents' commits too)", async () => {
+		const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@localhost", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
+		const child = await api.sessions.launch({ cwd: REPO, title: "graph child" });
+		const changed = new vscode.EventEmitter<void>();
+		let plan: unknown;
+		const sub = api.sessions.usePlan({ get plan() { return plan as never; }, onDidChange: changed.event, edit: async () => ({}) });
+		try {
+			const wt = await waitFor("child folder", () => api.sessions.get(child)?.cwd || undefined, 30_000);
+			await waitFor("child idle", () => api.sessions.get(child)?.status === "idle", 120_000);
+			// "The parents' work": committed in the child's worktree before its own run starts.
+			fs.writeFileSync(path.join(wt, "from-parent-1.txt"), "p1\n");
+			fs.writeFileSync(path.join(wt, "from-parent-2.txt"), "p2\n");
+			git(wt, "add", "-A");
+			git(wt, "commit", "-q", "-m", "parent work");
+			const base = git(wt, "rev-parse", "HEAD");
+			fs.writeFileSync(path.join(wt, "own.txt"), "mine\n");
+			await waitFor("AO's manifest lists the parents' commits too", async () => (await ao.workspaceManifest(child)).files.filter(f => f.status !== "unmodified").length === 3, 20_000);
+			const lane = { id: child, session: child, autoRun: true, createdAt: 1, pending: 0, running: 0, done: 1, failed: 0, total: 1 };
+			const task = (id: string, extra: object) => ({ id, title: id, subtasks: [], status: "done", createdAt: 1, state: "done", ...extra });
+			plan = { rev: 1, edges: [], keptBranches: [], lanes: [lane], recurring: [], status: {}, tasks: [task("child-task", { lane: child, after: ["parent-task"], git: { repo: REPO, branch: "switchyard/child-task", worktree: wt, base } }), task("parent-task", { git: { repo: REPO, branch: "switchyard/parent-task" } })] };
+			changed.fire();
+			await waitFor("the count is the task's own file", () => api.sessions.get(child)?.changedFiles === 1, 20_000);
+			assert.deepEqual((await api.sessions.workspaceFiles(child)).map(f => f.path), ["own.txt"]);
+		} finally {
+			sub.dispose();
+			await api.sessions.stop(child).catch(() => undefined);
+			await api.sessions.remove(child).catch(() => undefined);
+		}
+	});
+
 	it("on the real planner: Dependencies… (after), Mark completed (lane.complete), priority; the task graph shows in the card data", async () => {
 		const planner = await ensurePlanner(path.join(EXT_PATH, "out", "planner.js"));
 		assert.ok(planner, "the planner started (isolated SWITCHYARD_HOME)");
@@ -256,6 +286,15 @@ describe("AO views", () => {
 			planner.close();
 			await stopPlanner();
 		}
+	});
+
+	it("model pickers list the live session's own choices, not AO's catalog of thousands", async () => {
+		const choices = await api.sessions.modelChoices();
+		assert.ok(choices && choices.length > 0, "a running session offers models");
+		assert.ok(choices.length < 500, `the session's list, not the catalog: ${choices.length} ids`);
+		assert.ok(choices.every(c => c.value.includes("/")), "provider/model ids");
+		const current = meta()?.model;
+		if (current) assert.ok(choices.some(c => c.value === current), `the session's own model ${current} is offered`);
 	});
 
 	it("stop (exit-agent) and resume (resume-agent) keep the session", async () => {
@@ -334,11 +373,19 @@ describe("AO views", () => {
 		assert.match(report, new RegExp(`AO daemon running at ${(process.env.SWITCHYARD_E2E_AO_URL ?? "").replace(/[.]/g, "\\.")}`));
 		assert.match(report, /AO can run omp/);
 		assert.match(report, /## Planner/);
+		assert.match(report, /## Permission gate and omp flags/);
 		assert.match(report, /views smoke \(repo-1\)/);
 		await vscode.commands.executeCommand("omp.doctor");
 		await settle(3000);
 		shot("8-doctor");
 		await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+	});
+
+	it("the runtime copy holds what the planner service installs the omp gate and shim from, beside planner.js", async () => {
+		const runtime = path.join(process.env.SWITCHYARD_HOME ?? "", "runtime");
+		await waitFor("runtime copy", () => fs.existsSync(path.join(runtime, "omp-shim", "omp")), 20_000);
+		for (const f of ["planner.js", "cli.js", path.join("omp-extension", "mode.js"), path.join("omp-extension", "checkpoints.js")]) assert.ok(fs.existsSync(path.join(runtime, f)), f);
+		assert.ok(fs.statSync(path.join(runtime, "omp-shim", "omp")).mode & 0o111, "the shim stays executable");
 	});
 
 	it("the usage dashboard opens (cost from AO conversations, transcripts by workspace)", async () => {

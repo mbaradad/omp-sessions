@@ -16,10 +16,10 @@ import { queueOf } from "../shared/plan-queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
 import type { SessionQueues } from "./session-queues";
-import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, ownFiles, parentBranches, priorityOps, rerunTaskIds, statusOf, taskTransitions, withQueue } from "./session-view";
+import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, statusOf, taskBaseOf, taskTransitions, withQueue } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
-import { type ProjectInfo, findProject } from "./worktree-git";
+import { type ProjectInfo, changedSince, findProject } from "./worktree-git";
 
 const rootCache = new Map<string, ProjectInfo>();
 
@@ -99,6 +99,8 @@ export interface PlanSource {
 export class SessionManager implements vscode.Disposable {
 	private sessions = new Map<string, SessionMeta>();
 	private readonly models = new Map<string, AoSessionModel>();
+	/** A graph child's own files from git (`diff <Task.git.base>` in its worktree), by session; `key` is what they were computed for. */
+	private readonly taskFiles = new Map<string, { key: string; files: AoChangedFile[] }>();
 	private readonly emitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.emitter.event;
 	private readonly transitionEmitter = new vscode.EventEmitter<{ meta: SessionMeta; from: SessionMeta["status"] }>();
@@ -156,6 +158,7 @@ export class SessionManager implements vscode.Disposable {
 			}
 			for (const t of transitions) this.transitionEmitter.fire(t);
 			for (const t of tasks.changes) this.taskTransitionEmitter.fire(t);
+			for (const id of this.sessions.keys()) this.refreshTaskFiles(id);
 			if (changed) this.emitter.fire();
 		};
 		apply();
@@ -211,6 +214,7 @@ export class SessionManager implements vscode.Disposable {
 			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
 			meta.changedFiles = this.ownFilesOf(model.id, model.changedFiles, meta.cwd).length;
 			this.models.set(model.id, model);
+			queueMicrotask(() => this.refreshTaskFiles(model.id));
 			next.set(model.id, meta);
 			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title || prev.cwd !== meta.cwd || prev.cost !== meta.cost) dirty = true;
 			if (prev && prev.status !== meta.status) transitions.push({ meta, from: prev.status });
@@ -226,12 +230,43 @@ export class SessionManager implements vscode.Disposable {
 	 * (GAPS G43), so only the files its edit tools touched count (`ownFiles`); other sessions keep the whole list.
 	 */
 	private ownFilesOf<T extends { path: string }>(id: string, files: readonly T[], cwd: string): T[] {
+		const own = taskBaseOf(this.planSource?.plan, id) ? this.taskFiles.get(id)?.files : undefined;
+		if (own) return own as unknown as T[];
+		// No git answer yet (or no base): what its edit tools touched, for a session that builds on parents.
 		const graphChild = parentBranches(this.planSource?.plan, id).length > 0;
 		return ownFiles(files, cwd, graphChild ? this.changes(id) : undefined);
 	}
 
+	/**
+	 * A graph child with a recorded base: its changed files are `git diff <base>` in its worktree (exact, shell edits
+	 * included), computed once its agent is not working and again when the session changes after that.
+	 */
+	private refreshTaskFiles(id: string): void {
+		const meta = this.sessions.get(id);
+		const base = taskBaseOf(this.planSource?.plan, id);
+		if (!meta || !base || !meta.cwd || meta.status === "working" || meta.status === "starting") return;
+		const key = `${base}|${meta.updatedAt}`;
+		if (this.taskFiles.get(id)?.key === key) return;
+		this.taskFiles.set(id, { key, files: this.taskFiles.get(id)?.files ?? [] });
+		void changedSince(meta.cwd, base).then(
+			list => {
+				const files = list.map(asChangedFile);
+				this.taskFiles.set(id, { key, files });
+				const current = this.sessions.get(id);
+				if (!current || this.disposed || current.changedFiles === files.length) return;
+				this.sessions = new Map(this.sessions).set(id, { ...current, changedFiles: files.length });
+				this.emitter.fire();
+			},
+			err => this.ao.log.warn(`changed files of ${id} since ${base}: ${String(err)}`),
+		);
+	}
+
 	/** Files the session changed in its workspace compared with its base branch (AO's workspace manifest), paths relative to its folder; a graph child's own files only. */
 	async workspaceFiles(id: string): Promise<AoChangedFile[]> {
+		// The watcher's own list: the same source and moment as the count (AO caches its manifest for 3 s unflagged, so a read of
+		// ours right after a turn settles could disagree with it). Our read is only for a session the watcher does not carry.
+		const model = this.models.get(id);
+		if (model) return this.ownFilesOf(id, model.changedFiles, this.get(id)?.cwd ?? model.cwd ?? "");
 		const client = await this.ao.client();
 		const manifest = await client.workspaceManifest(id);
 		const files = manifest.files.flatMap(f => (f.status === "unmodified" ? [] : [{ path: f.path, ...(f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }]));
@@ -281,9 +316,34 @@ export class SessionManager implements vscode.Disposable {
 		await source.edit(completeOps(source.plan, ids, completed));
 	}
 
+	/** Where a graph child's own work starts (the planner's `Task.git.base`), when it has one: `git diff <it>` in the worktree is what the task changed. */
+	taskBase(id: string): string | undefined {
+		return taskBaseOf(this.planSource?.plan, id);
+	}
+
 	/** The branches this session's tasks build on (their parents'), for "Compare Branch with Base". */
 	parentBranches(id: string): Array<{ title: string; branch: string }> {
 		return parentBranches(this.planSource?.plan, id);
+	}
+
+	/**
+	 * The models a live session of this machine offers (its config options: the only exact list; AO's agent catalog
+	 * has thousands of ids and drops models that run). Asks the most recently active sessions in turn; undefined when
+	 * none is running (a new session has no list yet: callers accept a typed id, the spawn helper checks it).
+	 */
+	async modelChoices(): Promise<Array<{ value: string; name: string }> | undefined> {
+		const client = await this.ao.client(false).catch(() => undefined);
+		if (!client) return undefined;
+		const live = this.all()
+			.filter(m => m.status !== "stopped")
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, 3);
+		for (const m of live) {
+			const options = await client.configOptions(m.id).catch(() => undefined);
+			const choices = options?.options.find(o => o.id === "model")?.choices;
+			if (choices?.length) return choices.map(c => ({ value: c.value, name: c.name || c.value }));
+		}
+		return undefined;
 	}
 
 	/** Relists every session from AO. */

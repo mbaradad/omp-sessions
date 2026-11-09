@@ -9,8 +9,26 @@ import { pickPermissionMode } from "./permissions";
 import { plain } from "./plain";
 import { splitArgs } from "./session-view";
 
-/** omp's chat models (shared/models.ts) with the omp Sessions default marked; no models when omp can't list them. */
-export async function loadModels(cwd: string): Promise<ModelList> {
+/** A source of the exact model list: a live session's own choices (SessionManager.modelChoices). */
+export interface ModelChoices {
+	modelChoices(): Promise<Array<{ value: string; name: string }> | undefined>;
+}
+
+/**
+ * The models to pick from, the Switchyard default marked: a live session's own choices when one runs (the only exact
+ * list), else omp's `models` listing; no models when neither answers (a typed id is still accepted, and the spawn helper
+ * checks it against the new session's choices).
+ */
+export async function loadModels(cwd: string, sessions?: ModelChoices): Promise<ModelList> {
+	const choices = await sessions?.modelChoices().catch(() => undefined);
+	if (choices) {
+		const preferred = readSwitchyardConfig().model ?? null;
+		return {
+			models: choices.map(c => ({ selector: c.value, provider: c.value.split("/")[0], id: c.value.split("/").slice(1).join("/") || c.value, name: c.name, default: c.value === preferred })),
+			default: preferred,
+			ompDefault: null,
+		};
+	}
 	try {
 		return await listModels(cwd);
 	} catch {
@@ -25,7 +43,7 @@ export function defaultModelLabel(list: Pick<ModelList, "default" | "ompDefault"
 }
 
 /** `omp.setDefaultModel`: the model new sessions start with when none is picked, for every client. */
-export async function chooseDefaultModel(cwd: string): Promise<void> {
+export async function chooseDefaultModel(cwd: string, sessions?: ModelChoices): Promise<void> {
 	const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { selector: string | null }>();
 	qp.title = "Default model for new omp sessions (VS Code, omp-sessions, phone, Hermes)";
 	qp.placeholder = "Model";
@@ -33,7 +51,7 @@ export async function chooseDefaultModel(cwd: string): Promise<void> {
 	qp.busy = true;
 	qp.items = [{ label: "$(settings) omp's own default", description: "omp config modelRoles.default", selector: null }];
 	qp.show();
-	void loadModels(cwd).then(list => {
+	void loadModels(cwd, sessions).then(list => {
 		qp.items = [
 			{ label: "$(settings) omp's own default", description: `${list.ompDefault ?? "omp config modelRoles.default"}${list.default ? "" : " · current"}`, selector: null },
 			...list.models.map(m => ({ label: `${m.default ? "$(star-full) " : ""}${m.name}`, description: `${m.selector}${m.default ? " · current" : ""}`, selector: m.selector })),
@@ -75,7 +93,7 @@ export interface LaunchChoices {
  * Asks for model, thinking, permission mode, extra omp flags (applied by the Switchyard omp shim: the
  * session restarts once before its first message) and a first prompt.
  */
-export async function askLaunchOptions(cwd: string): Promise<LaunchChoices | undefined> {
+export async function askLaunchOptions(cwd: string, sessions?: ModelChoices): Promise<LaunchChoices | undefined> {
 	const out: LaunchChoices = {};
 	const step = (n: number) => `New omp session (${n}/5)`;
 
@@ -86,11 +104,20 @@ export async function askLaunchOptions(cwd: string): Promise<LaunchChoices | und
 	modelPick.busy = true;
 	modelPick.items = [{ label: "$(settings) Default model", description: defaultModelLabel({ default: readSwitchyardConfig().model ?? null, ompDefault: null }) }];
 	modelPick.show();
-	void loadModels(cwd).then(list => {
-		modelPick.items = [
+	let listed: Array<vscode.QuickPickItem & { selector?: string }> = [];
+	const render = () => {
+		const typed = modelPick.value.trim();
+		// A model that is in no list yet (a new session has none): the typed id is tried, and refused by the spawn if the session does not offer it.
+		const custom = typed && !listed.some(i => i.selector === typed) ? [{ label: `$(edit) ${typed}`, description: "typed model id", selector: typed, alwaysShow: true }] : [];
+		modelPick.items = [...custom, ...listed];
+	};
+	modelPick.onDidChangeValue(render);
+	void loadModels(cwd, sessions).then(list => {
+		listed = [
 			{ label: "$(settings) Default model", description: defaultModelLabel(list) },
 			...list.models.map(m => ({ label: `${m.default ? "$(star-full) " : ""}${m.name}`, description: `${m.selector}${m.default ? " · default" : ""}`, detail: m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k context` : undefined, selector: m.selector })),
 		];
+		render();
 		modelPick.busy = false;
 	});
 	const picked = Promise.withResolvers<(vscode.QuickPickItem & { selector?: string }) | undefined>();

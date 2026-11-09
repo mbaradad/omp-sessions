@@ -9,6 +9,14 @@ import { ensureOmpIntegration } from "../shared/omp-extension-install";
 import type { OmpApi } from "./api";
 
 export function registerOmpExtensions(api: OmpApi): void {
+	// The Doctor's fix: an explicit request installs even from a development host.
+	api.context.subscriptions.push(
+		vscode.commands.registerCommand("switchyard.installOmpIntegration", () => {
+			const done = ensureOmpIntegration({ bundleRoot: path.join(api.context.extensionPath, "out"), production: true });
+			if (done.error) void vscode.window.showErrorMessage(`Switchyard: ${done.error}.`);
+			else void vscode.window.showInformationMessage(done.installed.length ? `Switchyard installed the omp ${done.installed.join(" and ")}. New sessions enforce their mode.` : "The omp gate and shim are already installed.");
+		}),
+	);
 	const result = ensureOmpIntegration({ bundleRoot: path.join(api.context.extensionPath, "out"), production: api.context.extensionMode === vscode.ExtensionMode.Production });
 	if (!result.error) return;
 	console.warn("[switchyard] omp integration:", result.error);

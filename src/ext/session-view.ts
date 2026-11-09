@@ -3,7 +3,7 @@
 // vscode), so the CLI and tests can use it too.
 import * as path from "node:path";
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
-import type { AoAgentState, AoSessionModel } from "../ao/model";
+import type { AoAgentState, AoChangedFile, AoSessionModel } from "../ao/model";
 import type { PlanOp, PlanView, TaskState, TaskView } from "../planner/types";
 import type { FileChange } from "../shared/checkpoints";
 import type { Priority } from "../shared/organize";
@@ -252,6 +252,26 @@ export function ownFiles<T extends { path: string }>(files: readonly T[], cwd: s
 	return files.filter(f => touched.has(path.resolve(cwd, f.path)));
 }
 
+/**
+ * Where a graph child's own work starts: the planner's `Task.git.base` (the branch head after its parents were merged in,
+ * before its first run) of the session's first task that has one. `git diff base` in its worktree is what the task changed;
+ * AO's manifest also lists the parents' commits (GAPS G43). Undefined for a session without such a task: a root task in a
+ * session the planner created (the manifest is exact there) or a session outside the graph.
+ */
+export function taskBaseOf(plan: PlanView | undefined, sessionId: string): string | undefined {
+	if (!plan) return undefined;
+	const lanes = new Set(plan.lanes.filter(l => l.id === sessionId || l.session === sessionId).map(l => l.id));
+	return plan.tasks
+		.filter(t => ((t.lane !== undefined && lanes.has(t.lane)) || t.session === sessionId) && t.git?.base)
+		.sort((a, b) => a.createdAt - b.createdAt)[0]?.git?.base;
+}
+
+/** git's name-status letter of a changed file as AO's manifest words it. */
+export function asChangedFile(f: { status: string; path: string; from?: string }): AoChangedFile {
+	const status = f.status === "A" || f.status === "?" ? "added" : f.status === "D" ? "deleted" : f.status === "R" || f.status === "C" ? "renamed" : "modified";
+	return { path: f.path, ...(f.from && { oldPath: f.from }), status, additions: 0, deletions: 0 };
+}
+
 /** A planner task whose state changed between two plans (the sounds listen to these). */
 export interface TaskTransition {
 	task: TaskView;
@@ -262,10 +282,11 @@ export interface TaskTransition {
 
 /**
  * The tasks of `plan` whose state differs from `previous` (task id → state; a task not in it is new and does not
- * count), and the map for the next call. No plan: nothing changed, `previous` stays.
+ * count), and the map for the next call. No plan (the planner is unreachable): nothing changed and the map is
+ * emptied, so the first plan after the reconnect is only a baseline: finishes that happened while disconnected are not replayed as cues.
  */
 export function taskTransitions(previous: ReadonlyMap<string, TaskState>, plan: PlanView | undefined): { next: Map<string, TaskState>; changes: TaskTransition[] } {
-	if (!plan) return { next: new Map(previous), changes: [] };
+	if (!plan) return { next: new Map(), changes: [] };
 	const sessionOf = taskSessionOf(plan);
 	const changes: TaskTransition[] = [];
 	for (const task of plan.tasks) {

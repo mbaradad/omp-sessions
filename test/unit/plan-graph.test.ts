@@ -39,6 +39,19 @@ describe("planGraph", () => {
 		assert.deepEqual(finishedOnly, { nodes: [], edges: [] });
 	});
 
+	test("an edge between two finished tasks stays when git tracks it: a later parent change still reaches the child, and the Re-run action lives on that edge", () => {
+		const done = { status: "done", state: "done" } as const;
+		const tracked = planGraph(
+			plan([], [task("a", done), task("b", { after: ["a"], ...done, sync: { a: { state: "upstream-changed", at: 1 } } }), task("c", { after: ["a"], ...done })]),
+			titleOf,
+			NOW,
+		);
+		assert.deepEqual(keys(tracked), ["a>b:after:done"]);
+		assert.equal(tracked.edges[0].sync, "upstream-changed");
+		assert.deepEqual(tracked.nodes.map(n => n.id), ["a", "b"], "only the tracked edge's ends are drawn");
+		assert.equal(tracked.nodes[1].sync, "upstream-changed");
+	});
+
 	test("a dependency that duplicates a queue edge is drawn once; self and missing dependencies are ignored", () => {
 		const g = planGraph(plan([lane("q")], [task("a", { lane: "q" }), task("b", { lane: "q", after: ["a", "b", "gone"] })]), titleOf, NOW);
 		assert.deepEqual(keys(g), ["a>b:after"]);

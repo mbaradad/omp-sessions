@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
-import { afterUndoOps, armedLanes, checkTaskOption, continuesSession, keptBranchText, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
+import { afterUndoOps, armedLanes, checkPercent, checkTaskOption, continuesSession, failureHint, keptBranchText, modeGateNote, spareNote, taskProvider, usageLines, holdLines, isUndoable, undoneWith, laneSummary, orderedLanes, parseBudget, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../../src/shared/plan-tree";
 
 const NOW = new Date(2026, 10, 9, 12, 0);
 
@@ -207,5 +207,60 @@ describe("continuesSession", () => {
 describe("keptBranchText", () => {
 	test("says whose branch it was and why the planner kept it", () => {
 		assert.equal(keptBranchText({ task: "Write release notes", why: "holds 2 commits no other branch has" }), "of “Write release notes” — holds 2 commits no other branch has");
+	});
+});
+
+describe("modeGateNote", () => {
+	test("auto never needs the gate; ask, edits and plan are refused at spawn without it", () => {
+		for (const gate of [true, false]) assert.equal(modeGateNote("auto", gate), "");
+		for (const m of ["ask", "edits", "plan"]) {
+			assert.equal(modeGateNote(m, true), "");
+			assert.match(modeGateNote(m, false), /gate is not installed/);
+		}
+	});
+});
+
+describe("failureHint", () => {
+	test("recognises the missing-gate refusal on a failed task only", () => {
+		const summary = 'Permission mode "plan" needs the Switchyard permission gate, which is not installed (looked in /x). Run `switchyard omp-extension install`; without the gate a session can only start in mode "auto".';
+		assert.equal(failureHint({ status: "failed", summary }), "⚠ permission gate not installed");
+		assert.equal(failureHint({ status: "pending", summary }), "", "a requeued task is not failed any more");
+		assert.equal(failureHint({ status: "failed", summary: "The model request failed." }), "");
+		assert.equal(failureHint({ status: "failed" }), "");
+	});
+});
+
+describe("usage scheduling helpers", () => {
+	const withDefaults = (model?: string) => {
+		const p = plan([lane("q", { defaults: { model: "openai/gpt-5" } }), lane("bare")], []);
+		p.status = { ...p.status, usage: { holdAtPercent: 95, spareBelowPercent: 60 }, ...(model ? { defaults: { model } } : {}) };
+		return p;
+	};
+
+	test("the provider is the prefix of the model the task will run with: its own, then its queue's, then the planner default", () => {
+		const p = withDefaults("google/gemini-3");
+		assert.equal(taskProvider(p, { lane: "q", options: { model: "anthropic/claude-opus-4-6" } }), "anthropic");
+		assert.equal(taskProvider(p, { lane: "q" }), "openai");
+		assert.equal(taskProvider(p, { lane: "bare" }), "google");
+		assert.equal(taskProvider(p, {}), "google");
+		assert.equal(taskProvider(withDefaults(), { lane: "bare" }), undefined);
+		assert.equal(taskProvider(withDefaults(), { options: { model: "opus" } }), undefined, "a model without a provider prefix has no known provider");
+	});
+
+	test("spare says it does nothing without a provider, else which windows it waits for", () => {
+		assert.match(spareNote(withDefaults(), { lane: "bare" }), /no effect yet/);
+		assert.equal(spareNote(withDefaults(), { lane: "q" }), "starts only while every openai usage window is below 60%");
+	});
+
+	test("usage windows read one per line, with the reset only while it is in the future", () => {
+		const now = new Date(2026, 10, 9, 12, 0);
+		const lines = usageLines({ usageWindows: [{ provider: "anthropic", window: "5h", usedPercent: 61.6, resetsAt: now.getTime() + 3_600_000 }, { provider: "openai", window: "week", usedPercent: 9, resetsAt: now.getTime() - 1 }] }, now);
+		assert.match(lines[0], /^anthropic 5h: 62% \(resets /);
+		assert.equal(lines[1], "openai week: 9%");
+	});
+
+	test("a threshold is a number above 0 and at most 100", () => {
+		for (const ok of ["95", " 60 ", "99.5", "100"]) assert.equal(checkPercent(ok), undefined, ok);
+		for (const bad of ["", "0", "101", "-5", "abc", "6 0"]) assert.ok(checkPercent(bad), bad);
 	});
 });

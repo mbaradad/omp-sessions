@@ -6,7 +6,7 @@
 import * as vscode from "vscode";
 import type { KeptBranch, LaneView, PlanOp, PlanView, Subtask, TaskStatus, TaskView } from "../planner/types";
 import type { TodoItem, TodoPhase } from "../shared/omp-todos";
-import { keptBranchText, laneSummary, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
+import { failureHint, keptBranchText, laneSummary, spareNote, orderedLanes, syncAttention, syncConflicts, syncText, taskStateText, tasksOf } from "../shared/plan-tree";
 import { describeOptions, formatDuration } from "../shared/task-text";
 import type { OmpApi } from "./api";
 import { registerTaskExtras } from "./task-extras";
@@ -226,8 +226,10 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		item.description = [
 			t.state === "waiting" && !t.position ? "" : taskStateText(t, titleOf),
 			t.undone ? "↶ undone: its work is gone" : "",
+			failureHint(t),
 			syncText(syncAttention(t)),
 			t.priority && t.priority !== "normal" ? t.priority : "",
+			t.usage === "spare" ? "◔ spare" : "",
 			retrying,
 			t.subtasks.length ? `${subsDone}/${t.subtasks.length}` : "",
 			t.status === "done" || t.status === "failed" ? fmtAgo(t.finishedAt) : t.status === "running" ? fmtAgo(t.startedAt) : "",
@@ -241,6 +243,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 		tip.appendMarkdown(`**${t.title.replace(/[*_`[\]]/g, "\\$&")}**  \n$(pulse) ${t.state}`);
 		if (t.waitReason) tip.appendMarkdown(` — ${t.waitReason}`);
 		if (results.some(Boolean)) tip.appendMarkdown(`  \n$(watch) ${results.filter(Boolean).join(" · ")}${t.attempts ? ` · ${t.attempts} attempt(s)` : ""}`);
+		if (t.usage === "spare") tip.appendMarkdown(`  \n$(pulse) spare: ${spareNote(this.deps.planner.plan, t)}`);
 		if (t.after?.length) tip.appendMarkdown(`  \n$(git-merge) after ${t.after.map(id => titleOf(id) ?? id).join(", ")}`);
 		const opts = t.options;
 		if (opts) {
@@ -507,12 +510,8 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 	reg("switchyard.tasks.cleanBranches", async () => {
 		const before = deps.planner.plan?.keptBranches?.length ?? 0;
 		if (!(await edit([{ op: "branch.clean" }]))) return;
-		// The planner answers before it has finished deleting: wait (a few seconds at most) for the list to shrink.
-		let after = deps.planner.plan?.keptBranches?.length ?? 0;
-		for (let i = 0; i < 8 && after >= before && before > 0; i++) {
-			await new Promise(resolve => setTimeout(resolve, 500));
-			after = deps.planner.plan?.keptBranches?.length ?? after;
-		}
+		// The planner answers after the cleanup finished, with the new plan sent before the response.
+		const after = deps.planner.plan?.keptBranches?.length ?? 0;
 		void vscode.window.showInformationMessage(after === 0 ? "Switchyard: no kept branches left." : after < before ? `Switchyard: ${before - after} branch(es) cleaned; ${after} still hold work no other branch has.` : `Switchyard: ${after} branch(es) still hold work no other branch has: merge or delete them in git first.`);
 	});
 	reg("switchyard.tasks.copyBranch", async (arg?: unknown) => {

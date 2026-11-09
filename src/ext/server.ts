@@ -25,6 +25,7 @@ import { plain } from "./plain";
 
 /** What the planner and CLI run from: their bundles and the agent skill the CLI installs (plus the Hermes plugin folder). */
 const RUNTIME_FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
+const RUNTIME_FOLDERS = [PLUGIN_BUNDLE, "omp-extension", "omp-shim"];
 
 /** What other extension modules need from the machine side. */
 export interface ServerControl {
@@ -57,17 +58,20 @@ function runtimeVersion(dir: string): string | undefined {
  */
 export function installRuntime(outDir: string, version: string): string {
 	const dir = runtimeDir();
-	const complete = RUNTIME_FILES.every(f => fs.existsSync(path.join(dir, f))) && fs.existsSync(path.join(dir, PLUGIN_BUNDLE, "plugin.yaml"));
+	const complete = RUNTIME_FILES.every(f => fs.existsSync(path.join(dir, f))) && fs.existsSync(path.join(dir, PLUGIN_BUNDLE, "plugin.yaml")) && fs.existsSync(path.join(dir, "omp-extension", "mode.js")) && fs.existsSync(path.join(dir, "omp-shim", "omp"));
 	if (complete && runtimeVersion(dir) === version) return dir;
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	for (const f of RUNTIME_FILES) copyAtomic(path.join(outDir, f), path.join(dir, f));
-	// The Hermes plugin `omp-sessions hermes install` copies from (a folder: swapped in whole).
-	const plugin = path.join(dir, PLUGIN_BUNDLE);
-	const tmp = `${plugin}.${process.pid}.tmp`;
-	fs.rmSync(tmp, { recursive: true, force: true });
-	fs.cpSync(path.join(outDir, PLUGIN_BUNDLE), tmp, { recursive: true });
-	fs.rmSync(plugin, { recursive: true, force: true });
-	fs.renameSync(tmp, plugin);
+	// Folders swapped in whole: the Hermes plugin `omp-sessions hermes install` copies from, and the omp gate and shim the planner
+	// service installs from at its start (G46) when it outlives VS Code: they sit beside planner.js, where it looks.
+	for (const folder of RUNTIME_FOLDERS) {
+		const target = path.join(dir, folder);
+		const tmp = `${target}.${process.pid}.tmp`;
+		fs.rmSync(tmp, { recursive: true, force: true });
+		fs.cpSync(path.join(outDir, folder), tmp, { recursive: true });
+		fs.rmSync(target, { recursive: true, force: true });
+		fs.renameSync(tmp, target);
+	}
 	const pkg = path.join(dir, "package.json");
 	fs.writeFileSync(`${pkg}.tmp`, JSON.stringify({ name: "omp-sessions-runtime", version, private: true }));
 	fs.renameSync(`${pkg}.tmp`, pkg);
@@ -132,8 +136,8 @@ export function registerServer(api: OmpApi): ServerControl {
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
 		const next: SwitchyardConfig = {};
-		if (extraArgs !== undefined) next.omp = extraArgs.length ? { extraArgs } : undefined;
-		else if (cleared.extraArgs) next.omp = undefined;
+		if (extraArgs !== undefined) next.omp = { extraArgs: extraArgs.length ? extraArgs : undefined };
+		else if (cleared.extraArgs) next.omp = { extraArgs: undefined };
 		if (service !== undefined) next.service = service ? "on" : "off";
 		else if (cleared.service) next.service = undefined;
 		if (!Object.keys(next).length) return;

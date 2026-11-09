@@ -3,7 +3,7 @@
 
 import { settleDeadHost } from "../shared/health";
 import type { SessionMeta } from "../shared/protocol";
-import { type AoFacts, type PlannerFacts, aoChecks, plannerChecks } from "./doctor-ao";
+import { type AoFacts, type GateFacts, type PlannerFacts, aoChecks, gateChecks, plannerChecks } from "./doctor-ao";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
 
 export type Level = "ok" | "warn" | "error" | "info";
@@ -66,6 +66,8 @@ export interface DoctorFacts {
 	/** The Agent Orchestrator daemon every session runs in. */
 	ao: AoFacts;
 	planner: PlannerFacts;
+	/** The omp gate and shim (G46). */
+	gate: GateFacts;
 	/** The sessions AO lists, as the views see them. */
 	sessions: SessionMeta[];
 	/** Old session-host folders with file snapshots (Disk section, Clean Up File Snapshots). */
@@ -197,6 +199,7 @@ export function buildReport(f: DoctorFacts): Report {
 			{ title: "omp", checks: omp },
 			{ title: "Agent Orchestrator", checks: aoChecks(f.ao) },
 			{ title: "Planner", checks: plannerChecks(f.planner) },
+			{ title: "Permission gate and omp flags", checks: gateChecks(f.gate) },
 			{ title: "Environment", checks: env },
 			{ title: "Storage", checks: storage },
 			{ title: `Sessions (${f.sessions.length})`, checks: sessions },
