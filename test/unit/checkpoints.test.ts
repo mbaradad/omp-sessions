@@ -14,8 +14,8 @@ class FakeOmp {
 	entries: Entry[] = [];
 	leaf: string | null = null;
 	private seq = 0;
-	private readonly handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
-	private readonly commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
+	readonly handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
+	readonly commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
 	readonly notices: string[] = [];
 
 	constructor(readonly cwd: string) {
@@ -195,6 +195,13 @@ test("subagent edits belong to the main session's prompt", async () => {
 	);
 	await omp.command("/undo");
 	assert.equal(omp.read("a.txt"), "a0");
+});
+
+test("an omp AO did not start (no AO_SESSION_ID) gets no hooks and no commands", () => {
+	const { omp } = setup();
+	delete process.env.AO_SESSION_ID;
+	const own = new FakeOmp(omp.cwd);
+	assert.equal(own.handlers.size + own.commands.size, 0);
 });
 
 test("state.json lists every prompt and marks the undone ones", async () => {

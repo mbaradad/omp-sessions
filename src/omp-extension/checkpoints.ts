@@ -11,8 +11,10 @@
 // - `/redo` navigates back to where the undo started, rewrites the files, and appends a new marker.
 //   Any new entry after the marker (a prompt, a compaction) ends the redo history.
 // - `state.json` mirrors the prompts and the redo stack for clients (see src/shared/checkpoints.ts).
-// - For AO sessions, `omp.json` records omp's own session id and transcript (GAPS.md G9).
-// It works whichever client drives omp: the TUI, `omp acp` under AO, RPC.
+// - `omp.json` records omp's own session id and transcript (GAPS.md G9).
+// It works whichever client drives the omp of an AO session (AO's chat through `omp acp`, AO's
+// terminal mode, `omp --resume` with AO_SESSION_ID set) and does nothing without AO_SESSION_ID
+// (MAPPING.md D6): a person's own omp sessions are left alone.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { type AoNativeSession, nativeSessionFile } from "../ao/native";
@@ -33,7 +35,6 @@ import {
 	isPromptEntry,
 	listPrompts,
 	messageText,
-	ompCheckpointDir,
 	planRestore,
 	readChanges,
 	readState,
@@ -84,7 +85,6 @@ interface ExtensionApiLike {
 }
 
 interface PendingCall {
-	dir: string;
 	prompt: string | undefined;
 	before: Map<string, string | null>;
 	at: number;
@@ -96,27 +96,23 @@ let mainSession: SessionManagerLike | undefined;
 /** Before-snapshots of running edit calls, by tool call id. */
 const pending = new Map<string, PendingCall>();
 
-function storeDir(sm: SessionManagerLike): string {
-	const ao = process.env.AO_SESSION_ID?.trim();
-	return ao ? aoCheckpointDir(ao) : ompCheckpointDir(sm.getSessionId());
-}
-
 function listNames(paths: readonly string[], cwd: string): string {
 	const names = paths.map(p => (p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p));
 	return names.length > 4 ? `${names.slice(0, 4).join(", ")} and ${names.length - 4} more` : names.join(", ");
 }
 
 export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
+	const aoSessionId = process.env.AO_SESSION_ID?.trim();
+	if (!aoSessionId) return;
+	const dir = aoCheckpointDir(aoSessionId);
 	const warn = (message: string, err: unknown) => pi.logger?.warn(`switchyard checkpoints: ${message}`, { error: String(err) });
 
 	/** The session whose prompts a call in `ctx` belongs to. */
 	const ownerOf = (ctx: ContextLike) => (ctx.agent?.kind === "sub" ? mainSession : ctx.sessionManager);
 
-	/** Rewrites state.json; omp sessions AO did not start get a store only once they edit a file. */
+	/** Rewrites state.json. */
 	const syncState = (sm: SessionManagerLike, last?: CheckpointResult) => {
 		try {
-			const dir = storeDir(sm);
-			if (!process.env.AO_SESSION_ID && !fs.existsSync(dir)) return;
 			const changes = readChanges(dir);
 			writeState(dir, {
 				version: 1,
@@ -135,10 +131,8 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 		}
 	};
 
-	/** For AO sessions, records omp's own session id and transcript (AO keeps them internal; GAPS.md G9, src/ao/native.ts). */
+	/** Records omp's own session id and transcript (AO keeps them internal; GAPS.md G9, src/ao/native.ts). */
 	const recordNative = (sm: SessionManagerLike) => {
-		const aoSessionId = process.env.AO_SESSION_ID?.trim();
-		if (!aoSessionId) return;
 		try {
 			const file = nativeSessionFile(aoSessionId);
 			const record: AoNativeSession = { aoSessionId, ompSessionId: sm.getSessionId(), sessionFile: sm.getSessionFile(), cwd: sm.getCwd() };
@@ -173,13 +167,12 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 			if (!EDIT_TOOLS[event.toolName] || pending.has(event.toolCallId)) return;
 			const sm = ownerOf(ctx);
 			if (!sm) return;
-			const dir = storeDir(sm);
 			const before = new Map<string, string | null>();
 			for (const p of candidatePaths(event.input, ctx.cwd)) {
 				const hash = snapshotFile(dir, p);
 				if (hash !== undefined) before.set(p, hash);
 			}
-			pending.set(event.toolCallId, { dir, prompt: currentPrompt(sm.getBranch()), before, at: Date.now() });
+			pending.set(event.toolCallId, { prompt: currentPrompt(sm.getBranch()), before, at: Date.now() });
 		} catch (err) {
 			warn("before-snapshot failed", err);
 		}
@@ -197,14 +190,14 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 			for (const p of new Set([...call.before.keys(), ...fromDetails.paths])) {
 				// omp's own oldText is authoritative when present; the snapshot covers everything else.
 				const old = fromDetails.oldText.get(p);
-				const before = old !== undefined ? storeBlob(call.dir, Buffer.from(old)) : call.before.get(p);
-				const after = snapshotFile(call.dir, p);
+				const before = old !== undefined ? storeBlob(dir, Buffer.from(old)) : call.before.get(p);
+				const after = snapshotFile(dir, p);
 				if (after === undefined || before === undefined || before === after) continue;
 				files.push({ path: p, op: before === null ? "create" : after === null ? "delete" : "update", before, after });
 			}
 			if (!files.length) return;
 			const change: FileChange = { toolCallId: event.toolCallId, toolName: event.toolName, timestamp: Date.now(), files, prompt: call.prompt, ompSession: sm.getSessionId() };
-			appendChange(call.dir, change);
+			appendChange(dir, change);
 		} catch (err) {
 			warn("after-snapshot failed", err);
 		}
@@ -225,7 +218,6 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 		handler: async (args, ctx) => {
 			if (!ctx.isIdle()) await ctx.waitForIdle();
 			const sm = ctx.sessionManager;
-			const dir = storeDir(sm);
 			const fail = (message: string) => report(ctx, { op: "undo", ok: false, message, restored: [], failed: [], overwritten: [] });
 			const branch = sm.getBranch();
 			const target = undoTarget(branch, args.trim() || undefined);
@@ -259,7 +251,6 @@ export default function switchyardCheckpoints(pi: ExtensionApiLike): void {
 		handler: async (_args, ctx) => {
 			if (!ctx.isIdle()) await ctx.waitForIdle();
 			const sm = ctx.sessionManager;
-			const dir = storeDir(sm);
 			const fail = (message: string) => report(ctx, { op: "redo", ok: false, message, restored: [], failed: [], overwritten: [] });
 			const stack = redoStack(sm.getBranch());
 			const top = stack.at(-1);

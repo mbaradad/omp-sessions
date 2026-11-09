@@ -4,13 +4,11 @@
 // (the VS Code extension) read what it writes: the edits for Review Changes and inline diffs, and
 // which prompts are undone, to hide those turns that AO's timeline still shows.
 //
-// Store layout, one folder per session, under Switchyard's state folder (`SWITCHYARD_HOME`, default
-// ~/.switchyard; src/ao/native.ts keeps `omp.json` next to it, see GAPS.md G9):
-//   sessions/<AO session id>/checkpoints/   omp started by AO (AO_SESSION_ID set)
-//   omp/<omp session id>/checkpoints/       any other omp
-//     changes.jsonl   one FileChange per edit tool call, in order
-//     blobs/<sha1>    file contents (EMPTY_BLOB stands for an empty file, null for absent)
-//     state.json      CheckpointState: the session's prompts and the redo stack
+// Store layout: `<Switchyard state folder>/sessions/<AO session id>/checkpoints/` (`SWITCHYARD_HOME`,
+// default ~/.switchyard; src/ao/native.ts keeps `omp.json` one level up, see GAPS.md G9):
+//   changes.jsonl   one FileChange per edit tool call, in order
+//   blobs/<sha1>    file contents (EMPTY_BLOB stands for an empty file, null for absent)
+//   state.json      CheckpointState: the session's prompts and the redo stack
 // Node-only (fs); no VS Code and no omp imports, so the omp extension bundles it.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -134,11 +132,6 @@ function segment(id: string): string {
 /** Store of an AO session. */
 export function aoCheckpointDir(aoSessionId: string, home = switchyardHome()): string {
 	return path.join(home, "sessions", segment(aoSessionId), "checkpoints");
-}
-
-/** Store of an omp session AO did not start. */
-export function ompCheckpointDir(ompSessionId: string, home = switchyardHome()): string {
-	return path.join(home, "omp", segment(ompSessionId), "checkpoints");
 }
 
 export function changesFile(dir: string): string {
