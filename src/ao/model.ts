@@ -62,6 +62,8 @@ export interface AoQuestion {
 	schema?: unknown;
 	/** input in URL mode: the page that answers it. */
 	url?: string;
+	/** approval that arrived as a `user_input` form (omp's write/edit prompts): the form field the chosen decision's id goes into, resolved through the inputs route. */
+	inputField?: string;
 	turnId?: string;
 	createdAt: number;
 }
@@ -131,9 +133,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
-/** Approvals and questions still waiting for an answer, oldest first. */
+const OPEN_TURNS: Readonly<Partial<Record<AoTurn["state"], true>>> = { queued: true, running: true };
+
+/**
+ * Approvals and questions still waiting for an answer, oldest first. A request belongs to a turn that
+ * waits on it: when that turn has ended (a person's Stop leaves the approval row `pending` although the
+ * turn is `interrupted` and the agent ready, checked live) nobody can answer it any more.
+ */
 export function pendingActivities(conversation: AoConversation): AoActivity[] {
-	return conversation.activities.filter(a => a.status === "pending" && a.requestId && (a.activityKind === "approval" || a.activityKind === "user_input"));
+	const turns = new Map(conversation.turns.map(t => [t.id, t]));
+	return conversation.activities.filter(a => {
+		if (a.status !== "pending" || !a.requestId || (a.activityKind !== "approval" && a.activityKind !== "user_input")) return false;
+		const turn = a.turnId ? turns.get(a.turnId) : undefined;
+		return !turn || OPEN_TURNS[turn.state] === true;
+	});
 }
 
 /** Labels for ACP's permission option kinds, for decisions that come without one. */
@@ -179,6 +192,13 @@ export function questionOf(activity: AoActivity): AoQuestion {
 	}
 	const fields = schemaFields(detail.schema);
 	const message = str(detail.message);
+	const permission = permissionPrompt(fields);
+	if (permission) {
+		// omp's write/edit permission prompts arrive as a `user_input` form (VALIDATION.md §3, G12): one
+		// field offering Approve / Approve … for this session / Deny. Same concept as bash's approval.
+		const decisions = permission.options.map((label, i): AoDecision => ({ id: String(permission.values[i]), label, kind: permissionKind(label) }));
+		return { ...base, kind: "approval", decisions, options: permission.options, inputField: permission.key, ...(message && message !== activity.summary && { message }) };
+	}
 	return {
 		...base,
 		kind: "input",
@@ -188,6 +208,19 @@ export function questionOf(activity: AoActivity): AoQuestion {
 		...(detail.schema !== undefined && { schema: detail.schema }),
 		...(str(detail.url) && { url: str(detail.url) }),
 	};
+}
+
+/** ACP option kind of a permission choice: `Approve` once, `Approve … for this session` always, `Deny` rejects. */
+function permissionKind(label: string): string {
+	if (/^deny\b|^reject\b/i.test(label)) return "reject_once";
+	return /session|always/i.test(label) ? "allow_always" : "allow_once";
+}
+
+/** The single field of a form that is a tool-permission prompt: choices include an approval and a denial. */
+function permissionPrompt(fields: AoQuestionField[]): AoQuestionField | undefined {
+	const [field] = fields;
+	if (fields.length !== 1 || field.multi || field.options.length < 2) return undefined;
+	return field.options.some(o => /^approve\b|^allow\b/i.test(o)) && field.options.some(o => /^deny\b|^reject\b/i.test(o)) ? field : undefined;
 }
 
 export function questionsOf(conversation: AoConversation): AoQuestion[] {
@@ -392,11 +425,12 @@ export function answerFor(question: AoQuestion, answer: string): AoAnswer {
 		const decisions = question.decisions ?? [];
 		if (decisions.length === 0) return { error: "This approval offers no decisions." };
 		const i = pick(decisions.map(d => d.label), text) ?? pick(decisions.map(d => d.id), text);
-		if (i !== undefined) return { kind: "approval", decisionId: decisions[i].id };
 		const kindMatch = YES.test(text) ? ["allow_once", "allow_always"] : NO.test(text) ? ["reject_once", "reject_always"] : undefined;
-		const byKind = kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
-		if (byKind) return { kind: "approval", decisionId: byKind.id };
-		return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		const chosen = i !== undefined ? decisions[i] : kindMatch && (decisions.find(d => d.kind === kindMatch[0]) ?? decisions.find(d => d.kind === kindMatch[1]));
+		if (!chosen) return { error: `Answer with one of: ${decisions.map((d, k) => `${k + 1}. ${d.label}`).join(", ")}` };
+		// A permission prompt that arrived as a question is answered through the inputs route, the choice as the field's value.
+		if (question.inputField) return { kind: "input", body: { action: "accept", content: { [question.inputField]: chosen.id } } };
+		return { kind: "approval", decisionId: chosen.id };
 	}
 	if (question.url && !question.questions) return { error: `This question is answered in a browser: ${question.url}` };
 	const fields = question.questions ?? [];

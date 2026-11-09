@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView, AoTurn } from "../../src/ao/client";
-import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, questionOf, queueOf, sessionModel } from "../../src/ao/model";
+import { AO_LOST_TURN_ERROR, agentState, answerFor, changedFiles, lastReply, pendingActivities, questionOf, queueOf, sessionModel } from "../../src/ao/model";
 
 const T = "2026-11-09T15:00:00Z";
 
@@ -97,6 +97,19 @@ test("agentState: session lifecycle before and after the conversation", () => {
 	assert.equal(agentState(view({ status: "pr_open" })), "idle");
 });
 
+test("a pending approval whose turn has ended no longer waits for anyone", () => {
+	// As read live after a person's Stop during an approval: the row stays `pending`, the turn is `interrupted`, the agent is ready.
+	const owned = { ...approval, turnId: "t1" };
+	const stopped = conversation({ turns: [turn("t1", "interrupted")], activities: [owned] });
+	assert.equal(pendingActivities(stopped).length, 0);
+	assert.equal(agentState(view(), stopped), "idle");
+	assert.equal(sessionModel(view(), stopped).question, undefined);
+	// While its turn runs (or is queued) it waits; a request with no turn is kept.
+	assert.equal(agentState(view(), conversation({ turns: [turn("t1", "running")], activities: [owned] })), "needs_input");
+	assert.equal(pendingActivities(conversation({ activities: [approval] })).length, 1);
+	for (const state of ["completed", "failed", "cancelled", "recovered"] as const) assert.equal(pendingActivities(conversation({ turns: [turn("t1", state)], activities: [owned] })).length, 0, state);
+});
+
 test("agentState: the conversation decides once there is one", () => {
 	const v = view();
 	assert.equal(agentState(v, conversation({ turns: [turn("t1", "completed")] })), "idle");
@@ -172,6 +185,36 @@ test("approvals as omp sends them: bare ACP option ids get labels and kinds", ()
 	assert.deepEqual(answerFor(q, "no"), { kind: "approval", decisionId: "reject_once" });
 	assert.deepEqual(answerFor(q, "2"), { kind: "approval", decisionId: "allow_always" });
 	assert.deepEqual(answerFor(q, "reject_always"), { kind: "approval", decisionId: "reject_always" });
+});
+
+test("write/edit permission prompts arrive as user_input and are approvals too (G12, VALIDATION.md §3)", () => {
+	// As validate read them under omp's always-ask: summary "Allow tool: write\nPath: …", one enum field, resolved through inputs/{id}/resolve.
+	const write = activity({
+		activityKind: "user_input",
+		requestId: "req-write",
+		summary: "Allow tool: write\nPath: overlay-edit.md",
+		detail: { inputMode: "form", message: "Allow tool: write\nPath: overlay-edit.md", schema: { type: "object", properties: { value: { type: "string", enum: ["Approve", "Approve write for this session", "Deny"] } } } },
+	});
+	const q = questionOf(write);
+	assert.equal(q.kind, "approval");
+	assert.equal(q.title, "Allow tool: write\nPath: overlay-edit.md");
+	assert.deepEqual(q.options, ["Approve", "Approve write for this session", "Deny"]);
+	assert.deepEqual(q.decisions?.map(d => d.kind), ["allow_once", "allow_always", "reject_once"]);
+	// yes/no, number and label all answer it, through the inputs route with the enum value.
+	const accept = (value: string) => ({ kind: "input", body: { action: "accept", content: { value } } });
+	assert.deepEqual(answerFor(q, "yes"), accept("Approve"));
+	assert.deepEqual(answerFor(q, "2"), accept("Approve write for this session"));
+	assert.deepEqual(answerFor(q, "no"), accept("Deny"));
+	assert.deepEqual(answerFor(q, "deny"), accept("Deny"));
+	assert.ok("error" in answerFor(q, "maybe"));
+	// It waits like any approval: needs_input, and the report shows a select.
+	const waiting = conversation({ turns: [turn("t1", "running")], activities: [{ ...write, turnId: "t1" }] });
+	assert.equal(agentState(view(), waiting), "needs_input");
+	assert.equal(sessionModel(view(), waiting).question?.kind, "approval");
+	// omp's `ask` forms are not permission prompts, nor a form that merely has a Yes/No choice.
+	assert.equal(questionOf(ask).kind, "input");
+	const yesNo = activity({ activityKind: "user_input", requestId: "r", detail: { schema: { type: "object", properties: { ok: { type: "string", enum: ["Yes", "No"] } } } } });
+	assert.equal(questionOf(yesNo).kind, "input");
 });
 
 test("answerFor: approvals by number, label or yes/no", () => {

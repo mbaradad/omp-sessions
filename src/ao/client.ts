@@ -121,6 +121,8 @@ export class AoClient {
 	private readonly doFetch: typeof fetch;
 	/** Set when connected through discovery: a refused connection looks for the daemon again (it may have restarted on another port). */
 	private readonly discovery: AoConnectOptions | undefined;
+	/** The probe in flight, shared by every request that failed at once. */
+	private rediscovering: Promise<AoDaemon | undefined> | undefined;
 
 	constructor(options: AoClientOptions, discovery?: AoConnectOptions) {
 		this.doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -148,15 +150,23 @@ export class AoClient {
 	/**
 	 * Looks for the daemon again (discovery clients only); returns it, or undefined when none answers.
 	 * Never starts one: a daemon someone stopped stays stopped until a client connects with `start`.
+	 * Concurrent callers (every in-flight request fails together when the daemon goes down) share one
+	 * probe.
 	 */
-	async rediscover(): Promise<AoDaemon | undefined> {
-		if (!this.discovery) return undefined;
-		const daemon = await findDaemon(this.discovery);
-		if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
-			this.currentBaseUrl = daemon.baseUrl;
-			this.client = this.create();
-		}
-		return daemon;
+	rediscover(): Promise<AoDaemon | undefined> {
+		if (!this.discovery) return Promise.resolve(undefined);
+		const discovery = this.discovery;
+		this.rediscovering ??= (async () => {
+			const daemon = await findDaemon(discovery);
+			if (daemon && daemon.baseUrl !== this.currentBaseUrl) {
+				this.currentBaseUrl = daemon.baseUrl;
+				this.client = this.create();
+			}
+			return daemon;
+		})().finally(() => {
+			this.rediscovering = undefined;
+		});
+		return this.rediscovering;
 	}
 
 	private create(): AoApi {
@@ -260,6 +270,21 @@ export class AoClient {
 	 */
 	steerOrSend(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSteerOrSendResponse> {
 		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+	}
+
+	/**
+	 * Steers the running turn with this text (omp's `_session/steering`). Refused when no turn runs
+	 * (CHAT_NO_ACTIVE_TURN: send it as a message instead). It also folds every queued message into the
+	 * same steering call, in queue order, and those queued turns end (VALIDATION.md §5): warn before
+	 * steering a session with a queue. `clientMessageId` is generated when absent.
+	 */
+	steer(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSchemas["SteerConversationResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
+	}
+
+	/** Delivers one queued message into the running turn now (steers with its text), leaving the others queued. */
+	promoteQueuedTurn(sessionId: string, turnId: string): Promise<AoSchemas["PromoteQueuedTurnResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", { params: { path: { sessionId, turnId } } }));
 	}
 
 	/** Stops the running turn. */
