@@ -187,9 +187,18 @@ function systemdUserAvailable(): boolean {
 	return r.status === 0;
 }
 
-/** systemd unit name: one per run file, so an isolated instance does not collide with the default one. */
+/** True when HOME is not the user's real home (a smoke or e2e run with an isolated HOME). */
+export function isolatedHome(env: NodeJS.ProcessEnv = process.env): boolean {
+	return path.resolve(env.HOME || os.homedir()) !== path.resolve(os.userInfo().homedir);
+}
+
+/**
+ * systemd unit name: `ao-daemon` only for the default instance of the user's real home. Anything else
+ * gets a unit named after its run file: `systemctl --user` talks to the one real user manager whatever
+ * HOME says, so an isolated run must never touch the real `ao-daemon.service`.
+ */
 export function daemonUnitName(runFile: string, env: NodeJS.ProcessEnv = process.env): string {
-	if (path.resolve(runFile) === path.join(os.homedir(), ".ao", "running.json") && !env.AO_DATA_DIR) return "ao-daemon";
+	if (!isolatedHome(env) && path.resolve(runFile) === path.join(os.homedir(), ".ao", "running.json") && !env.AO_DATA_DIR) return "ao-daemon";
 	return `ao-daemon-${crypto.createHash("sha256").update(path.resolve(runFile)).digest("hex").slice(0, 8)}`;
 }
 

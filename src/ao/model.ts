@@ -3,7 +3,7 @@
 // and (for chat sessions) its conversation snapshot. Pure functions, plus AoSessionWatcher, which
 // keeps those models current from the daemon's change stream; the report (`show --json` shape) and the
 // conversation follower (attach, tail) live in ./report and ./follow and are exported from here.
-import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn } from "./client";
+import type { AoActivity, AoClient, AoConversation, AoListSessionsQuery, AoResolveInputRequest, AoSessionView, AoStreamStatus, AoTurn, AoWorkspaceManifest } from "./client";
 
 export type { AoConversationFollow, AoConversationUpdate, AoFollowOptions } from "./follow";
 export { deltaCursor, followConversation, mergeConversation } from "./follow";
@@ -221,30 +221,14 @@ export function queueOf(conversation: AoConversation): AoQueue {
 }
 
 /**
- * Files the agent's turns changed, with their line counts summed across turns. Rolled-back turns and
- * files are left out, and so are `undone` turns: omp's /undo rewinds turns AO never hears about (its
- * rollback is unsupported for omp), so it keeps their diffs; the checkpoints store knows them.
+ * The files the session changed: its workspace against the base it started from (AO's workspace
+ * manifest). omp chat turns carry no `diff` (checked live), so the turns cannot tell; the manifest also
+ * reflects whatever omp's /undo put back, since it reads the files themselves.
  */
-export function changedFiles(conversation: AoConversation, undone?: ReadonlySet<string>): AoChangedFile[] {
-	const files = new Map<string, AoChangedFile>();
-	for (const turn of conversation.turns) {
-		if (turn.rolledBack || !turn.diff || undone?.has(turn.id)) continue;
-		for (const f of turn.diff.files) {
-			if (f.rolledBack) continue;
-			const prev = files.get(f.path) ?? (f.oldPath ? files.get(f.oldPath) : undefined);
-			if (prev && f.oldPath && prev.path === f.oldPath) files.delete(f.oldPath);
-			// A file this session created stays "added" until it is deleted again.
-			const status = prev?.status === "added" && f.status !== "deleted" ? "added" : f.status;
-			files.set(f.path, {
-				path: f.path,
-				...((f.oldPath ?? prev?.oldPath) && status === "renamed" && { oldPath: f.oldPath ?? prev?.oldPath }),
-				status,
-				additions: (prev?.additions ?? 0) + f.additions,
-				deletions: (prev?.deletions ?? 0) + f.deletions,
-			});
-		}
-	}
-	return [...files.values()];
+export function changedFiles(manifest: AoWorkspaceManifest): AoChangedFile[] {
+	return manifest.files.flatMap((f): AoChangedFile[] =>
+		f.status === "unmodified" ? [] : [{ path: f.path, ...(f.status === "renamed" && f.previousPath && { oldPath: f.previousPath }), status: f.status, additions: f.additions, deletions: f.deletions }],
+	);
 }
 
 /**
@@ -320,8 +304,8 @@ export function exitReasonOf(view: AoSessionView, conversation?: AoConversation)
 	return last?.state === "failed" ? last.errorMessage || "The turn failed." : undefined;
 }
 
-/** `undone`: turns omp's /undo rewound (see changedFiles). */
-export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState, undone?: ReadonlySet<string>): AoSessionModel {
+/** `files`: the session's changed files (changedFiles of its workspace manifest), when read. */
+export function sessionModel(view: AoSessionView, conversation?: AoConversation, planned?: AoPlannedState, files: AoChangedFile[] = []): AoSessionModel {
 	const question = conversation ? questionsOf(conversation)[0] : undefined;
 	const reply = conversation ? lastReply(conversation) : undefined;
 	const exitReason = exitReasonOf(view, conversation);
@@ -341,7 +325,7 @@ export function sessionModel(view: AoSessionView, conversation?: AoConversation,
 		createdAt: ms(view.createdAt),
 		updatedAt: Math.max(ms(view.updatedAt), ms(view.lastEventAt)),
 		...(typeof usage?.cost === "number" && { cost: usage.cost, currency: usage.currency || "USD" }),
-		changedFiles: conversation ? changedFiles(conversation, undone) : [],
+		changedFiles: files,
 		queue: conversation ? queueOf(conversation) : { pending: 0, running: 0, done: 0, total: 0, items: [] },
 		...(question && { question }),
 		...(reply && { reply }),
@@ -450,10 +434,10 @@ export interface AoWatcherOptions {
 	conversations?: boolean;
 	/** Messages per conversation read (`limit`). Default 50. */
 	conversationLimit?: number;
+	/** Read each session's workspace manifest for its changed files (again only when its conversation moved). Default true. */
+	changedFiles?: boolean;
 	/** Coalesce a session's change events for this long before refetching it. Default 100 ms. */
 	debounceMs?: number;
-	/** Turns of a session that omp's /undo rewound (from the checkpoints store), left out of its changed files. */
-	undoneTurns?(sessionId: string, conversation: AoConversation): ReadonlySet<string> | undefined;
 }
 
 /**
@@ -467,6 +451,7 @@ export class AoSessionWatcher {
 	private readonly statusListeners = new Set<(status: AoStreamStatus) => void>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly cwds = new Map<string, string>();
+	private readonly files = new Map<string, { key: string; files: AoChangedFile[] }>();
 	private subscription: { close(): void } | undefined;
 	private closed = false;
 	private opens = 0;
@@ -574,14 +559,28 @@ export class AoSessionWatcher {
 
 	private async build(view: AoSessionView): Promise<AoSessionModel> {
 		const cwd = await this.cwdOf(view.id);
-		const withCwd = (m: AoSessionModel): AoSessionModel => (cwd ? { ...m, cwd } : m);
-		if (this.options.conversations === false || view.mode !== "chat") return withCwd(sessionModel(view));
+		// Not ready yet (409 while the controller starts), or gone with a terminated session: the view alone.
+		const conversation = this.options.conversations === false || view.mode !== "chat" ? undefined : await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 }).catch(() => undefined);
+		const files = this.options.changedFiles === false ? [] : await this.filesOf(view, conversation);
+		const model = sessionModel(view, conversation, undefined, files);
+		return cwd ? { ...model, cwd } : model;
+	}
+
+	/**
+	 * Files change only while the agent works, which adds conversation items or settles turns: the
+	 * manifest (a git diff on the daemon) is read again only when those moved.
+	 */
+	private async filesOf(view: AoSessionView, conversation: AoConversation | undefined): Promise<AoChangedFile[]> {
+		const key = conversation ? `${conversation.latestSequence}|${conversation.turns.map(t => `${t.id}:${t.state}`).join(",")}` : view.updatedAt;
+		const known = this.files.get(view.id);
+		if (known?.key === key) return known.files;
 		try {
-			const conversation = await this.client.getConversation(view.id, { limit: this.options.conversationLimit ?? 50 });
-			return withCwd(sessionModel(view, conversation, undefined, this.options.undoneTurns?.(view.id, conversation)));
+			const files = changedFiles(await this.client.workspaceManifest(view.id));
+			this.files.set(view.id, { key, files });
+			return files;
 		} catch {
-			// Not ready yet (409 while the controller starts), or gone with a terminated session.
-			return withCwd(sessionModel(view));
+			// No workspace any more (terminated and released), or a transient failure: keep what was known.
+			return known?.files ?? [];
 		}
 	}
 
