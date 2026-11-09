@@ -100,6 +100,7 @@ export class Planner {
 			log: (...parts) => this.log(...parts),
 			now: () => this.now(),
 			changed: () => this.schedule(0),
+			removeSession: session => (this.ao ? this.ao.removeSession(session) : Promise.reject(new Error("AO is not connected"))),
 		});
 	}
 
@@ -329,7 +330,7 @@ export class Planner {
 		const tracked = this.state.tasks.filter(t => t.git);
 		this.commit(s => Object.assign(s, res.state));
 		// Tasks removed from the plan take their planner-made branches with them (when git agrees: merged, not checked out).
-		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch, t.title, t.id);
+		for (const t of tracked) if (t.git && !this.state.tasks.some(x => x.id === t.id)) void this.propagation.dropBranch(t.git.repo, t.git.branch, t.title, t.id, t.session);
 		for (const e of res.effects) {
 			if (e.kind === "branches") this.cleaning = this.propagation.cleanKept();
 			else if (e.kind === "sync") void this.propagation.sync(e.task);

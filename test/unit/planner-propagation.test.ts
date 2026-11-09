@@ -433,19 +433,18 @@ test("removing a task deletes its switchyard/* branch when git agrees (merged, n
 	const branches = () => git(repo, "branch", "--format=%(refname:short)").split("\n");
 	const [a, b, c] = [branchOf("A"), branchOf("B"), branchOf("C")];
 	assert.ok(a.startsWith("switchyard/") && branches().includes(a));
-	// Finish B with no work of its own, C with a commit nobody merged; the sessions end (worktrees go away).
+	// Finish B with no work of its own, C with a commit nobody merged.
 	ao.finishTurn(sent(p, "B") as string, "completed", "B done");
 	write(ao, sent(p, "C") as string, "c.txt", "C work\n");
 	ao.finishTurn(sent(p, "C") as string, "completed", "C done");
 	await until("B and C done", () => byTitle(p, "B").status === "done" && byTitle(p, "C").git?.head !== byTitle(p, "A").git?.head && byTitle(p, "C").status === "done");
 	const ids = ["B", "C"].map(x => byTitle(p, x).id);
-	for (const title of ["B", "C"]) {
-		const wt = ao.worktreeOf(byTitle(p, title).session as string);
-		git(repo, "worktree", "remove", "--force", wt);
-	}
+	const [sB, sC] = [byTitle(p, "B").session as string, byTitle(p, "C").session as string];
 	p.edit(ids.map(id => ({ op: "remove" as const, id })));
 	await until("B's branch deleted", () => !branches().includes(b));
+	assert.deepEqual(ao.removed, [sB], "B's session went with its branch: it cannot be restored from a branch that is gone");
 	assert.ok(branches().includes(c), "C's commit is merged nowhere: its branch is kept");
+	assert.ok(ao.sessions.has(sC), "and so is C's session, which still holds those commits");
 	assert.ok(branches().includes(a), "A is still in the plan");
 	assert.ok(branches().includes("main"));
 	// The kept one is on the plan view, with the removed task and the reason.
@@ -458,4 +457,26 @@ test("removing a task deletes its switchyard/* branch when git agrees (merged, n
 	git(repo, "merge", "-q", "--no-edit", c);
 	p.edit([{ op: "branch.clean" }]);
 	await until("C's branch deleted", () => !branches().includes(c) && p.view().keptBranches.length === 0);
+	assert.deepEqual(ao.removed, [sB, sC], "C's session is removed with its branch");
+});
+
+test("a removed task's session that AO refuses to delete (uncommitted changes) keeps its branch too; a session another task still uses is not removed", async t => {
+	const { repo, ao, p } = await graph(t);
+	const branches = () => git(repo, "branch", "--format=%(refname:short)").split("\n");
+	const b = byTitle(p, "B");
+	ao.finishTurn(sent(p, "B") as string, "completed", "B done");
+	await until("B done", () => byTitle(p, "B").status === "done" && byTitle(p, "B").git?.head);
+	// Somebody left an uncommitted file in B's worktree: AO would refuse to delete the session.
+	write(ao, b.session as string, "scratch.txt", "mine\n");
+	p.edit([{ op: "remove", id: b.id }]);
+	await until("B's branch listed as kept", () => p.view().keptBranches.some(k => k.branch === b.git?.branch));
+	assert.match(p.view().keptBranches[0].why, /was kept: .*uncommitted changes/);
+	assert.ok(branches().includes(b.git?.branch as string));
+	assert.deepEqual(ao.removed, [], "nothing was removed");
+	assert.equal(p.view().keptBranches[0].session, b.session);
+	// The person cleans the worktree; `branch.clean` now removes the session and the branch.
+	fs.rmSync(path.join(ao.worktreeOf(b.session as string), "scratch.txt"));
+	p.edit([{ op: "branch.clean" }]);
+	await until("removed after the clean-up", () => !branches().includes(b.git?.branch as string) && p.view().keptBranches.length === 0);
+	assert.deepEqual(ao.removed, [b.session]);
 });

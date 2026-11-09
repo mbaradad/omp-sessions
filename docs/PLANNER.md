@@ -185,7 +185,7 @@ batch when the plan changed since (`error: "stale rev N"`).
 
 ```ts
 interface EdgeView { parent: string; parentSession?: string; child: string; childSession?: string; state: "in-sync"|"pending"|"merged"|"upstream-changed"|"resolving"|"conflict"; files?: string[]; parentHead?: string; childHead?: string; at: number }   // derived from Task.sync
-interface KeptBranch { repo: string; branch: string; task: string; taskId: string; tip?: string; why: string; at: number }
+interface KeptBranch { repo: string; branch: string; task: string; taskId: string; session?: string; tip?: string; why: string; at: number }
 interface PlanView { rev: number; edges: EdgeView[]; keptBranches: KeptBranch[]; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
 interface LaneView extends Lane { pending: number; running: number; done: number; failed: number; total: number }
 interface PlannerStatus extends PlannerConfig {
@@ -321,7 +321,11 @@ branch head after the parents were merged in and before the task's first run (ne
 session: the worktree head after the parents' merge; absent for a root task in a session the planner created, where
 AO's diff is exact). `git diff base..head` = what the task changed (`head`: after its last turn).
 
-AO never deletes the branches of its sessions. When a task is **removed** from the plan, the planner deletes its
+AO never deletes the branches of its sessions, and a session restored after its branch is gone would be recreated
+from the default branch without the task's commits. So the planner removes a removed task's **session together with
+its branch** (kill, then delete with cleanup: AO refuses a worktree with uncommitted changes, and then both stay),
+only when the branch can go, and never a session another task of the plan still uses; a kept branch keeps its
+session. When a task is **removed** from the plan, the planner deletes its
 `switchyard/*` branch, but only when every commit on it is still reachable from another branch (a parent's,
 `main`…) and nothing has it checked out; a branch with work of its own stays, is logged ("kept branch") and is recorded in the plan: `PlanView.keptBranches: KeptBranch[]` = `{repo, branch, task (title), taskId, tip?, why, at}`, so `plan status` and the Tasks view can list leftover branches. `edit [{op:"branch.clean"}]` (also run at every planner (re)connect) retries them, and **answers when the cleanup is done** (the plan event with the shrunk list comes before the response): one a person deleted, or merged into another branch since, leaves the list (and is deleted when merged).
 Branches the planner did not create are never touched.
@@ -403,6 +407,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: removing a task also removes its AO session when its branch is deleted (kept branch = kept session).
 - 2026-11-09: `PlanView.keptBranches` (leftover switchyard/* branches with unmerged work) and op `branch.clean`.
 - 2026-11-09: the service installs the omp gate/shim at start (G46); `ping` returns `omp`.
 - 2026-11-09: a turn failed with ACP `-32800` / "Request cancelled" (a person's Stop) is `interrupted`, not a failed attempt.

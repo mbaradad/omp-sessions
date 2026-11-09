@@ -25,6 +25,8 @@ export interface PropagationHost {
 	now(): number;
 	/** The plan changed so that dispatch may proceed (a child was requeued). */
 	changed(): void;
+	/** Terminates and deletes an AO session (its branch is being deleted); rejects when AO keeps it. Absent: AO is not connected. */
+	removeSession?(session: string): Promise<void>;
 }
 
 function real(p: string): string {
@@ -154,29 +156,43 @@ export class Propagation {
 	 * every commit on it is still reachable from another branch (a parent's, `main`…): nothing is lost. A branch with
 	 * work of its own stays, is recorded in the plan (`keptBranches`) and shown to the user; git refuses one that is checked out.
 	 */
-	dropBranch(repo: string, branch: string, title: string, taskId: string): Promise<void> {
+	dropBranch(repo: string, branch: string, title: string, taskId: string, session?: string): Promise<void> {
 		if (!isPlannerBranch(branch)) return Promise.resolve();
 		const still = this.host.state().tasks.some(t => t.git?.branch === branch && real(t.git.repo) === real(repo));
 		if (still) return Promise.resolve();
 		return this.serial(async () => {
-			const kept = await this.tryDelete(repo, branch);
+			const kept = await this.tryDelete(repo, branch, session);
 			if (kept === undefined) return this.forgetKept(repo, branch);
 			this.host.log("kept branch", branch, kept.why);
 			this.host.commit(s => {
 				s.keptBranches = s.keptBranches.filter(k => !(k.repo === repo && k.branch === branch));
-				s.keptBranches.push({ repo, branch, task: title, taskId, ...(kept.tip ? { tip: kept.tip } : {}), why: kept.why, at: this.host.now() });
+				s.keptBranches.push({ repo, branch, task: title, taskId, ...(session ? { session } : {}), ...(kept.tip ? { tip: kept.tip } : {}), why: kept.why, at: this.host.now() });
 			});
 		});
 	}
 
-	/** Deletes `branch` when nothing is lost; otherwise says why it stays. Undefined: it is gone now. */
-	private async tryDelete(repo: string, branch: string): Promise<{ why: string; tip?: string } | undefined> {
+	/**
+	 * Deletes `branch` when nothing is lost; otherwise says why it stays. Undefined: it is gone now. The task's AO
+	 * session goes first (it holds the branch checked out, and a session restored after the branch is gone would be
+	 * recreated from the default branch without the task's commits); a session another task still uses is left.
+	 */
+	private async tryDelete(repo: string, branch: string, session?: string): Promise<{ why: string; tip?: string } | undefined> {
 		try {
 			return await withRepoLock(repo, async () => {
 				const tip = await revParse(repo, `refs/heads/${branch}`);
 				if (!tip) return undefined;
 				const others = (await git(repo, ["for-each-ref", "--contains", tip, "--format=%(refname:short)", "refs/heads"])).split("\n").filter(b => b && b !== branch);
 				if (!others.length) return { why: "it has commits no other branch has", tip };
+				const shared = !!session && this.host.state().tasks.some(t => t.session === session);
+				if (session && !shared) {
+					if (!this.host.removeSession) return { why: `its session ${session} cannot be removed while AO is not connected`, tip };
+					try {
+						await this.host.removeSession(session);
+						this.host.log("removed session", session, "of", branch);
+					} catch (err) {
+						return { why: `its session ${session} was kept: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`, tip };
+					}
+				}
 				try {
 					await git(repo, ["branch", "-D", branch]);
 					this.host.log("deleted branch", branch);
@@ -203,7 +219,7 @@ export class Propagation {
 			for (const k of [...this.host.state().keptBranches]) {
 				const still = this.host.state().tasks.some(t => t.git?.branch === k.branch && real(t.git.repo) === real(k.repo));
 				if (still) continue;
-				const kept = await this.tryDelete(k.repo, k.branch);
+				const kept = await this.tryDelete(k.repo, k.branch, k.session);
 				if (kept === undefined) this.forgetKept(k.repo, k.branch);
 				else if (kept.tip !== k.tip || kept.why !== k.why) {
 					this.host.commit(s => {
