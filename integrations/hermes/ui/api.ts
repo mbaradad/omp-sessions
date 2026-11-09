@@ -49,6 +49,9 @@ export interface Models {
 	/** The omp Sessions default model for new sessions (null: omp's own default). */
 	default: string | null;
 	ompDefault?: string | null;
+	/** The session whose omp's choices these are; null when no session is running (then `note` says so and the list is empty). */
+	source?: string | null;
+	note?: string;
 }
 
 export type State = "queued" | "scheduled" | "starting" | "working" | "needs_input" | "idle" | "interrupted" | "stopped";

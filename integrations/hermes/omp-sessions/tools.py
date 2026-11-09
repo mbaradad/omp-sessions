@@ -152,7 +152,7 @@ SCHEMAS: dict[str, dict] = {
     },
     "omp_models_list": {
         "name": "omp_models_list",
-        "description": "Models omp can use (provider/id selectors for omp_session_start and omp_session_model), with the omp Sessions default and omp's own default.",
+        "description": "Models omp can use (provider/id selectors for omp_session_start and omp_session_model), with the omp Sessions default and omp's own default. The list is what a RUNNING session's omp offers (`source` names it); with no session running it is empty and `note` says so: then start a session first, or pass the model you know (an unknown one is refused).",
         "parameters": {"type": "object", "properties": {"search": {"type": "string", "description": "Filter, e.g. sonnet or openai."}}},
     },
     "omp_session_model": {

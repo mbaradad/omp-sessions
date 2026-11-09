@@ -245,6 +245,21 @@ class PluginTest(unittest.TestCase):
         self.tick_until("proj", child, lambda t: t.status == "done", "child done")
         self.assertEqual(len(tagged(child)), 1)
 
+    def test_a_child_card_starts_from_its_parents_work(self) -> None:
+        # GRAPH-PROPAGATION through the lane: the child card's session is queued after the parent card's, so the
+        # planner commits the parent's work and brings it into the child's worktree before the child's prompt.
+        parent = self.create("proj", "write shared.txt from-parent\necho parent done")
+        child = self.create("proj", "bash cat shared.txt\necho child done", parents=[parent])
+        self.tick_until("proj", parent, lambda t: t.status == "done", "parent done")
+        self.tick_until("proj", child, lambda t: t.status == "done", "child done")
+        [ps] = tagged(parent)
+        [cs] = tagged(child)
+        self.assertEqual((Path(cs["meta"]["cwd"]) / "shared.txt").read_text().strip(), "from-parent", "the parent's file is in the child's worktree")
+        edges = [e for e in json.loads(omp_sessions("plan", "status", "--json").stdout)["edges"] if e.get("childSession") == cs["meta"]["id"]]
+        self.assertEqual([(e["parentSession"], e["state"]) for e in edges], [(ps["meta"]["id"], "merged")])
+        # The page and omp_session_status show the same edge as the child's `upstream`.
+        self.assertEqual([e["state"] for e in self.tool("omp_session_status", {"id": cs["meta"]["id"]})["upstream"]], ["merged"])
+
     def test_a_cards_model_override_picks_the_sessions_model(self) -> None:
         card = self.create("proj", "echo on mini", model_override="fake-mini", provider_override="fake")
         self.tick("proj")
@@ -875,6 +890,18 @@ class PureTest(unittest.TestCase):
         self.assertEqual(d(Card("ready", "omp"), gone, None, "omp"), [("claim",), ("recreate",)])
         self.assertEqual(d(Card("ready", "omp"), gone, rep("idle"), "omp"), [("claim",), ("retry",)])
         self.assertEqual(d(Card("blocked", "omp"), gone, rep("idle"), "omp"), [])
+
+    def test_a_card_waits_for_a_pending_reply_but_not_forever(self) -> None:
+        d, Card = self.lane.decide, self.lane.Card
+        link = {"session": "s1", "state": "active", "asked": []}
+        done = {"state": "idle", "queue": {"pending": 0, "running": 0, "done": 1, "total": 1}}
+        # The reply is not final yet (the CLI leaves it out): completing now would record the wrong result.
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "replyPending": True}, "omp"), [("wait_reply",)])
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "replyPending": True, "reply": "ok"}, "omp"), [("complete",)], "a reply that is there is used")
+        self.assertEqual(d(Card("running", "omp"), link, {**done, "reply": "ok"}, "omp"), [("complete",)])
+        # A tool-only or failed turn never gets one: after a few passes the card completes without a reply.
+        waited = {**link, "reply_waits": self.lane.REPLY_WAIT_PASSES}
+        self.assertEqual(d(Card("running", "omp"), waited, {**done, "replyPending": True}, "omp"), [("complete",)])
 
     def test_decide_merge_conflict_blocks_once_per_parent_head(self) -> None:
         d, Card = self.lane.decide, self.lane.Card
