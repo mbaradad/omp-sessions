@@ -247,6 +247,26 @@ def card_lookup(refs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
     return out
 
 
+def card_plan(info: dict, card_of: dict[str, str]) -> dict:
+    """What the planner says about a card's session (`switchyard ls --json`), for the graph: its state
+    (blocked, scheduled, held, paused, waiting, running, interrupted: absent once the work is done), why it is
+    held, and the cards whose sessions it waits for (`after`: set by the lane from the parent cards that ran in
+    it; `blockedBy`: the unfinished ones; `upstream`: the worst state of the merge edges from parents)."""
+    cards = lambda sessions: [card_of[str(x)] for x in sessions or [] if str(x) in card_of]  # noqa: E731
+    out: dict = {"state": info.get("planState")}
+    if info.get("waitReason"):
+        out["reason"] = info["waitReason"]
+    if isinstance(info.get("waitUntil"), (int, float)):
+        out["until"] = info["waitUntil"]
+    # The parents the planner knows: the next task's `after`, and every graph edge into the session (kept after the task finished).
+    edges = [e.get("parentSession") for e in info.get("upstream") or [] if isinstance(e, dict)]
+    out["after"] = sorted({*cards(info.get("after")), *cards(edges)})
+    out["blockedBy"] = cards(info.get("blockedBy"))
+    if info.get("upstreamState"):
+        out["upstream"] = info["upstreamState"]
+    return out
+
+
 def card_ref(info: dict, by_session: dict[str, dict]) -> Optional[tuple[str, str]]:
     """(board, card) a session works on: the lane's link, else its `hermes:<board>` + `card:<id>` tags."""
     sid = str((info.get("meta") or {}).get("id"))
@@ -701,6 +721,7 @@ def boards_view() -> dict:
         except SwitchyardError:
             infos = []
     states = {str(i["meta"]["id"]): switchyard.agent_state(i) for i in infos}
+    info_of = {str(i["meta"]["id"]): i for i in infos}
     # The omp session of each card: the lane's, else the latest one tagged hermes:<board> + card:<id>.
     by_session = {str(l.get("session")): l for l in links.values() if l.get("session")}
     session_of: dict[tuple[str, str], str] = {}
@@ -711,6 +732,8 @@ def boards_view() -> dict:
     out = []
     for b in board_slugs():
         slug = str(b["slug"])
+        # session -> card id, for the sessions of this board's cards: the planner names sessions, the graph cards.
+        card_of = {sid: card for (board, card), sid in session_of.items() if board == slug}
         entry = s.lane.boards.get(slug, {})
         assignee = (entry.get("assignee") or s.lane.assignee).lower()
         listed = not s.lane.boards or slug in s.lane.boards
@@ -754,6 +777,7 @@ def boards_view() -> dict:
                             "sessionState": (states.get(sid) or "removed") if sid else ("not created" if l else None),
                             "lane": l is not None,
                             "laneState": l.get("state") if l else None,
+                            "plan": card_plan(info_of[sid], card_of) if sid in info_of else None,
                         }
                     )
         except Exception as exc:
