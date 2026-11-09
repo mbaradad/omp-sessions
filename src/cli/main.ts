@@ -277,6 +277,8 @@ async function cmdNew(args: Args): Promise<number> {
 	// here. A session in the checkout itself (`never`) is not something AO does (MAPPING Q1): refuse it rather than ignore it.
 	if (!project && worktree === "always") throw new Error(`--worktree=always needs a git repository: ${dir} is not in one`);
 	if (worktree === "never") throw new Error("--worktree=never / --no-worktree: AO runs every session of a git project in its own worktree; running in the checkout itself is not available (MAPPING Q1). Start the session in a folder outside git, or leave the flag out");
+	// MAPPING Q1: a folder outside git is not opened by AO; the session gets an empty scratch directory.
+	if (!project) process.stderr.write(c.yellow(`warning: ${dir} is not in a git repository: the session runs in an empty scratch directory, not in ${dir}\n`));
 	// A queued task gets its session now (idle, no prompt), so its id is the session id like before; the planner prompts it.
 	const lane = task ? await planner() : undefined;
 	// Sessions this one waits for, checked before anything is created.
