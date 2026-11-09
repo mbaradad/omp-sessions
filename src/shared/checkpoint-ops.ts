@@ -124,3 +124,25 @@ export function turnChanges(sessionId: string, conversation: AoConversation, tur
 	const prompt = matchTurns(aoTurns(conversation), readState(dir)?.prompts ?? []).get(turnId);
 	return prompt ? readChanges(dir).filter(c => c.prompt === prompt.id) : [];
 }
+
+export interface TurnSummary {
+	/** omp has a record of this turn's prompt (false: it never reached omp, or the session has no checkpoint state). */
+	known: boolean;
+	/** Files the turn's edit tools changed. */
+	files: string[];
+	/** `/undo` took the turn back. */
+	undone: boolean;
+	/** The turn's prompt is the session's last active one: undoing it takes back nothing else. */
+	last: boolean;
+}
+
+/** What a client shows about one AO turn: its files, whether it was undone, and whether it can be undone alone. */
+export function turnSummary(sessionId: string, conversation: AoConversation, turnId: string): TurnSummary {
+	const dir = aoCheckpointDir(sessionId);
+	const state = readState(dir);
+	const prompt = matchTurns(aoTurns(conversation), state?.prompts ?? []).get(turnId);
+	if (!state || !prompt) return { known: false, files: [], undone: false, last: false };
+	const files = new Set<string>();
+	for (const c of readChanges(dir)) if (c.prompt === prompt.id) for (const f of c.files) files.add(f.path);
+	return { known: true, files: [...files], undone: !prompt.active, last: prompt.active && state.prompts.filter(p => p.active).at(-1)?.id === prompt.id };
+}

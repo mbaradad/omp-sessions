@@ -409,16 +409,20 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (id) await checkpoints.review(id, `omp: ${await titleOf(id)}`, snapshots);
 	});
 
-	reg("switchyard.undo", async (arg?: unknown) => {
+	// `switchyard.undo(sessionId, turnId?)`: the session's last prompt, or the one AO turn `turnId` sent and
+	// everything after it. Resolves with omp's CheckpointResult (undefined: cancelled, nothing to undo, or failed).
+	reg("switchyard.undo", async (arg?: unknown, turnId?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Undo the last prompt of which session?"));
-		if (!id) return;
-		const done = await checkpoints.undo(id);
+		if (!id) return undefined;
+		const done = await checkpoints.undo(id, typeof turnId === "string" ? { turnId } : undefined);
 		if (done?.prompt) panels.get(id)?.insertText(done.prompt);
+		return done;
 	});
 
+	// `switchyard.redo(sessionId)`: resolves with omp's CheckpointResult, or undefined.
 	reg("switchyard.redo", async (arg?: unknown) => {
 		const id = idFrom(arg) ?? (await pickSession("Redo in which session?"));
-		if (id) await checkpoints.redo(id);
+		return id ? checkpoints.redo(id) : undefined;
 	});
 
 	reg("omp.resumeFromHistory", async (arg?: unknown) => {
