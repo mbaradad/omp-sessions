@@ -35,9 +35,9 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 /**
- * Polls (real time: the daemon and fake run on it) until the session's `n`-th turn is final and its last
- * assistant message is too; that message's text. AO can show a turn `completed` a moment before it
- * flags the last message `streaming: false`, so a client reading the reply must wait for that.
+ * Waits (real time: the daemon and fake run on it) until the session's `n`-th turn has ended, then reads its reply
+ * with foundation's awaitTurnReply, which also waits for the turn's last assistant message to be final (AO can show
+ * a turn `completed` a moment before it flags that message `streaming: false`).
  */
 async function replyOf(sessionId: string, n: number): Promise<string | undefined> {
 	const deadline = Date.now() + 30_000;
@@ -46,10 +46,11 @@ async function replyOf(sessionId: string, n: number): Promise<string | undefined
 		const turn = conv.turns[n - 1];
 		if (turn && turn.state !== "queued" && turn.state !== "running") {
 			assert.equal(turn.state, "completed", `turn ${n} of ${sessionId}: ${turn.state} ${turn.errorMessage ?? ""}`);
-			const reply = conv.messages.filter(m => m.turnId === turn.id && m.role === "assistant" && !m.streaming).at(-1);
-			if (reply) return reply.text;
+			const reply = await client.awaitTurnReply(sessionId, turn.id, { graceMs: 10_000 });
+			assert.ok(reply.final, `turn ${n} of ${sessionId} has a final reply`);
+			return reply.text;
 		}
-		if (Date.now() > deadline) throw new Error(`turn ${n} of ${sessionId}: ${turn?.state ?? "missing"}, messages ${JSON.stringify(conv.messages.filter(m => m.turnId === turn?.id).map(m => [m.role, m.streaming, m.text]))}`);
+		assert.ok(Date.now() < deadline, `turn ${n} of ${sessionId} ended: ${turn?.state ?? "missing"}`);
 		await sleep(100);
 	}
 }
