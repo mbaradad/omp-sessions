@@ -893,30 +893,30 @@
 			},
 			{
 				"command": "omp.server.start",
-				"title": "Start omp-sessions Server",
+				"title": "Start Planner and AO Daemon",
 				"category": "omp",
 				"icon": "$(play)"
 			},
 			{
 				"command": "omp.server.restart",
-				"title": "Restart omp-sessions Server",
+				"title": "Restart Planner",
 				"category": "omp",
 				"icon": "$(debug-restart)"
 			},
 			{
 				"command": "omp.server.showLog",
-				"title": "Show omp-sessions Server Log",
+				"title": "Show Planner or AO Daemon Log",
 				"category": "omp",
 				"icon": "$(output)"
 			},
 			{
 				"command": "omp.server.install",
-				"title": "Install omp-sessions Login Service",
+				"title": "Install Planner and AO Daemon Login Services",
 				"category": "omp"
 			},
 			{
 				"command": "omp.server.statusInTerminal",
-				"title": "Show omp-sessions Status in Terminal",
+				"title": "Show Status in Terminal",
 				"category": "omp",
 				"icon": "$(terminal)"
 			},
@@ -1824,12 +1824,24 @@
 			{
 				"id": "omp.gettingStarted",
 				"title": "omp: background coding agent",
-				"description": "Run omp sessions that keep working while VS Code is closed, review their changes, and queue work.",
+				"description": "Run omp sessions on Agent Orchestrator: they keep working while VS Code is closed, each in its own git worktree; review their changes, queue work, follow them from your phone.",
 				"steps": [
+					{
+						"id": "daemon",
+						"title": "Agent Orchestrator runs the sessions",
+						"description": "The AO daemon starts omp for every session and keeps it running.\n[Start AO and the planner](command:omp.server.start)",
+						"media": {
+							"markdown": "media/walkthrough/daemon.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.server.start",
+							"onCommand:omp.newSession"
+						]
+					},
 					{
 						"id": "start",
 						"title": "Start a background session",
-						"description": "Sessions survive VS Code, sleep and SSH drops.\n[Start a session](command:omp.newSession)",
+						"description": "Sessions survive VS Code, sleep and SSH drops, each in its own git worktree.\n[Start a session](command:omp.newSession)",
 						"media": {
 							"markdown": "media/walkthrough/start.md"
 						},
@@ -1883,6 +1895,17 @@
 							"onCommand:omp.fixDiagnostics",
 							"onCommand:omp.addToChat",
 							"onCommand:omp.scm.commit"
+						]
+					},
+					{
+						"id": "phone",
+						"title": "Follow sessions from your phone",
+						"description": "Pair the Orchestrator mobile app with this machine.\n[Connect Phone](command:omp.remote.connectPhone)",
+						"media": {
+							"markdown": "media/walkthrough/phone.md"
+						},
+						"completionEvents": [
+							"onCommand:omp.remote.connectPhone"
 						]
 					}
 				]
@@ -2024,13 +2047,13 @@
 				"omp.server.autoStart": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Start the per-user `omp-sessions` server when VS Code opens (clients also start it whenever they need it; it keeps running until `omp-sessions server stop`). It starts stopped sessions whose task queue has work when a concurrency slot is free, stops the sessions it started once their queue is done, and serves the `omp-sessions` terminal command, the phone app and Hermes."
+					"markdownDescription": "When VS Code opens, start the per-user planner (it runs task queues, dependencies and schedules with no client open) and, when none runs, the Agent Orchestrator daemon that runs every omp session (`ao daemon`, found through `~/.ao/running.json`). Off: nothing is started; the status bar shows when AO is unreachable and **omp: Start Planner and AO Daemon** starts both."
 				},
 				"omp.server.installService": {
 					"type": "boolean",
 					"default": true,
 					"scope": "machine",
-					"markdownDescription": "Install the `omp-sessions` server as a user service (systemd user unit, launchd agent) the first time it starts, so it comes back after a crash or reboot. Off: the server still starts on demand but not at login. Same as `omp-sessions config set service on|off`; removing an installed service is `omp-sessions server uninstall` (the install notice's **Turn Off** does both). Never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
+					"markdownDescription": "Run the planner and the AO daemon as user services the first time they start (systemd user units, a launchd agent for the planner), so they come back after a crash or reboot. Off: they still start on demand but not at login; AO then runs as a detached process. The planner service is never installed for VS Code's own runtime (no Node 22+ on PATH): it moves with VS Code updates."
 				},
 				"omp.sessionScope": {
 					"type": "string",

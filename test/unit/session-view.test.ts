@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { approvalModeFor, launchFlags, metaOf, permissionModeOf, statusOf } from "../../src/ext/session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, statusOf } from "../../src/ext/session-view";
+import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { PERMISSION_MODES } from "../../src/shared/permissions";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
 
@@ -109,6 +110,21 @@ test("pairingLink: AO's v2 offer with every endpoint, base64url in the fragment"
 	const fragment = link.slice(link.indexOf("#") + 1);
 	assert.doesNotMatch(fragment, /[+/=]/);
 	assert.deepEqual(JSON.parse(Buffer.from(fragment, "base64url").toString("utf8")), { v: 2, hostId: "h_1", name: "192.168.1.20", platform: "", endpoints: [lan, tunnel], token: "pw-123" });
+});
+
+test("laneQueue: a session's queue summary from the planner lanes that continue it", () => {
+	const lane = (l: Partial<LaneView>): LaneView => ({ id: "l_1", autoRun: true, createdAt: 1, pending: 0, running: 0, done: 0, failed: 0, total: 0, ...l });
+	const task = (t: Partial<TaskView>): TaskView => ({ id: "t", title: "t", subtasks: [], status: "pending", createdAt: 5, state: "waiting", ...t });
+	const plan = {
+		rev: 1,
+		lanes: [lane({ id: "repo-1", pending: 2, done: 1, total: 3 }), lane({ id: "l_2", session: "repo-1", autoRun: false, startAt: 9000, pending: 1, total: 1 }), lane({ id: "l_3", session: "repo-2", pending: 4, total: 4 })],
+		tasks: [task({ id: "a", lane: "repo-1", position: 2, createdAt: 7 }), task({ id: "b", lane: "repo-1", state: "interrupted" }), task({ id: "c", lane: "l_2", state: "scheduled", waitUntil: 8000 }), task({ id: "d", lane: "l_3", position: 1 })],
+		recurring: [],
+		status: {} as PlanView["status"],
+	} satisfies PlanView;
+	assert.deepEqual(laneQueue(plan, "repo-1"), { pending: 3, running: 0, done: 1, total: 4, autoRun: true, startAt: 8000, interrupted: 1, waiting: { position: 2, since: 7 } });
+	assert.equal(laneQueue(plan, "repo-9"), undefined);
+	assert.equal(laneQueue(undefined, "repo-1"), undefined);
 });
 
 test("pairing readiness: no code without an address or a password; pending while the tunnel starts", () => {

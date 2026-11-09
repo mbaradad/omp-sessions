@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, type AoSpawnResponse, readNativeSession } from "../ao/client";
 import { type AoChangedFile, type AoSessionModel, AoSessionWatcher } from "../ao/model";
+import type { PlanView } from "../planner/types";
 import { findOmp, readLauncherSettings, sendToHost } from "../shared/launch";
 import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
@@ -11,7 +12,7 @@ import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../s
 import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { approvalModeFor, launchFlags, metaOf } from "./session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf } from "./session-view";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -77,6 +78,12 @@ export interface NewSessionOptions {
 	resumeFile?: string;
 }
 
+/** The planner's latest plan and its change event (the Tasks view's PlannerStore has this shape). */
+export interface PlanSource {
+	readonly plan: PlanView | undefined;
+	readonly onDidChange: vscode.Event<unknown>;
+}
+
 /**
  * Every AO session, as `SessionMeta` records for the views (tree, board, status bar, notifications), kept
  * current from AO's change stream by an AoSessionWatcher; plus the session commands (new, stop, resume,
@@ -103,6 +110,8 @@ export class SessionManager implements vscode.Disposable {
 	private disposed = false;
 	/** Set once the first list arrived (until then the views show no sessions, not "none"). */
 	loaded = false;
+	/** The planner's plan (task queues of sessions), when a planner connection was handed over (`usePlan`). */
+	private planSource: PlanSource | undefined;
 
 	constructor(
 		private readonly ao: AoConnection,
@@ -110,6 +119,33 @@ export class SessionManager implements vscode.Disposable {
 		readonly version: string,
 	) {
 		void this.connect().catch(() => undefined);
+	}
+
+	/**
+	 * Takes each session's task-queue summary (`meta.queue`: badges, the board's Queued column, hide-finished)
+	 * from the planner's plan, now and whenever it changes. The Tasks view's planner connection provides it.
+	 */
+	usePlan(source: PlanSource): vscode.Disposable {
+		this.planSource = source;
+		const apply = () => {
+			let changed = false;
+			for (const [id, meta] of this.sessions) {
+				const queue = laneQueue(source.plan, id);
+				if (JSON.stringify(queue) === JSON.stringify(meta.queue)) continue;
+				const { queue: _old, ...rest } = meta;
+				this.sessions.set(id, queue ? { ...rest, queue } : rest);
+				changed = true;
+			}
+			if (changed) this.emitter.fire();
+		};
+		apply();
+		const sub = source.onDidChange(apply);
+		return {
+			dispose: () => {
+				sub.dispose();
+				if (this.planSource === source) this.planSource = undefined;
+			},
+		};
 	}
 
 	/** The watcher on the connected daemon; connects (and retries every 10 s in the background) when needed. */
@@ -163,6 +199,8 @@ export class SessionManager implements vscode.Disposable {
 			const meta = metaOf(model, cwds[i], readNativeSession(model.id));
 			// Turn diffs miss files the agent created; the worktree's changes (counted below) don't.
 			meta.changedFiles = Math.max(meta.changedFiles, this.fileCounts.get(model.id) ?? 0);
+			const queue = laneQueue(this.planSource?.plan, model.id);
+			if (queue) meta.queue = queue;
 			const prev = next.get(model.id);
 			this.models.set(model.id, model);
 			next.set(model.id, meta);

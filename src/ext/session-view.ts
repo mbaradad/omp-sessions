@@ -3,6 +3,7 @@
 // vscode), so the CLI and tests can use it too.
 import type { AoNativeSession, AoTurnSettings } from "../ao/client";
 import type { AoAgentState, AoSessionModel } from "../ao/model";
+import type { PlanView } from "../planner/types";
 import type { PermissionMode } from "../shared/permissions";
 import type { SessionMeta, SessionStatus } from "../shared/protocol";
 
@@ -104,3 +105,29 @@ export function launchFlags(args: readonly string[]): { model?: string; effort?:
 	return out;
 }
 
+
+/**
+ * A session's task-queue summary (tree badges, the board's Queued column, hide-finished) from the planner's
+ * plan: the lanes that continue this AO session (lane id = session id, or `lane.session`). Undefined when the
+ * session has no lane.
+ */
+export function laneQueue(plan: PlanView | undefined, sessionId: string): SessionMeta["queue"] | undefined {
+	const lanes = plan?.lanes.filter(l => l.id === sessionId || l.session === sessionId) ?? [];
+	if (!plan || !lanes.length) return undefined;
+	const ids = new Set(lanes.map(l => l.id));
+	const tasks = plan.tasks.filter(t => t.lane !== undefined && ids.has(t.lane));
+	const total = (key: "pending" | "running" | "done" | "total") => lanes.reduce((n, l) => n + l[key], 0);
+	const startAt = Math.min(...lanes.flatMap(l => (l.startAt ? [l.startAt] : [])), ...tasks.flatMap(t => (t.state === "scheduled" && t.waitUntil ? [t.waitUntil] : [])));
+	const interrupted = tasks.filter(t => t.state === "interrupted").length;
+	const waiting = tasks.find(t => t.state === "waiting" && t.position !== undefined);
+	return {
+		pending: total("pending"),
+		running: total("running"),
+		done: total("done"),
+		total: total("total"),
+		autoRun: lanes.some(l => l.autoRun),
+		...(Number.isFinite(startAt) && { startAt }),
+		...(interrupted && { interrupted }),
+		...(waiting?.position !== undefined && { waiting: { position: waiting.position, since: waiting.createdAt } }),
+	};
+}

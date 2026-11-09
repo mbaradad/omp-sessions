@@ -1,7 +1,9 @@
-// The machine side from the extension: the AO daemon that runs every session (found through its run file,
-// started as the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts),
-// the `omp-sessions` command (`omp.installCli`) and the runtime folder it runs from (the extension folder
-// changes with every update), and the `omp.path`/`omp.extraArgs` mirror in launcher.json the CLI reads.
+// The machine side from the extension (MAPPING: the server commands and settings now mean the planner, plus
+// the AO daemon it and every client need): the planner (`out/planner.js`, a user service; src/planner) that
+// holds queues and schedules, the AO daemon that runs every session (found through its run file, started as
+// the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts), the
+// `omp-sessions` command (`omp.installCli`) and the runtime folder the planner and CLI run from (the
+// extension folder changes with every update), and the `omp.path`/`omp.extraArgs` mirror the CLI reads.
 import { execFile, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -13,16 +15,19 @@ import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
 import { ompPathProblem, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
+import { ensurePlanner, stopPlanner } from "../planner/client";
+import { logPath as plannerLogPath } from "../planner/paths";
+import { installService as installPlannerService, serviceKind, serviceUnitPath } from "../planner/service";
 import type { OmpApi } from "./api";
 import { type ServerFacts, parseMachineStatus } from "./doctor-server";
 import { plain } from "./plain";
 
-/** What the CLI runs from: its bundle and the agent skill it installs (plus the Hermes plugin folder). */
-const RUNTIME_FILES = ["cli.js", "omp-sessions.SKILL.md"];
+/** What the planner and CLI run from: their bundles and the agent skill the CLI installs (plus the Hermes plugin folder). */
+const RUNTIME_FILES = ["cli.js", "planner.js", "omp-sessions.SKILL.md"];
 
 /** What other extension modules need from the machine side. */
 export interface ServerControl {
-	/** Finds or starts the AO daemon; resolves with a status line, rejects when it does not come up. */
+	/** Finds or starts the AO daemon and the planner; resolves with a status line, rejects when either does not come up. */
 	ensureRunning(): Promise<string>;
 	/** `omp-sessions status --json` from the installed runtime (never starts anything), or why it could not be read. */
 	status(): Promise<Pick<ServerFacts, "status" | "error">>;
@@ -173,11 +178,34 @@ export function registerServer(api: OmpApi): ServerControl {
 		if (text !== existing) writeLauncher(file, text);
 	};
 
+	const plannerScript = () => {
+		if (!runtime) throw new Error("the omp-sessions runtime is not installed (see the AO output)");
+		return path.join(runtime, "planner.js");
+	};
+	/**
+	 * Starts the planner: through its user service, installed the first time when `omp.server.installService`
+	 * allows and a system Node runs it (VS Code's own runtime moves with every VS Code update), else detached.
+	 */
+	const startPlanner = async (): Promise<string> => {
+		const script = plannerScript();
+		const kind = serviceKind();
+		const wantService = vscode.workspace.getConfiguration("omp").get<boolean>("server.installService", true) && !getNode().electron;
+		if (wantService && kind && !fs.existsSync(serviceUnitPath(kind))) {
+			const r = installPlannerService(script, getNode().path);
+			if (r) ao.log.info(`installed the planner ${r.kind} user service ${r.file}${r.ok ? "" : " (it did not start)"}`);
+		}
+		const planner = await ensurePlanner(script, getNode().path);
+		if (!planner) throw new Error(`the planner did not start (see ${plannerLogPath()})`);
+		const info = await planner.request("ping", {}, 3000).finally(() => planner.close());
+		return `planner ${info.version} running (pid ${info.pid})`;
+	};
+
 	const ensureRunning = async (): Promise<string> => {
 		const client = await ao.client(true);
 		const daemon = await findDaemon();
 		const unit = installedUnit();
-		return `AO daemon running at ${client.baseUrl}${daemon ? ` (pid ${daemon.pid}${unit ? `, systemd unit ${unit}` : ""})` : ""}`;
+		const aoLine = `AO daemon running at ${client.baseUrl}${daemon ? ` (pid ${daemon.pid}${unit ? `, systemd unit ${unit}` : ""})` : ""}`;
+		return `${aoLine}; ${await startPlanner()}`;
 	};
 
 	/** Runs the runtime's CLI as the `omp-sessions` launcher would: this node (Electron as Node when it is VS Code's). */
@@ -198,7 +226,7 @@ export function registerServer(api: OmpApi): ServerControl {
 	const showError = (err: unknown) =>
 		void vscode.window.showErrorMessage(plain(err instanceof Error ? err.message : String(err)), "Show Log").then(a => a && vscode.commands.executeCommand("omp.server.showLog"));
 
-	// Off the activation path: finding node takes a moment.
+	// Off the activation path: finding node and starting the planner take a moment.
 	setTimeout(() => {
 		try {
 			migrateLegacyLauncher();
@@ -206,6 +234,11 @@ export function registerServer(api: OmpApi): ServerControl {
 		} catch (err) {
 			ao.log.warn(`could not refresh the omp-sessions command: ${String(err)}`);
 		}
+		if (!ao.mayStart()) return;
+		startPlanner().then(
+			msg => ao.log.info(msg),
+			err => ao.log.error(`planner: ${err instanceof Error ? err.message : String(err)}`),
+		);
 	}, 1500);
 
 	context.subscriptions.push(
@@ -240,29 +273,34 @@ export function registerServer(api: OmpApi): ServerControl {
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.install", async () => {
-			// ensureDaemon installs and enables the `ao-daemon` user unit when it starts the default daemon under systemd.
-			if (process.platform !== "linux") {
-				void vscode.window.showInformationMessage("A login service for AO exists on Linux (systemd); elsewhere omp Sessions starts the AO daemon when it needs it.");
-				return;
-			}
 			try {
+				const kind = serviceKind();
+				if (!kind) {
+					void vscode.window.showInformationMessage("Login services exist on Linux (systemd) and macOS (launchd); on Windows the planner and AO start when a client needs them.");
+					return;
+				}
+				const lines: string[] = [];
+				const planner = installPlannerService(plannerScript(), getNode().path);
+				if (planner) lines.push(`the planner runs as the ${planner.kind} user service ${planner.file}${planner.ok ? "" : " (it did not start)"}${getNode().electron ? "; it uses VS Code's own Node, which VS Code updates replace: the next start re-points it" : ""}`);
+				// ensureDaemon installs and enables the `ao-daemon` user unit when it starts the default daemon under systemd.
 				let unit = installedUnit();
-				if (!unit) {
+				if (!unit && kind === "systemd") {
 					const running = await findDaemon();
-					if (running) {
-						const ok = await vscode.window.showWarningMessage(
+					const ok =
+						!running ||
+						(await vscode.window.showWarningMessage(
 							"Restart the AO daemon as a systemd user service?",
 							{ modal: true, detail: "It runs without one now. Sessions keep running across the restart (their hosts are separate processes); the service starts AO at login and after a crash." },
 							"Restart as Service",
-						);
-						if (ok !== "Restart as Service") return;
-						await stopDaemon(running);
+						)) === "Restart as Service";
+					if (ok) {
+						if (running) await stopDaemon(running);
+						await ensureDaemon({ supervisor: "systemd", log: m => ao.log.info(m) });
+						unit = installedUnit();
 					}
-					await ensureDaemon({ supervisor: "systemd", log: m => ao.log.info(m) });
-					unit = installedUnit();
 				}
-				if (unit) void vscode.window.showInformationMessage(plain(`The AO daemon runs as the systemd user service ${unit}.service: it starts at login and restarts after a crash.`));
-				else void vscode.window.showWarningMessage("systemd did not take the AO service; see the AO output.");
+				if (unit) lines.push(`the AO daemon runs as the systemd user service ${unit}.service`);
+				void vscode.window.showInformationMessage(plain(`${lines.join("; ")}. They start at login and restart after a crash.`));
 				api.sessions.refresh();
 			} catch (err) {
 				showError(err);
@@ -280,33 +318,34 @@ export function registerServer(api: OmpApi): ServerControl {
 			terminal.sendText(windows ? `& ${args.map(a => `"${a.replace(/[`"$]/g, "`$&")}"`).join(" ")}` : shellQuote(args));
 		}),
 		vscode.commands.registerCommand("omp.server.restart", async () => {
-			const ok = await vscode.window.showWarningMessage(
-				"Restart the AO daemon?",
-				{ modal: true, detail: "Running sessions keep running (their hosts are separate processes) and reconnect when it is back." },
-				"Restart",
-			);
-			if (ok !== "Restart") return;
 			try {
-				const running = await findDaemon();
-				if (running) await stopDaemon(running);
-				await ensureDaemon({ log: m => ao.log.info(m) });
-				void vscode.window.showInformationMessage(plain(await ensureRunning()));
-				api.sessions.refresh();
+				await stopPlanner();
+				void vscode.window.showInformationMessage(plain(`Restarted: ${await startPlanner()}. The AO daemon keeps running (its sessions too).`));
 			} catch (err) {
 				showError(err);
 			}
 		}),
 		vscode.commands.registerCommand("omp.server.showLog", async () => {
 			const unit = installedUnit();
-			if (unit) {
-				const terminal = vscode.window.createTerminal({ name: "AO daemon log" });
-				terminal.show();
-				terminal.sendText(shellQuote(["journalctl", "--user", "-u", `${unit}.service`, "-n", "300", "-f"]));
-				return;
+			const aoFile = path.join(path.dirname(defaultRunFile()), "daemon.log");
+			const pick = await vscode.window.showQuickPick(
+				[
+					{ label: "Planner", description: plannerLogPath(), which: "planner" },
+					{ label: "AO daemon", description: unit ? `journalctl --user -u ${unit}` : fs.existsSync(aoFile) ? aoFile : "this window's AO output", which: "ao" },
+				],
+				{ placeHolder: "Show which log?" },
+			);
+			if (pick?.which === "planner") {
+				if (fs.existsSync(plannerLogPath())) await vscode.window.showTextDocument(vscode.Uri.file(plannerLogPath()), { preview: true });
+				else void vscode.window.showInformationMessage("The planner has not logged anything yet.");
+			} else if (pick?.which === "ao") {
+				if (unit) {
+					const terminal = vscode.window.createTerminal({ name: "AO daemon log" });
+					terminal.show();
+					terminal.sendText(shellQuote(["journalctl", "--user", "-u", `${unit}.service`, "-n", "300", "-f"]));
+				} else if (fs.existsSync(aoFile)) await vscode.window.showTextDocument(vscode.Uri.file(aoFile), { preview: true });
+				else ao.log.show();
 			}
-			const file = path.join(path.dirname(defaultRunFile()), "daemon.log");
-			if (fs.existsSync(file)) await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
-			else ao.log.show();
 		}),
 	);
 	return { ensureRunning, status, client: () => ao.client(true) };
