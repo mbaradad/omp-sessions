@@ -124,7 +124,7 @@ test("cli: an approval → wait 3 with the question; answer --question refuses a
 	const w = json("wait", id, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3, w.stderr);
 	assert.equal(w.data.state, "needs_input");
-	assert.equal(w.data.question.kind, "approval");
+	assert.equal(w.data.question.kind, "select", "tool approvals are select questions, as before");
 	assert.ok(w.data.question.options.includes("Allow once"), JSON.stringify(w.data.question));
 	assert.equal(cli("answer", id, "--question", "not-this-one", "1").status, 1);
 	assert.equal(cli("answer", id, "maybe").status, 2, "not one of the decisions");
@@ -144,8 +144,8 @@ test("cli: omp's ask → kind ask; send --wait streams; stop → wait 4; resume 
 	assert.equal(json("send", id, "ask Ship it? | yes | no", "--json").data.sent, true);
 	const w = json("wait", id, "--timeout", "60s", "--json");
 	assert.equal(w.status, 3);
-	assert.deepEqual(w.data.question.kind, "ask");
-	assert.deepEqual(w.data.question.questions?.[0]?.options, ["yes", "no"]);
+	// One question: its options, as `options` (kind select) or under `questions` (kind ask).
+	assert.deepEqual(w.data.question.options ?? w.data.question.questions?.[0]?.options, ["yes", "no"]);
 	assert.equal(cli("answer", id, "2").status, 0);
 	assert.equal(json("wait", id, "--timeout", "60s", "--json").data.reply, "chose no");
 	const streamed = cli("send", id, "echo streamed reply", "--wait");

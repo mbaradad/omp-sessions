@@ -5,7 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type AoClient, AoError, type AoSchemas, findDaemon, switchyardHome, unwrap } from "../ao/client";
-import { SETTLED_STATES, answerFor } from "../ao/model";
+// Two `permissionModeOf`s: src/ao's reads AO turn settings; src/shared/permissions' parses a typed word.
+import { SETTLED_STATES, answerFor, permissionModeOf as aoPermissionMode } from "../ao/model";
 import { SKILL_FILE, SKILL_NAME, SKILL_PLATFORMS, type SkillTarget, detectedPlatforms, installSkill, isSkillPlatform, skillTargets, uninstallSkill } from "../shared/agent-skill";
 import { AFTER_INSTALL, PLUGIN_BUNDLE, disablePlugin, findHermes, hermesLookup, pluginReport, pluginTarget, reportLine, resolveTargets, uninstallPlugin, updatePlugin } from "../shared/hermes-plugin";
 import { ORG_COLORS, OrganizeStore, PRIORITIES, isOrgColor, isPriority } from "../shared/organize";
@@ -18,7 +19,7 @@ import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } 
 import { attach } from "./attach";
 import { type LaneSummary, type Planner, type PlannerQueue, type QueueOp, connectPlanner, lanesOf, plannerService } from "./plan";
 import { itemLines, timeline } from "./render";
-import { type AgentState, APPROVAL_OF, type ListFilter, type Session, type SessionReport, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, loadSession, loadSessions, modeOf, ompModeOption, orderOf, resolveSession, sessionReport, workspacePath } from "./sessions";
+import { type AgentState, APPROVAL_OF, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, loadSession, loadSessions, ompModeOption, orderOf, reportOf, resolveSession } from "./sessions";
 import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
 
 function readVersion(): string {
@@ -92,7 +93,7 @@ async function resumeAgent(client: AoClient, s: Session): Promise<boolean> {
 		return true;
 	}
 	if (v.activity.state !== "exited") return false;
-	await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: s.id } } }));
+	await client.resumeAgent(s.id);
 	return true;
 }
 
@@ -289,7 +290,7 @@ async function cmdNew(args: Args): Promise<number> {
 		});
 		if (priority && isPriority(priority)) await lane.call("edit", { ops: [{ op: "lane.update", id, priority }] });
 	}
-	const cwd = (await workspacePath(client, id)) ?? project?.path ?? dir;
+	const cwd = (await client.workspacePath(id).catch(() => undefined)) || project?.path || dir;
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ id, started: !task || !startAt, title, cwd, ...(startAt ? { startAt } : {}) })}\n`);
 		return 0;
@@ -352,14 +353,14 @@ async function cmdTail(args: Args): Promise<number> {
 // ---------- agent-facing: show / wait / answer ----------
 
 /** The session's report for agents: state, pending question, full last reply. */
-async function reportFor(id: string): Promise<SessionReport> {
+async function reportFor(id: string): Promise<CliReport> {
 	const client = await ao();
 	const s = await fresh(id, 200);
 	const [ompMode, changedFiles] = await Promise.all([s.model.conversation && s.state !== "stopped" ? ompModeOption(client, id) : undefined, changedFileCount(client, id)]);
-	return sessionReport(s, { ...(ompMode && { ompMode }), ...(changedFiles !== undefined && { changedFiles }) });
+	return reportOf(s, { ...(ompMode && { ompMode }), ...(changedFiles !== undefined && { changedFiles }) });
 }
 
-function printReport(r: SessionReport): void {
+function printReport(r: CliReport): void {
 	const q = r.queue.total ? c.dim(` · queue ${r.queue.done}/${r.queue.total}`) : "";
 	process.stdout.write(`${STATE_COLOR[r.state](r.state.replace("_", " "))} ${r.id} ${c.bold(r.title)}${q}${r.cost ? c.dim(` · $${r.cost.toFixed(2)}`) : ""}\n`);
 	if (r.question) {
@@ -680,7 +681,7 @@ async function cmdStop(args: Args): Promise<number> {
 		const s = await findSession(q);
 		const v = s.model.view;
 		const live = !v.isTerminated && v.activity.state !== "exited";
-		if (live) await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: s.id } } }));
+		if (live) await client.exitAgent(s.id);
 		// Queued or scheduled work stops too: its lane pauses and loses its start time (`queue <s> start` re-arms it).
 		const unqueued = !!(p && s.lane && s.lane.pending > 0 && (s.lane.autoRun || s.lane.startAt !== undefined));
 		if (p && unqueued) await p.call("queue", { id: s.id, ops: [{ op: "schedule", at: null }, { op: "autoRun", value: false }] });
@@ -723,7 +724,7 @@ async function cmdRemove(args: Args): Promise<number> {
 		// AO deletes only terminated sessions; kill releases the workspace (a dirty worktree is kept on disk).
 		if (!s.model.view.isTerminated) await client.killSession(s.id);
 		// `cleanup`: release a workspace kill left on disk; AO refuses (and says so) when it holds uncommitted work.
-		await unwrap(client.api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId: s.id }, query: { cleanup: true } } }));
+		await client.deleteSession(s.id, true);
 		if (p && s.lane) await p.call("edit", { ops: [{ op: "lane.remove", id: s.id }] }).catch(() => undefined);
 		const org = new OrganizeStore();
 		if (org.data.sessions[s.id]) org.cleanup(id => id !== s.id);
@@ -766,8 +767,8 @@ async function switchMode(client: AoClient, s: Session, mode: PermissionMode): P
 	await client.setTurnSettings(s.id, { approvalMode: approval });
 	if (!live) return "next-resume";
 	if (s.model.conversation?.turns.some(t => t.state === "running" || t.state === "queued")) throw new Error(`omp's approval level changes only when AO restarts it, and ${s.id} is working: switch when it is idle, or abort it first (MAPPING G7)`);
-	await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: s.id } } }));
-	await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: s.id } } }));
+	await client.exitAgent(s.id);
+	await client.resumeAgent(s.id);
 	return "restarted";
 }
 
@@ -777,7 +778,8 @@ async function cmdMode(args: Args): Promise<void> {
 	const s = await findSession(ref);
 	const client = await ao();
 	if (!want) {
-		const current = modeOf(s.model.conversation?.settings.approvalMode, await ompModeOption(client, s.id));
+		const ompMode = await ompModeOption(client, s.id);
+		const current = ompMode === "plan" ? "plan" : aoPermissionMode(s.model.conversation?.settings);
 		process.stdout.write(`${c.bold(s.title)} ${c.dim(s.id)} · ${current ? PERMISSION_MODE_INFO[current].label : c.dim("omp's own approval setting (tools.approvalMode)")}\n`);
 		for (const m of PERMISSION_MODES) process.stdout.write(`  ${m === current ? c.green("●") : c.dim("·")} ${pad(m, 6)} ${c.dim(PERMISSION_MODE_INFO[m].detail)}\n`);
 		return;

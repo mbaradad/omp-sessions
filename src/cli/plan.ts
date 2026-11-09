@@ -64,8 +64,8 @@ export interface LaneSummary {
 	total: number;
 	autoRun: boolean;
 	startAt?: number;
-	/** A task was cut short by a crash or restart: it waits for a person. */
-	interrupted?: boolean;
+	/** When a task was cut short by a crash or restart (epoch ms): it waits for a person. */
+	interrupted?: number;
 	/** The next task waits for its start time. */
 	scheduled?: boolean;
 	/** The next task is ready but waits (a slot, usage limits, dependencies); `position` is 1-based in start order, 0 when it isn't waiting for a slot. */
@@ -83,7 +83,8 @@ export function laneSummaries(plan: PlanView): Map<string, LaneSummary> {
 		const summary: LaneSummary = { pending: lane.pending, running: lane.running, done: lane.done, total: lane.total, autoRun: lane.autoRun };
 		if (lane.startAt !== undefined) summary.startAt = lane.startAt;
 		if (lane.priority) summary.priority = lane.priority;
-		if (tasks.some(t => t.state === "interrupted")) summary.interrupted = true;
+		const cut = tasks.find(t => t.state === "interrupted");
+		if (cut) summary.interrupted = cut.interrupted ?? cut.startedAt ?? 0;
 		if (next?.state === "scheduled") summary.scheduled = true;
 		if (next && (next.state === "waiting" || next.state === "held" || next.state === "blocked")) summary.waiting = { position: next.position ?? 0 };
 		out.set(session, summary);

@@ -1,13 +1,13 @@
-// The CLI on AO: what `show --json` says a question is, `ls` filters, session lookup, the planner's
-// lane state on top of AO's, and the attach follower printing only what a new snapshot adds.
+// The CLI on AO: `ls` filters, session lookup, the planner's lane state on top of AO's, and the
+// attach follower printing only what a new snapshot adds.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoActivity, AoConversation, AoMessage, AoSessionView } from "../../src/ao/client";
-import { questionOf, sessionModel } from "../../src/ao/model";
+import { sessionModel } from "../../src/ao/model";
 import type { PlanView } from "../../src/planner/types";
 import { laneSummaries } from "../../src/cli/plan";
 import { ConversationFollower } from "../../src/cli/render";
-import { type Session, filterSessions, plannedState, questionJson, resolveSession } from "../../src/cli/sessions";
+import { type Session, filterSessions, plannedState, resolveSession } from "../../src/cli/sessions";
 import { setColor } from "../../src/cli/term";
 
 setColor(false);
@@ -75,41 +75,6 @@ const session = (id: string, title: string, s: Partial<Session> = {}): Session =
 	return { id, title, cwd: `/w/${id}`, model, state: model.state, priority: "normal", tags: [], ...s };
 };
 
-// omp under AO asks through ACP forms (`user_input`) or ACP permission requests (`approval`).
-const input = (schema: unknown, message: string) => questionOf(activity({ activityKind: "user_input", status: "pending", requestId: "req-1", summary: message, detail: { inputMode: "form", message, schema } }));
-
-test("questionJson: omp's select/confirm/input forms keep their dialog kinds; the title is the first line", () => {
-	const select = questionJson(input({ type: "object", properties: { value: { type: "string", enum: ["Approve", "Deny"] } }, required: ["value"] }, "Allow tool: write\nPath: notes.md"));
-	assert.deepEqual(select, { id: "req-1", kind: "select", title: "Allow tool: write", message: "Path: notes.md", options: ["Approve", "Deny"] });
-	assert.equal(questionJson(input({ type: "object", properties: { value: { type: "boolean" } } }, "Continue?")).kind, "confirm");
-	const text = questionJson(input({ type: "object", properties: { value: { type: "string", description: "branch" } } }, "Which branch?"));
-	assert.equal(text.kind, "input");
-	assert.equal(text.options, undefined);
-});
-
-test("questionJson: omp's ask tool is `ask` with one entry per question; an AO approval lists its decisions", () => {
-	const ask = questionJson(
-		input(
-			{
-				type: "object",
-				properties: {
-					q0: { type: "string", title: "Colour?", oneOf: [{ const: "Red", title: "Red" }, { const: "Blue", title: "Blue" }] },
-					q0__other: { type: "string", title: "Other (type your own)" },
-					q1: { type: "array", title: "Languages?", items: { anyOf: [{ const: "Go", title: "Go" }, { const: "TS", title: "TS" }] } },
-				},
-			},
-			"Answer 2 questions",
-		),
-	);
-	assert.equal(ask.kind, "ask");
-	assert.deepEqual(ask.questions, [
-		{ question: "Colour?", options: ["Red", "Blue"], multi: false },
-		{ question: "Languages?", options: ["Go", "TS"], multi: true },
-	]);
-	const approval = questionJson(questionOf(activity({ activityKind: "approval", status: "pending", requestId: "req-2", summary: "sleep 30", detail: { decisions: [{ id: "allow_once", label: "Allow once", kind: "allow_once" }, { id: "reject_once", label: "Reject", kind: "reject_once" }] } })));
-	assert.deepEqual(approval, { id: "req-2", kind: "approval", title: "sleep 30", options: ["Allow once", "Reject"] });
-});
-
 test("resolveSession: exact id beats a prefix; ambiguous prefixes and titles are errors; . is the session working here", () => {
 	const all = [session("repo-1", "Fix checkout"), session("repo-12", "Fix login"), session("other-3", "Docs")];
 	assert.equal((resolveSession("repo-1", all, "/") as Session).id, "repo-1");
@@ -155,7 +120,7 @@ const plan = (tasks: Array<Partial<PlanView["tasks"][number]>>, lane: Partial<Pl
 test("laneSummaries: the lane's next task says waiting (with its slot position), scheduled or interrupted", () => {
 	assert.deepEqual(laneSummaries(plan([{ status: "done", state: "done" }, { state: "waiting", position: 2 }])).get("repo-1")?.waiting, { position: 2 });
 	assert.equal(laneSummaries(plan([{ state: "scheduled" }], { autoRun: false, startAt: 5 })).get("repo-1")?.scheduled, true);
-	assert.equal(laneSummaries(plan([{ state: "interrupted" }], { autoRun: false })).get("repo-1")?.interrupted, true);
+	assert.equal(laneSummaries(plan([{ state: "interrupted", interrupted: 42 }], { autoRun: false })).get("repo-1")?.interrupted, 42, "when it was cut short");
 	assert.equal(laneSummaries(plan([{ state: "paused" }], { autoRun: false })).get("repo-1")?.waiting, undefined, "a paused lane waits for nobody");
 	assert.ok(laneSummaries(plan([{}], { id: "l_1", session: "repo-9" })).has("repo-9"), "a lane continuing a session is keyed by that session");
 });
@@ -164,7 +129,7 @@ test("plannedState: the planner's word goes on top of an idle or stopped session
 	const lane = { pending: 1, running: 0, done: 0, total: 1, autoRun: false };
 	assert.equal(plannedState({ ...lane, scheduled: true, startAt: 1 }), "scheduled");
 	assert.equal(plannedState({ ...lane, waiting: { position: 1 } }), "queued");
-	assert.equal(plannedState({ ...lane, interrupted: true }), "interrupted");
+	assert.equal(plannedState({ ...lane, interrupted: 1 }), "interrupted");
 	assert.equal(plannedState(lane), undefined);
 	const idle = view({ activity: { state: "exited", lastActivityAt: T } });
 	assert.equal(sessionModel(idle, undefined, plannedState({ ...lane, waiting: { position: 1 } })).state, "queued");

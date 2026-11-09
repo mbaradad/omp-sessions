@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import { type AoClient, type AoConversation, type AoSessionView, unwrap } from "../ao/client";
-import { type AoQuestion, answerFor, questionsOf, sessionModel } from "../ao/model";
+import { type AoQuestion, answerFor, followConversation, questionsOf, sessionModel } from "../ao/model";
 import { ConversationFollower, itemLines, timeline } from "./render";
 import type { Session } from "./sessions";
 import { c, oneLine, termWidth } from "./term";
@@ -169,89 +169,78 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 		}
 	};
 
-	// ---------- history ----------
 	process.stdout.write(`${header(session)}\n`);
-	let conversation: AoConversation | undefined;
-	try {
-		conversation = await client.getConversation(id, { limit: Math.max(TAIL, opts.history) });
-	} catch (err) {
-		process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
-		return 1;
-	}
-	const items = timeline(conversation).filter(i => itemLines(i, termWidth()).length > 0);
-	const history = opts.history > 0 ? items.slice(-opts.history) : [];
-	if (items.length > history.length || conversation.hasMoreBefore) process.stdout.write(c.dim("… earlier messages\n"));
-	for (const item of history) for (const l of itemLines(item, termWidth())) follower.write(`${l}\n`);
-	follower.seen(conversation);
-	// A streaming reply continues where the history left it.
-	const live = conversation.messages.at(-1);
-	if (live?.streaming && live.role === "assistant") follower.update({ ...conversation, messages: conversation.messages.slice(0, -1) });
-
-	// ---------- live ----------
-	let view: AoSessionView = session.model.view;
+	// ---------- history, then live: src/ao reads the conversation's changes as AO reports them ----------
 	/** `send --wait`: the turn we started; we leave once it is over. */
 	let ourTurn: string | undefined;
 	let sawRunning = false;
-	let refreshing = false;
-	let again = false;
-	const refresh = async () => {
-		if (finished) return;
-		if (refreshing) {
-			again = true;
-			return;
-		}
-		refreshing = true;
+	let stoppedSaid = false;
+	let started = false;
+	let checking = false;
+	let conversation: AoConversation | undefined;
+	/** The session's state needs its AO view too (an exited agent shows there, not in the conversation). */
+	const check = async () => {
+		const conv = conversation;
+		if (finished || checking || !conv) return;
+		checking = true;
 		try {
-			do {
-				again = false;
-				const [v, conv] = await Promise.all([client.getSession(id), client.getConversation(id, { limit: TAIL })]);
-				view = v;
-				conversation = conv;
-				follower.update(conv);
-				onQuestions(questionsOf(conv));
-				const state = sessionModel(v, conv).state;
-				if (state === "stopped") {
-					say(c.dim("session stopped"));
-					if (opts.prompt !== undefined || opts.readOnly) finish(opts.prompt !== undefined ? 4 : 0);
-				}
-				if (opts.prompt !== undefined) {
-					const busy = conv.turns.some(t => t.state === "running" || t.state === "queued");
-					if (busy) sawRunning = true;
-					const mine = ourTurn ? conv.turns.find(t => t.id === ourTurn) : undefined;
-					const over = mine ? mine.state !== "running" && mine.state !== "queued" : sawRunning;
-					if (over && !busy && state !== "needs_input") finish(0);
-				}
-				if (!follower.isMidLine()) showPrompt();
-			} while (again && !finished);
+			const state = sessionModel(await client.getSession(id), conv).state;
+			if (state === "stopped" && !stoppedSaid) {
+				stoppedSaid = true;
+				say(c.dim("session stopped"));
+				if (opts.prompt !== undefined || opts.readOnly) finish(opts.prompt !== undefined ? 4 : 0);
+			} else if (state !== "stopped") stoppedSaid = false;
+			if (opts.prompt !== undefined) {
+				const busy = conv.turns.some(t => t.state === "running" || t.state === "queued");
+				if (busy) sawRunning = true;
+				const mine = ourTurn ? conv.turns.find(t => t.id === ourTurn) : undefined;
+				const over = mine ? mine.state !== "running" && mine.state !== "queued" : sawRunning;
+				if (over && !busy && state !== "needs_input") finish(0);
+			}
 		} catch {
-			// The daemon restarted or the session is gone; the next event or poll tries again.
+			// The daemon restarted or the session is gone; the next change or poll checks again.
 		} finally {
-			refreshing = false;
+			checking = false;
 		}
 	};
-	let debounce: NodeJS.Timeout | undefined;
-	const schedule = () => {
-		if (debounce) return;
-		debounce = setTimeout(() => {
-			debounce = undefined;
-			void refresh();
-		}, 120);
-	};
-	const events = client.events({
-		after: "latest",
-		onEvent: e => {
-			if (e.sessionId === id) schedule();
-		},
-		onStatus: s => {
-			if (s.state === "open") schedule();
+	const follow = followConversation(client, id, {
+		limit: Math.max(TAIL, opts.history),
+		onUpdate: ({ conversation: conv }) => {
+			conversation = conv;
+			// The first snapshot is the history, printed below.
+			if (!started || finished) return;
+			follower.update(conv);
+			onQuestions(questionsOf(conv));
+			void check();
+			if (!follower.isMidLine()) showPrompt();
 		},
 	});
-	const poll = setInterval(schedule, POLL_MS);
+	let first: AoConversation;
+	try {
+		first = await follow.ready;
+	} catch (err) {
+		follow.close();
+		process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
+		return 1;
+	}
+	conversation ??= first;
+	// A reply still streaming is left out of the history: the follower prints it and then its growth.
+	const live = first.messages.at(-1)?.streaming ? first.messages.at(-1) : undefined;
+	const before = live ? { ...first, messages: first.messages.filter(m => m !== live) } : first;
+	const items = timeline(before).filter(i => itemLines(i, termWidth()).length > 0);
+	const history = opts.history > 0 ? items.slice(-opts.history) : [];
+	if (items.length > history.length || first.hasMoreBefore) process.stdout.write(c.dim("… earlier messages\n"));
+	for (const item of history) for (const l of itemLines(item, termWidth())) follower.write(`${l}\n`);
+	follower.seen(before);
+	started = true;
+	follower.update(conversation);
+	onQuestions(questionsOf(conversation));
+	// Changes AO's feed doesn't carry for this session (its agent exiting) still show within a few seconds.
+	const poll = setInterval(() => void check(), POLL_MS);
 	const viewId = `omp-sessions-cli-${randomUUID()}`;
 	const lease = (active: boolean) => unwrap(client.api.POST("/api/v1/sessions/{sessionId}/chat-view", { params: { path: { sessionId: id } }, body: { viewId, active } })).catch(() => undefined);
 	void lease(true);
 	const leaseTimer = setInterval(() => void lease(true), VIEW_LEASE_MS);
-	onQuestions(questionsOf(conversation));
 
 	const busyNow = () => !!conversation?.turns.some(t => t.state === "running");
 	const send = async (text: string, steer: boolean) => {
@@ -269,7 +258,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 			process.stderr.write(`${c.red("omp-sessions:")} ${err instanceof Error ? err.message : String(err)}\n`);
 			finish(1);
 		}
-		schedule();
+		void check();
 	}
 
 	if (interactive) {
@@ -289,7 +278,7 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 				return showPrompt();
 			}
 			if (text === "/stop") {
-				void unwrap(client.api.POST("/api/v1/sessions/{sessionId}/exit-agent", { params: { path: { sessionId: id } } })).then(
+				void client.exitAgent(id).then(
 					() => say(c.dim("stopped (omp-sessions resume to continue)")),
 					err => say(c.red(`✗ ${err instanceof Error ? err.message : String(err)}`)),
 				);
@@ -321,15 +310,14 @@ export async function attach(client: AoClient, session: Session, opts: AttachOpt
 	} else if (!opts.readOnly && opts.prompt === undefined) {
 		process.stderr.write(c.dim("stdin is not a terminal: following output only\n"));
 	}
-	if (view.isTerminated && opts.prompt === undefined) say(c.dim("session stopped (omp-sessions resume to continue)"));
+	if (session.model.view.isTerminated && opts.prompt === undefined) say(c.dim("session stopped (omp-sessions resume to continue)"));
 
 	const code = await done;
 	finished = true;
 	clearTimeout(promptTimer);
-	clearTimeout(debounce);
 	clearInterval(poll);
 	clearInterval(leaseTimer);
-	events.close();
+	follow.close();
 	rl?.close();
 	follower.endLine();
 	await lease(false);
