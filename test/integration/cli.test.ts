@@ -437,3 +437,27 @@ test("cli: config set hibernation applies it to the running AO at once; status s
 	assert.equal(await client.chatHibernation(), true, "an absent key leaves AO alone");
 	await client.applyChatHibernation(false);
 });
+
+test("cli: models reads a running session's omp choices (the only exact list); with no running session it says so; model refuses an id the session doesn't offer", { skip, timeout: 120_000 }, async () => {
+	type Models = { models: Array<{ selector: string; source?: string }>; source: string | null; note?: string };
+	// Every session of this run is over by now or running: stop what runs, so there is nothing to read from.
+	for (const s of (await client.listSessions({})).sessions) await client.exitAgent(s.id).catch(() => undefined);
+	const none = json<Models>("models", "--json");
+	assert.equal(none.status, 0, "a script gets valid JSON either way");
+	assert.equal(none.data.source, null);
+	assert.deepEqual(none.data.models, []);
+	assert.match(none.data.note ?? "", /no running session/);
+	assert.equal(cli("models").status, 1, "plain text: an error, with the same explanation");
+
+	const id = started("echo models please", "--mode", "auto");
+	assert.equal(cli("wait", id, "--timeout", "60s").status, 0);
+	const listed = json<Models>("models", "--json", "--session", id);
+	assert.equal(listed.status, 0, listed.stderr);
+	assert.equal(listed.data.source, id);
+	const offered = (await client.configOptions(id)).options.find(o => o.id === "model")?.choices?.map(ch => ch.value) ?? [];
+	assert.deepEqual(listed.data.models.map(m => m.selector).sort(), [...offered].sort(), "exactly the session's own choices");
+	assert.equal(json<Models>("models", "--json").data.source, id, "the newest running session when none is given");
+	const refused = cli("model", id, "nowhere/not-offered");
+	assert.equal(refused.status, 1);
+	assert.match(refused.stderr, /offers no model/);
+});

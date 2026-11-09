@@ -285,11 +285,7 @@ async function cmdNew(args: Args): Promise<number> {
 		if (report.shim.onDaemonPath === false) throw new Error(`the AO daemon was not started with ${path.dirname(report.shim.path)} first on its PATH, so omp flags after -- would be ignored: restart AO through Switchyard (it starts it that way)`);
 	}
 	const model = value(args, "model") ?? defaults.model;
-	// An unusable model would fail the spawn after AO created the session: check it first, so nothing is created.
-	if (model) {
-		const usable = await agentModels().catch(() => []);
-		if (usable.length && !usable.some(m => m.id === model)) throw new Error(`omp can't use the model ${model}: it is not one of the ${usable.length} models of the providers omp is configured for (omp-sessions models lists them)`);
-	}
+	// A model no catalog knows or that the session doesn't offer is refused by the spawn helper before anything is left behind.
 	const title = value(args, "title") ?? titleFrom(task ?? prompt ?? "");
 	const client = await ao();
 	// A git folder runs in its AO project (AO gives the session its own worktree); any other folder runs standalone (MAPPING D2, Q1).
@@ -875,7 +871,13 @@ async function cmdModel(args: Args): Promise<number> {
 		else process.stdout.write(`${model ?? c.dim("omp's default")} ${c.dim(`${s.id} ${s.title}`)}\n`);
 		return 0;
 	}
-	await (await ao()).setTurnSettings(s.id, { model: want });
+	const client = await ao();
+	// A running omp says which models it offers (its own choices, not the catalog): refuse another one before changing the setting.
+	if (live) {
+		const choices = await sessionModelChoices(client, s.id);
+		if (choices?.length && !choices.some(m => m.value === want)) throw new Error(`omp offers no model ${want} to ${s.id} (omp-sessions models --session ${s.id} lists them)`);
+	}
+	await client.setTurnSettings(s.id, { model: want });
 	const applied = live ? "live" : "next-resume";
 	if (json) process.stdout.write(`${JSON.stringify({ id: s.id, model: want, applied })}\n`);
 	else process.stdout.write(`${c.green(want)} ${s.id} ${s.title}${applied === "next-resume" ? c.dim(" (from its next resume)") : ""}\n`);
@@ -1597,7 +1599,7 @@ async function cmdConfig(args: Args): Promise<number> {
 					} catch (err) {
 						throw new Error(`could not check the model with AO (${err instanceof Error ? err.message : String(err)}); --force saves it anyway`);
 					}
-					if (!known) throw new Error(`omp doesn't offer the model ${v} (omp-sessions models lists them); --force saves it anyway`);
+					if (!known) throw new Error(`omp has no model ${v} in its catalog (omp-sessions models lists what a running session offers); --force saves it anyway`);
 				}
 				writeSwitchyardConfig({ model: v === "none" ? undefined : v });
 			} else if (key === "mode") {
@@ -1643,31 +1645,52 @@ async function cmdConfig(args: Args): Promise<number> {
 
 type AgentModel = AoSchemas["AgentModelsResponse"]["models"][number];
 
-/**
- * The omp models a session can start with: AO's catalog is every provider's models (3768 here), the user can
- * use those of the providers omp is configured for (VALIDATION §19: any other id fails the spawn with a 409 and
- * leaves a terminated session). Empty `configuredProviders`: AO doesn't know, so the whole catalog stands.
- */
+/** AO's omp catalog: every model omp knows, usable or not (3768 here, against the 53 a session offers). Only good for "does this id exist at all". */
 async function agentModels(): Promise<AgentModel[]> {
 	const client = await ao();
-	const res = await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }));
-	const configured = res.configuredProviders ?? [];
-	return configured.length ? res.models.filter(m => m.provider !== undefined && configured.includes(m.provider)) : res.models;
+	return (await unwrap<AoSchemas["AgentModelsResponse"]>(client.api.GET("/api/v1/agents/{agent}/models", { params: { path: { agent: "omp" } } }))).models;
 }
 
+/**
+ * The models omp actually offers: the `model` choices of a live session's config options (VALIDATION §19). The catalog
+ * and its `configuredProviders` are not that list (they drop models that run, e.g. zai/*, vllm, ollama).
+ */
+async function sessionModelChoices(client: AoClient, sessionId: string): Promise<Array<{ value: string; name: string }> | undefined> {
+	try {
+		const option = (await client.configOptions(sessionId)).options.find(o => o.id === "model");
+		return option?.choices?.map(ch => ({ value: ch.value, name: ch.name }));
+	} catch {
+		return undefined;
+	}
+}
+
+/** `models [search] [--session <session>]`: the choices of that session, else of the newest session whose omp is running. */
 async function cmdModels(args: Args): Promise<number> {
 	const search = args._.join(" ").toLowerCase();
 	const def = readSwitchyardConfig().model;
-	const usable = await agentModels();
-	const models = usable
-		.filter(m => !search || m.id.toLowerCase().includes(search) || m.label.toLowerCase().includes(search))
+	const json = flag(args, "json");
+	const client = await ao();
+	const ref = value(args, "session");
+	const chosen = ref !== undefined ? await findSession(ref) : (await loadSessions(client, { conversationLimit: 1 })).find(s => !s.model.view.isTerminated && s.model.view.activity.state !== "exited");
+	const choices = chosen ? await sessionModelChoices(client, chosen.id) : undefined;
+	if (!chosen || !choices) {
+		// omp offers its models per running session: with none there is no exact list to show.
+		const note = chosen ? `${chosen.id}'s omp is not running, so it can't say which models it offers (omp-sessions resume ${chosen.id}, or use --session with a running one)` : "no running session to read omp's model choices from: omp offers them per session. Start one (omp-sessions new …) or pass --session <session>";
+		if (json) process.stdout.write(`${JSON.stringify({ models: [], default: def ?? null, ompDefault: null, source: null, note }, null, 2)}\n`);
+		else process.stderr.write(`omp-sessions: ${note}\n`);
+		return json ? 0 : 1;
+	}
+	const catalog = new Map((await agentModels().catch(() => [])).map(m => [m.id, m]));
+	const models = choices
+		.filter(m => !search || m.value.toLowerCase().includes(search) || m.name.toLowerCase().includes(search))
 		.map(m => {
-			const slash = m.id.indexOf("/");
-			return { selector: m.id, provider: m.provider || m.id.slice(0, Math.max(0, slash)), id: slash < 0 ? m.id : m.id.slice(slash + 1), name: m.label, ...(m.contextWindow && { contextWindow: m.contextWindow }), ...(m.id === def && { default: true }) };
+			const slash = m.value.indexOf("/");
+			const contextWindow = catalog.get(m.value)?.contextWindow;
+			return { selector: m.value, provider: slash < 0 ? "" : m.value.slice(0, slash), id: slash < 0 ? m.value : m.value.slice(slash + 1), name: m.name, ...(contextWindow && { contextWindow }), ...(m.value === def && { default: true }) };
 		})
 		.sort((a, b) => a.provider.localeCompare(b.provider) || a.selector.localeCompare(b.selector));
-	if (flag(args, "json")) {
-		process.stdout.write(`${JSON.stringify({ models, default: def ?? null, ompDefault: null }, null, 2)}\n`);
+	if (json) {
+		process.stdout.write(`${JSON.stringify({ models, default: def ?? null, ompDefault: null, source: chosen.id }, null, 2)}\n`);
 		return 0;
 	}
 	let provider: string | undefined;
@@ -1698,7 +1721,9 @@ ${c.bold("Machine")}
   config set omp.extraArgs [--] <arg>…
                                   arguments added to every omp acp an AO session starts (e.g. -- --profile
                                   work; none: clear). Applied by the Switchyard omp shim on the daemon's PATH
-  models [search] [--json]        the models omp can use (● = the default)
+  models [search] [--session s] [--json]
+                                  the models omp offers: the choices of a running session's omp (the given one,
+                                  else the newest running; none: say so). ● = the default
   version [--json]                this CLI, the planner and the AO daemon (also --version, -v)
 
 ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (latest session in this folder)")}
@@ -1859,7 +1884,7 @@ const ALIASES: Record<string, string> = { list: "ls", chat: "attach", log: "tail
 const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd: string) => Promise<number> | number }> = {
 	status: { flags: ["json"], run: cmdStatus },
 	config: { flags: ["json", "force"], run: cmdConfig },
-	models: { flags: ["json"], run: cmdModels },
+	models: { flags: ["json", "session"], run: cmdModels },
 	model: { flags: ["json"], run: cmdModel },
 	version: { flags: ["json"], run: args => cmdVersion(flag(args, "json")) },
 	ls: { flags: ["all", "json", "project", "cwd", "group", "tag", "state"], run: async args => (await cmdList(args), 0) },

@@ -42,7 +42,7 @@ This prints `{"id": "...", "started": true, "title": "...", "cwd": "..."}` and r
 - Flags after a bare `--` go to omp itself for this session (`new <dir> -p "…" --json -- --advisor plan`, put every Switchyard flag before the `--`); they need Switchyard's omp shim (`omp.shim.installed`). Machine-wide ones: `config set omp.extraArgs -- --profile work`.
 - `--tag` (repeatable) labels the session, e.g. with the ticket or card it works on. The user can filter by tag.
 - `--group <name>` files the session under a group in VS Code, created if missing. Use it to keep related work together, e.g. one group per board or project.
-- `--model provider/id` picks the model (`omp-sessions models --json` lists them). Without it the session uses the user's default (`omp-sessions config get model`), then omp's own default. `--priority urgent|high|normal|low` matters for queued work.
+- `--model provider/id` picks the model (`omp-sessions models --json` lists the models a running session's omp offers, `source` says which session; with no session running the list is empty and `note` says so). Without it the session uses the user's default (`omp-sessions config get model`), then omp's own default. `--priority urgent|high|normal|low` matters for queued work.
 - Write the prompt the way you would brief a colleague: the goal, the constraints, how to verify, and what to report at the end. The session can't see your conversation.
 
 ## Queue or schedule work
