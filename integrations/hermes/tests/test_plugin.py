@@ -683,6 +683,9 @@ class PureTest(unittest.TestCase):
         self.assertEqual(d(Card("running", "omp"), link, rep("scheduled", pending=1), "omp"), [("heartbeat",)])
         self.assertEqual(d(Card("ready", "omp"), {**link, "state": "failed"}, rep("interrupted", pending=1), "omp"), [("claim",), ("retry",)])
         self.assertEqual(d(Card("running", "omp"), link, None, "omp")[0][0], "block_transient")
+        [(kind, why)] = d(Card("running", "omp"), {**link, "session": "mw9f9wnjc2353a"}, None, "omp")
+        self.assertEqual(kind, "block_transient")
+        self.assertIn("predates the move to Switchyard", why, "an old omp Sessions id is never in AO: say so, not 'removed'")
         gone = {**link, "state": "failed"}
         self.assertEqual(d(Card("ready", "omp"), gone, None, "omp"), [("claim",), ("recreate",)])
         self.assertEqual(d(Card("ready", "omp"), gone, rep("idle"), "omp"), [("claim",), ("retry",)])
