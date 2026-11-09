@@ -1,13 +1,10 @@
 // An omp Chat session on a real, isolated AO daemon (test/ao-fixture.mjs) running the scripted ACP
 // fake (test/fake-omp-acp.mjs), driven only through src/ao: create, stream, approve, answer, steer.
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
-import { AoClient, unwrap } from "../../src/ao/client";
+import { AoClient } from "../../src/ao/client";
 import { type AoSessionModel, AoSessionWatcher, answerQuestion } from "../../src/ao/model";
-import { type AoFixture, aoAvailable, startAoFixture } from "../ao-fixture.mjs";
-
-const skip = aoAvailable() ? false : "ao not installed (set OMP_TEST_AO_BIN)";
+import { type AoFixture, skipWithoutAo as skip, startAoFixture } from "../ao-fixture.mjs";
 
 let ao: AoFixture;
 let client: AoClient;
@@ -108,7 +105,7 @@ test("omp chat session: streams a reply, resolves an approval and an ask", { ski
 test("omp chat session: steering joins the running turn", { skip }, async () => {
 	const { session } = await client.spawnSession({ projectId, harness: "omp", mode: "chat", kind: "worker", displayName: "fixture steer", approvalMode: "default", prompt: "slow 1500" });
 	await waitFor(session.id, "the running tool", m => m.state === "working" && (m.conversation?.activities.some(a => a.status === "running" || a.status === "pending") ?? false));
-	const res = await client.steerOrSend(session.id, { text: "also say hi", clientMessageId: randomUUID() });
+	const res = await client.steerOrSend(session.id, { text: "also say hi" });
 	assert.equal(res.outcome, "steered");
 	const done = await waitFor(session.id, "the steered reply", m => m.state === "idle" && m.reply === "steered: also say hi");
 	assert.equal(done.conversation?.turns.length, 1, "steering joined the running turn instead of starting another");
@@ -129,7 +126,7 @@ test("omp chat session: a restarted chat host reloads the omp session", { skip }
 	assert.ok(ao.killChatHosts(session.id) > 0, "a chat host to kill");
 	await waitFor(session.id, "the agent exit", m => m.state === "stopped");
 	const restarted = ao.fakeOmpFrames().length;
-	await unwrap(client.api.POST("/api/v1/sessions/{sessionId}/resume-agent", { params: { path: { sessionId: session.id } } }));
+	await client.resumeAgent(session.id);
 	await client.sendMessage(session.id, { text: "echo after the restart" });
 	const done = await waitFor(session.id, "the reply after the restart", m => m.state === "idle" && m.reply === "after the restart");
 	const load = ao.fakeOmpFrames().slice(restarted).find(f => f.dir === "in" && f.msg?.method === "session/load");
