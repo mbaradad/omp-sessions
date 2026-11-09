@@ -18,7 +18,7 @@ before(async () => {
 	ao = await startAoFixture();
 	// The fake provider is nearly out of usage: `spare` work must wait.
 	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97, resetsAt: Date.now() + 3_600_000 }]);
-	planner = await startPlannerFixture({ ao });
+	planner = await startPlannerFixture({ ao, pollMs: 200, usageEveryMs: 500 });
 	project = await ao.createProject(ao.scratchRepo());
 });
 
@@ -75,4 +75,32 @@ test("an AO daemon restart mid-turn: the task finishes and is not dispatched aga
 	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "R").status === "done", { what: "R done after the AO restart" });
 	assert.match(byTitle(done, "R").summary ?? "", /survived-ao-restart/);
 	assert.equal(prompts("survived-ao-restart"), 1);
+});
+
+test("a usage drop releases a spare task without a planner restart", { skip }, async () => {
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 97 }]);
+	// The planner reads `omp usage` periodically (usageEveryMs): wait until it has seen the new level.
+	await planner.waitFor((p: PlanView) => p.status.usageWindows?.some(w => w.usedPercent >= 97) ?? false, { what: "the planner to read 97% usage" });
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "S2", notes: "echo spare-two", usage: "spare", options: { project, model: "fake/fake-model" } } }] });
+	await planner.waitFor((p: PlanView) => byTitle(p, "S2").state === "held", { what: "S2 held" });
+	const pid = planner.pid;
+	ao.setUsage([{ provider: "fake", id: "5h", label: "5 Hour", usedPercent: 5 }]);
+	await planner.waitFor((p: PlanView) => byTitle(p, "S2").status === "done", { what: "S2 done after usage dropped" });
+	assert.equal(planner.pid, pid, "no planner restart");
+	assert.equal(prompts("spare-two"), 1);
+});
+
+// Last in the file on purpose: until the planner is fixed, this leaves its pass timer 1 h out and starves later tests.
+// todo: the planner's schedule() keeps a pending pass whose due time is <= the new now, but its real timer was set
+// for the old wake time (1 h): after a clock jump (this test clock, or a machine waking from sleep) the periodic
+// poll never replaces it, so the start waits for the original timer. Reported to `planner`.
+test("a scheduled start comes due when the clock moves forward", { skip, todo: "planner: schedule(0) keeps the pending 1 h timer after a clock jump" }, async () => {
+	await planner.call("edit", { ops: [{ op: "add", task: { title: "T", notes: "echo clock-ran", startAt: Date.now() + 3_600_000, options: { project } } }] });
+	const scheduled: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "T").state === "scheduled", { what: "T scheduled" });
+	assert.ok((byTitle(scheduled, "T").waitUntil ?? 0) > Date.now());
+	assert.equal(prompts("clock-ran"), 0);
+	planner.advanceClock(2 * 3_600_000);
+	const done: PlanView = await planner.waitFor((p: PlanView) => byTitle(p, "T").status === "done", { what: "T done after the clock moved", timeoutMs: 10_000 });
+	assert.match(byTitle(done, "T").summary ?? "", /clock-ran/);
+	assert.equal(prompts("clock-ran"), 1);
 });

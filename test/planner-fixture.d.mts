@@ -3,15 +3,19 @@ import type { AoFixture } from "./ao-fixture.mjs";
 
 export interface PlannerFixtureOptions {
 	ao: AoFixture;
-	/** OMP_VSCODE_HOME to use (e.g. the one a VS Code under test already has). Default: a temp dir. */
+	/** SWITCHYARD_HOME to use (e.g. the one a VS Code under test already has); must be under the temp dir. Default: a temp dir. */
 	stateRoot?: string;
 	/** Bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, else built from src/planner/main.ts). */
 	plannerJs?: string;
 	env?: Record<string, string>;
-	/** false: no `omp usage` polling (OMP_PLANNER_USAGE=off). Default: polls the AO fixture's omp. */
+	/** false: no `omp usage` polling (SWITCHYARD_PLANNER_USAGE=off). Default: polls the AO fixture's omp. */
 	usage?: boolean;
-	/** OMP_PLANNER_RETRY_BASE_MS. */
+	/** SWITCHYARD_PLANNER_RETRY_BASE_MS. */
 	retryBaseMs?: number;
+	/** SWITCHYARD_PLANNER_POLL_MS: how often the planner re-checks AO and its clock. */
+	pollMs?: number;
+	/** SWITCHYARD_PLANNER_USAGE_EVERY_MS: how often it reads `omp usage`. */
+	usageEveryMs?: number;
 	readyTimeoutMs?: number;
 }
 
@@ -25,10 +29,10 @@ export interface PlannerWireEvent {
 
 export interface PlannerFixture {
 	root: string;
-	/** OMP_VSCODE_HOME of the planner. */
+	/** SWITCHYARD_HOME of the planner. */
 	stateRoot: string;
 	socket: string;
-	/** Env for planner clients: OMP_VSCODE_HOME → this planner, AO_* → the AO fixture, the fake omp first on PATH. */
+	/** Env for planner clients: SWITCHYARD_HOME → this planner, AO_* → the AO fixture, the fake omp first on PATH. */
 	clientEnv: Record<string, string>;
 	plannerJs: string;
 	readonly pid: number;
@@ -38,6 +42,8 @@ export interface PlannerFixture {
 	subscribe(onEvent: (ev: PlannerWireEvent) => void): Promise<{ close(): void }>;
 	/** Polls `plan` until `pred` holds. */
 	waitFor(pred: (plan: any) => boolean, opts?: { what?: string; timeoutMs?: number; args?: unknown }): Promise<any>;
+	/** Moves the planner's clock `ms` further ahead of real time (cumulative): startAt, recurring schedules and holds come due. */
+	advanceClock(ms: number): void;
 	log(): string;
 	/** Same state, new process: SIGTERM, or SIGKILL with `kill`. */
 	restart(opts?: { kill?: boolean }): Promise<void>;

@@ -10,12 +10,15 @@
 //   await planner.restart({ kill: true });        // crash + restart: nothing may be dispatched twice
 //   await planner.stop(); await ao.stop();
 //
-// Options: { ao, stateRoot, plannerJs, env, usage, retryBaseMs, readyTimeoutMs }
-//   stateRoot    OMP_VSCODE_HOME to use (e.g. the one a VS Code under test already has); default a temp dir
+// Options: { ao, stateRoot, plannerJs, env, usage, retryBaseMs, pollMs, usageEveryMs, readyTimeoutMs }
+//   stateRoot    SWITCHYARD_HOME to use (e.g. the one a VS Code under test already has); default a temp dir
 //   plannerJs    bundled planner (default $SWITCHYARD_TEST_PLANNER_JS, which test/run.mjs builds; else built here)
 //   env          extra planner env
-//   usage        false: OMP_PLANNER_USAGE=off (no `omp usage` polling); default on, against ao.ompBin
-//   retryBaseMs  OMP_PLANNER_RETRY_BASE_MS (retry backoff base) for fast failure tests
+//   usage        false: SWITCHYARD_PLANNER_USAGE=off (no `omp usage` polling); default on, against ao.ompBin
+//   retryBaseMs  SWITCHYARD_PLANNER_RETRY_BASE_MS (retry backoff base) for fast failure tests
+//   pollMs       SWITCHYARD_PLANNER_POLL_MS (how often the planner re-checks AO and its clock)
+//   usageEveryMs SWITCHYARD_PLANNER_USAGE_EVERY_MS (how often it reads `omp usage`), so a test need not restart it
+// The planner runs on a test clock: planner.advanceClock(ms) moves its `now` forward (startAt, recurring).
 
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
@@ -33,7 +36,7 @@ function plannerSocket(stateRoot) {
 	const preferred = path.join(stateRoot, "planner", "planner.sock");
 	if (Buffer.byteLength(preferred) < 100) return preferred;
 	const tag = crypto.createHash("sha256").update(stateRoot).digest("hex").slice(0, 16);
-	return path.join(os.tmpdir(), `ompv-${process.getuid?.() ?? "u"}`, `planner-${tag}.sock`);
+	return path.join(os.tmpdir(), `switchyard-${process.getuid?.() ?? "u"}`, `planner-${tag}.sock`);
 }
 
 /** Bundles src/planner/main.ts into `outfile` (when no prebuilt planner.js is given). */
@@ -82,24 +85,27 @@ export async function startPlannerFixture(opts) {
 	const { ao } = opts;
 	if (!ao) throw new Error("startPlannerFixture needs { ao } (an AO fixture)");
 	const root = fs.mkdtempSync(path.join(ao.root, "planner-"));
-	const stateRoot = opts.stateRoot ?? path.join(root, "state");
+	const stateRoot = path.resolve(opts.stateRoot ?? path.join(root, "state"));
 	fs.mkdirSync(stateRoot, { recursive: true });
 	const plannerJs = opts.plannerJs ?? process.env.SWITCHYARD_TEST_PLANNER_JS ?? (await buildPlanner(path.join(root, "planner.js")));
 	const socket = plannerSocket(stateRoot);
 	const logFile = path.join(root, "planner-stderr.log");
-	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO. The
-	// OMP_VSCODE_HOME / OMP_PLANNER_* names are the planner's (src/planner/paths.ts, main.ts); they
-	// follow the planner when it moves to the Switchyard names.
-	// The state dir (OMP_VSCODE_HOME today, SWITCHYARD_HOME once the planner moves) must be a temp dir.
+	const clockFile = path.join(root, "planner-clock-ms");
+	// The planner's state dir (SWITCHYARD_HOME; src/planner/paths.ts) must be a temp dir.
 	const tmpRoot = fs.realpathSync(os.tmpdir());
-	if (path.relative(tmpRoot, path.resolve(stateRoot)).startsWith("..")) throw new Error(`planner fixture: stateRoot ${stateRoot} is not under ${tmpRoot}: tests never touch the real state dirs`);
-	const clientEnv = { ...ao.stackEnv, OMP_VSCODE_HOME: stateRoot, SWITCHYARD_HOME: stateRoot };
+	if (path.relative(tmpRoot, stateRoot).startsWith("..")) throw new Error(`planner fixture: stateRoot ${stateRoot} is not under ${tmpRoot}: tests never touch the real state dirs`);
+	// What a planner client (CLI, extension, Hermes) needs to reach this planner and this AO.
+	const clientEnv = { ...ao.stackEnv, SWITCHYARD_HOME: stateRoot };
+	let clockOffset = 0;
 	const env = {
-		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("OMP_PLANNER_"))),
+		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AO_") && !k.startsWith("SWITCHYARD_PLANNER_"))),
 		...clientEnv,
-		OMP_PLANNER_STDERR: "1",
-		...(opts.usage === false ? { OMP_PLANNER_USAGE: "off" } : { OMP_PLANNER_OMP: ao.ompBin }),
-		...(opts.retryBaseMs ? { OMP_PLANNER_RETRY_BASE_MS: String(opts.retryBaseMs) } : {}),
+		SWITCHYARD_PLANNER_STDERR: "1",
+		SWITCHYARD_PLANNER_CLOCK_FILE: clockFile,
+		...(opts.usage === false ? { SWITCHYARD_PLANNER_USAGE: "off" } : { SWITCHYARD_PLANNER_OMP: ao.ompBin }),
+		...(opts.retryBaseMs ? { SWITCHYARD_PLANNER_RETRY_BASE_MS: String(opts.retryBaseMs) } : {}),
+		...(opts.pollMs ? { SWITCHYARD_PLANNER_POLL_MS: String(opts.pollMs) } : {}),
+		...(opts.usageEveryMs ? { SWITCHYARD_PLANNER_USAGE_EVERY_MS: String(opts.usageEveryMs) } : {}),
 		...opts.env,
 	};
 	const readyTimeoutMs = opts.readyTimeoutMs ?? 15_000;
@@ -138,7 +144,7 @@ export async function startPlannerFixture(opts) {
 		root,
 		stateRoot,
 		socket,
-		/** Env for planner clients (OMP_VSCODE_HOME → this planner; AO_* → the AO fixture; the fake omp first on PATH). */
+		/** Env for planner clients (SWITCHYARD_HOME → this planner; AO_* → the AO fixture; the fake omp first on PATH). */
 		clientEnv,
 		plannerJs,
 		get pid() {
@@ -186,7 +192,16 @@ export async function startPlannerFixture(opts) {
 				await sleep(100);
 			}
 		},
-		/** The planner's log (OMP_PLANNER_STDERR copies every line of planner.log there, plus crashes). */
+		/**
+		 * Moves the planner's clock `ms` further ahead of real time (cumulative): a task's `startAt`, a
+		 * recurring schedule or a hold's `until` comes due without waiting. The planner notices on its next
+		 * periodic pass (see `pollMs`).
+		 */
+		advanceClock(ms) {
+			clockOffset += ms;
+			fs.writeFileSync(clockFile, String(clockOffset));
+		},
+		/** The planner's log (SWITCHYARD_PLANNER_STDERR copies every line of planner.log there, plus crashes). */
 		log() {
 			return fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
 		},
