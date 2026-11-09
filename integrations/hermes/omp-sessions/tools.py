@@ -68,6 +68,7 @@ SCHEMAS: dict[str, dict] = {
                 "notes": {"type": "string", "description": "Details of the queued task (with task)."},
                 "subtasks": {"type": "array", "items": {"type": "string"}, "description": "Checklist items of the queued task."},
                 "at": {**AT, "description": f"Schedule the queued task: {AT['description']}"},
+                "after": {"type": "array", "items": {"type": "string"}, "description": "With task: omp session ids (or title words) whose work must finish first; the task waits (state queued, blockedBy in the report) and starts by itself once they are idle or stopped with no queued work left and no failed last task."},
                 "cwd": {"type": "string", "description": "Absolute folder to run in."},
                 "project": {"type": "string", "description": "Hermes project id/slug/name, or the name of a folder from omp_projects_list."},
                 "board": {"type": "string", "description": "Kanban board slug: run in its configured folder and omp group."},
@@ -130,6 +131,7 @@ SCHEMAS: dict[str, dict] = {
                 "subtasks": {"type": "array", "items": {"type": "string"}, "description": "Checklist items."},
                 "top": {"type": "boolean", "description": "Put it first in the queue."},
                 "run": {"type": "boolean", "description": "Turn the queue on (otherwise it runs when already on or scheduled)."},
+                "after": {"type": "array", "items": {"type": "string"}, "description": "omp session ids (or title words) whose work must finish before this queue's tasks start; replaces the queue's dependencies. Refused for the session itself, unknown sessions and cycles."},
             },
             "required": ["id", "task"],
         },
@@ -307,6 +309,8 @@ class Tools:
                 raise OmpSessionsError("give either prompt (start now) or task (queue it)")
             if _str(args, "at") and not task:
                 raise OmpSessionsError("at schedules a queued task: use task instead of prompt")
+            if _list(args, "after") and not task:
+                raise OmpSessionsError("after holds back a queued task: use task instead of prompt")
             mode = _str(args, "mode")
             if mode and mode not in MODES:
                 raise OmpSessionsError(f"mode must be one of {', '.join(MODES)}")
@@ -326,6 +330,7 @@ class Tools:
                 group=_str(args, "group") or group,
                 priority=_str(args, "priority"),
                 model=_str(args, "model"),
+                after=_list(args, "after"),
             )
             key = current_session_key()
             if key and settings.notify:
@@ -458,7 +463,7 @@ class Tools:
             task = _str(args, "task")
             if not task:
                 raise OmpSessionsError("task is required")
-            queue = self.omp().queue_add(sid, task, notes=_str(args, "notes"), subtasks=_list(args, "subtasks"), top=args.get("top") is True, run=args.get("run") is True)
+            queue = self.omp().queue_add(sid, task, notes=_str(args, "notes"), subtasks=_list(args, "subtasks"), top=args.get("top") is True, run=args.get("run") is True, after=_list(args, "after"))
             self._rearm(sid)
             return queue
 

@@ -570,6 +570,24 @@ class PluginTest(unittest.TestCase):
         self.assertIn("error", self.tool("omp_session_start", {"prompt": "echo hi"}))
         self.assertIn("error", self.tool("omp_session_start", {"prompt": "echo hi", "board": "other"}))
 
+    def test_start_and_queue_add_take_dependencies(self) -> None:
+        first = self.tool("omp_session_start", {"task": "echo first", "cwd": str(WORK), "at": "+2h"})
+        self.assertNotIn("error", first, first)
+        second = self.tool("omp_session_start", {"task": "echo second", "cwd": str(WORK), "after": [first["id"]]})
+        self.assertNotIn("error", second, second)
+        self.assertEqual(second.get("after"), [first["id"]])
+        # The first session still has its scheduled task ahead: the second waits for it, queued.
+        report = json.loads(omp_sessions("show", second["id"], "--json").stdout)
+        self.assertEqual((report["state"], report["after"], report["blockedBy"]), ("queued", [first["id"]], [first["id"]]))
+        # The first waiting for the second would be a cycle; an unknown session is refused too.
+        cycle = self.tool("omp_queue_add", {"id": first["id"], "task": "echo more", "after": [second["id"]]})
+        self.assertIn("cycle", cycle.get("error", ""), cycle)
+        self.assertIn("error", self.tool("omp_queue_add", {"id": second["id"], "task": "echo more", "after": ["no-such-session"]}))
+        self.assertIn("error", self.tool("omp_session_start", {"prompt": "echo hi", "cwd": str(WORK), "after": [first["id"]]}))
+        queue = json.loads((OMP_HOME / "sessions" / first["id"] / "queue.json").read_text())
+        self.assertEqual([t["title"] for t in queue["tasks"]], ["echo first"], "a refused dependency adds no task")
+        self.assertNotIn("after", queue)
+
 
 class PureTest(unittest.TestCase):
     @classmethod

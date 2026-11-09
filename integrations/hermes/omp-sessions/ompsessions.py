@@ -220,17 +220,27 @@ class OmpSessions:
         """A prompt (stdin) to the session; while it works it waits for the end of the turn unless `steer`."""
         self.ok(["send", free_text_ok(session), "-", *(["--steer"] if steer else [])], stdin=text, timeout=90)
 
-    def queue_add(self, session: str, task: str, *, notes: Optional[str] = None, subtasks: Sequence[str] = (), top: bool = False, run: bool = False) -> Any:
+    def queue_add(self, session: str, task: str, *, notes: Optional[str] = None, subtasks: Sequence[str] = (), top: bool = False, run: bool = False, after: Sequence[str] = ()) -> Any:
         """Adds a task to the session's queue; returns the queue. stdin carries the title (one line) and,
-        after the first newline, the notes (`queue add -` keeps them verbatim)."""
+        after the first newline, the notes (`queue add -` keeps them verbatim). `after`: sessions the
+        queue waits for (replaces the queue's current dependencies)."""
         args = ["queue", free_text_ok(session), "add", "-", "--json", *(f"--sub={s}" for s in subtasks)]
         args += [*(["--top"] if top else []), *(["--run"] if run else [])]
         title = " ".join(task.split())
+        # Dependencies first: with --run the task must not start before they are in place.
+        if after:
+            self.queue_after(session, after)
         return self.json(args, stdin=f"{title}\n{notes}" if notes else title)
 
     def queue_at(self, session: str, when: str) -> Any:
         """Schedules the session's queue (+30m, 14:30, an ISO time) or cancels the schedule (off); returns the queue."""
         return self.json(["queue", free_text_ok(session), "at", "--json", "--", free_text_ok(when)])
+
+    def queue_after(self, session: str, after: Sequence[str]) -> Any:
+        """Pending tasks of the session wait until these sessions finished (empty: no waiting); returns
+        the queue. Refused for the session itself, unknown sessions and cycles."""
+        refs = [free_text_ok(s) for s in after] or ["off"]
+        return self.json(["queue", free_text_ok(session), "after", "--json", "--", *refs])
 
     def priority(self, session: str, priority: str) -> str:
         if priority not in PRIORITIES:
@@ -308,12 +318,16 @@ class OmpSessions:
         group: Optional[str] = None,
         priority: Optional[str] = None,
         model: Optional[str] = None,
+        after: Sequence[str] = (),
     ) -> dict:
-        """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?}."""
+        """Starts a session (prompt) or queues one (task); returns {id, started, title, cwd, startAt?, after?}.
+        `after` (task only): sessions whose work must finish before the task starts."""
         if bool(prompt) == bool(task):
             raise OmpSessionsError("give either a prompt or a task")
         if priority and priority not in PRIORITIES:
             raise OmpSessionsError(f"priority must be one of {', '.join(PRIORITIES)}")
+        if prompt and after:
+            raise OmpSessionsError("after holds back a queued task: give a task, not a prompt")
         # `--flag=value`: a value starting with `--` stays a value.
         args = ["new", "--detach", "--json"]
         stdin = None
@@ -328,6 +342,7 @@ class OmpSessions:
                 stdin = notes
             if at:
                 args.append(f"--at={at}")
+            args += [f"--after={s}" for s in after]
         for flag, value in (("title", title), ("mode", mode), ("group", group), ("priority", priority), ("model", model)):
             if value:
                 args.append(f"--{flag}={value}")
