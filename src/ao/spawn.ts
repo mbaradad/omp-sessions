@@ -39,7 +39,7 @@ export interface SpawnSwitchyardOptions {
 	model?: string;
 	/** omp's thinking level (`off`, `low`, `medium`, `high`, …), checked against its choices. */
 	thinking?: string;
-	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). Any other mode needs the permission gate installed: without it the spawn is refused (`switchyard install`). */
+	/** The permission mode, written to the mode file before the prompt. Default `auto` (the gate lets everything through). Any other mode needs the permission gate installed: without it the spawn is refused (`switchyard omp-extension install`). */
 	mode?: AoSessionMode;
 	/** Where to look for the gate (omp's agent folder): default the machine's own. For tests that install a stand-in gate in a temp folder. */
 	gate?: { omp?: OmpPathOptions };
@@ -130,7 +130,7 @@ export async function spawnSwitchyardSession(client: AoClient, options: SpawnSwi
 	// so a mode file nobody reads would run everything unrestricted while reporting the mode. Refuse before anything exists.
 	if (mode !== "auto") {
 		const status = gateStatus(options.gate);
-		if (!status.gate) throw new Error(`Permission mode "${mode}" needs the Switchyard permission gate, which is not installed (looked in ${status.extensionDir}). Run \`switchyard install\`; without the gate a session can only start in mode "auto".`);
+		if (!status.gate) throw new Error(`Permission mode "${mode}" needs the Switchyard permission gate, which is not installed (looked in ${status.extensionDir}). Run \`switchyard omp-extension install\`; without the gate a session can only start in mode "auto".`);
 	}
 
 	// 1. A model no catalog knows would leave a terminated session behind; refuse it before any session exists.
