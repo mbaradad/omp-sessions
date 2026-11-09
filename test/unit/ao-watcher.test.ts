@@ -239,3 +239,54 @@ test("AoSessionWatcher: a manifest AO flags stale is not trusted, but only a few
 		watcher.close();
 	}
 });
+
+/** The fake daemon with a manifest endpoint that fails the first `failures` reads after the start (a busy daemon), then answers. */
+function flakyManifest(failures: number) {
+	const daemon = fakeDaemon();
+	let calls = 0;
+	const ao = {
+		...daemon.ao,
+		workspaceManifest: async () => {
+			calls++;
+			if (calls > 1 && calls <= 1 + failures) throw new Error("daemon busy");
+			return manifest(calls > 1 + failures || failures === 0 ? ["hello.txt"] : []);
+		},
+	} as unknown as AoClient;
+	return { daemon, ao, calls: () => calls };
+}
+
+test("AoSessionWatcher: a manifest read that fails at the settle is tried again, not left stale until the next event", async () => {
+	const { daemon, ao, calls } = flakyManifest(2);
+	const watcher = new AoSessionWatcher(ao, { debounceMs: 1, settleMs: 20, manifestCacheMs: 60 });
+	await watcher.start();
+	try {
+		assert.equal(calls(), 1, "the first-sight read, while the turn runs");
+		daemon.state.turn = "completed";
+		daemon.state.seq = 6;
+		daemon.emit();
+		// Two reads fail, the third answers: no event follows the settle, the retries alone bring the file in.
+		const files = await next(watcher, m => m.changedFiles.length > 0);
+		assert.deepEqual(files.changedFiles.map(f => f.path), ["hello.txt"]);
+	} finally {
+		watcher.close();
+	}
+});
+
+test("AoSessionWatcher: a manifest that keeps failing is tried a few times, not forever", async () => {
+	const { daemon, ao, calls } = flakyManifest(1_000);
+	const watcher = new AoSessionWatcher(ao, { debounceMs: 1, settleMs: 15, manifestCacheMs: 40 });
+	await watcher.start();
+	try {
+		daemon.state.turn = "completed";
+		daemon.state.seq = 6;
+		daemon.emit();
+		await new Promise(r => setTimeout(r, 300));
+		const reads = calls();
+		assert.ok(reads > 1 && reads <= 6, `${reads} reads`);
+		await new Promise(r => setTimeout(r, 200));
+		assert.equal(calls(), reads, "gave up");
+		assert.deepEqual(watcher.get("repo-1")?.changedFiles, []);
+	} finally {
+		watcher.close();
+	}
+});
