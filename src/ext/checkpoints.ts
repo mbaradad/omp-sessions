@@ -4,26 +4,22 @@
 // client: it asks before undoing (listing the files), interrupts a running turn, sends the command
 // through AO like any message, and reports the outcome omp wrote to state.json. It also serves the
 // recorded edits: Review Changes (VS Code's multi-file diff), per-file and per-edit diffs, the chat's
-// inline diffs, and which AO turns are undone (AO's timeline keeps them; GAPS.md G12).
+// inline diffs, and which AO turns are undone (AO's timeline keeps them; GAPS.md G27). The AO side
+// of undo/redo is src/shared/checkpoint-ops.ts, shared with the CLI, Hermes and the planner.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import type { AoClient, AoConversation } from "../ao/client";
 import { switchyardHome } from "../ao/native";
-import { agentState } from "../ao/model";
+import { type UndoTarget, interruptAndWait, isBusy, planRedo, planUndo, runCheckpointCommand } from "../shared/checkpoint-ops";
 import {
-	type CheckpointPrompt,
 	type CheckpointResult,
 	type CheckpointState,
 	type FileChange,
 	type TurnStatus,
 	aoCheckpointDir,
 	aoTurns,
-	fileMatches,
 	liveChanges,
-	matchTurns,
-	planRestore,
 	readBlob,
 	readChanges,
 	readState,
@@ -129,42 +125,25 @@ export class Checkpoints implements vscode.Disposable {
 	}
 
 	/**
-	 * Undoes the last prompt, or the prompt `target` names (an AO turn, or its text for clients that
-	 * render omp's transcript) and everything after it: omp rewinds the conversation and writes back
-	 * the files. Asks first. Resolves with omp's result (its `prompt` goes back into the composer),
-	 * or undefined when cancelled or nothing happened.
+	 * Undoes the last prompt, or the prompt `target` names and everything after it: omp rewinds the
+	 * conversation and writes back the files. Asks first, interrupts a running turn. Resolves with
+	 * omp's result (its `prompt` goes back into the composer), or undefined when nothing happened.
 	 */
-	async undo(sessionId: string, target?: { turnId: string } | { text: string }): Promise<CheckpointResult | undefined> {
+	async undo(sessionId: string, target?: UndoTarget): Promise<CheckpointResult | undefined> {
 		const ao = await this.connect();
 		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
-		const state = this.state(sessionId);
-		if (!state) {
-			void vscode.window.showWarningMessage("This session has no checkpoints: the Switchyard omp extension was not loaded when it started. Restart the session to enable undo.");
+		const plan = planUndo(sessionId, conversation, target);
+		if ("error" in plan) {
+			void vscode.window.showInformationMessage(plan.error);
 			return undefined;
 		}
-		const active = state.prompts.filter(p => p.active);
-		let prompt: CheckpointPrompt | undefined;
-		if (!target) prompt = active.at(-1);
-		else if ("turnId" in target) prompt = matchTurns(aoTurns(conversation), state.prompts).get(target.turnId);
-		else {
-			const want = target.text.trim();
-			prompt = active.findLast(p => p.text.trim() === want) ?? active.findLast(p => want.startsWith(p.text.trim().slice(0, 200)));
-		}
-		if (!prompt?.active) {
-			void vscode.window.showInformationMessage(target ? "That prompt is not part of the conversation any more (already undone)." : "Nothing to undo: no prompt in the conversation.");
-			return undefined;
-		}
-		const rewound = active.slice(active.indexOf(prompt));
-		const dir = aoCheckpointDir(sessionId);
-		const files = planRestore(this.changes(sessionId), new Set(rewound.map(p => p.id)));
-		const rel = (f: string) => path.relative(state.cwd, f) || f;
-		const overwritten = files.filter(f => !fileMatches(dir, f.path, f.after)).map(f => rel(f.path));
-		const busy = ["working", "needs_input", "starting"].includes(agentState(view, conversation));
+		const rel = (f: string) => path.relative(plan.cwd, f) || f;
+		const busy = isBusy(view, conversation);
 		const detail = [
-			rewound.length > 1 ? `${rewound.length} prompts are undone: this one and every later one.` : "",
-			files.length ? `${files.length} file${files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(files.map(f => rel(f.path)))}.` : "No file edits to revert.",
+			plan.rewound.length > 1 ? `${plan.rewound.length} prompts are undone: this one and every later one.` : "",
+			plan.files.length ? `${plan.files.length} file${plan.files.length === 1 ? "" : "s"} go back to their content from before: ${listNames(plan.files.map(f => rel(f.path)))}.` : "No file edits to revert.",
 			"The conversation rewinds to before the prompt, which goes back into the composer.",
-			overwritten.length ? `Changed since omp last wrote them (your edits are overwritten): ${listNames(overwritten)}.` : "",
+			plan.overwritten.length ? `Changed since omp last wrote them (your edits are overwritten): ${listNames(plan.overwritten.map(rel))}.` : "",
 			busy ? "omp is working: the turn is interrupted first." : "",
 			"Changes made by shell commands are not tracked. Redo brings everything back.",
 		]
@@ -172,62 +151,42 @@ export class Checkpoints implements vscode.Disposable {
 			.join("\n\n");
 		const ok = await vscode.window.showWarningMessage(target ? "Restore the checkpoint before this prompt?" : "Undo the last prompt?", { modal: true, detail }, "Undo");
 		if (ok !== "Undo") return undefined;
-		if (busy && !(await this.interrupt(ao, sessionId))) {
+		if (busy && !(await interruptAndWait(ao, sessionId))) {
 			void vscode.window.showErrorMessage("omp did not stop; nothing was undone.");
 			return undefined;
 		}
-		return this.run(ao, sessionId, target ? `/undo ${prompt.id}` : "/undo");
+		return this.run(ao, sessionId, plan.command);
 	}
 
 	/** Brings back what the newest undo removed: the conversation and the files. */
 	async redo(sessionId: string): Promise<CheckpointResult | undefined> {
 		const ao = await this.connect();
 		const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
-		const next = this.state(sessionId)?.redo[0];
-		if (!next) {
-			void vscode.window.showInformationMessage("Nothing to redo.");
+		const plan = planRedo(sessionId);
+		if ("error" in plan) {
+			void vscode.window.showInformationMessage(plan.error);
 			return undefined;
 		}
-		if (["working", "needs_input", "starting"].includes(agentState(view, conversation))) {
+		if (isBusy(view, conversation)) {
 			void vscode.window.showWarningMessage("omp is working: stop it before redoing.");
 			return undefined;
 		}
-		const dir = aoCheckpointDir(sessionId);
-		const changed = next.files.filter(f => !fileMatches(dir, f.path, f.before));
-		if (changed.length) {
-			const cwd = this.state(sessionId)?.cwd ?? "";
-			const ok = await vscode.window.showWarningMessage("Redo?", { modal: true, detail: `Changed since the undo (your edits are overwritten): ${listNames(changed.map(f => path.relative(cwd, f.path) || f.path))}.` }, "Redo");
+		if (plan.overwritten.length) {
+			const names = plan.overwritten.map(f => path.relative(plan.cwd, f) || f);
+			const ok = await vscode.window.showWarningMessage("Redo?", { modal: true, detail: `Changed since the undo (your edits are overwritten): ${listNames(names)}.` }, "Redo");
 			if (ok !== "Redo") return undefined;
 		}
-		return this.run(ao, sessionId, "/redo");
+		return this.run(ao, sessionId, plan.command);
 	}
 
-	/** Sends the command through AO and waits for omp's outcome in state.json. */
 	private async run(ao: AoClient, sessionId: string, command: string): Promise<CheckpointResult | undefined> {
-		const sentAt = Date.now();
-		await ao.sendMessage(sessionId, { text: command });
-		const deadline = sentAt + RESULT_TIMEOUT_MS;
-		while (Date.now() < deadline) {
-			const last = this.state(sessionId)?.last;
-			if (last && last.at >= sentAt) {
-				const show = !last.ok ? vscode.window.showWarningMessage : last.failed.length ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
-				void show(last.message);
-				return last.ok ? last : undefined;
-			}
-			await sleep(250);
+		const last = await runCheckpointCommand(ao, sessionId, command, RESULT_TIMEOUT_MS);
+		if (!last) {
+			void vscode.window.showWarningMessage(`omp has not answered ${command.split(" ")[0]} yet; it runs once the session is connected.`);
+			return undefined;
 		}
-		void vscode.window.showWarningMessage(`omp has not answered ${command.split(" ")[0]} yet; it runs once the session is connected.`);
-		return undefined;
-	}
-
-	private async interrupt(ao: AoClient, sessionId: string): Promise<boolean> {
-		await ao.interrupt(sessionId);
-		for (let i = 0; i < 50; i++) {
-			const [view, conversation] = await Promise.all([ao.getSession(sessionId), ao.getConversation(sessionId)]);
-			if (agentState(view, conversation) !== "working") return true;
-			await sleep(200);
-		}
-		return false;
+		void (last.ok && !last.failed.length ? vscode.window.showInformationMessage(last.message) : vscode.window.showWarningMessage(last.message));
+		return last.ok ? last : undefined;
 	}
 
 	/** Each file the session's live edits touched, with its content before the first of them (null: did not exist). */
