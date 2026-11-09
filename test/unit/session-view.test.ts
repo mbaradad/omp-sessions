@@ -44,8 +44,9 @@ test("statusOf: the five view statuses; queued/scheduled/interrupted read as idl
 	for (const s of ["idle", "queued", "scheduled", "interrupted"] as const) assert.equal(statusOf(s), "idle");
 });
 
-test("splitArgs: whitespace separates arguments", () => {
+test("splitArgs: whitespace separates arguments, quotes keep one together", () => {
 	assert.deepEqual(splitArgs("  --plan-yolo\t--advisor \n--profile work "), ["--plan-yolo", "--advisor", "--profile", "work"]);
+	assert.deepEqual(splitArgs(`--append-system-prompt "be brief" --x='a b'`), ["--append-system-prompt", "be brief", "--x=a b"]);
 	assert.deepEqual(splitArgs(" "), []);
 });
 

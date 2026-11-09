@@ -75,9 +75,25 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 	};
 }
 
-/** Splits a flags line on whitespace (the omp shim reads a session's flags the same way, so no argument can contain a space). */
+/** Splits a flags line like a shell: whitespace separates arguments, quotes keep text (spaces too) in one (the spawn helper stores such arguments as a JSON array for the shim). */
 export function splitArgs(line: string): string[] {
-	return line.split(/\s+/).filter(Boolean);
+	const out: string[] = [];
+	let word: string | undefined;
+	let quote: string | undefined;
+	for (const ch of line) {
+		if (quote) {
+			if (ch === quote) quote = undefined;
+			else word += ch;
+		} else if (ch === '"' || ch === "'") {
+			quote = ch;
+			word ??= "";
+		} else if (/\s/.test(ch)) {
+			if (word !== undefined) out.push(word);
+			word = undefined;
+		} else word = (word ?? "") + ch;
+	}
+	if (word !== undefined) out.push(word);
+	return out;
 }
 
 /**
