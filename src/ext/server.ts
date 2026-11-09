@@ -3,7 +3,7 @@
 // holds queues and schedules, the AO daemon that runs every session (found through its run file, started as
 // the `ao-daemon` systemd user unit or a detached process when none runs; src/ao/daemon.ts), the
 // `omp-sessions` command (`omp.installCli`) and the runtime folder the planner and CLI run from (the
-// extension folder changes with every update), and the `omp.path`/`omp.extraArgs` mirror the CLI reads.
+// extension folder changes with every update), and the `omp.extraArgs` mirror the CLI reads.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -12,7 +12,7 @@ import { type AoClient, defaultRunFile, ensureDaemon, findDaemon, stopDaemon } f
 import { daemonUnitName } from "../ao/daemon";
 import { COMMAND, isOurLauncher, launcherPath, launcherText, writeLauncher } from "../shared/cli-launcher";
 import { PLUGIN_BUNDLE } from "../shared/hermes-plugin";
-import { ompPathProblem, readLauncherSettings, writeLauncherSettings } from "../shared/launch";
+import { readLauncherSettings, writeLauncherSettings } from "../shared/launch";
 import { stateRoot } from "../shared/protocol";
 import { migrateLegacyLauncher } from "../shared/rename-migration";
 import { ensurePlanner, stopPlanner } from "../planner/client";
@@ -113,21 +113,15 @@ export function registerServer(api: OmpApi): ServerControl {
 	const version = api.sessions.version;
 
 	/**
-	 * Mirrors the user's own `omp.path`/`omp.extraArgs`/`omp.server.installService` (never a workspace's: they
-	 * apply to every session on this machine) into launcher.json. A key the user hasn't set keeps launcher.json's
-	 * value (`omp-sessions config set` may have set it), unless `cleared` lists it (the user just removed the
-	 * setting). A relative omp.path would run a file from each session's folder: refused.
+	 * Mirrors the user's own `omp.extraArgs`/`omp.server.installService` (never a workspace's: they apply to every
+	 * session on this machine) into launcher.json. A key the user hasn't set keeps launcher.json's value (the CLI's
+	 * `config set` may have set it), unless `cleared` lists it (the user just removed the setting).
 	 */
-	const syncLauncher = (cleared: { path?: boolean; extraArgs?: boolean; service?: boolean } = {}) => {
+	const syncLauncher = (cleared: { extraArgs?: boolean; service?: boolean } = {}) => {
 		const cfg = vscode.workspace.getConfiguration("omp");
-		const ompPath = cfg.inspect<string>("path")?.globalValue;
 		const extraArgs = cfg.inspect<string[]>("extraArgs")?.globalValue;
 		const service = cfg.inspect<boolean>("server.installService")?.globalValue;
-		const problem = ompPath ? ompPathProblem(ompPath) : undefined;
-		if (problem) void vscode.window.showWarningMessage(plain(`${problem}; omp Sessions keeps using the previous omp.`), "Open Settings").then(a => a && vscode.commands.executeCommand("workbench.action.openSettings", "omp.path"));
 		const next = readLauncherSettings();
-		if (ompPath !== undefined && !problem) next.ompPath = ompPath.trim() || undefined;
-		else if (ompPath === undefined && cleared.path) next.ompPath = undefined;
 		if (extraArgs !== undefined) next.extraArgs = extraArgs;
 		else if (cleared.extraArgs) next.extraArgs = [];
 		if (service !== undefined) next.service = service ? "on" : "off";
@@ -141,8 +135,8 @@ export function registerServer(api: OmpApi): ServerControl {
 	syncLauncher();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			const changed = { path: e.affectsConfiguration("omp.path"), extraArgs: e.affectsConfiguration("omp.extraArgs"), service: e.affectsConfiguration("omp.server.installService") };
-			if (changed.path || changed.extraArgs || changed.service) syncLauncher(changed);
+			const changed = { extraArgs: e.affectsConfiguration("omp.extraArgs"), service: e.affectsConfiguration("omp.server.installService") };
+			if (changed.extraArgs || changed.service) syncLauncher(changed);
 		}),
 	);
 

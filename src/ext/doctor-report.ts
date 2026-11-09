@@ -53,8 +53,6 @@ export interface DoctorFacts {
 	/** `vscode.env.remoteName` (ssh-remote, wsl, …); undefined for a local window. */
 	remoteName?: string;
 	omp: {
-		/** `omp.path` setting, when set. */
-		configured?: string;
 		/** Executable that would be launched. */
 		resolved?: string;
 		exists: boolean;
@@ -152,16 +150,15 @@ export function assessSession(m: SessionMeta): Check {
 export function buildReport(f: DoctorFacts): Report {
 	const omp: Check[] = [];
 	const install: Fix = { label: "Install omp", command: "omp.installOmp" };
-	const setPath: Fix = { label: "Set path…", command: "omp.setOmpPath" };
 	if (!f.omp.resolved) {
-		omp.push({ level: "error", title: "omp is not installed", detail: "No `omp` executable on PATH, in ~/.bun/bin, ~/.local/bin, ~/.npm-global/bin, /opt/homebrew/bin or /usr/local/bin.", fixes: [install, setPath] });
+		omp.push({ level: "error", title: "omp is not installed", detail: "No `omp` executable on PATH, in ~/.bun/bin, ~/.local/bin, ~/.npm-global/bin, /opt/homebrew/bin or /usr/local/bin.", fixes: [install] });
 	} else if (!f.omp.exists) {
-		omp.push({ level: "error", title: "omp.path points to a missing file", detail: f.omp.resolved, fixes: [setPath, install] });
+		omp.push({ level: "error", title: "The omp executable is missing", detail: f.omp.resolved, fixes: [install] });
 	} else if (f.omp.versionError) {
 		const bunHint = /bun/i.test(f.omp.versionError) && !f.bun ? "\nomp runs on Bun (≥ 1.3.14), which was not found." : "";
-		omp.push({ level: "error", title: "`omp --version` failed", detail: `${f.omp.resolved}\n${f.omp.versionError}${bunHint}`, fixes: [install, setPath] });
+		omp.push({ level: "error", title: "`omp --version` failed", detail: `${f.omp.resolved}\n${f.omp.versionError}${bunHint}`, fixes: [install] });
 	} else {
-		omp.push({ level: "ok", title: `omp ${f.omp.version ?? "(unknown version)"}`, detail: `${f.omp.resolved}${f.omp.configured ? " (from omp.path)" : ""}` });
+		omp.push({ level: "ok", title: `omp ${f.omp.version ?? "(unknown version)"}`, detail: f.omp.resolved });
 	}
 	omp.push(f.bun ? { level: "ok", title: "Bun found", detail: f.bun } : { level: f.omp.exists && !f.omp.versionError ? "info" : "warn", title: "Bun not found on PATH", detail: "omp runs on Bun; the installer sets it up." });
 	const unauthenticated = f.sessions.filter(m => m.status !== "stopped" && m.authProblem);

@@ -4,7 +4,6 @@ import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin"
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
-import { sessionSettingsChip } from "../shared/session-config";
 import { agentState } from "../shared/session-report";
 import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
@@ -178,8 +177,6 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		if (m.cost) tip.appendMarkdown(`$(credit-card) $${m.cost.toFixed(2)}  \n`);
 		if (m.authProblem && m.status !== "stopped") tip.appendMarkdown(`$(warning) omp can't use a model: ${m.authProblem.replace(/[*_`[\]]/g, "\\$&")} — run **omp: Log In to a Model Provider**  \n`);
 		if (m.exitReason) tip.appendMarkdown(`$(info) ${m.exitReason.replace(/[*_`[\]]/g, "\\$&")}  \n`);
-		const settingsChip = sessionSettingsChip(m.id);
-		if (settingsChip) tip.appendMarkdown(`$(settings-gear) ${settingsChip.replace(/[*_`[\]]/g, "\\$&")}  \n`);
 		if (m.lastText) tip.appendCodeblock(m.lastText, "markdown");
 		item.tooltip = tip;
 		item.contextValue = `${m.status === "stopped" ? "session.stopped" : "session.running"}${worktree ? ".worktree" : ""}`;

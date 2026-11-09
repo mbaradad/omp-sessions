@@ -227,14 +227,14 @@ test("issueUrl: GitHub new-issue link with encoded title/body; undefined when to
 
 // ---------- whole report ----------
 
-test("buildReport: missing omp is an error with install/set-path fixes", () => {
+test("buildReport: missing omp is an error with an install fix", () => {
 	const report = buildReport(doctorFacts({ omp: { exists: false }, bun: undefined }));
 	const omp = report.sections[0].checks[0];
 	assert.equal(omp.level, "error");
 	assert.match(omp.title, /not installed/);
-	assert.deepEqual(omp.fixes?.map(f => f.command), ["omp.installOmp", "omp.setOmpPath"]);
-	const broken = buildReport(doctorFacts({ omp: { configured: "/nope/omp", resolved: "/nope/omp", exists: false } }));
-	assert.match(broken.sections[0].checks[0].title, /missing file/);
+	assert.deepEqual(omp.fixes?.map(f => f.command), ["omp.installOmp"]);
+	const broken = buildReport(doctorFacts({ omp: { resolved: "/nope/omp", exists: false } }));
+	assert.match(broken.sections[0].checks[0].title, /executable is missing/);
 	const failing = buildReport(doctorFacts({ omp: { resolved: "/x/omp", exists: true, versionError: "/usr/bin/env: 'bun': No such file or directory" }, bun: undefined }));
 	assert.match(failing.sections[0].checks[0].detail ?? "", /runs on Bun/);
 });

@@ -19,13 +19,13 @@ import { askLaunchOptions, chooseDefaultMode, chooseDefaultModel } from "./launc
 import { ChatPanel, VIEW_TYPE, panelSurface, viewSurface } from "./panel";
 import { plain } from "./plain";
 import { AoConnection } from "./ao-connection";
-import { type NewSessionOptions, SessionManager, listOmpHistory } from "./sessions";
+import { inCheckout } from "./checkout";
+import { type NewSessionOptions, SessionManager, listOmpHistory, projectRoot } from "./sessions";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
 import { registerScheduler } from "./scheduler";
 import { registerRemote } from "./remote";
 import { registerServer } from "./server";
-import { registerSessionConfig } from "./session-config";
 import { registerTasks } from "./tasks";
 import { type Node, SessionTree } from "./tree";
 import { registerToolbox } from "./toolbox";
@@ -236,7 +236,8 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			const rel = path.relative(parent, child);
 			return !rel.startsWith("..") && !path.isAbsolute(rel);
 		};
-		const related = (m: SessionMeta | undefined): m is SessionMeta => !!m && (!cwdHint || within(cwdHint, m.cwd) || within(m.cwd, cwdHint));
+		// A session runs in AO's worktree of its project: it belongs where its project's checkout is.
+		const related = (m: SessionMeta | undefined): m is SessionMeta => !!m && (!cwdHint || within(cwdHint, m.cwd) || within(m.cwd, cwdHint) || within(cwdHint, projectRoot(m.cwd).root) || within(projectRoot(m.cwd).root, cwdHint));
 		if (lastActive && related(lastActive.meta)) return lastActive;
 		const open = [...panels.values()].find(p => related(p.meta) && p.meta.status !== "stopped");
 		if (open) return open;
@@ -444,7 +445,8 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			void vscode.window.showInformationMessage("Start an omp session for this repository first.");
 			return;
 		}
-		await panel.sendPrompt(prompt);
+		const root = repoRoot(arg);
+		await panel.sendPrompt(root ? inCheckout(prompt, root) : prompt);
 	};
 	reg(
 		"omp.scm.commit",
@@ -492,7 +494,6 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerChatContext(api);
 	registerBoard(api);
 	registerBridge(api);
-	registerSessionConfig(api);
 	registerPermissions(api);
 	registerAgentSkill(api);
 	registerHermesPlugin(api);

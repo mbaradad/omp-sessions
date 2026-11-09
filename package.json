@@ -58,7 +58,7 @@
 	"capabilities": {
 		"untrustedWorkspaces": {
 			"supported": false,
-			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts the binary named by the workspace-overridable `omp.path`/`omp.extraArgs` settings. Trust the folder to use it."
+			"description": "omp is a coding agent: it runs shell commands, edits files and loads project configuration (AGENTS.md, .omp/) from the folder, and the extension starts sessions through the AO daemon. Trust the folder to use it."
 		},
 		"virtualWorkspaces": {
 			"supported": false,
@@ -141,11 +141,6 @@
 				"icon": "$(cloud-download)"
 			},
 			{
-				"command": "omp.setOmpPath",
-				"title": "Set omp Executable Path…",
-				"category": "omp"
-			},
-			{
 				"command": "omp.showOmpMissing",
 				"title": "omp Is Not Installed",
 				"category": "omp"
@@ -215,12 +210,6 @@
 				"title": "Open Sessions Board",
 				"category": "omp",
 				"icon": "$(layout)"
-			},
-			{
-				"command": "omp.sessionSettings",
-				"title": "Session Settings…",
-				"category": "omp",
-				"icon": "$(settings-gear)"
 			},
 			{
 				"command": "omp.setPermissionMode",
@@ -1439,11 +1428,6 @@
 					"group": "1_session@0"
 				},
 				{
-					"command": "omp.sessionSettings",
-					"when": "view == omp.sessions && viewItem =~ /^session/",
-					"group": "1_session@9"
-				},
-				{
 					"command": "omp.setPermissionMode",
 					"when": "view == omp.sessions && viewItem =~ /^session/",
 					"group": "1_session@8"
@@ -1953,12 +1937,6 @@
 					"default": 14,
 					"minimum": 0,
 					"markdownDescription": "Days a stopped session must be unused before **omp: Clean Up File Snapshots** (and the Doctor report) offers to delete its file snapshots (the blobs behind change diffs and reverts)."
-				},
-				"omp.path": {
-					"type": "string",
-					"default": "",
-					"scope": "machine",
-					"markdownDescription": "Path to the omp executable on the machine omp runs on: an absolute path, `~/…`, or a command name on PATH. Every omp session on that machine uses it (VS Code, `omp-sessions`, the phone app, Hermes); it can't be set per workspace. Empty: search PATH, ~/.local/bin, ~/.bun/bin."
 				},
 				"omp.extraArgs": {
 					"type": "array",

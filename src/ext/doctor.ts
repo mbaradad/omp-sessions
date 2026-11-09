@@ -50,13 +50,12 @@ function findExecutable(name: string): string | undefined {
 	return undefined;
 }
 
-/** omp executable state: `exists` is false for an `omp.path` that points nowhere. */
-function ompStatus(): { configured?: string; resolved?: string; exists: boolean } {
-	const configured = vscode.workspace.getConfiguration("omp").get<string>("path")?.trim() || undefined;
+/** omp executable state, as AO finds it: on the daemon's PATH or in the usual install folders. */
+function ompStatus(): { resolved?: string; exists: boolean } {
 	const resolved = resolveOmpPath();
 	// A bare command name (`omp`) is looked up on PATH at spawn time.
 	const exists = !!resolved && (!path.isAbsolute(resolved) || fs.existsSync(resolved));
-	return { configured, resolved, exists };
+	return { resolved, exists };
 }
 
 /** `omp --version`, with the PATH additions the session host also uses (omp runs on Bun). */
@@ -219,16 +218,11 @@ export function registerDoctor(api: OmpApi): void {
 	async function showOmpMissing(automatic: boolean): Promise<void> {
 		if (automatic && (missingShown || context.globalState.get<boolean>(HIDE_MISSING_KEY))) return;
 		missingShown = true;
-		const st = ompStatus();
-		const message =
-			st.configured && !st.exists
-				? `The omp executable set in omp.path does not exist: ${st.resolved}`
-				: "omp is not installed (or not on PATH). omp Sessions runs the omp coding agent CLI in the background.";
-		const actions = ["Install omp", "Set Path…", "Learn More"];
+		const message = "omp is not installed (or not on PATH). Switchyard runs the omp coding agent CLI in the background, through Agent Orchestrator.";
+		const actions = ["Install omp", "Learn More"];
 		if (automatic) actions.push("Don't Show Again");
 		const pick = await vscode.window.showWarningMessage(plain(message), ...actions);
 		if (pick === "Install omp") await vscode.commands.executeCommand("omp.installOmp");
-		else if (pick === "Set Path…") await vscode.commands.executeCommand("omp.setOmpPath");
 		else if (pick === "Learn More") await vscode.env.openExternal(vscode.Uri.parse(LEARN_MORE));
 		else if (pick === "Don't Show Again") await context.globalState.update(HIDE_MISSING_KEY, true);
 	}
@@ -273,16 +267,6 @@ export function registerDoctor(api: OmpApi): void {
 		}
 	});
 
-	reg("omp.setOmpPath", async () => {
-		const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, openLabel: "Use this omp", title: "Select the omp executable", defaultUri: vscode.Uri.file(os.homedir()) });
-		const file = picked?.[0]?.fsPath;
-		if (!file) return;
-		await vscode.workspace.getConfiguration("omp").update("path", file, vscode.ConfigurationTarget.Global);
-		const v = await ompVersion(file);
-		if (v.error) void vscode.window.showWarningMessage(plain(`omp.path is set, but \`omp --version\` failed: ${v.error}`), "Run Doctor").then(a => a && vscode.commands.executeCommand("omp.doctor"));
-		else void vscode.window.showInformationMessage(plain(`Using omp ${v.version} at ${file}.`));
-	});
-
 	// ---------- not logged in ----------
 	function checkAuth(): void {
 		for (const m of sessions.all()) {
@@ -325,7 +309,7 @@ export function registerDoctor(api: OmpApi): void {
 			arch: process.arch,
 			osRelease: os.release(),
 			remoteName: vscode.env.remoteName,
-			omp: { configured: st.configured, resolved: st.resolved, exists: st.exists, version: version.version, versionError: version.error },
+			omp: { resolved: st.resolved, exists: st.exists, version: version.version, versionError: version.error },
 			bun: findExecutable("bun"),
 			stateDir: root,
 			writable,

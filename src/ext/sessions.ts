@@ -9,7 +9,6 @@ import { type OmpPaths, ompPathsForArgs } from "../shared/omp-paths";
 import type { PermissionMode } from "../shared/permissions";
 import { type FileChange, type QueueOp, type SessionMeta, type SessionStatus, type TaskQueue, sessionDir } from "../shared/protocol";
 import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../shared/queue";
-import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
 import { approvalModeFor, laneQueue, launchFlags, metaOf, rerunTaskIds, statusOf, withQueue } from "./session-view";
@@ -46,15 +45,15 @@ function realPath(p: string): string {
 	return real;
 }
 
-/** Finds the omp executable: `omp.path` setting, PATH, then common install locations. */
+/** Finds the omp executable on PATH or in the usual install folders (AO runs the one on the daemon's PATH). */
 export function resolveOmpPath(): string | undefined {
-	return findOmp(vscode.workspace.getConfiguration("omp").get<string>("path"));
+	return findOmp(undefined);
 }
 
 /** Thrown when no omp executable is found (see `onOmpMissing`). */
 export class OmpMissingError extends Error {
 	constructor() {
-		super("Could not find the `omp` executable. Install omp or set `omp.path` in settings.");
+		super("Could not find the `omp` executable. Install omp and make sure it is on PATH.");
 	}
 }
 
@@ -342,15 +341,14 @@ export class SessionManager implements vscode.Disposable {
 		if (opts.resumeFile) throw new Error("AO cannot continue an existing omp transcript yet (GAPS G8): start a new session instead.");
 		const flags = launchFlags(opts.ompArgs ?? []);
 		if (flags.ignored.length) this.ao.log.warn(`omp flags omp acp can't take, ignored: ${flags.ignored.join(" ")}`);
-		// Precedence: this launch, then the project's saved defaults (Session Settings), then the omp Sessions defaults.
-		const project = launchFlags(readProjectDefaults(opts.cwd)?.args ?? []);
+		// Precedence: this launch, then the defaults (launcher.json: Set Default Model / Mode).
 		const defaults = readLauncherSettings();
-		const mode = opts.mode ?? flags.mode ?? project.mode ?? defaults.mode;
+		const mode = opts.mode ?? flags.mode ?? defaults.mode;
 		const approval = mode ? approvalModeFor(mode) : undefined;
 		const aoProject = await client.projectForFolder(opts.cwd);
 		const prompt = (opts.prompt ?? opts.goal)?.trim();
-		const model = opts.model ?? flags.model ?? project.model ?? defaults.model;
-		const effort = opts.effort ?? flags.effort ?? project.effort;
+		const model = opts.model ?? flags.model ?? defaults.model;
+		const effort = opts.effort ?? flags.effort;
 		const title = opts.title?.trim().slice(0, 100);
 		let response: AoSpawnResponse;
 		try {
