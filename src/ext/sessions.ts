@@ -12,7 +12,7 @@ import { applyQueueOps, queueSummary, readQueueFile, writeQueueFile } from "../s
 import { readProjectDefaults } from "../shared/session-config";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
-import { approvalModeFor, laneQueue, launchFlags, metaOf } from "./session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, statusOf, withQueue } from "./session-view";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, findProject } from "./worktree-git";
 
@@ -128,14 +128,18 @@ export class SessionManager implements vscode.Disposable {
 	usePlan(source: PlanSource): vscode.Disposable {
 		this.planSource = source;
 		const apply = () => {
+			const transitions: { meta: SessionMeta; from: SessionStatus }[] = [];
 			let changed = false;
 			for (const [id, meta] of this.sessions) {
 				const queue = laneQueue(source.plan, id);
 				if (JSON.stringify(queue) === JSON.stringify(meta.queue)) continue;
-				const { queue: _old, ...rest } = meta;
-				this.sessions.set(id, queue ? { ...rest, queue } : rest);
+				const model = this.models.get(id);
+				const next = withQueue(meta, queue, model ? statusOf(model.state) : meta.status);
+				this.sessions.set(id, next);
+				if (next.status !== meta.status) transitions.push({ meta: next, from: meta.status });
 				changed = true;
 			}
+			for (const t of transitions) this.transitionEmitter.fire(t);
 			if (changed) this.emitter.fire();
 		};
 		apply();
@@ -200,8 +204,8 @@ export class SessionManager implements vscode.Disposable {
 			// Turn diffs miss files the agent created; the worktree's changes (counted below) don't.
 			meta.changedFiles = Math.max(meta.changedFiles, this.fileCounts.get(model.id) ?? 0);
 			const queue = laneQueue(this.planSource?.plan, model.id);
-			if (queue) meta.queue = queue;
 			const prev = next.get(model.id);
+			if (queue) Object.assign(meta, withQueue(meta, queue, meta.status));
 			this.models.set(model.id, model);
 			next.set(model.id, meta);
 			if (!prev || prev.updatedAt !== meta.updatedAt || prev.status !== meta.status || prev.title !== meta.title || prev.cwd !== meta.cwd || prev.cost !== meta.cost) dirty = true;

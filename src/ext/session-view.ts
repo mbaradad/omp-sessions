@@ -144,3 +144,14 @@ export function laneQueue(plan: PlanView | undefined, sessionId: string): Sessio
 		...(waiting?.position !== undefined && { waiting: { position: waiting.position, since: waiting.createdAt } }),
 	};
 }
+
+/**
+ * `meta` with the planner's queue summary. A merge conflict that the child agent could not resolve
+ * (`queue.sync.state === "conflict"`) counts as needs-input, like a question: status `waiting`, so the tree,
+ * the status bar, the badge and the notification treat it as one. `base` is the status AO's state gives.
+ */
+export function withQueue(meta: SessionMeta, queue: SessionMeta["queue"], base: SessionStatus): SessionMeta {
+	const { queue: _old, ...rest } = meta;
+	const conflict = queue?.sync?.state === "conflict" && base !== "stopped";
+	return { ...rest, status: conflict ? "waiting" : base, ...(queue && { queue }) };
+}

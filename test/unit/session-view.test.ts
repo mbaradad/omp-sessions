@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, statusOf } from "../../src/ext/session-view";
+import { approvalModeFor, laneQueue, launchFlags, metaOf, permissionModeOf, statusOf, withQueue } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { PERMISSION_MODES } from "../../src/shared/permissions";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/shared/phone-pairing";
@@ -157,4 +157,17 @@ test("pairing readiness: no code without an address or a password; pending while
 	assert.equal(pairingPending({ enabled: true, endpoints: [lan], tunnel: { supported: true, running: true, ready: false, lastError: "no network" } }), false);
 	assert.equal(reachSummary({ enabled: true, endpoints: [lan], tunnel: { supported: false, running: false, ready: false } }), "this network · no public tunnel: cloudflared isn't installed");
 	assert.equal(reachSummary({ enabled: true, endpoints: [lan, tunnel] }), "this network · anywhere (Cloudflare tunnel)");
+});
+
+test("withQueue: an unresolved merge conflict is needs-input (waiting); other sync states and stopped sessions keep their status", () => {
+	const base = metaOf(model({ state: "idle" }), "");
+	const queue = (state: "conflict" | "merged" | "upstream-changed") => ({ pending: 0, running: 0, done: 1, total: 1, autoRun: true, sync: { state, parents: ["repo-1"] } });
+	assert.equal(withQueue(base, queue("conflict"), "idle").status, "waiting");
+	assert.equal(withQueue(base, queue("merged"), "idle").status, "idle");
+	assert.equal(withQueue(base, queue("upstream-changed"), "idle").status, "idle");
+	assert.equal(withQueue(base, queue("conflict"), "stopped").status, "stopped");
+	// Resolved: the queue loses its conflict and the session goes back to what AO says.
+	const conflicted = withQueue(base, queue("conflict"), "idle");
+	assert.equal(withQueue(conflicted, queue("merged"), "idle").status, "idle");
+	assert.equal(withQueue(conflicted, undefined, "idle").queue, undefined);
 });

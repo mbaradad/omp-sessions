@@ -36,6 +36,7 @@ function buildData(api: OmpApi): BoardData {
 			lastText: m.lastText,
 			cost: m.cost,
 			queue: m.queue,
+			sync: m.queue?.sync,
 			waiting: m.queue?.waiting,
 			createdAt: m.createdAt,
 			updatedAt: m.updatedAt,
@@ -92,6 +93,17 @@ async function handle(api: OmpApi, msg: FromBoard): Promise<void> {
 			break;
 		case "resume":
 			for (const id of msg.ids) await vscode.commands.executeCommand("omp.resumeSession", id);
+			break;
+		case "rerunWithParent":
+			// The planner owns propagation (GRAPH-PROPAGATION.md); the Tasks view registers the command that asks it.
+			for (const id of msg.ids) {
+				try {
+					await vscode.commands.executeCommand("omp.tasks.rerunWithParentChanges", id);
+				} catch {
+					void vscode.window.showWarningMessage("Re-running with parent changes needs the planner (omp.tasks.rerunWithParentChanges is not available).");
+					break;
+				}
+			}
 			break;
 		case "apply":
 			apply(api, msg);

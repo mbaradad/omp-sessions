@@ -8,6 +8,9 @@ import type { PermissionMode } from "./permissions";
 
 export type SessionStatus = "starting" | "idle" | "working" | "waiting" | "stopped";
 
+/** How a child task's worktree stands against a parent's changes (GRAPH-PROPAGATION.md rule 7); one per graph edge. */
+export type SyncState = "in-sync" | "pending" | "merged" | "conflict" | "upstream-changed";
+
 export interface SessionMeta {
 	id: string;
 	cwd: string;
@@ -34,7 +37,7 @@ export interface SessionMeta {
 	/** Task queue summary for tree badges. `waiting`: the next task waits for a global concurrency slot
 	 * (`position` 1-based among waiting sessions, `since` epoch ms). `interrupted`: pending tasks a host
 	 * crash or reboot cut short (see QueueTask.interrupted). */
-	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number }; /** Failed tasks (requeue). */ failed?: number; /** Sessions whose queues must finish first (dependencies); `blockedBy`: the unfinished ones. */ after?: string[]; blockedBy?: string[] };
+	queue?: { pending: number; running: number; done: number; total: number; autoRun: boolean; startAt?: number; interrupted?: number; waiting?: { position: number; since: number }; /** Failed tasks (requeue). */ failed?: number; /** Sessions whose queues must finish first (dependencies); `blockedBy`: the unfinished ones. */ after?: string[]; blockedBy?: string[]; /** Worst sync state over the incoming graph edges, and the parent sessions in that state (propagation). */ sync?: { state: SyncState; parents: string[] } };
 	/** omp's own todo plan (phases → tasks), mirrored for the Tasks view. */
 	plan?: Array<{ name: string; tasks: Array<{ content: string; status: string; blocker?: string }> }>;
 	/** Extension version whose host.js runs this session (absent: hosts that predate the field). */

@@ -176,6 +176,10 @@ input {
 	color: var(--vscode-badge-foreground);
 }
 .pill.working { background: transparent; color: var(--c-blue); border: 1px solid var(--c-blue); }
+.pill.sync { font-size: 0.85em; }
+.pill.sync-conflict { background: transparent; color: var(--c-red, var(--vscode-errorForeground)); border: 1px solid currentColor; }
+.pill.sync-upstream-changed, .pill.sync-pending { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
+.pill.sync-merged { background: transparent; color: var(--c-green, var(--vscode-descriptionForeground)); border: 1px solid currentColor; }
 .pill.waiting, .pill.queued { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.idle { background: transparent; color: var(--c-green); border: 1px solid var(--c-green); }
 .pill.stopped { background: transparent; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); }

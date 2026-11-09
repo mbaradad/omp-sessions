@@ -7,6 +7,7 @@ import {
 	type BoardLane,
 	RANK_STEP,
 	adjacentTarget,
+	canRerunWithParent,
 	buildColumns,
 	cyclePriority,
 	filterCards,
@@ -14,6 +15,7 @@ import {
 	projectsOf,
 	rankInsert,
 	stepTarget,
+	worstSync,
 } from "../../src/kanban/board";
 
 const NOW = 1_700_000_000_000;
@@ -278,5 +280,34 @@ describe("filterCards", () => {
 	});
 	test("projectsOf: distinct, sorted", () => {
 		assert.deepEqual(projectsOf(cards), ["api", "app", "web"]);
+	});
+});
+
+describe("edge sync states", () => {
+	test("worstSync: conflict outranks upstream-changed, pending, merged, in-sync; none for no edges", () => {
+		assert.equal(worstSync([]), undefined);
+		assert.equal(worstSync(["in-sync", "merged"]), "merged");
+		assert.equal(worstSync(["merged", "pending", "in-sync"]), "pending");
+		assert.equal(worstSync(["pending", "upstream-changed", "merged"]), "upstream-changed");
+		assert.equal(worstSync(["upstream-changed", "conflict", "pending"]), "conflict");
+	});
+
+	test("a conflicted card sits in Needs input, even while idle; a stopped one stays stopped", () => {
+		const cols = buildColumns("status", { lanes: [], groups: [] }, [
+			card("a", { sync: { state: "conflict", parents: ["p"] } }),
+			card("b", { sync: { state: "upstream-changed", parents: ["p"] } }),
+			card("c", { status: "stopped", sync: { state: "conflict", parents: ["p"] } }),
+		]);
+		const ids = (key: string) => cols.find(c => c.id === `status:${key}`)?.sections.flatMap(s => s.cards.map(c => c.id));
+		assert.deepEqual(ids("waiting"), ["a"]);
+		assert.deepEqual(ids("idle"), ["b"]);
+		assert.deepEqual(ids("stopped"), ["c"]);
+	});
+
+	test("Re-run with parent changes applies to upstream-changed and conflicted cards only", () => {
+		assert.equal(canRerunWithParent(card("a", { sync: { state: "upstream-changed", parents: [] } })), true);
+		assert.equal(canRerunWithParent(card("a", { sync: { state: "conflict", parents: [] } })), true);
+		for (const state of ["in-sync", "pending", "merged"] as const) assert.equal(canRerunWithParent(card("a", { sync: { state, parents: [] } })), false, state);
+		assert.equal(canRerunWithParent(card("a")), false);
 	});
 });
