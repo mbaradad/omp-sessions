@@ -205,6 +205,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 			t.status === "done" || t.status === "failed" ? fmtAgo(t.finishedAt) : t.status === "running" ? fmtAgo(t.startedAt) : "",
 			...results,
 			...describeOptions(t.options),
+			t.options?.mode && t.options.mode !== "auto" ? `🔒 ${t.options.mode}` : "",
 		]
 			.filter(Boolean)
 			.join(" · ");
@@ -221,6 +222,7 @@ export class TasksProvider implements vscode.TreeDataProvider<TaskNode>, vscode.
 				opts.freshContext ? "fresh context: runs in a new session (earlier conversation is not visible to it)" : "",
 				opts.retries ? `up to ${opts.retries} automatic retr${opts.retries === 1 ? "y" : "ies"} on failure` : "",
 				opts.timeoutMinutes ? `stopped after ${opts.timeoutMinutes} min` : "",
+				opts.mode ? `permission mode \`${opts.mode}\` (when the task starts a new session)` : "",
 			].filter(Boolean);
 			if (lines.length) tip.appendMarkdown(`\n\n$(settings-gear) ${lines.join("  \n")}`);
 		}

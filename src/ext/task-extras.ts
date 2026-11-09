@@ -2,8 +2,8 @@
 // one task's), dependencies, priorities and duplicate/retry: the UI for what the planner stores and
 // honours (PLANNER-API.md). The Tasks view re-renders when the planner pushes the new plan.
 import * as vscode from "vscode";
-import type { PlanOp, Priority, TaskOptions } from "../planner/types";
-import { PRIORITIES, THINKING_LEVELS } from "../planner/types";
+import type { PermissionMode, PlanOp, Priority, TaskOptions } from "../planner/types";
+import { PERMISSION_MODES, PRIORITIES, THINKING_LEVELS } from "../planner/types";
 import { afterUndoOps, armedLanes, checkTaskOption, isUndoable, undoneWith } from "../shared/plan-tree";
 import { formatStartTime, parseStartTime } from "../shared/task-text";
 import type { OmpApi } from "./api";
@@ -17,6 +17,13 @@ async function choose(items: Array<{ label: string; detail?: string; id: string 
 	);
 	return pick?.id;
 }
+
+const MODE_HELP: Record<PermissionMode, string> = {
+	ask: "asks before edits and shell commands",
+	edits: "edits freely, asks before shell commands",
+	plan: "plans only: edit tools are blocked",
+	auto: "no questions",
+};
 
 const TIME_HELP = "HH:MM (today or tomorrow), YYYY-MM-DD HH:MM, +30m / +2h, tomorrow 9:00";
 
@@ -38,13 +45,22 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 			{ id: "thinking", label: `Thinking level${o.thinking ? ` — ${o.thinking}` : ""}`, detail: `${THINKING_LEVELS.join(" / ")}` },
 			{ id: "clearThinking", label: "Clear thinking level" },
 			{ id: "fresh", label: o.freshContext ? "Fresh context: ON" : "Fresh context: OFF", detail: "run the task in a new session (clean context)" },
+			{ id: "mode", label: `Permission mode${o.mode ? ` — ${o.mode}` : ""}`, detail: "ask / edits / plan / auto (default auto): for a session this task STARTS; ignored when the task continues a session" },
 			{ id: "retries", label: `Automatic retries${o.retries ? ` — ${o.retries}` : ""}`, detail: "1–10, with backoff; 0 = none" },
 			{ id: "timeout", label: `Time limit${o.timeoutMinutes ? ` — ${o.timeoutMinutes} min` : ""}`, detail: "minutes; 0 = none" },
 			{ id: "clearAll", label: "Clear all options" },
 		];
 		const choice = await choose(items);
 		if (!choice) return;
-		if (choice === "model" || choice === "thinking" || choice === "retries" || choice === "timeout") {
+		if (choice === "mode") {
+			const picked = await choose([
+				...PERMISSION_MODES.map(m => ({ id: m, label: m === o.mode ? `${m} (current)` : m, detail: MODE_HELP[m] })),
+				{ id: "clearMode", label: "Clear (use the default, auto)" },
+			]);
+			if (!picked) return;
+			if (picked === "clearMode") delete o.mode;
+			else o.mode = picked as PermissionMode;
+		} else if (choice === "model" || choice === "thinking" || choice === "retries" || choice === "timeout") {
 			const value = await vscode.window.showInputBox({
 				title: `“${task.title}”`,
 				prompt: { model: "provider/modelId (e.g. anthropic/claude-opus-4-6)", thinking: `one of: ${THINKING_LEVELS.join(", ")}`, retries: "number 1–10", timeout: "minutes" }[choice],
@@ -74,6 +90,7 @@ export function registerTaskExtras(api: OmpApi, deps: TasksDeps, provider: Tasks
 			delete o.freshContext;
 			delete o.retries;
 			delete o.timeoutMinutes;
+			delete o.mode;
 		}
 		await edit([{ op: "update", id: task.id, options: Object.keys(o).length ? o : null }]);
 	});
