@@ -11,7 +11,7 @@ import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
 import { aoCheckpointDir } from "../shared/checkpoints";
 import { PLUGIN_BUNDLE, findHermes, findSwitchyard, gatewayPath, hermesCommand, hermesLookup, hermesRoot, parseLaneStatus, pluginReport, resolveTargets } from "../shared/hermes-plugin";
-import { type SessionMeta, sessionDir, sessionsRoot } from "../shared/protocol";
+import { type SessionMeta, sessionsRoot } from "../shared/protocol";
 import type { OmpApi } from "./api";
 import type { AoFacts, PlannerFacts } from "./doctor-ao";
 import type { HermesFacts } from "./doctor-hermes";
@@ -74,14 +74,6 @@ function ompVersion(omp: string): Promise<{ version?: string; error?: string }> 
 	return promise;
 }
 
-function readMetaFile(id: string): SessionMeta | undefined {
-	try {
-		return JSON.parse(fs.readFileSync(path.join(sessionDir(id), "meta.json"), "utf8")) as SessionMeta;
-	} catch {
-		return undefined;
-	}
-}
-
 async function dirBytes(dir: string): Promise<number> {
 	let entries: fs.Dirent[];
 	try {
@@ -103,8 +95,8 @@ async function dirBytes(dir: string): Promise<number> {
 	return sizes.reduce((a, b) => a + b, 0);
 }
 
-/** Session folders of the old session host that still hold file snapshots (Disk section, Clean Up File Snapshots). */
-async function gatherSnapshots(): Promise<SessionFacts[]> {
+/** Sessions whose checkpoint folder (`<switchyard home>/sessions/<id>`) holds file snapshots (Disk section, Clean Up File Snapshots). */
+async function gatherSnapshots(known: (id: string) => SessionMeta | undefined): Promise<SessionFacts[]> {
 	let ids: string[] = [];
 	try {
 		ids = fs.readdirSync(sessionsRoot());
@@ -113,7 +105,7 @@ async function gatherSnapshots(): Promise<SessionFacts[]> {
 	}
 	const facts = await Promise.all(
 		ids.map(async (id): Promise<SessionFacts | undefined> => {
-			const meta = readMetaFile(id);
+			const meta = known(id);
 			if (!meta) return undefined;
 			return { meta, blobBytes: await dirBytes(path.join(aoCheckpointDir(id), "blobs")) };
 		}),
@@ -299,7 +291,7 @@ export function registerDoctor(api: OmpApi): void {
 			writable = false;
 			writeError = (err as Error).message;
 		}
-		const [snapshots, aoFacts, planner, hermes] = await Promise.all([gatherSnapshots(), gatherAo(api), gatherPlanner(), gatherHermes(context.extensionPath)]);
+		const [snapshots, aoFacts, planner, hermes] = await Promise.all([gatherSnapshots(id => sessions.get(id)), gatherAo(api), gatherPlanner(), gatherHermes(context.extensionPath)]);
 		const now = Date.now();
 		return {
 			now,
@@ -381,7 +373,7 @@ export function registerDoctor(api: OmpApi): void {
 		});
 		if (input === undefined) return;
 		const days = Number(input.trim());
-		const candidates = cleanupCandidates(await gatherSnapshots(), days, Date.now());
+		const candidates = cleanupCandidates(await gatherSnapshots(id => sessions.get(id)), days, Date.now());
 		if (candidates.length === 0) {
 			void vscode.window.showInformationMessage(`No stopped session older than ${days} day(s) has snapshots.`);
 			return;
@@ -395,8 +387,8 @@ export function registerDoctor(api: OmpApi): void {
 		if (ok !== "Delete Snapshots") return;
 		let freed = 0;
 		for (const s of candidates) {
-			// The folder may have been removed since the scan.
-			if (!readMetaFile(s.meta.id)) continue;
+			// The session may have been resumed (or removed) since the scan.
+			if (sessions.get(s.meta.id)?.status !== "stopped") continue;
 			try {
 				fs.rmSync(path.join(aoCheckpointDir(s.meta.id), "blobs"), { recursive: true, force: true });
 				freed += s.blobBytes;
