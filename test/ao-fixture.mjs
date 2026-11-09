@@ -238,6 +238,18 @@ function gitIn(cwd, ...args) {
 	return r.stdout;
 }
 
+/** Waits (at most `timeoutMs`; a timeout is not an error) until AO's catalog of omp models has entries. */
+async function waitModelCatalog(baseUrl, timeoutMs = 20_000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			const res = await fetch(`${baseUrl}/api/v1/agents/omp/models`, { signal: AbortSignal.timeout(2000) });
+			if (res.ok && ((await res.json()).models ?? []).length > 0) return;
+		} catch {}
+		await sleep(100);
+	}
+}
+
 /** Puts back what `startAoFixture` replaced in process.env, key by key, unless another fixture has taken the key over since. */
 function restoreProcessEnv(isolation, previous) {
 	for (const [key, ours] of Object.entries(isolation)) {
@@ -343,7 +355,12 @@ export async function startAoFixture(opts = {}) {
 		const exited = new Promise(r => proc.once("exit", (code, signal) => r({ code, signal })));
 		proc.once("error", () => {});
 		const ready = await waitReady(`http://127.0.0.1:${port}`, exited, readyTimeoutMs, { pid: proc.pid, dataDir });
-		if (ready === true) return { proc };
+		if (ready === true) {
+			// AO fills its omp model catalog (`omp models --json`) in the background after start; a client that validates a
+			// model against it (src/ao/spawn.ts) would fail "Unknown omp model" until then. Hand out a daemon that has it.
+			if (!opts.realOmp && opts.fakeOmpEnv?.FAKE_OMP_NO_MODELS !== "1") await waitModelCatalog(`http://127.0.0.1:${port}`);
+			return { proc };
+		}
 		killGroup(proc.pid, "SIGKILL");
 		return { failed: ready, tail: fs.readFileSync(logFile, "utf8").split("\n").slice(-40).join("\n") };
 	}
