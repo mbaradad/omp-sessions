@@ -185,7 +185,8 @@ batch when the plan changed since (`error: "stale rev N"`).
 
 ```ts
 interface EdgeView { parent: string; parentSession?: string; child: string; childSession?: string; state: "in-sync"|"pending"|"merged"|"upstream-changed"|"resolving"|"conflict"; files?: string[]; parentHead?: string; childHead?: string; at: number }   // derived from Task.sync
-interface PlanView { rev: number; edges: EdgeView[]; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
+interface KeptBranch { repo: string; branch: string; task: string; taskId: string; tip?: string; why: string; at: number }
+interface PlanView { rev: number; edges: EdgeView[]; keptBranches: KeptBranch[]; tasks: TaskView[]; lanes: LaneView[]; recurring: Recurring[]; status: PlannerStatus }
 interface LaneView extends Lane { pending: number; running: number; done: number; failed: number; total: number }
 interface PlannerStatus extends PlannerConfig {
   running: number; waiting: number; scheduled: number; held: number; blocked: number; interrupted: number;
@@ -319,7 +320,7 @@ AO's diff is exact). `git diff base..head` = what the task changed (`head`: afte
 
 AO never deletes the branches of its sessions. When a task is **removed** from the plan, the planner deletes its
 `switchyard/*` branch, but only when every commit on it is still reachable from another branch (a parent's,
-`main`…) and nothing has it checked out; a branch with work of its own stays (the log says "kept branch").
+`main`…) and nothing has it checked out; a branch with work of its own stays, is logged ("kept branch") and is recorded in the plan: `PlanView.keptBranches: KeptBranch[]` = `{repo, branch, task (title), taskId, tip?, why, at}`, so `plan status` and the Tasks view can list leftover branches. `edit [{op:"branch.clean"}]` (also run at every planner (re)connect) retries them: one a person deleted, or merged into another branch since, leaves the list (and is deleted when merged).
 Branches the planner did not create are never touched.
 
 ## Graphs through sessions a client spawned first (the CLI's `new --task`)
@@ -399,6 +400,7 @@ disables the omp poll.
 
 ## Changelog
 
+- 2026-11-09: `PlanView.keptBranches` (leftover switchyard/* branches with unmerged work) and op `branch.clean`.
 - 2026-11-09: the service installs the omp gate/shim at start (G46); `ping` returns `omp`.
 - 2026-11-09: a turn failed with ACP `-32800` / "Request cancelled" (a person's Stop) is `interrupted`, not a failed attempt.
 - 2026-11-09: `Task.git.base`; removed tasks delete their reachable `switchyard/*` branches.

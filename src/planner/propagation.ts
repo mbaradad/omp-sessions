@@ -152,25 +152,65 @@ export class Propagation {
 	/**
 	 * A removed task's branch: AO never deletes the branches of its sessions, so the planner does, but only when
 	 * every commit on it is still reachable from another branch (a parent's, `main`…): nothing is lost. A branch with
-	 * work of its own stays, and git refuses one that is checked out.
+	 * work of its own stays, is recorded in the plan (`keptBranches`) and shown to the user; git refuses one that is checked out.
 	 */
-	dropBranch(repo: string, branch: string): Promise<void> {
+	dropBranch(repo: string, branch: string, title: string, taskId: string): Promise<void> {
 		if (!isPlannerBranch(branch)) return Promise.resolve();
 		const still = this.host.state().tasks.some(t => t.git?.branch === branch && real(t.git.repo) === real(repo));
 		if (still) return Promise.resolve();
 		return this.serial(async () => {
-			try {
-				const deleted = await withRepoLock(repo, async () => {
-					const tip = await revParse(repo, `refs/heads/${branch}`);
-					if (!tip) return false;
-					const others = (await git(repo, ["for-each-ref", "--contains", tip, "--format=%(refname:short)", "refs/heads"])).split("\n").filter(b => b && b !== branch);
-					if (!others.length) throw new Error("it has commits no other branch has");
+			const kept = await this.tryDelete(repo, branch);
+			if (kept === undefined) return this.forgetKept(repo, branch);
+			this.host.log("kept branch", branch, kept.why);
+			this.host.commit(s => {
+				s.keptBranches = s.keptBranches.filter(k => !(k.repo === repo && k.branch === branch));
+				s.keptBranches.push({ repo, branch, task: title, taskId, ...(kept.tip ? { tip: kept.tip } : {}), why: kept.why, at: this.host.now() });
+			});
+		});
+	}
+
+	/** Deletes `branch` when nothing is lost; otherwise says why it stays. Undefined: it is gone now. */
+	private async tryDelete(repo: string, branch: string): Promise<{ why: string; tip?: string } | undefined> {
+		try {
+			return await withRepoLock(repo, async () => {
+				const tip = await revParse(repo, `refs/heads/${branch}`);
+				if (!tip) return undefined;
+				const others = (await git(repo, ["for-each-ref", "--contains", tip, "--format=%(refname:short)", "refs/heads"])).split("\n").filter(b => b && b !== branch);
+				if (!others.length) return { why: "it has commits no other branch has", tip };
+				try {
 					await git(repo, ["branch", "-D", branch]);
-					return true;
-				});
-				if (deleted) this.host.log("deleted branch", branch);
-			} catch (err) {
-				this.host.log("kept branch", branch, err instanceof Error ? err.message.split("\n")[0] : String(err));
+					this.host.log("deleted branch", branch);
+					return undefined;
+				} catch (err) {
+					return { why: err instanceof Error ? err.message.split("\n")[0] : String(err), tip };
+				}
+			});
+		} catch (err) {
+			return { why: err instanceof Error ? err.message.split("\n")[0] : String(err) };
+		}
+	}
+
+	private forgetKept(repo: string, branch: string): void {
+		if (!this.host.state().keptBranches.some(k => k.repo === repo && k.branch === branch)) return;
+		this.host.commit(s => {
+			s.keptBranches = s.keptBranches.filter(k => !(k.repo === repo && k.branch === branch));
+		});
+	}
+
+	/** The kept branches again: one a person deleted or merged since leaves the list (and is deleted when it can be). */
+	cleanKept(): Promise<void> {
+		return this.serial(async () => {
+			for (const k of [...this.host.state().keptBranches]) {
+				const still = this.host.state().tasks.some(t => t.git?.branch === k.branch && real(t.git.repo) === real(k.repo));
+				if (still) continue;
+				const kept = await this.tryDelete(k.repo, k.branch);
+				if (kept === undefined) this.forgetKept(k.repo, k.branch);
+				else if (kept.tip !== k.tip || kept.why !== k.why) {
+					this.host.commit(s => {
+						const x = s.keptBranches.find(y => y.repo === k.repo && y.branch === k.branch);
+						if (x) Object.assign(x, { why: kept.why, ...(kept.tip ? { tip: kept.tip } : {}) });
+					});
+				}
 			}
 		});
 	}
