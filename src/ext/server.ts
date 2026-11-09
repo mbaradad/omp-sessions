@@ -30,6 +30,10 @@ const RUNTIME_FOLDERS = [PLUGIN_BUNDLE, "omp-extension", "omp-shim"];
 export interface ServerControl {
 	/** A client for the AO daemon, starting it when none runs (an explicit user action asked for it). */
 	client(): Promise<AoClient>;
+	/** Starts the planner when it isn't running (it also serves AO's dashboard); resolves to a one-line summary. */
+	planner(): Promise<string>;
+	/** Runs `switchyard <args>` (the runtime's CLI) in a new terminal. */
+	runCli(args: string[]): void;
 }
 
 export function runtimeDir(): string {
@@ -366,5 +370,5 @@ export function registerServer(api: OmpApi): ServerControl {
 			}
 		}),
 	);
-	return { client: () => ao.client(true) };
+	return { client: () => ao.client(true), planner: startPlanner, runCli: runCliInTerminal };
 }

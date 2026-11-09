@@ -1059,6 +1059,17 @@
 				"category": "Switchyard"
 			},
 			{
+				"command": "switchyard.openAoDashboard",
+				"title": "Open AO Dashboard",
+				"category": "Switchyard",
+				"icon": "$(dashboard)"
+			},
+			{
+				"command": "switchyard.installAoDashboard",
+				"title": "Install AO Dashboard",
+				"category": "Switchyard"
+			},
+			{
 				"command": "switchyard.installAgentSkill",
 				"title": "Install Switchyard Skill for Agents…",
 				"category": "Switchyard"
@@ -1102,6 +1113,11 @@
 					"command": "switchyard.board",
 					"when": "view == switchyard.sessions",
 					"group": "2_board@1"
+				},
+				{
+					"command": "switchyard.openAoDashboard",
+					"when": "view == switchyard.sessions",
+					"group": "2_board@2"
 				},
 				{
 					"command": "switchyard.organize.filter",
@@ -1856,6 +1872,9 @@
 				{
 					"command": "switchyard.showOmpMissing",
 					"when": "false"
+				},
+				{
+					"command": "switchyard.openAoDashboard"
 				},
 				{
 					"command": "switchyard.hermes.openCard",

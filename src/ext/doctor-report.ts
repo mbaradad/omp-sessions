@@ -2,7 +2,7 @@
 // Pure: facts are gathered by doctor.ts; everything here is unit-tested without VS Code.
 
 import type { SessionMeta } from "../shared/protocol";
-import { type AoFacts, type GateFacts, type PlannerFacts, aoChecks, gateChecks, plannerChecks } from "./doctor-ao";
+import { type AoFacts, type DashboardFacts, type GateFacts, type PlannerFacts, aoChecks, dashboardChecks, gateChecks, plannerChecks } from "./doctor-ao";
 import { type HermesFacts, hermesChecks } from "./doctor-hermes";
 
 export type Level = "ok" | "warn" | "error" | "info";
@@ -64,6 +64,8 @@ export interface DoctorFacts {
 	/** The Agent Orchestrator daemon every session runs in. */
 	ao: AoFacts;
 	planner: PlannerFacts;
+	/** AO's dashboard; absent when it could not be checked. */
+	dashboard?: DashboardFacts;
 	/** The omp gate and shim (G46). */
 	gate: GateFacts;
 	/** The sessions AO lists, as the views see them. */
@@ -195,7 +197,7 @@ export function buildReport(f: DoctorFacts): Report {
 		generatedAt: f.now,
 		sections: [
 			{ title: "omp", checks: omp },
-			{ title: "Agent Orchestrator", checks: aoChecks(f.ao) },
+			{ title: "Agent Orchestrator", checks: [...aoChecks(f.ao), ...(f.dashboard ? dashboardChecks(f.dashboard) : [])] },
 			{ title: "Planner", checks: plannerChecks(f.planner) },
 			{ title: "Permission gate and omp flags", checks: gateChecks(f.gate) },
 			{ title: "Environment", checks: env },
