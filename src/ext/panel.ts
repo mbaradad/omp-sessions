@@ -807,9 +807,11 @@ export class ChatPanel implements vscode.Disposable {
 	}
 
 	private resolveCandidate(candidate: string): string | undefined {
-		const cwd = this.meta?.cwd || os.homedir();
+		const cwd = this.meta?.cwd;
 		const expanded = candidate.startsWith("~/") ? path.join(os.homedir(), candidate.slice(2)) : candidate;
-		const abs = path.resolve(cwd, expanded);
+		// Without a workspace only absolute paths resolve.
+		if (!cwd && !path.isAbsolute(expanded)) return undefined;
+		const abs = path.resolve(cwd ?? "", expanded);
 		return fs.existsSync(abs) ? abs : undefined;
 	}
 
@@ -847,7 +849,12 @@ export class ChatPanel implements vscode.Disposable {
 			this.post({ type: "notice", level: "warning", text: "A shell command is still running (Esc stops it)." });
 			return;
 		}
-		const cwd = this.meta?.cwd || os.homedir();
+		// AO has no workspace for this session (terminated, worktree released): there is no folder to run in.
+		const cwd = this.meta?.cwd;
+		if (!cwd) {
+			this.post({ type: "notice", level: "warning", text: "This session has no workspace folder any more, so there is nowhere to run the command." });
+			return;
+		}
 		const win = process.platform === "win32";
 		const child = spawn(win ? process.env.ComSpec || "cmd.exe" : process.env.SHELL || "/bin/sh", win ? ["/d", "/s", "/c", command] : ["-c", command], { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 		this.shell = child;
@@ -978,7 +985,8 @@ export class ChatPanel implements vscode.Disposable {
 				return;
 			}
 			case "openFile": {
-				const abs = this.resolveCandidate(m.path) ?? path.resolve(this.meta?.cwd ?? "", m.path);
+				const abs = this.resolveCandidate(m.path) ?? (this.meta?.cwd || path.isAbsolute(m.path) ? path.resolve(this.meta?.cwd ?? "", m.path) : undefined);
+				if (!abs) return;
 				await openFile(abs, m.line, m.column, this.surface.viewColumn);
 				return;
 			}
