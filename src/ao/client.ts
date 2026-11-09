@@ -9,6 +9,7 @@
 // `api` is an openapi-fetch client typed by AO's OpenAPI spec: every endpoint, typed params and
 // bodies. `unwrap` turns its `{ data, error }` into the data or a thrown AoError. The wrappers below
 // cover what several clients call; add one here rather than repeating a call shape across clients.
+import { randomUUID } from "node:crypto";
 import createClient, { type Client } from "openapi-fetch";
 import { type AoDaemon, type AoStartOptions, ensureDaemon, findDaemon } from "./daemon";
 import { type AoEventStreamOptions, type AoEventSubscription, subscribeEvents } from "./events";
@@ -220,14 +221,20 @@ export class AoClient {
 		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/conversation", { params: { path: { sessionId }, query } }));
 	}
 
-	/** Sends a message: it starts a turn, or queues one behind the running turn. */
+	/**
+	 * Sends a message: it starts a turn, or queues one behind the running turn. `clientMessageId` makes
+	 * it idempotent (a retry with the same id is reported `duplicate`); one is generated when absent.
+	 */
 	sendMessage(sessionId: string, body: AoSendRequest): Promise<AoSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/messages", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
-	/** Steers the running turn with this text, or sends it as a new turn when none runs. */
+	/**
+	 * Steers the running turn with this text, or sends it as a new turn when none runs. AO requires a
+	 * `clientMessageId` (generated when absent); after a CHAT_STEER_UNCERTAIN error, retry only with the same one.
+	 */
 	steerOrSend(sessionId: string, body: AoSchemas["SteerConversationRequest"]): Promise<AoSteerOrSendResponse> {
-		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body }));
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/conversation/steer-or-send", { params: { path: { sessionId } }, body: { ...body, clientMessageId: body.clientMessageId ?? randomUUID() } }));
 	}
 
 	/** Stops the running turn. */
