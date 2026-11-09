@@ -5,8 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { AoClient } from "../ao/client";
-import { switchyardHome } from "../ao/native";
+import { type AoClient, switchyardHome } from "../ao/client";
 import { type TodoPhase, phasesToMarkdown, readTodoMirror, todoImportCommand, todoImportFile, writeFileAtomic } from "../shared/omp-todos";
 
 const POLL_MS = 3000;
