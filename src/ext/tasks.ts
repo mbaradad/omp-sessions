@@ -397,11 +397,9 @@ export function registerTasks(api: OmpApi, deps: TasksDeps): TasksProvider {
 		});
 		if (!text?.trim()) return;
 		const { title, subtasks } = parseTaskInput(text);
-		const ops: PlanOp[] = [];
-		// A new session queue waits for Start (▶), as queues always did; a separate task runs when ready.
-		if (where.lane && !deps.planner.plan?.lanes.some(l => l.id === where.lane)) ops.push({ op: "lane.add", id: where.lane, session: where.lane, autoRun: false });
-		ops.push({ op: "add", task: { title, subtasks, lane: where.lane, options: where.cwd ? { cwd: where.cwd } : undefined } });
-		await edit(ops);
+		// A queue named after an AO session that has none is created by the planner, paused (it waits for Start ▶,
+		// as queues always did); a task in no queue runs when ready.
+		await edit([{ op: "add", task: { title, subtasks, lane: where.lane, options: where.cwd ? { cwd: where.cwd } : undefined } }]);
 	});
 
 	reg("omp.tasks.addSubtask", async (arg?: unknown) => {

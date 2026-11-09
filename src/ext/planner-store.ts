@@ -37,20 +37,19 @@ export class PlannerStore implements vscode.Disposable {
 		return this.current ? undefined : this.lastError;
 	}
 
-	/** Applies edits; afterwards `plan` already reflects them (commands that follow each other decide from it). */
+	/**
+	 * Applies edits. The planner sends the new plan before its response (same connection), so when this resolves
+	 * `plan` already reflects them and commands that follow each other can decide from it.
+	 */
 	async edit(ops: PlanOp[]): Promise<Record<string, string>> {
 		const client = await this.connect();
-		const { refs } = await client.request("edit", { ops });
-		await this.refresh(client);
-		return refs;
+		return (await client.request("edit", { ops })).refs;
 	}
 
 	/** The old per-session queue ops on a lane (or AO session id): for code ported from the queue model. */
 	async queue(id: string, ops: QueueOp[]): Promise<QueueView> {
 		const client = await this.connect();
-		const view = await client.request("queue", { id, ops });
-		await this.refresh(client);
-		return view;
+		return client.request("queue", { id, ops });
 	}
 
 	async scheduler(set?: Partial<PlannerConfig>): Promise<PlannerStatus> {
@@ -58,17 +57,6 @@ export class PlannerStore implements vscode.Disposable {
 		return client.request("scheduler", set ? { set } : {});
 	}
 
-	private async refresh(client: PlannerClient): Promise<void> {
-		try {
-			const plan = await client.request("plan", {});
-			// The pushed snapshot may be newer already (rev only grows).
-			if (this.current && plan.rev < this.current.rev) return;
-			this.current = plan;
-			this.planEmitter.fire(plan);
-		} catch {
-			/* the subscription delivers it */
-		}
-	}
 
 	dispose(): void {
 		this.disposed = true;
