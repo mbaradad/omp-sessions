@@ -97,6 +97,8 @@ export interface Session {
 	status: string;
 	mode?: Mode | null;
 	model?: string | null;
+	/** The AO harness running it (omp, claude-code, codex, …). */
+	harness?: string | null;
 	cost: number;
 	changedFiles: number;
 	createdAt?: number;

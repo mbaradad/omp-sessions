@@ -600,7 +600,8 @@
           },
           icon("external", 11)
         ),
-        s.group ? h("span", { className: "omps-chip", title: "omp group" }, s.group) : null,
+        s.harness && s.harness !== "omp" ? h("span", { className: "omps-chip omps-harness", title: `Runs on the ${s.harness} harness (omp-only: plan mode, the approval gate, /undo)` }, s.harness) : null,
+        s.group ? h("span", { className: "omps-chip", title: "Group" }, s.group) : null,
         s.upstream?.some((e) => e.state === "conflict") ? h("span", { className: "omps-chip omps-sync-conflict", title: "A parent task's changes don't merge cleanly into this one" }, "merge conflict") : s.upstream?.some((e) => e.state === "upstream-changed") ? h("span", { className: "omps-chip omps-sync-upstream-changed", title: "A parent task changed after this one finished: open it to re-run with the changes" }, "parent changed") : null,
         s.completed ? h("span", { className: "omps-chip is-completed", title: s.completedAt ? `Completed ${new Date(s.completedAt).toLocaleString()}` : "Marked completed" }, icon("check", 10), "Completed") : null,
         s.archived ? h("span", { className: "omps-chip", title: "Archived: hidden unless Archived is on" }, "Archived") : null

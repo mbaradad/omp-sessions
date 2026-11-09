@@ -128,6 +128,20 @@ def as_approval(Base):
     return Approval
 
 
+def recording_new(Base, seen: list):
+    """Switchyard that records each `new` argv and drops `--harness=` before running it: the fixture's fake AO
+    has only omp, and these tests check that the harness reaches the CLI, not that AO runs it."""
+
+    class Recording(Base):
+        def json(self, args, **kw):
+            if args and args[0] == "new":
+                seen.append(list(args))
+                args = [a for a in args if not a.startswith("--harness=")]
+            return super().json(args, **kw)
+
+    return Recording
+
+
 class PluginTest(unittest.TestCase):
     injected: list[dict] = []
 
@@ -264,6 +278,28 @@ class PluginTest(unittest.TestCase):
         sid = self.session_of(card)
         self.tick_until("proj", card, lambda t: t.status == "done", "done")
         self.assertIn("fake-mini", str(report(sid).get("model") or ""))
+
+    def test_a_boards_harness_reaches_switchyard_new(self) -> None:
+        import copy
+
+        lane, seen = self.plugin.lane, []
+        real_omp, real_settings = lane.omp, lane.settings
+
+        def with_harness():
+            s = copy.deepcopy(real_settings())
+            s.lane.boards.setdefault("proj", {})["harness"] = "claude-code"
+            return s
+
+        lane.omp = lambda: recording_new(type(real_omp()), seen)(real_omp().configured)
+        lane.settings = with_harness
+        try:
+            card = self.create("proj", "echo on claude")
+            self.tick("proj")
+            until(lambda: tagged(card), "card session")
+        finally:
+            lane.omp, lane.settings = real_omp, real_settings
+        self.assertTrue(any("--harness=claude-code" in a for a in seen), seen)
+        self.tick_until("proj", card, lambda t: t.status == "done", "done")
 
     # ---- archiving ----
 
@@ -676,6 +712,17 @@ class PluginTest(unittest.TestCase):
         self.assertIn("error", self.tool("switchyard_session_mode", {"id": sid, "mode": "ask"}))
         self.assertEqual(json.loads(switchyard("show", sid, "--json").stdout).get("mode"), "plan")
 
+    def test_start_passes_the_harness_to_switchyard_new(self) -> None:
+        tools, real, seen = self.plugin.tools, self.plugin.tools.omp, []
+        tools.omp = lambda: recording_new(type(real()), seen)(real().configured)
+        try:
+            res = self.tool("switchyard_session_start", {"task": "echo on codex", "cwd": str(WORK), "harness": "codex", "at": "+2h"})
+            self.assertNotIn("error", res, res)
+        finally:
+            tools.omp = real
+        self.assertIn("--harness=codex", seen[-1])
+        self.assertEqual(seen[-1][-1], str(WORK), "the folder stays last")
+
     def test_start_queues_on_a_board_or_project_and_lists_places(self) -> None:
         res = self.tool("switchyard_session_start", {"task": "echo queued", "notes": "details", "board": "proj", "at": "+2h"})
         self.assertNotIn("error", res, res)
@@ -791,6 +838,29 @@ class PureTest(unittest.TestCase):
         self.assertFalse(self.settings.parse_settings({"lane": {"enabled": True}}).lane.archive_completed, "off by default")
         self.assertEqual([self.settings.board_lane(ac, x).archive_completed for x in ("a", "b", "c")], [False, True, True], "a board's own bool wins; anything else: the lane's")
         self.assertTrue(self.lane.board_lane_fallback(ac, "b").archive_completed)
+        h = self.settings.parse_settings({"lane": {"enabled": True, "boards": {"a": {"harness": " claude-code "}, "b": {"harness": ""}}}})
+        self.assertEqual(h.lane.boards["a"]["harness"], "claude-code")
+        self.assertNotIn("harness", h.lane.boards["b"])
+        self.assertEqual([self.settings.board_lane(h, x).harness for x in ("a", "b")], ["claude-code", None])
+        self.assertEqual(self.lane.board_lane_fallback(h, "a").harness, "claude-code")
+
+    def test_board_harness_round_trips_through_set_board(self) -> None:
+        from unittest import mock
+
+        from hermes_plugins.switchyard import commands
+
+        stored: dict = {"lane": {"enabled": True, "boards": {"a": {"model": "m/x"}}}}
+
+        def update(key, change):
+            stored[key] = change(stored.get(key))
+
+        with mock.patch.object(commands, "update_setting", update):
+            commands.set_board("a", harness="codex")
+            self.assertEqual(self.settings.board_lane(self.settings.parse_settings(stored), "a").harness, "codex")
+            commands.set_board("a", model="m/y")
+            self.assertEqual(stored["lane"]["boards"]["a"]["harness"], "codex", "None leaves it alone")
+            commands.set_board("a", harness="")
+            self.assertNotIn("harness", stored["lane"]["boards"]["a"], "\"\" clears it")
 
     def test_the_mode_gates_question_is_an_approval(self) -> None:
         from hermes_plugins.switchyard.switchyard import is_approval

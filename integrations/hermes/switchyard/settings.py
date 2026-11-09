@@ -17,6 +17,7 @@ written with update_setting).
           mode: edits
           assignee: switchyard
           model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: Switchyard's default)
+          harness: claude-code                  # AO chat harness of the board's card sessions (`switchyard harnesses`; default: Switchyard's default, the AO project's worker harness, else AO's default)
           comment_authors: [dashboard, alice]   # replaces the lane's list on this board
           archive_completed: true               # replaces the lane's archive_completed on this board
     projects:                      # Hermes project id/slug/name (or any name you like) -> folder
@@ -53,6 +54,7 @@ class BoardLane:
     folder: Optional[str] = None
     mode: Optional[str] = None
     model: Optional[str] = None
+    harness: Optional[str] = None
     comment_authors: tuple[str, ...] = DEFAULT_COMMENT_AUTHORS
     archive_completed: bool = False
 
@@ -102,7 +104,7 @@ def _board_entry(v: Any) -> dict[str, Any]:
     if not isinstance(v, Mapping):
         return {}
     out: dict[str, Any] = {}
-    for key in ("folder", "group", "assignee", "model"):
+    for key in ("folder", "group", "assignee", "model", "harness"):
         s = _str(v.get(key))
         if s:
             out[key] = s
@@ -158,6 +160,7 @@ def board_lane(s: Settings, slug: str, board_name: Optional[str] = None) -> Opti
         folder=e.get("folder"),
         mode=e.get("mode") or s.lane.mode,
         model=e.get("model"),
+        harness=e.get("harness"),
         comment_authors=tuple(e["comment_authors"]) if "comment_authors" in e else s.lane.comment_authors,
         archive_completed=archive_completed(s, slug),
     )

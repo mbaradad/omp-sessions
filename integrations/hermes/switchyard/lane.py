@@ -547,6 +547,7 @@ class Lane:
                 tags=["hermes", f"hermes:{slug}", f"card:{task.id}"],
                 group=cfg.group if cfg else None,
                 model=card_model(task) or (cfg.model if cfg else None),
+                harness=cfg.harness if cfg else None,
                 after=after,
             )
         except SwitchyardError as exc:
@@ -929,7 +930,7 @@ def board_lane_fallback(settings: Settings, slug: str) -> BoardLane:
     """Settings for a linked card whose board the lane no longer takes new cards from."""
     e = settings.lane.boards.get(slug, {})
     authors = tuple(e["comment_authors"]) if "comment_authors" in e else settings.lane.comment_authors
-    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), comment_authors=authors, archive_completed=archive_completed(settings, slug))
+    return BoardLane(slug=slug, assignee=settings.lane.assignee, group=slug, mode=settings.lane.mode, model=e.get("model"), harness=e.get("harness"), comment_authors=authors, archive_completed=archive_completed(settings, slug))
 
 
 def project_folder(project_id: Optional[str], settings: Settings) -> Optional[str]:
