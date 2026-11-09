@@ -2,7 +2,6 @@
 // then runs them with `node --test`. Usage: node test/run.mjs [unit|host|ao|integration]...
 // No suite named: unit and host. `integration` runs test/integration/ against an isolated AO daemon
 // started per test file by test/ao-fixture.mjs (skips when `ao` is missing; SWITCHYARD_TEST_AO_BIN picks one).
->>>>>>> ao/test-infra
 // TEST_OUT=<dir> bundles elsewhere (parallel runs); TEST_FILTER=<regex> keeps only matching test files.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -16,12 +15,8 @@ const filter = process.env.TEST_FILTER ? new RegExp(process.env.TEST_FILTER) : u
 const suites = process.argv.slice(2).filter(a => !a.startsWith("-"));
 // `ao`: live contract tests against a running AO daemon (AO_RUN_FILE/AO_PORT pick it); only when asked for.
 const selected = suites.length ? suites : ["unit", "host"];
-<<<<<<< HEAD
-for (const s of selected) if (s !== "unit" && s !== "host" && s !== "ao") throw new Error(`unknown suite ${s}`);
-=======
-const SUITES = ["unit", "host", "integration"];
+const SUITES = ["unit", "host", "ao", "integration"];
 for (const s of selected) if (!SUITES.includes(s)) throw new Error(`unknown suite ${s}`);
->>>>>>> ao/test-infra
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
