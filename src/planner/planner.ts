@@ -89,7 +89,6 @@ export class Planner {
 	private readonly retryTimers = new Map<string, { timer: NodeJS.Timeout; due: number }>();
 	private readonly listeners = new Set<(change: PlannerChange) => void>();
 	private readonly propagation: Propagation;
-	/** omp model ids AO knows, fetched at most every 10 minutes. */
 
 	constructor(private readonly opts: PlannerOptions) {
 		this.state = opts.initial ?? emptyState();
@@ -461,8 +460,11 @@ export class Planner {
 	/** Runs a scheduling pass within `delay` ms (an earlier pending pass is kept). */
 	schedule(delay = 300): void {
 		if (this.stopped) return;
-		const due = this.now() + delay;
-		if (this.tickTimer && this.tickDue <= due) return;
+		const now = this.now();
+		const due = now + delay;
+		// A pending pass is kept when it is due earlier. One that is already overdue by the clock (it was set for
+		// a wake time the clock has since jumped past: machine suspend, a test clock) is replaced: its timer is late.
+		if (this.tickTimer && this.tickDue <= due && this.tickDue >= now) return;
 		clearTimeout(this.tickTimer);
 		this.tickDue = due;
 		this.tickTimer = setTimeout(
@@ -608,10 +610,12 @@ export class Planner {
 	/** Drives or checks task `id` after `delay` ms (coalesced; one AO step per task at a time). */
 	private follow(id: string, delay: number): void {
 		if (this.stopped) return;
-		const due = this.now() + Math.max(0, delay);
+		const now = this.now();
+		const due = now + Math.max(0, delay);
 		const pending = this.retryTimers.get(id);
-		// A check already due sooner covers this request; a later one (a slow re-check) gives way to it.
-		if (pending && pending.due <= due) return;
+		// A check already due sooner covers this request; a later one (a slow re-check) gives way to it. One already
+		// overdue by the clock (the clock jumped past it) has a late timer and is replaced.
+		if (pending && pending.due <= due && pending.due >= now) return;
 		if (pending) {
 			clearTimeout(pending.timer);
 			this.retryTimers.delete(id);
