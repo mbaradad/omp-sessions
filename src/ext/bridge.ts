@@ -17,14 +17,17 @@ import {
 	type BSignature,
 	type BSym,
 	bridgeDisabledFlag,
+	bridgeExtensionDir,
 	bridgeRoot,
 	bridgeSocketPath,
 	ensureBridgeRoot,
+	installBridgeExtension,
 	isInside,
 	isRecord,
 	isToolName,
 	LIMITS,
 	readRegistry,
+	removeBridgeExtension,
 	splitSymbol,
 	TOOL_NAMES,
 	type ToolArgs,
@@ -623,6 +626,16 @@ function syncDisabledFlag(on: boolean): void {
 	}
 }
 
+/** The omp extension that registers the tools in omp sessions: installed while on, removed when off. */
+function syncOmpExtension(on: boolean, bundle: string): void {
+	try {
+		if (on) installBridgeExtension(bundle);
+		else removeBridgeExtension();
+	} catch (err) {
+		console.warn("[omp bridge] could not update omp's extension folder:", err);
+	}
+}
+
 // ---------- chat symbol links ----------
 
 export interface ChatSymbolInfo {
@@ -761,6 +774,8 @@ async function bridgeStatus(api: OmpApi): Promise<void> {
 	lines.push(`- This window: ${running ? `serving on \`${running.socket}\` (pid ${running.pid}, ${server?.clients ?? 0} MCP connection(s))` : `not serving${server?.lastError ? ` — ${server.lastError}` : ""}`}`);
 	const script = vscode.Uri.joinPath(api.context.extensionUri, "out", "mcp.js").fsPath;
 	lines.push(`- MCP server script: \`${script}\`${fs.existsSync(script) ? "" : " **(missing — rebuild the extension)**"}`);
+	const ompExt = path.join(bridgeExtensionDir(), "index.js");
+	lines.push(`- omp extension (gives omp sessions the tools): \`${ompExt}\`${fs.existsSync(ompExt) ? "" : on ? " **(missing — reload the window)**" : " (removed while off)"}`);
 	lines.push("", "## Connected windows", "");
 	const entries = readRegistry();
 	if (!entries.length) lines.push("None.");
@@ -808,9 +823,11 @@ async function bridgeStatus(api: OmpApi): Promise<void> {
 export function registerBridge(api: OmpApi): void {
 	const srv = new BridgeServer();
 	server = srv;
+	const bundle = vscode.Uri.joinPath(api.context.extensionUri, "out", "omp-bridge.js").fsPath;
 	const apply = () => {
 		const on = enabled();
 		syncDisabledFlag(on);
+		syncOmpExtension(on, bundle);
 		if (on) void srv.start();
 		else srv.stop();
 	};

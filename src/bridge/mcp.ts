@@ -1,62 +1,22 @@
-// `out/mcp.js`: stdio MCP server that omp starts for each session (see bridgeOmpArgs). It always
-// answers initialize / tools/list so omp starts normally; tools/call is forwarded to the VS Code
-// window that has the session cwd open, or fails with a clear "not connected" message.
+// `out/mcp.js`: stdio MCP server exposing this machine's VS Code windows' language features to any
+// MCP client. omp sessions get the same tools from the omp extension (`out/omp-bridge.js`), because
+// `omp acp` (how Agent Orchestrator runs omp) ignores on-disk MCP config. It always answers
+// initialize / tools/list; tools/call is forwarded to the VS Code window that has the cwd open, or
+// fails with a clear "not connected" message.
 import * as readline from "node:readline";
-import { isRecord, isToolName, MCP_INSTRUCTIONS, pickWindows, readRegistry, TOOL_DEFS, type ToolArgs, validateArgs } from "../shared/bridge";
-import { pidAlive } from "../shared/launch";
-import { BridgeConnection } from "./client";
-import { formatResult } from "./format";
+import { isRecord, MCP_INSTRUCTIONS, TOOL_DEFS } from "../shared/bridge";
+import { BridgeCaller } from "./call";
 
-const cwd = process.env.OMP_VSCODE_BRIDGE_CWD || process.cwd();
-const NOT_CONNECTED = `VS Code is not connected: no VS Code window with the omp extension (and \`omp.vscodeTools\` enabled) is open on this machine. Use omp's built-in tools (read, grep, find, lsp…) instead.`;
-
-let conn: BridgeConnection | undefined;
-let connMatched = false;
+const caller = new BridgeCaller(process.env.OMP_VSCODE_BRIDGE_CWD || process.cwd());
 
 function send(msg: unknown): void {
 	process.stdout.write(`${JSON.stringify(msg)}\n`);
 }
 
-/** Reuses the current window connection unless a better-matching window is available. */
-async function connection(): Promise<{ conn: BridgeConnection; matched: boolean } | undefined> {
-	const choices = pickWindows(readRegistry(), cwd).filter(c => pidAlive(c.entry.pid));
-	if (conn && !conn.closed && (connMatched || !choices.some(c => c.matched && c.entry.pid !== conn?.entry.pid))) return { conn, matched: connMatched };
-	conn?.close();
-	conn = undefined;
-	for (const c of choices) {
-		try {
-			conn = await BridgeConnection.open(c.entry);
-			connMatched = c.matched;
-			return { conn, matched: c.matched };
-		} catch (err) {
-			process.stderr.write(`bridge: window ${c.entry.pid} unreachable: ${err instanceof Error ? err.message : String(err)}\n`);
-		}
-	}
-	return undefined;
-}
-
 async function callTool(params: unknown): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
-	const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 	const p = isRecord(params) ? params : {};
-	const name = isToolName(p.name) ? p.name : undefined;
-	let args: ToolArgs;
-	if (!name) {
-		return text(`Unknown tool: ${p.name === undefined ? "(none)" : String(p.name)}`, true);
-	}
-	try {
-		args = validateArgs(name, p.arguments, cwd);
-	} catch (err) {
-		return text(`Invalid arguments: ${err instanceof Error ? err.message : String(err)}`, true);
-	}
-	const c = await connection();
-	if (!c) return text(NOT_CONNECTED, true);
-	try {
-		const result = await c.conn.call(name, args, cwd);
-		const note = c.matched ? undefined : `(Note: no VS Code window has ${cwd} open; answering from window "${c.conn.entry.name}", so workspace-wide results may belong to another project.)`;
-		return text(formatResult(result, cwd, note));
-	} catch (err) {
-		return text(`VS Code: ${err instanceof Error ? err.message : String(err)}`, true);
-	}
+	const r = await caller.call(p.name, p.arguments);
+	return { content: [{ type: "text", text: r.text }], ...(r.isError ? { isError: true } : {}) };
 }
 
 async function handle(msg: unknown): Promise<void> {
@@ -99,6 +59,6 @@ rl.on("line", line => {
 	}
 });
 rl.on("close", () => {
-	conn?.close();
+	caller.close();
 	process.exit(0);
 });
