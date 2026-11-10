@@ -29,6 +29,10 @@ AO runs a coordinating agent per project, the **orchestrator**: it takes a high-
 
 Renamed from `omp-sessions`; GitHub redirects the old repository URLs. The site moved to https://mbaradad.github.io/switchyard/ (the old Pages address does not redirect) and now describes Switchyard as a layer over any Agent Orchestrator harness, with omp as one of them.
 
+### Hermes: the AO dashboard tab shows AO's web UI in Desktop too
+
+Hermes Desktop used to offer only an "Open in browser" button for the **AO dashboard** tab. It now frames AO's dashboard port directly when that port answers on the computer Desktop runs on (on the Switchyard machine, or through a port forward such as `LocalForward 3012 localhost:3012`), and says how to forward it when it doesn't. The tab, in Desktop and in a browser, opens at AO's page for a project (`#/projects/<id>`) with a button per project.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (whichever harness AO is set up for: Claude Code, Codex, omp through `omp acp`, …); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.

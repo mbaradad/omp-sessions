@@ -429,16 +429,37 @@
   // integrations/hermes/ui/ao.ts
   var STATUS = "/ao/switchyard-ao-dashboard/status";
   var INSTALL = "switchyard dashboard install";
+  function aoRoute(projectId) {
+    return projectId ? `#/projects/${encodeURIComponent(projectId)}` : "";
+  }
+  function initialProject(projects, filter) {
+    const chosen = projects.find((x) => x.id === filter || x.name === filter);
+    return (chosen ?? (projects.length === 1 ? projects[0] : void 0))?.id;
+  }
+  async function answers(origin) {
+    try {
+      await fetch(`${origin}${STATUS.replace("/ao/", "/")}`, { mode: "no-cors", cache: "no-store" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   function AoDashboardPanel(p) {
     const { host } = p;
     const [probe, setProbe] = useState(null);
     const [opening, setOpening] = useState(false);
     const [note, setNote] = useState(null);
+    const [target, setTarget] = useState(void 0);
     const [frameKey, setFrameKey] = useState(0);
     const check = async () => {
       setProbe(null);
       try {
-        setProbe({ status: await host.request(STATUS) });
+        const status2 = await host.request(STATUS);
+        const origin = `http://localhost:${status2.port}`;
+        const direct2 = host.aoDirect && status2.installed && await answers(origin) ? `${origin}/` : null;
+        const projects2 = await host.request("/orchestrators").then((list) => list.orchestrators.map((o) => ({ id: o.projectId, name: o.projectName })).filter((x, i, all) => all.findIndex((y) => y.id === x.id) === i)).catch(() => []);
+        setTarget(initialProject(projects2, p.project));
+        setProbe({ status: status2, direct: direct2, projects: projects2 });
       } catch (err) {
         const message = errorMessage(err);
         setProbe({ error: message, down: /not running on 127\.0\.0\.1/.test(message) });
@@ -447,14 +468,14 @@
     useEffect(() => {
       void check();
     }, []);
-    const openBrowser = async () => {
+    const openBrowser = async (direct2) => {
       if (!host.openPage) return;
       setNote(null);
       setOpening(true);
       try {
-        const { page } = await host.request("/ao-page");
+        const page = direct2 ? `${direct2}${aoRoute(target)}` : (await host.request("/ao-page")).page;
         await host.openPage(page);
-        setNote("Opened in your browser. Sign in to this Hermes there if it asks.");
+        setNote(direct2 ? "Opened in your browser." : "Opened in your browser. Sign in to this Hermes there if it asks.");
       } catch (err) {
         setNote(errorMessage(err));
       } finally {
@@ -466,7 +487,7 @@
     if ("error" in probe) {
       return probe.down ? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on the Switchyard machine.`, action: checkAgain }) : h(ErrorBox, { message: probe.error, onRetry: () => void check() });
     }
-    const { status } = probe;
+    const { status, direct, projects } = probe;
     if (!status.installed) {
       return h(Empty, {
         icon: "terminal",
@@ -477,20 +498,25 @@
     }
     const daemon = status.daemon ? null : h("span", { className: "omps-stale omps-ao-warn" }, icon("alert", 12), "AO's daemon is not answering: the dashboard shows no live data until it is back.");
     const version = h("span", { className: "omps-muted omps-total" }, `AO dashboard${status.version ? ` ${status.version}` : ""} · port ${status.port}`);
-    if (!host.aoFrame) {
+    const src = direct ? `${direct}${aoRoute(target)}` : host.aoFrame ? `${host.aoFrame}${aoRoute(target)}` : void 0;
+    if (!src) {
+      const forward = `ssh -L ${status.port}:localhost:${status.port} <the Switchyard machine>`;
       return h(
         "div",
         { className: "omps-ao" },
         h(Empty, {
           icon: "external",
           title: "AO dashboard",
-          body: host.aoNote,
-          action: host.openPage ? h(Button, { kind: "brand", icon: "external", label: "Open in browser", busy: opening, onClick: () => void openBrowser() }) : checkAgain
+          body: host.aoDirect ? h("span", null, `${host.aoNote ?? ""} To show it here, forward its port to this computer: `, h("code", null, forward), ".") : host.aoNote,
+          action: host.openPage ? h(Button, { kind: "brand", icon: "external", label: "Open in browser", busy: opening, onClick: () => void openBrowser(null) }) : checkAgain
         }),
         note ? h("div", { className: "omps-notice omps-ao-note" }, icon("external", 12), note) : null,
         h("div", { className: "omps-ao-foot" }, version, daemon)
       );
     }
+    const projectButtons = projects.map(
+      (x) => h(Button, { key: x.id, small: true, kind: target === x.id ? "primary" : "ghost", pressed: target === x.id, label: x.name, title: `AO's page for ${x.name}`, onClick: () => setTarget(x.id) })
+    );
     return h(
       "div",
       { className: "omps-ao" },
@@ -499,11 +525,14 @@
         { className: "omps-filters omps-ao-bar" },
         version,
         daemon,
+        projects.length ? h(Button, { small: true, kind: target ? "ghost" : "primary", pressed: !target, label: "All projects", onClick: () => setTarget(void 0) }) : null,
+        ...projectButtons,
         h("span", { className: "omps-grow" }),
         h(Button, { small: true, kind: "ghost", icon: "refresh", label: "Reload", onClick: () => setFrameKey(frameKey + 1) }),
-        h("a", { className: "omps-btn omps-btn-sm omps-btn-default", href: host.aoFrame, target: "_blank", rel: "noopener" }, icon("external", 13), h("span", null, "Open in new window"))
+        host.openPage ? h(Button, { small: true, icon: "external", label: "Open in browser", busy: opening, onClick: () => void openBrowser(direct) }) : h("a", { className: "omps-btn omps-btn-sm omps-btn-default", href: src, target: "_blank", rel: "noopener" }, icon("external", 13), h("span", null, "Open in new window"))
       ),
-      h("iframe", { key: frameKey, className: "omps-ao-frame", src: host.aoFrame, title: "AO dashboard", allow: "clipboard-read; clipboard-write" })
+      note ? h("div", { className: "omps-notice omps-ao-note" }, icon("external", 12), note) : null,
+      h("iframe", { key: `${frameKey}:${target ?? ""}`, className: "omps-ao-frame", src, title: "AO dashboard", allow: "clipboard-read; clipboard-write" })
     );
   }
 
@@ -3239,7 +3268,7 @@ ${note.detail}` : ""}`),
       } else if (view === "orchestrator") {
         main = h(OrchestratorPanel, { host, now, onOpenSession: setSelected, onOpenAo: () => setView("ao") });
       } else if (view === "ao") {
-        main = h(AoDashboardPanel, { host });
+        main = h(AoDashboardPanel, { host, project });
       } else if (notInstalled) {
         main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
       } else if (!sessions) {

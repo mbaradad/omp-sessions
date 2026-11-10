@@ -23,6 +23,8 @@ export interface Host {
 	 *  sign-in cookie reaches it). Absent where a frame can't sign in: Desktop (its bearer token stays in its
 	 *  main process) and a dashboard in Hermes's legacy session-token mode (a frame can't send the header). */
 	aoFrame?: string;
+	/** Desktop: the AO dashboard's own port may answer on this computer (the Switchyard machine, or a port forward to it): frame it directly. */
+	aoDirect?: boolean;
 	/** Why the AO dashboard tab has no frame. */
 	aoNote?: string;
 	/** Opens a web page in the system browser (Desktop: the AO dashboard's landing page from GET /ao-page). */

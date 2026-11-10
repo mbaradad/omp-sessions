@@ -272,7 +272,7 @@ export function createPage(host: Host): () => ReactElement {
 		} else if (view === "orchestrator") {
 			main = h(OrchestratorPanel, { host, now, onOpenSession: setSelected, onOpenAo: () => setView("ao") });
 		} else if (view === "ao") {
-			main = h(AoDashboardPanel, { host });
+			main = h(AoDashboardPanel, { host, project });
 		} else if (notInstalled) {
 			main = h(Empty, { icon: "terminal", title: "switchyard is not installed", body: overview.switchyard.hint ?? "", action: h(Button, { label: "Check again", icon: "refresh", onClick: refresh }) });
 		} else if (!sessions) {
