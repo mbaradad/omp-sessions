@@ -1,7 +1,8 @@
-// Webview of the Task Graph (src/ext/task-graph.ts): the plan's tasks as a left-to-right DAG. Solid arrows
-// are dependencies, dashed arrows the order a queue runs its tasks in; a node's stripe shows its state.
-// Click a node to select it and get its actions. The extension host sends the graph, this draws it.
-import { GRAPH_METRICS, layoutGraph } from "../shared/graph-layout";
+// Webview of the Task Graph (src/ext/task-graph.ts): the plan's tasks as a left-to-right DAG. Thick arrows
+// are dependencies the planner enforces, dotted arrows the order a queue runs its tasks in; a node's stripe
+// shows its state and its badge the planner's word for a task that is not running. Click a node to select it
+// and get its actions. The extension host sends the graph, this draws it (src/shared/graph-svg.ts).
+import { type DagEdge, type DagNode, drawDag } from "../shared/graph-svg";
 import type { PlanGraph } from "../shared/plan-graph";
 
 interface VsCodeApi {
@@ -18,14 +19,6 @@ export type FromGraph = { type: "ready" } | { type: "action"; action: GraphActio
 export type GraphAction = "openChat" | "runNow" | "requeue" | "dependencies" | "schedule" | "rerun" | "sync";
 
 const vscode = acquireVsCodeApi();
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, ...children: Array<Node | string>): SVGElementTagNameMap[K] {
-	const e = document.createElementNS(SVG_NS, tag);
-	for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-	e.append(...children);
-	return e;
-}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, ...children: Array<Node | string>): HTMLElementTagNameMap[K] {
 	const e = document.createElement(tag);
@@ -48,14 +41,28 @@ const STATE_CLASS: Record<string, string> = {
 	waiting: "s-waiting",
 };
 
-/** Edge colour per propagation state (`in-sync`/`merged` look like any other dependency). */
-const SYNC_CLASS: Partial<Record<string, string>> = { pending: "sync-pending", "upstream-changed": "sync-changed", resolving: "sync-changed", conflict: "sync-conflict" };
+/** The planner's word for a task that is not running, as a node badge. */
+const STATE_BADGE: Partial<Record<string, { text: string; tone: "wait" | "bad" }>> = {
+	blocked: { text: "blocked", tone: "wait" },
+	scheduled: { text: "scheduled", tone: "wait" },
+	paused: { text: "paused", tone: "wait" },
+	held: { text: "held", tone: "wait" },
+	waiting: { text: "queued", tone: "wait" },
+	interrupted: { text: "interrupted", tone: "bad" },
+	failed: { text: "failed", tone: "bad" },
+};
+
+/** Edge look per propagation state (`in-sync`/`merged` look like any other dependency). */
+const SYNC_CLASS: Partial<Record<string, string>> = { pending: "syncing", "upstream-changed": "changed", resolving: "changed", conflict: "conflict" };
 const SYNC_TITLE: Partial<Record<string, string>> = {
 	pending: "The parent changed; the change is merged into this task when its turn ends",
 	"upstream-changed": "The parent changed after this task finished; re-run it to take the change into account",
 	resolving: "The task's agent is resolving a merge conflict",
 	conflict: "The merge conflicted: a person decides",
 };
+
+const MARKERS = ["graph-arrow", "graph-arrow-pending", "graph-arrow-syncing", "graph-arrow-changed", "graph-arrow-conflict"];
+const SYNC_MARKER: Partial<Record<string, string>> = { syncing: "graph-arrow-syncing", changed: "graph-arrow-changed", conflict: "graph-arrow-conflict" };
 
 const root = el("div", "app");
 document.body.append(root);
@@ -99,71 +106,28 @@ function render(): void {
 	}
 	if (selected && !graph.nodes.some(n => n.id === selected)) selected = undefined;
 
-	const { nodeWidth: w, nodeHeight: h } = GRAPH_METRICS;
-	const pad = 16;
-	const layout = layoutGraph(
-		graph.nodes.map(n => n.id),
-		graph.edges,
-	);
-	const width = layout.width + 2 * pad;
-	const height = layout.height + 2 * pad;
-	const svg = svgEl("svg", { class: "graph-svg", width, height, viewBox: `${-pad} ${-pad} ${width} ${height}`, role: "group", "aria-label": "Task dependencies and queue order" });
-	const defs = svgEl("defs", {});
-	for (const id of ["graph-arrow", "graph-arrow-pending"]) defs.append(svgEl("marker", { id, class: id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" }, svgEl("path", { d: "M0 0L10 5L0 10z" })));
-	svg.append(defs);
-
-	// Edge look by kind and by whether they still hold something back.
-	const edgeInfo = new Map(graph.edges.map(e => [`${e.from}\n${e.to}`, e]));
-	const edgeLayer = svgEl("g", { class: "graph-edges" });
-	for (const r of layout.routes) {
-		// Horizontal tangents at every point: smooth S-curves between layers, straight runs through virtual slots.
-		const d = r.points
-			.map((q, i) => {
-				if (i === 0) return `M${q.x} ${q.y}`;
-				const p = r.points[i - 1];
-				const dx = Math.max(30, Math.abs(q.x - p.x) / 2);
-				return `C${p.x + dx} ${p.y} ${q.x - dx} ${q.y} ${q.x} ${q.y}`;
-			})
-			.join("");
-		const info = edgeInfo.get(`${r.from}\n${r.to}`);
-		const pending = info?.pending === true;
-		const highlight = selected !== undefined && (r.from === selected || r.to === selected);
-		const syncClass = info?.sync ? SYNC_CLASS[info.sync] : undefined;
-		const syncTitle = info?.sync ? SYNC_TITLE[info.sync] : undefined;
-		const cls = ["gedge", info?.kind === "lane" ? "lane" : "", pending ? "pending" : "", syncClass ?? "", highlight ? "hl" : ""].filter(Boolean).join(" ");
-		const path = svgEl("path", { class: cls, d, "marker-end": `url(#${pending ? "graph-arrow-pending" : "graph-arrow"})` });
-		if (syncTitle) path.append(svgEl("title", {}, syncTitle));
-		edgeLayer.append(path);
-	}
-
-	const nodeLayer = svgEl("g", { class: "graph-nodes" });
-	const maxChars = Math.floor((w - 22) / 7);
-	for (const n of graph.nodes) {
-		const p = layout.positions.get(n.id);
-		if (!p) continue;
-		const clip = (s: string) => (s.length > maxChars ? `${s.slice(0, maxChars - 1)}…` : s);
+	const nodes = graph.nodes.map((n): DagNode => {
 		const label = [n.state, n.text !== n.state ? n.text : ""].filter(Boolean).join(" · ");
-		const g = svgEl(
-			"g",
-			{ class: `gnode ${STATE_CLASS[n.state] ?? ""}${n.id === selected ? " selected" : ""}`, transform: `translate(${p.x} ${p.y})`, tabindex: 0, role: "button", "aria-label": `${n.title}, ${label}` },
-			svgEl("title", {}, [n.title, n.lane ? `queue: ${n.lane}` : "separate task", label].join("\n")),
-			svgEl("rect", { class: "gnode-box", width: w, height: h, rx: 6 }),
-			svgEl("rect", { class: "gnode-stripe", width: 4, height: h - 12, x: 4, y: 6, rx: 2 }),
-			svgEl("text", { class: "gnode-title", x: 14, y: 20 }, clip(n.title)),
-			svgEl("text", { class: "gnode-state", x: 14, y: 37 }, clip(n.text)),
-		);
-		g.addEventListener("click", () => select(n.id === selected ? undefined : n.id));
-		g.addEventListener("keydown", e => {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				select(n.id === selected ? undefined : n.id);
-			}
-		});
-		nodeLayer.append(g);
-	}
-	svg.append(edgeLayer, nodeLayer);
+		const badge = STATE_BADGE[n.state];
+		return {
+			id: n.id,
+			title: n.title,
+			sub: n.text.replace(/^[^\p{L}\p{N}]+/u, ""),
+			classes: [STATE_CLASS[n.state] ?? "", ...(n.id === selected ? ["selected"] : [])].filter(Boolean),
+			tooltip: [n.title, n.lane ? `queue: ${n.lane}` : "separate task", label].join("\n"),
+			...(badge && { badge }),
+		};
+	});
+	const edges = graph.edges.map((e): DagEdge => {
+		const sync = e.sync ? SYNC_CLASS[e.sync] : undefined;
+		const highlight = selected !== undefined && (e.from === selected || e.to === selected);
+		const classes = [e.kind === "lane" ? "lane" : "enforced", e.pending ? "pending" : "", highlight ? "hl" : "", sync ?? ""].filter(Boolean);
+		const syncTitle = e.sync ? SYNC_TITLE[e.sync] : undefined;
+		return { from: e.from, to: e.to, classes, marker: (sync && SYNC_MARKER[sync]) || (e.pending ? "graph-arrow-pending" : "graph-arrow"), ...(syncTitle && { tooltip: syncTitle }) };
+	});
+	const svg = drawDag({ nodes, edges, markers: MARKERS, label: "Task dependencies and queue order", onSelect: id => select(id === selected ? undefined : id) });
 
-	const legend = el("div", "legend", el("span", "key solid", "dependency"), el("span", "key dashed", "queue order"), el("span", "key pending", "still waiting"), el("span", "key changed", "parent changed"), el("span", "key conflict", "conflict"));
+	const legend = el("div", "legend graph-legend", el("span", "key enforced", "dependency"), el("span", "key lane", "queue order"), el("span", "key pending", "still waiting"), el("span", "key changed", "parent changed"), el("span", "key conflict", "conflict"));
 	root.append(legend, el("div", "graph", svg));
 
 	const node = graph.nodes.find(n => n.id === selected);

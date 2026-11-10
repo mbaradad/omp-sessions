@@ -157,13 +157,16 @@ def omp_version(o: Any) -> dict:
 
 def questions_for(o: Any, infos: list[dict]) -> dict[str, Optional[dict]]:
     """The pending question of every session waiting for input."""
+    waiting = [(str((i.get("meta") or {}).get("id")), (i.get("meta") or {}).get("updatedAt")) for i in infos if switchyard.agent_state(i) == "needs_input"]
+    return waiting_questions(o, waiting)
+
+
+def waiting_questions(o: Any, waiting: list[tuple[str, Any]]) -> dict[str, Optional[dict]]:
+    """The pending question of each waiting session or orchestrator, given as (id, updatedAt): the dialog in full, which
+    only `switchyard show` has. Rerun only when the session changed since the last time."""
     want: list[tuple[str, Any]] = []
     out: dict[str, Optional[dict]] = {}
-    for info in infos:
-        meta = info.get("meta") or {}
-        if switchyard.agent_state(info) != "needs_input":
-            continue
-        sid, stamp = str(meta.get("id")), meta.get("updatedAt")
+    for sid, stamp in waiting:
         with _LOCK:
             hit = _QUESTIONS.get(sid)
         if hit and hit[0] == stamp:
@@ -399,7 +402,7 @@ def session_detail(sid: str) -> dict:
     card = card_lookup({ref}).get(ref) if ref else None
     question = report.get("question") if isinstance(report.get("question"), dict) else None
     view = session_view(info, card, ref, question, o.upstream_by_session().get(str(report.get("id")), []))
-    view.update(reply=report.get("reply"), mode=report.get("mode") or view["mode"], model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"])
+    view.update(reply=report.get("reply"), mode=report.get("mode") or view["mode"], model=report.get("model") or view["model"], changedFiles=report.get("changedFiles") or view["changedFiles"], prs=[p for p in report.get("prs") or [] if isinstance(p, dict)])
     return view
 
 
@@ -413,7 +416,7 @@ def start_session(body: dict) -> dict:
     o = require_omp(s)
     prompt = _text(body, "prompt")
     if not prompt:
-        raise ApiError(400, "write what omp should do")
+        raise ApiError(400, "write what the agent should do")
     where = body.get("where") if isinstance(body.get("where"), dict) else {}
     kind, place = _text(where, "kind"), _text(where, "value")
     if kind not in ("folder", "project", "board") or not place:
@@ -560,13 +563,30 @@ def with_page(out: dict, base_url: str) -> dict:
     if not isinstance(url, str) or not url:
         raise ApiError(502, "switchyard vscode printed no link")
     page = f"{plugin_page('open-vscode.html', base_url)}#{quote(url, safe='')}"
-    return {"url": url, "page": page, "folder": out.get("folder"), "authority": out.get("authority"), "windowAt": out.get("windowAt")}
+    return {"url": url, "page": page, "folder": out.get("folder"), "review": out.get("review"), "pr": out.get("pr"), "authority": out.get("authority"), "windowAt": out.get("windowAt")}
 
 
-def open_in_vscode(sid: str, base_url: str) -> dict:
-    """Asks the VS Code window last used on omp's machine to open the session's chat (`switchyard vscode`)."""
+def vscode_intent(body: dict) -> list[str]:
+    """`switchyard vscode`'s flags for the body's `review: "pr"` and `pr: N` (a pull request number of the session)."""
+    review, pr = body.get("review"), body.get("pr")
+    if review is None:
+        if pr is not None:
+            raise ApiError(400, "pr goes with review")
+        return []
+    if review != "pr":
+        raise ApiError(400, 'review must be "pr"')
+    if pr is None:
+        return ["--review"]
+    if isinstance(pr, bool) or not isinstance(pr, int) or pr < 1:
+        raise ApiError(400, "pr must be a pull request number")
+    return ["--review", "--pr", str(pr)]
+
+
+def open_in_vscode(sid: str, body: dict, base_url: str) -> dict:
+    """Asks the VS Code window last used on the Switchyard machine to open the session's chat, and its
+    pull request review when the body says `review: "pr"` (`switchyard vscode`)."""
     o = require_omp(settings())
-    out = o.json(["vscode", switchyard.free_text_ok(sid), "--json"])
+    out = o.json(["vscode", switchyard.free_text_ok(sid), *vscode_intent(body), "--json"])
     return with_page(out if isinstance(out, dict) else {}, base_url)
 
 
@@ -671,6 +691,96 @@ def set_default_model(body: dict) -> dict:
     return o.models()
 
 
+# ---------- orchestrators: AO's coordinating agent of a project, through `switchyard orchestrator …` ----------
+# The chat of an orchestrator is a session: its question is answered, and a follow-up sent, with the /sessions/<id>/…
+# routes (answer, send, stop, vscode) given its id; nothing here re-implements what AO or the CLI do.
+
+# Page names of the settings -> the plugin's (Switchyard.orchestrator_config); text first, then the on/off ones.
+ORCHESTRATOR_TEXT = {"harness": "harness", "model": "model", "effort": "effort", "permissions": "permissions", "rules": "rules", "rulesFile": "rules_file", "workerHarness": "worker_harness", "workerModel": "worker_model"}
+ORCHESTRATOR_TOGGLES = {"workersRequestReview": "review", "autoReview": "auto_review"}
+
+
+def orchestrator_views(o: Any, infos: list[dict]) -> list[dict]:
+    """Orchestrators for the page: the CLI's own fields, a ~ label of the folder, and the question in full
+    (`orchestrator status` has its title and message; the dialog's options and sub-questions are in `show`)."""
+    waiting = [(str(i["id"]), i.get("updatedAt")) for i in infos if isinstance(i.get("question"), dict)]
+    full = waiting_questions(o, waiting) if waiting else {}
+    out = []
+    for info in infos:
+        view = {**info, "projectPathLabel": tilde(str(info.get("projectPath") or ""))}
+        q = info.get("question")
+        if isinstance(q, dict):
+            # Without the dialog, kind "unknown": the page says where it can be answered instead of guessing buttons.
+            view["question"] = {"kind": "unknown", **{k: q[k] for k in ("title", "message") if q.get(k)}, **(full.get(str(info["id"])) or {}), "id": q.get("id"), "approval": q.get("approval") is True}
+        out.append(view)
+    return out
+
+
+def list_orchestrators() -> dict:
+    o = require_omp(settings())
+    return {"orchestrators": orchestrator_views(o, o.orchestrators(stopped=True)), "at": time.time()}
+
+
+def get_orchestrator(project: str) -> dict:
+    """`orchestrator status <project>`: {project, orchestrator: view | None, note?}."""
+    o = require_omp(settings())
+    out = o.orchestrator(project)
+    info = out.get("orchestrator")
+    view = orchestrator_views(o, [info])[0] if isinstance(info, dict) else None
+    return {**out, "orchestrator": view}
+
+
+def submit_to_orchestrator(body: dict) -> dict:
+    """Gives the project's orchestrator a task (starting it when needed). The project is named: without one the CLI
+    would take the git project of this server's working folder."""
+    o = require_omp(settings())
+    task, project = _text(body, "task"), _text(body, "project")
+    if not task:
+        raise ApiError(400, "write what the orchestrator should do")
+    if not project:
+        raise ApiError(400, "pick the project")
+    if "steer" in body and not isinstance(body["steer"], bool):
+        raise ApiError(400, "steer must be true or false")
+    return o.orchestrator_submit(task, project=project, steer=body.get("steer") is True, harness=_text(body, "harness"))
+
+
+def orchestrator_action(project: str, action: str, body: dict) -> dict:
+    if action not in ("start", "restart", "stop"):
+        raise ApiError(404, f"unknown action {action}")
+    harness = _text(body, "harness")
+    if harness and action == "stop":
+        raise ApiError(400, "harness goes with start or restart")
+    out = require_omp(settings()).orchestrator_lifecycle(action, project, harness=harness)
+    if action == "stop" and out.get("stopped") is False:
+        raise ApiError(409, "this project has no running orchestrator")
+    return out
+
+
+def orchestrator_config(project: str, body: Optional[dict] = None) -> dict:
+    """The project's orchestrator settings ({projectId, config}); `body` (the page's names) changes the ones it has first.
+    A text or toggle set to "" / null clears it. A running orchestrator keeps what it started with: restart applies them."""
+    patch: dict[str, Any] = {}
+    for key, name in ORCHESTRATOR_TEXT.items():
+        if key in (body or {}):
+            v = body[key]
+            if v is not None and not isinstance(v, str):
+                raise ApiError(400, f"{key} must be text")
+            patch[name] = (v or "").strip() or None
+    for key, name in ORCHESTRATOR_TOGGLES.items():
+        if key in (body or {}):
+            v = body[key]
+            if v is not None and not isinstance(v, bool):
+                raise ApiError(400, f"{key} must be true, false or null")
+            patch[name] = v
+    if patch.get("permissions") not in (None, *switchyard.ORCHESTRATOR_PERMISSIONS):
+        raise ApiError(400, f"permissions must be one of {', '.join(switchyard.ORCHESTRATOR_PERMISSIONS)}")
+    return require_omp(settings()).orchestrator_config(project, patch)
+
+
+def harnesses_view() -> dict:
+    return require_omp(settings()).harnesses()
+
+
 # ---------- overview, places, boards ----------
 
 
@@ -736,7 +846,7 @@ def boards_view() -> dict:
             infos = []
     states = {str(i["meta"]["id"]): switchyard.agent_state(i) for i in infos}
     info_of = {str(i["meta"]["id"]): i for i in infos}
-    # The omp session of each card: the lane's, else the latest one tagged hermes:<board> + card:<id>.
+    # The session of each card: the lane's, else the latest one tagged hermes:<board> + card:<id>.
     by_session = {str(l.get("session")): l for l in links.values() if l.get("session")}
     session_of: dict[tuple[str, str], str] = {}
     for i in sorted(infos, key=lambda i: (str(i["meta"]["id"]) in by_session, i["meta"].get("updatedAt") or 0)):
@@ -776,7 +886,7 @@ def boards_view() -> dict:
                         }
                     )
                 ready = [{"id": t.id, "title": t.title, **rel.get(t.id, no_links)} for t in kb.list_tasks(conn, assignee=assignee, status="ready") if t.id not in lane_of]
-                # Every card (archived ones aside) with its links and omp session: the dependency graph.
+                # Every card (archived ones aside) with its links and session: the dependency graph.
                 for t in tasks:
                     l = lane_of.get(t.id)
                     sid = str((l or {}).get("session") or "") or session_of.get((slug, t.id), "")
@@ -867,14 +977,14 @@ def update_board(slug: str, body: dict) -> dict:
 
 
 def archive_done_cards(slug: str) -> dict:
-    """Archives the board's done lane cards and their omp sessions (`hermes switchyard archive-done`)."""
+    """Archives the board's done lane cards and their sessions (`hermes switchyard archive-done`)."""
     if slug not in {b["slug"] for b in board_slugs()}:
         raise ApiError(404, f"no kanban board {slug}")
     require_omp(settings())
     return {**lane().archive_done(slug), "view": boards_view()}
 
 
-# ---------- AO dashboard: AO's web UI, served by the Switchyard server on omp's machine ----------
+# ---------- AO dashboard: AO's web UI, served by the Switchyard server on the machine with your code ----------
 # /ao/… proxies to http://127.0.0.1:<dashboardPort>/…, behind Hermes's own sign-in (the browser
 # dashboard's session cookie reaches a same-origin iframe). Every URL of AO's UI is relative, so it
 # works under /api/plugins/switchyard/ao/. HTTP only: no WebSocket (AO's terminal panes), since
@@ -1083,7 +1193,7 @@ async def post_session(request: Request) -> Any:
 
 @router.post("/sessions/{sid}/vscode")
 async def post_session_vscode(sid: str, request: Request) -> Any:
-    return await _run(open_in_vscode, sid, str(request.base_url), write=True)
+    return await _run(open_in_vscode, sid, await _body(request), str(request.base_url), write=True)
 
 
 @router.post("/sessions/{sid}/project")
@@ -1119,6 +1229,41 @@ async def post_session_action(sid: str, action: str, request: Request) -> Any:
 @router.post("/boards/{slug}/archive-done")
 async def post_board_archive_done(slug: str) -> Any:
     return await _run(archive_done_cards, slug, write=True)
+
+
+@router.get("/orchestrators")
+async def get_orchestrators() -> Any:
+    return await _run(list_orchestrators)
+
+
+@router.post("/orchestrators/submit")
+async def post_orchestrator_submit(request: Request) -> Any:
+    return await _run(submit_to_orchestrator, await _body(request), write=True)
+
+
+@router.get("/orchestrators/{project}")
+async def get_orchestrator_of(project: str) -> Any:
+    return await _run(get_orchestrator, project)
+
+
+@router.get("/orchestrators/{project}/config")
+async def get_orchestrator_config(project: str) -> Any:
+    return await _run(orchestrator_config, project)
+
+
+@router.post("/orchestrators/{project}/config")
+async def post_orchestrator_config(project: str, request: Request) -> Any:
+    return await _run(orchestrator_config, project, await _body(request), write=True)
+
+
+@router.post("/orchestrators/{project}/{action}")
+async def post_orchestrator_action(project: str, action: str, request: Request) -> Any:
+    return await _run(orchestrator_action, project, action, await _body(request), write=True)
+
+
+@router.get("/harnesses")
+async def get_harnesses() -> Any:
+    return await _run(harnesses_view)
 
 
 @router.get("/projects")

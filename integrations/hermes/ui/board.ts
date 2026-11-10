@@ -44,7 +44,7 @@ function order(col: Column["id"], list: Session[]): Session[] {
 
 function questionLine(s: Session): string {
 	const q = s.question;
-	if (!q) return "omp is waiting for an answer";
+	if (!q) return "The agent is waiting for an answer";
 	if (q.questions?.length) return q.questions[0].question || q.title;
 	return q.title.split("\n")[0];
 }
@@ -222,7 +222,7 @@ export function SessionBoard(p: {
 	};
 	return h(
 		"div",
-		{ className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
+		{ className: "omps-board", role: "list", "aria-label": "sessions by state" },
 		...COLUMNS.map(col => {
 			const list = order(
 				col.id,

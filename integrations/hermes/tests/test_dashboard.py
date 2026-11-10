@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 import test_plugin as base
-from test_plugin import HERMES_HOME, WORK, switchyard, until
+from test_plugin import HERMES_HOME, WORK, switchyard, until, work_orchestrator, work_project_id
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -173,7 +173,7 @@ class DashboardApiTest(unittest.TestCase):
         self.assertIn("unknown action", self.post(f"/sessions/{sid}/requeue", {}, status=404)["error"])
 
     def test_start_validates_and_resolves_places(self) -> None:
-        self.assertEqual(self.post("/sessions", {"where": {"kind": "folder", "value": str(WORK)}}, status=400)["error"], "write what omp should do")
+        self.assertEqual(self.post("/sessions", {"where": {"kind": "folder", "value": str(WORK)}}, status=400)["error"], "write what the agent should do")
         self.assertIn("pick where", self.post("/sessions", {"prompt": "echo x"}, status=400)["error"])
         self.assertIn("has no folder", self.post("/sessions", {"prompt": "echo x", "where": {"kind": "board", "value": "other"}}, status=400)["error"])
         self.assertIn("not a folder", self.post("/sessions", {"prompt": "echo x", "where": {"kind": "folder", "value": str(WORK / "missing")}}, status=400)["error"])
@@ -327,6 +327,55 @@ class DashboardApiTest(unittest.TestCase):
             window.unlink(missing_ok=True)
             request.unlink(missing_ok=True)
 
+    def test_review_pr_in_vscode_and_the_detail_carries_the_prs(self) -> None:
+        sid = self.post("/sessions", {"prompt": "echo review", "where": {"kind": "folder", "value": str(WORK)}, "when": "queue"})["id"]
+        request = base.SWITCHYARD_HOME / "vscode-open.json"
+        window = base.SWITCHYARD_HOME / "vscode-window.json"
+        prs = [
+            {"number": 7, "url": "https://github.com/o/r/pull/7", "state": "open", "ci": "passing", "review": "approved", "mergeability": "mergeable", "reviewComments": False, "updatedAt": "2026-01-02T03:04:05Z"},
+            {"number": 9, "url": "https://github.com/o/r/pull/9", "state": "merged", "ci": "unknown", "review": "none", "mergeability": "unknown", "reviewComments": False, "updatedAt": "2026-01-01T03:04:05Z"},
+        ]
+        real_show = self.api.switchyard.Switchyard.show
+
+        def show_with_prs(o: object, session: str) -> dict | None:
+            report = real_show(o, session)
+            if report is not None:
+                report["prs"] = prs
+            return report
+
+        try:
+            window.unlink(missing_ok=True)
+            # `show --json` omits `prs` for a session with none; the detail then says so with an empty list.
+            self.assertEqual(self.get(f"/sessions/{sid}")["prs"], [])
+            with mock.patch.object(self.api.switchyard.Switchyard, "show", show_with_prs):
+                self.assertEqual(self.get(f"/sessions/{sid}")["prs"], prs)
+
+            link = self.post(f"/sessions/{sid}/vscode", {"review": "pr", "pr": 7})
+            self.assertEqual(link["url"], f"vscode://mbaradad.switchyard/open?session={sid}&review=pr&pr=7")
+            self.assertEqual((link["review"], link["pr"]), ("pr", 7))
+            self.assertEqual({k: v for k, v in json.loads(request.read_text()).items() if k != "at"}, {"session": sid, "review": "pr", "pr": 7})
+            link = self.post(f"/sessions/{sid}/vscode", {"review": "pr"})
+            self.assertEqual(link["url"], f"vscode://mbaradad.switchyard/open?session={sid}&review=pr")
+            self.assertIsNone(link["pr"])
+            self.assertEqual({k: v for k, v in json.loads(request.read_text()).items() if k != "at"}, {"session": sid, "review": "pr"})
+            # The redirect page follows the link with the intent.
+            self.assertEqual(urllib.parse.unquote(link["page"].partition("#")[2]), link["url"])
+            self.assertIn("review=pr", (API_FILE.parent / "open-vscode.html").read_text())
+            # A remote window's folder link carries no intent: the request file does.
+            window.write_text(json.dumps({"authority": "ssh-remote+ws", "scheme": "vscode", "at": 1}))
+            link = self.post(f"/sessions/{sid}/vscode", {"review": "pr", "pr": 9})
+            self.assertTrue(link["url"].startswith("vscode://vscode-remote/ssh-remote+ws/"), link["url"])
+            self.assertNotIn("review", link["url"])
+            self.assertEqual({k: v for k, v in json.loads(request.read_text()).items() if k != "at"}, {"session": sid, "review": "pr", "pr": 9})
+            # A plain open still asks for no review.
+            self.post(f"/sessions/{sid}/vscode", {})
+            self.assertEqual(set(json.loads(request.read_text())), {"session", "at"})
+            for body in ({"review": "merge"}, {"pr": 7}, {"review": "pr", "pr": 0}, {"review": "pr", "pr": -3}, {"review": "pr", "pr": "7"}, {"review": "pr", "pr": True}, {"review": "pr", "pr": 1.5}):
+                self.assertIn("error", self.post(f"/sessions/{sid}/vscode", body, status=400), body)
+        finally:
+            window.unlink(missing_ok=True)
+            request.unlink(missing_ok=True)
+
     def test_open_project_and_known_folders_in_vscode(self) -> None:
         import subprocess
 
@@ -456,6 +505,87 @@ class DashboardApiTest(unittest.TestCase):
             self.assertIn("no kanban board", self.post("/boards/nope/archive-done", {}, status=404)["error"])
         finally:
             CONFIG.write_text(self.config_text)
+
+    def test_orchestrator_routes_mirror_the_cli_and_drive_the_orchestrator(self) -> None:
+        harnesses = self.get("/harnesses")
+        self.assertIn("omp", [h["id"] for h in harnesses["harnesses"]])
+        self.assertTrue(all({"id", "label", "authStatus", "default"} <= set(h) for h in harnesses["harnesses"]))
+        # A task names its project (the CLI would take this server's working folder) and says what to do.
+        self.assertIn("pick the project", self.post("/orchestrators/submit", {"task": "x"}, status=400)["error"])
+        self.assertIn("what the orchestrator should do", self.post("/orchestrators/submit", {"project": "p"}, status=400)["error"])
+        self.assertIn("steer", self.post("/orchestrators/submit", {"task": "x", "project": "p", "steer": "yes"}, status=400)["error"])
+        self.assertIn("error", self.post("/orchestrators/submit", {"task": "x", "project": "no-such-project"}, status=400))
+        self.assertIn("unknown action", self.post("/orchestrators/p/explode", {}, status=404)["error"])
+
+        pid = work_project_id()
+        sent = self.post("/orchestrators/submit", {"task": "Move billing to the new API\n--and its tests", "project": pid})
+        orch = sent["orchestrator"]
+        self.assertEqual((sent["projectId"], sent["mode"]), (pid, "send"))
+        worker = json.loads(switchyard("new", str(WORK), "--detach", "--json", "-p", "echo dash worker").stdout)["id"]
+        until(lambda: base.report(worker)["state"] == "idle", "the worker's turn")
+        got = until(lambda: (r := self.get(f"/orchestrators/{pid}")["orchestrator"]) and r["state"] == "idle" and "its tests" in (r.get("reply") or "") and r, "the orchestrator's reply")
+        # The routes carry what the CLI prints: the same orchestrator, reply, settings and workers.
+        cli = work_orchestrator()
+        for key in ("id", "projectId", "projectName", "projectPath", "state", "reply", "config", "counts", "active", "harness"):
+            self.assertEqual(got.get(key), cli.get(key), key)
+        self.assertEqual([w["id"] for w in got["workers"]], [w["id"] for w in cli["workers"]])
+        self.assertIn(worker, [w["id"] for w in got["workers"]])
+        self.assertEqual(got["projectPathLabel"], self.api.tilde(cli["projectPath"]))
+        listed = self.get("/orchestrators")["orchestrators"]
+        self.assertEqual([o["id"] for o in listed], [orch])
+        none = self.get("/orchestrators/no-such-project")
+        self.assertEqual((none["project"], none["orchestrator"]), (None, None))
+
+        # Its question is answered with the session routes, the dialog in full (options), by the orchestrator's id.
+        self.post("/orchestrators/submit", {"task": "ask\nwhich way?", "project": pid})
+        asking = until(lambda: (r := self.get(f"/orchestrators/{pid}")["orchestrator"]) and r["state"] == "needs_input" and r, "the orchestrator asks")
+        q = asking["question"]
+        self.assertEqual((q["title"], q["approval"]), ("Pick one", False))
+        self.assertEqual((q.get("options") or q["questions"][0]["options"])[0], "alpha")
+        self.assertEqual(self.get("/orchestrators")["orchestrators"][0]["question"]["id"], q["id"])
+        self.post(f"/sessions/{orch}/answer", {"answer": "1", "question": q["id"]})
+        until(lambda: (r := work_orchestrator("idle", "chose alpha")) and r, "the answer reaches the orchestrator")
+        self.post(f"/sessions/{orch}/send", {"text": "echo carry on"})
+        until(lambda: work_orchestrator("idle", "carry on"), "a follow-up reaches it")
+        # Open in VS Code works on its id too (`switchyard vscode <id>`).
+        window = base.SWITCHYARD_HOME / "vscode-window.json"
+        request = base.SWITCHYARD_HOME / "vscode-open.json"
+        try:
+            window.unlink(missing_ok=True)
+            self.assertEqual(self.post(f"/sessions/{orch}/vscode", {})["url"], f"vscode://mbaradad.switchyard/open?session={orch}")
+        finally:
+            window.unlink(missing_ok=True)
+            request.unlink(missing_ok=True)
+
+        # Settings: the page's names; "" and null clear; AO's and the routes' own validation say 400.
+        initial = self.get(f"/orchestrators/{pid}/config")["config"]
+        self.assertEqual(initial, {"harness": "omp"}, "starting the orchestrator saved its harness in the project's settings")
+        saved = self.post(f"/orchestrators/{pid}/config", {"model": "fake/model", "rules": "Always ask\nfor a review.", "workersRequestReview": True, "autoReview": True, "permissions": "accept-edits", "workerHarness": "omp", "rulesFile": ""})
+        self.assertEqual(saved["config"], {**initial, "model": "fake/model", "rules": "Always ask\nfor a review.", "workersRequestReview": True, "autoReview": True, "permissions": "accept-edits", "workerHarness": "omp"})
+        self.assertEqual(self.get(f"/orchestrators/{pid}/config"), saved)
+        self.assertEqual(json.loads(switchyard("orchestrator", "config", f"--project={pid}", "--json").stdout), saved, "the CLI reads the same settings")
+        self.assertIn("permissions must be", self.post(f"/orchestrators/{pid}/config", {"permissions": "yolo"}, status=400)["error"])
+        self.assertIn("workersRequestReview", self.post(f"/orchestrators/{pid}/config", {"workersRequestReview": "yes"}, status=400)["error"])
+        self.assertIn("must be text", self.post(f"/orchestrators/{pid}/config", {"model": 3}, status=400)["error"])
+        self.assertIn("no-such-harness", self.post(f"/orchestrators/{pid}/config", {"harness": "no-such-harness"}, status=400)["error"])
+        self.assertEqual(self.get(f"/orchestrators/{pid}/config")["config"], saved["config"], "a refused change changes nothing")
+        cleared = self.post(f"/orchestrators/{pid}/config", {"model": "", "rules": None, "workersRequestReview": None, "autoReview": None, "permissions": "", "workerHarness": None})
+        self.assertEqual(cleared["config"], initial)
+
+        # Restart replaces it, stop ends it (once), and the page can start it again.
+        fresh = self.post(f"/orchestrators/{pid}/restart", {})
+        self.assertNotEqual(fresh["id"], orch)
+        self.assertEqual(self.get(f"/orchestrators/{pid}")["orchestrator"]["id"], fresh["id"])
+        self.assertEqual(self.post(f"/orchestrators/{pid}/stop", {})["stopped"], True)
+        until(lambda: (r := self.get(f"/orchestrators/{pid}")["orchestrator"]) and r["state"] == "stopped" and r, "the agent to be down")
+        self.assertIn("harness goes with", self.post(f"/orchestrators/{pid}/stop", {"harness": "omp"}, status=400)["error"])
+        # `orchestrator stop` with nothing running prints {stopped: false} and exits 1: a conflict, not a failure of the CLI.
+        nothing = mock.Mock(orchestrator_lifecycle=lambda *a, **k: {"projectId": pid, "stopped": False})
+        with mock.patch.object(self.api, "require_omp", return_value=nothing):
+            self.assertIn("no running orchestrator", self.post(f"/orchestrators/{pid}/stop", {}, status=409)["error"])
+        started = self.post(f"/orchestrators/{pid}/start", {"harness": "omp"})
+        self.assertEqual(started["id"], fresh["id"])
+        self.assertEqual(self.post(f"/orchestrators/{pid}/stop", {})["stopped"], True)
 
     def test_missing_switchyard_is_explained(self) -> None:
         with mock.patch.object(self.api.switchyard, "find_switchyard", return_value=None):

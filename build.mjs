@@ -16,6 +16,8 @@ const builds = [
 	{ ...common, sourcemap: false, entryPoints: fs.readdirSync("src/omp-extension").filter(f => f.endsWith(".ts")).map(f => `src/omp-extension/${f}`), outdir: "out/omp-extension", platform: "node", format: "esm" },
 	{ ...common, entryPoints: ["src/kanban/main.ts"], outfile: "out/kanban.js", platform: "browser", format: "iife" },
 	{ ...common, entryPoints: ["src/kanban/style.css"], outfile: "out/kanban.css" },
+	{ ...common, entryPoints: ["src/overview/main.ts"], outfile: "out/overview.js", platform: "browser", format: "iife" },
+	{ ...common, entryPoints: ["src/overview/style.css"], outfile: "out/overview.css" },
 	{ ...common, entryPoints: ["src/planner/main.ts"], outfile: "out/planner.js", platform: "node", format: "cjs", define: { PLANNER_VERSION: JSON.stringify(JSON.parse(fs.readFileSync("package.json", "utf8")).version) } },
 	{ ...common, entryPoints: ["src/cli/main.ts"], outfile: "out/cli.js", platform: "node", format: "cjs", banner: { js: "#!/usr/bin/env node" } },
 ];

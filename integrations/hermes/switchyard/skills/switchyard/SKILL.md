@@ -147,6 +147,22 @@ Idle sessions cost nothing. Leave finished sessions for the user to review unles
 - Each session already gets its own AO worktree and branch, so parallel sessions in one repository don't overwrite each other. Their work lands on their branches (`branch` in `show --json`), not in the user's checkout.
 - Prefer queueing (`--task`) over starting many sessions at once. The global limit then keeps the machine and the bill in check.
 
+## The orchestrator: hand over a goal, not a task
+
+AO runs a coordinating agent per project, the **orchestrator**. Give it a *high-level goal* ("move billing to the new API, with tests, in reviewable PRs") and it splits the work, starts and steers worker sessions, has their PRs reviewed and reports back. It never edits code itself. Use `switchyard new` for one concrete task you can brief yourself; use the orchestrator when the goal spans several steps or sessions and you want something to keep coordinating after you leave.
+
+```sh
+switchyard orchestrator submit "Move the billing module to the new API; update its tests; one PR per step" --project /abs/repo --json
+switchyard orchestrator status --project /abs/repo --json   # state, last reply, question, settings, workers with their PRs
+switchyard orchestrator submit "Skip the migration script for now" --project /abs/repo --steer   # redirect the turn in progress
+switchyard wait <orchestrator-id> --json                   # the orchestrator's chat is a session: wait, show, tail, answer, send all take its id
+```
+
+- `--project` is an AO project id, its name or a folder (the git project of the current folder when left out). The task is free text (`-` reads stdin); it starts the orchestrator when none runs and brings a stopped one back. `--json` prints `{orchestrator, projectId, harness, started, revived, turnId, mode}`; `orchestrator` is the session id.
+- `orchestrator status --json` prints `{project, orchestrator}` (`orchestrator` is null before the first task): `state`, `reply`, `question` (answer it with `switchyard answer <orchestrator-id> …`), `config`, and `workers` (each `{id, title, state, displayStatus, branch, prs}`; the workers are the project's worker sessions, so `show <worker-id>` gives their report). `--all` lists every project's orchestrator.
+- Settings live in AO's project config: `switchyard orchestrator config [--project p] --harness claude-code --model … --permissions auto --rules @rules.md --worker-harness codex --review on` (`none` clears one). A running orchestrator keeps what it started with: `switchyard orchestrator restart` replaces it with a fresh one that takes the settings. `stop` ends its agent.
+- It starts in AO's `bypass-permissions` unless the project's settings or `--permissions` say otherwise, because it only coordinates; the workers it starts follow the project's settings.
+
 ## Hermes Agent
 
 With the switchyard Hermes plugin installed (`switchyard hermes install`), a Hermes agent gets native tools for everything above: `switchyard_session_start`, `switchyard_session_status`, `switchyard_session_wait`, `switchyard_session_send`, `switchyard_session_answer`, `switchyard_session_mode`, `switchyard_session_model`, `switchyard_session_stop`, `switchyard_queue_add`, `switchyard_queue_schedule`, `switchyard_sessions_list`, `switchyard_projects_list`, `switchyard_models_list` and `switchyard_server_status` (`switchyard_session_start` takes `harness` like `new --harness`). Prefer the tools to shelling out. Approval dialogs stay with the user unless the plugin's `agent_approvals` setting is on. Hermes also gets a message in the chat when a session it started finishes or needs input, so there is no need to keep waiting on it.

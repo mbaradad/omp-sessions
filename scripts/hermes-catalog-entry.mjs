@@ -3,7 +3,7 @@
 // See docs/PUBLISHING.md, "Hermes plugin catalog".
 import { execFileSync } from "node:child_process";
 
-const REPO = "https://github.com/mbaradad/omp-sessions";
+const REPO = "https://github.com/mbaradad/switchyard";
 const SUBDIR = "integrations/hermes/switchyard";
 const SCREENSHOTS = ["site/assets/shots/hermes-dashboard.png", "site/assets/shots/hermes-detail.png", "site/assets/shots/hermes-desktop.png"];
 
@@ -34,7 +34,7 @@ if (!pushed) process.stderr.write(`warning: ${sha.slice(0, 8)} is not on origin/
 
 const quote = s => `'${s.replace(/'/g, "''")}'`;
 const yamlList = (items, indent) => (items.length ? `\n${items.map(i => `${indent}- ${i}`).join("\n")}` : " []");
-const shots = SCREENSHOTS.filter(f => exists(sha, f)).map(f => `https://raw.githubusercontent.com/mbaradad/omp-sessions/${sha}/${f}`);
+const shots = SCREENSHOTS.filter(f => exists(sha, f)).map(f => `https://raw.githubusercontent.com/mbaradad/switchyard/${sha}/${f}`);
 
 process.stdout.write(`name: ${scalar("name")}
 repo: ${REPO}
@@ -51,7 +51,7 @@ title: Switchyard
 screenshots:${yamlList(shots, "  ")}
 platforms: [linux, macos]
 known_issues:
-  - Needs the switchyard command on PATH, from the Switchyard VS Code extension ("Switchyard: Install switchyard Command") or the release tarball (npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/switchyard-<version>.tgz).
+  - Needs the switchyard command on PATH, from the Switchyard VS Code extension ("Switchyard: Install switchyard Command") or the release tarball (npm install -g https://github.com/mbaradad/switchyard/releases/download/v<version>/switchyard-<version>.tgz).
 capabilities:
   provides_tools:${yamlList(list("provides_tools"), "    ")}
   provides_hooks:${yamlList(list("provides_hooks"), "    ")}

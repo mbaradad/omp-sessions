@@ -1,5 +1,7 @@
 // What the page needs from its host, and the shapes of the plugin backend's answers
 // (integrations/hermes/switchyard/dashboard/plugin_api.py).
+import type { OrchestratorConfig, OrchestratorConfigPatch, OrchestratorInfo } from "../../../src/ao/orchestrator";
+import type { PrFacts } from "../../../src/shared/pr-review";
 import type { ReactLike } from "./react";
 
 export interface RequestOptions {
@@ -38,7 +40,7 @@ export interface AoDashboardStatus {
 	port: number;
 }
 
-/** POST /sessions/<id>/vscode: the request is recorded on omp's machine; these links bring up VS Code. */
+/** POST /sessions/<id>/vscode: the request is recorded on the Switchyard machine; these links bring up VS Code. */
 export interface VscodeLink {
 	/** vscode://… link. */
 	url: string;
@@ -46,9 +48,12 @@ export interface VscodeLink {
 	page: string;
 	/** The folder a project/folder link opens (absent for a session's chat). */
 	folder?: string | null;
-	/** Remote authority of the VS Code window last used on omp's machine ("" local, null none recorded). */
+	/** Remote authority of the VS Code window last used on the Switchyard machine ("" local, null none recorded). */
 	authority?: string | null;
 	windowAt?: number | null;
+	/** `"pr"` when the request also asks the window to open the session's PR review (`pr`: that PR's number). */
+	review?: "pr" | null;
+	pr?: number | null;
 }
 
 /** GET /models: `switchyard models --json`. */
@@ -146,12 +151,14 @@ export interface Session {
 	card?: CardRef | null;
 	/** Detail only: the full last reply. */
 	reply?: string | null;
+	/** Detail only: AO's facts about the pull requests the session owns (empty for none). */
+	prs?: PrFacts[];
 }
 
 export type SyncState = "in-sync" | "pending" | "merged" | "resolving" | "conflict" | "upstream-changed";
 
 export interface UpstreamEdge {
-	/** The parent's omp session. */
+	/** The parent's session. */
 	parent?: string | null;
 	state: SyncState;
 	/** Conflicting files (state conflict). */
@@ -229,7 +236,7 @@ export interface GraphCard extends CardLinks {
 	title: string;
 	status: string;
 	assignee?: string | null;
-	/** The omp session working on the card: the lane's, else the latest tagged with it. */
+	/** The session working on the card: the lane's, else the latest tagged with it. */
 	session?: string | null;
 	/** That session's state ("removed" when it's gone; "not created" for a lane card not started yet). */
 	sessionState?: string | null;
@@ -256,11 +263,11 @@ export interface Board {
 	model?: string | null;
 	/** This board's trusted comment authors (null: the lane's list). */
 	commentAuthors?: string[] | null;
-	/** Whose comments reach omp and whose @switchyard assigns cards on this board ("*": anyone). */
+	/** Whose comments reach the agent and whose @switchyard assigns cards on this board ("*": anyone). */
 	effectiveCommentAuthors: string[];
 	/** This board's archive_completed (null: the lane's setting). */
 	archiveCompleted?: boolean | null;
-	/** Whether the lane archives the cards it completes on this board (and their omp sessions). */
+	/** Whether the lane archives the cards it completes on this board (and their sessions). */
 	effectiveArchiveCompleted: boolean;
 	linked: LinkedCard[];
 	ready: Array<{ id: string; title: string } & Partial<CardLinks>>;
@@ -286,7 +293,7 @@ export interface ArchiveDone {
 	failed: Array<{ id: string; error: string }>;
 }
 
-/** POST /boards/<slug>/archive-done: the board's done lane cards it archived, with their omp sessions. */
+/** POST /boards/<slug>/archive-done: the board's done lane cards it archived, with their sessions. */
 export interface ArchiveDoneCards {
 	archived: string[];
 	sessions: string[];
@@ -295,10 +302,73 @@ export interface ArchiveDoneCards {
 }
 
 export interface Places {
-	folders: Array<{ name: string; path: string; label: string; sessions?: number; lastUsed?: number }>;
+	/** AO's projects (`switchyard projects`): `id` is what the orchestrator routes take. */
+	folders: Array<{ id?: string; name: string; path: string; label: string; sessions?: number; lastUsed?: number }>;
 	boards: Array<{ slug: string; name?: string | null; folder?: string | null; group?: string | null; lane: boolean }>;
 	hermesProjects: Array<{ id: string; slug: string; name: string; path?: string | null }>;
 	configured: Record<string, string>;
+}
+
+/** An AO orchestrator as `switchyard orchestrator --all --json` prints it (src/ao/orchestrator.ts: state, harness, last reply, its project's
+ *  workers with their PRs, the settings in force), plus what the backend adds. */
+export interface Orchestrator extends Omit<OrchestratorInfo, "question"> {
+	/** projectPath with the home directory as ~. */
+	projectPathLabel: string;
+	/** The dialog it waits on, in full like a session's (`kind: "unknown"` when only its title is known). */
+	question?: Question & { approval: boolean };
+}
+
+/** GET /orchestrators. */
+export interface OrchestratorList {
+	orchestrators: Orchestrator[];
+	at: number;
+}
+
+/** POST /orchestrators/submit: `switchyard orchestrator submit --json`. */
+export interface OrchestratorSubmitted {
+	orchestrator: string;
+	projectId: string;
+	harness?: string;
+	/** This task started the orchestrator / brought a stopped one back. */
+	started: boolean;
+	revived: boolean;
+	mode: "send" | "steer";
+	project: string;
+}
+
+/** POST /orchestrators/<project>/start|restart. */
+export interface OrchestratorStarted {
+	id: string;
+	started: boolean;
+	revived: boolean;
+	harness?: string;
+	projectId: string;
+}
+
+/** GET|POST /orchestrators/<project>/config. A POST names only what changes; "" or null clears a setting. */
+export interface OrchestratorSettings {
+	projectId: string;
+	config: OrchestratorConfig;
+}
+export type OrchestratorSettingsBody = OrchestratorConfigPatch;
+
+/** GET /harnesses: AO's chat harnesses (`switchyard harnesses --json`). */
+export interface Harness {
+	id: string;
+	label: string;
+	authStatus: string;
+	installed: boolean;
+	usageCount: number;
+	/** Why AO can't chat with it here. */
+	unavailable?: string;
+	/** The harness a new session here would run. */
+	default: boolean;
+}
+
+export interface Harnesses {
+	harnesses: Harness[];
+	default: { harness: string; source: string; reason: string } | null;
+	problem?: string;
 }
 
 export interface StartBody {

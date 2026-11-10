@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, test } from "node:test";
-import { OPEN_REQUEST_TTL_MS, type VscodeWindow, checkoutRoot, clearOpenRequest, folderProblem, isSessionId, readWindow, readWindows, recordWindow, requestOpen, takeOpenRequest, uriPath, vscodeFolderLink, vscodeLink } from "../../src/shared/vscode-open";
+import { OPEN_REQUEST_TTL_MS, type VscodeWindow, checkoutRoot, clearOpenRequest, folderProblem, intentOfParams, isSessionId, readWindow, readWindows, recordWindow, requestOpen, resolveSessionId, takeOpenRequest, uriPath, vscodeFolderLink, vscodeLink } from "../../src/shared/vscode-open";
 
 // stateRoot() reads SWITCHYARD_HOME on every call.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "switchyard-open-"));
@@ -92,7 +92,7 @@ test("folder links: an existing absolute folder only; widened to its checkout un
 test("a request is taken once, by a window that has the session, while fresh", () => {
 	requestOpen("s1", 10_000);
 	assert.equal(takeOpenRequest(id => id === "other", 10_500), undefined, "a window without the session leaves it");
-	assert.equal(takeOpenRequest(id => id === "s1", 11_000), "s1");
+	assert.deepEqual(takeOpenRequest(id => id === "s1", 11_000), { session: "s1" });
 	assert.equal(takeOpenRequest(() => true, 11_000), undefined, "already taken");
 
 	requestOpen("s2", 0);
@@ -104,4 +104,57 @@ test("a request is taken once, by a window that has the session, while fresh", (
 	assert.equal(fs.existsSync(path.join(home, "vscode-open.json")), true, "another session's request stays");
 	clearOpenRequest("s3");
 	assert.equal(fs.existsSync(path.join(home, "vscode-open.json")), false);
+});
+
+test("a request carries the review intent; a stale one is dropped with it; a malformed intent degrades to none", () => {
+	requestOpen("s1", 10_000, { review: "pr", pr: 7 });
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "vscode-open.json"), "utf8")), { session: "s1", at: 10_000, review: "pr", pr: 7 });
+	assert.deepEqual(takeOpenRequest(() => true, 10_100), { session: "s1", review: "pr", pr: 7 });
+
+	requestOpen("s2", 10_000, { review: "pr" });
+	assert.deepEqual(takeOpenRequest(() => true, 10_100), { session: "s2", review: "pr" }, "no PR number: the window picks");
+
+	requestOpen("s3", 10_000, { pr: 7 });
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "vscode-open.json"), "utf8")), { session: "s3", at: 10_000 }, "a PR without review is no intent");
+	assert.deepEqual(takeOpenRequest(() => true, 10_100), { session: "s3" });
+
+	requestOpen("s4", 0, { review: "pr", pr: 7 });
+	assert.equal(takeOpenRequest(() => true, OPEN_REQUEST_TTL_MS + 1), undefined, "stale, intent included");
+	assert.equal(fs.existsSync(path.join(home, "vscode-open.json")), false);
+
+	for (const bad of [{ review: "merge", pr: 7 }, { review: "pr", pr: -1 }, { review: "pr", pr: 1.5 }, { review: "pr", pr: "7" }]) {
+		fs.writeFileSync(path.join(home, "vscode-open.json"), JSON.stringify({ session: "s5", at: 10_000, ...bad }));
+		const taken = takeOpenRequest(() => true, 10_100);
+		assert.equal(taken?.session, "s5");
+		assert.equal(taken?.pr, undefined, JSON.stringify(bad));
+		if (bad.review !== "pr") assert.equal(taken?.review, undefined);
+	}
+});
+
+test("URI parameters: review is only pr, pr a positive integer and only with review", () => {
+	assert.deepEqual(intentOfParams(null, null), {});
+	assert.deepEqual(intentOfParams("pr", null), { review: "pr" });
+	assert.deepEqual(intentOfParams("pr", "42"), { review: "pr", pr: 42 });
+	for (const [review, pr] of [["merge", null], ["", null], ["PR", null], [null, "7"], ["pr", "0"], ["pr", "-3"], ["pr", "1.5"], ["pr", "abc"], ["pr", ""], ["pr", "007"], ["pr", "12345678901234567890"]] as const) {
+		assert.equal(intentOfParams(review, pr), undefined, `${review} ${pr}`);
+	}
+});
+
+test("a local link carries the intent; a remote folder link does not (the request file does)", () => {
+	const s = { id: "s1", cwd: "/home/me/p" };
+	assert.equal(vscodeLink(s, undefined, { review: "pr" }), "vscode://mbaradad.switchyard/open?session=s1&review=pr");
+	assert.equal(vscodeLink(s, undefined, { review: "pr", pr: 9 }), "vscode://mbaradad.switchyard/open?session=s1&review=pr&pr=9");
+	assert.equal(vscodeLink(s, win({ authority: "ssh-remote+ws" }), { review: "pr", pr: 9 }), "vscode://vscode-remote/ssh-remote+ws/home/me/p");
+});
+
+test("an orchestrator's id opens like a session's: a request waits for the window that holds it, a link names it exactly or by a unique prefix", () => {
+	// `has` is SessionManager.get, which holds the orchestrator sessions too (only its lists leave them out).
+	const held = new Set(["orch-1", "repo-7"]);
+	requestOpen("orch-1", 20_000);
+	assert.deepEqual(takeOpenRequest(id => held.has(id), 20_100), { session: "orch-1" });
+	assert.equal(resolveSessionId("orch-1", ["repo-7", "orch-1"]), "orch-1");
+	assert.equal(resolveSessionId("orch", ["repo-7", "orch-1"]), "orch-1");
+	assert.equal(resolveSessionId("orc", ["repo-7", "orch-1"]), undefined, "a prefix under 4 characters is not enough");
+	assert.equal(resolveSessionId("repo", ["repo-7", "repo-8"]), undefined, "an ambiguous prefix names nothing");
+	assert.equal(resolveSessionId("gone-1", ["repo-7"]), undefined);
 });

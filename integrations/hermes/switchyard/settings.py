@@ -2,18 +2,18 @@
 written with update_setting).
 
     switchyard: /path/to/switchyard        # default: PATH, ~/.local/bin/switchyard, %LOCALAPPDATA%\\switchyard\\switchyard.cmd, ~/.switchyard/runtime/cli.js
-    notify: true                   # tell the Hermes session that started an omp session when it settles
-    agent_approvals: false         # let the Hermes agent answer omp's approval dialogs (switchyard_session_answer, switchyard_session_mode)
+    notify: true                   # tell the Hermes session that started a session when it settles
+    agent_approvals: false         # let the Hermes agent answer the agent's approval dialogs (switchyard_session_answer, switchyard_session_mode)
     lane:
-      enabled: false               # run kanban cards assigned to `assignee` as omp sessions
+      enabled: false               # run kanban cards assigned to `assignee` as sessions
       assignee: switchyard
       mode: ask                    # starting permission mode of card sessions (unset: auto; ask/edits/plan need Switchyard's omp extension)
-      comment_authors: [dashboard] # whose card comments reach omp sessions and whose `@switchyard` assigns cards ("*": anyone)
-      archive_completed: false     # archive a card (and its omp session) once the lane completes it
+      comment_authors: [dashboard] # whose card comments reach sessions and whose `@switchyard` assigns cards ("*": anyone)
+      archive_completed: false     # archive a card (and its session) once the lane completes it
       boards:                      # empty: every board, with the defaults above
         lightscale:
           folder: /home/me/src/lightscale   # cwd for cards with a scratch workspace
-          group: Lightscale                 # omp group of the board's sessions (default: board name)
+          group: Lightscale                 # group of the board's sessions (default: board name)
           mode: edits
           assignee: switchyard
           model: anthropic/claude-sonnet-4-5    # model of the board's card sessions (a card's own model override wins; default: Switchyard's default)
@@ -26,7 +26,7 @@ written with update_setting).
 Comment authors: the Hermes dashboard and Hermes Console post as `dashboard`, `hermes kanban comment`
 as the profile name (or `--author`), and Hermes agents' kanban tools as their profile name. The
 default trusts only `dashboard` (the token-protected UI a person uses), so other profiles' agents,
-which may act on untrusted input, can't prompt omp or hand it cards; list a profile to trust it.
+which may act on untrusted input, can't prompt the agent or hand it cards; list a profile to trust it.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ class BoardLane:
     archive_completed: bool = False
 
     def trusts(self, author: str) -> bool:
-        """Whether `author`'s comments reach omp and their `@switchyard` mentions assign cards."""
+        """Whether `author`'s comments reach the agent and their `@switchyard` mentions assign cards."""
         return ANY_AUTHOR in self.comment_authors or author.strip().lower() in self.comment_authors
 
 

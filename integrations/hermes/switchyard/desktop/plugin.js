@@ -467,14 +467,14 @@ function AoDashboardPanel(p) {
   const checkAgain = h(Button, { label: "Check again", icon: "refresh", onClick: () => void check() });
   if (!probe) return h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Checking the AO dashboard…");
   if ("error" in probe) {
-    return probe.down ? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on omp's machine.`, action: checkAgain }) : h(ErrorBox, { message: probe.error, onRetry: () => void check() });
+    return probe.down ? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on the Switchyard machine.`, action: checkAgain }) : h(ErrorBox, { message: probe.error, onRetry: () => void check() });
   }
   const { status } = probe;
   if (!status.installed) {
     return h(Empty, {
       icon: "terminal",
       title: "AO dashboard not installed",
-      body: h("span", null, "Run ", h("code", null, INSTALL), " on omp's machine: it fetches Agent Orchestrator's web UI from AO's release."),
+      body: h("span", null, "Run ", h("code", null, INSTALL), " on the Switchyard machine: it fetches Agent Orchestrator's web UI from AO's release."),
       action: checkAgain
     });
   }
@@ -620,7 +620,7 @@ function order(col, list) {
 }
 function questionLine(s) {
   const q = s.question;
-  if (!q) return "omp is waiting for an answer";
+  if (!q) return "The agent is waiting for an answer";
   if (q.questions?.length) return q.questions[0].question || q.title;
   return q.title.split("\n")[0];
 }
@@ -751,7 +751,7 @@ function SessionBoard(p) {
   };
   return h(
     "div",
-    { className: "omps-board", role: "list", "aria-label": "omp sessions by state" },
+    { className: "omps-board", role: "list", "aria-label": "sessions by state" },
     ...COLUMNS.map((col) => {
       const list = order(
         col.id,
@@ -865,10 +865,10 @@ function ModelPicker(p) {
 async function openInVscode(host2, path, body = {}) {
   const link = await host2.request(path, { method: "POST", body });
   await host2.openVscode(link);
-  const what = link.folder ? link.folder : "the session";
+  const what = link.folder ? link.folder : link.review ? link.pr ? `the review of #${link.pr}` : "the pull request review" : "the session";
   if (link.authority) return `Opening ${what} in the VS Code window connected to ${link.authority.replace(/^ssh-remote\+/, "")}${link.windowAt ? ` (used ${ago(link.windowAt)})` : ""}.`;
-  if (link.authority === "") return `Opening ${what} in VS Code on omp's machine.`;
-  return link.folder ? `Opening ${what} in VS Code here (no VS Code window has used Switchyard on omp's machine yet).` : "No VS Code window has used Switchyard on omp's machine yet: the link opens VS Code here, which needs the Switchyard extension.";
+  if (link.authority === "") return `Opening ${what} in VS Code on the Switchyard machine.`;
+  return link.folder ? `Opening ${what} in VS Code here (no VS Code window has used Switchyard on the Switchyard machine yet).` : "No VS Code window has used Switchyard on the Switchyard machine yet: the link opens VS Code here, which needs the Switchyard extension.";
 }
 
 // integrations/hermes/ui/boards.ts
@@ -915,7 +915,7 @@ function BoardCard(p) {
       h("span", { className: "omps-grow" }),
       h("span", { className: cx("omps-lane-state", b.lane && "is-on") }, b.lane ? "Lane on" : p.laneOn ? "Not in the lane" : "Lane off"),
       b.folder ? h(Button, { small: true, kind: "ghost", icon: "external", title: `Open ${b.folder} in VS Code`, onClick: () => b.folder && p.onOpenFolder(b.folder) }) : null,
-      h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as omp sessions`, busy: p.busy, onChange: (on) => void p.onSave(b.slug, { lane: on }) })
+      h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as sessions`, busy: p.busy, onChange: (on) => void p.onSave(b.slug, { lane: on }) })
     ),
     h(
       "form",
@@ -927,7 +927,7 @@ function BoardCard(p) {
         }
       },
       h(Field, { label: "Folder", htmlFor: id("folder"), hint: "Where cards without a worktree run", children: h("input", { id: id("folder"), className: "omps-input omps-mono", value: folder, placeholder: "Not set", onChange: (e) => setFolder(e.target.value) }) }),
-      h(Field, { label: "omp group", htmlFor: id("group"), children: h("input", { id: id("group"), className: "omps-input", value: group, placeholder: b.defaultGroup, onChange: (e) => setGroup(e.target.value) }) }),
+      h(Field, { label: "Group", htmlFor: id("group"), children: h("input", { id: id("group"), className: "omps-input", value: group, placeholder: b.defaultGroup, onChange: (e) => setGroup(e.target.value) }) }),
       h(Field, {
         label: "Mode",
         htmlFor: id("mode"),
@@ -943,7 +943,7 @@ function BoardCard(p) {
       h(Field, {
         label: "Comment authors",
         htmlFor: id("authors"),
-        hint: "Whose card comments reach omp and whose @switchyard assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
+        hint: "Whose card comments reach the agent and whose @switchyard assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
         children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e) => setAuthors(e.target.value) })
       }),
       h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty }))
@@ -959,7 +959,7 @@ function BoardCard(p) {
           className: "omps-input",
           value: b.archiveCompleted == null ? "" : b.archiveCompleted ? "on" : "off",
           disabled: p.busy,
-          title: "Archive a card on the board, and its omp session, as soon as the lane completes it",
+          title: "Archive a card on the board, and its session, as soon as the lane completes it",
           onChange: (e) => {
             const v = e.target.value;
             void p.onSave(b.slug, { archiveCompleted: v === "" ? null : v === "on" });
@@ -975,7 +975,7 @@ function BoardCard(p) {
         "Archive every done card of this lane now?",
         h(Button, { small: true, kind: "danger", label: "Archive", busy: p.busy, onClick: () => void p.onArchiveDone(b.slug).finally(() => setConfirmArchive(false)) }),
         h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmArchive(false) })
-      ) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by omp, and their omp sessions`, onClick: () => setConfirmArchive(true) })
+      ) : h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by a session, and their sessions`, onClick: () => setConfirmArchive(true) })
     ),
     h(
       "div",
@@ -991,7 +991,7 @@ function BoardCard(p) {
             h("span", { className: cx("omps-kstatus", `k-${c.status}`) }, c.status),
             h("span", { className: "omps-linked-title", title: `${b.slug}/${c.id}` }, c.title ?? c.id),
             c.waitingOnInput ? h("span", { className: "omps-chip is-needs" }, "needs input") : null,
-            c.session ? h("button", { type: "button", className: cx("omps-linked-session", `tone-${c.sessionState}`), title: `Open omp session ${shortId(c.session)}`, onClick: () => c.session && p.onOpenSession(c.session) }, h("span", { className: cx("omps-dot", `tone-${c.sessionState}`) }), SESSION_STATE[c.sessionState] ?? c.sessionState) : h("span", { className: "omps-muted" }, SESSION_STATE[c.sessionState] ?? c.sessionState),
+            c.session ? h("button", { type: "button", className: cx("omps-linked-session", `tone-${c.sessionState}`), title: `Open session ${shortId(c.session)}`, onClick: () => c.session && p.onOpenSession(c.session) }, h("span", { className: cx("omps-dot", `tone-${c.sessionState}`) }), SESSION_STATE[c.sessionState] ?? c.sessionState) : h("span", { className: "omps-muted" }, SESSION_STATE[c.sessionState] ?? c.sessionState),
             c.error ? h("span", { className: "omps-linked-error", title: c.error }, icon("alert", 12)) : null
           )
         )
@@ -1080,7 +1080,7 @@ function BoardsPanel(p) {
       const n = res.archived.length;
       const failed = Object.entries(res.failed).map(([card, why]) => `${card}: ${why}`);
       if (failed.length) setActionError(`Not archived: ${failed.join("; ")}`);
-      setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} omp session${res.sessions.length === 1 ? "" : "s"}.`);
+      setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} session${res.sessions.length === 1 ? "" : "s"}.`);
       p.onChanged();
     } catch (err) {
       setActionError(errorMessage(err));
@@ -1106,7 +1106,7 @@ function BoardsPanel(p) {
         h(
           "div",
           { className: "omps-muted" },
-          view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the Switchyard scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
+          view.enabled ? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as sessions and report back to the card.` : `Turn it on to run kanban cards assigned to ${view.assignee} as sessions (they queue under the Switchyard scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
           tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null
         ),
         notes.length ? h(Notes, { notes }) : null
@@ -1155,6 +1155,22 @@ function BoardsPanel(p) {
   );
 }
 
+// src/shared/pr-review.ts
+var PR_CI_LABEL = { unknown: "CI unknown", pending: "CI running", passing: "CI passing", failing: "CI failing" };
+var PR_REVIEW_LABEL = { none: "no review", approved: "approved", changes_requested: "changes requested", review_required: "review required" };
+var PR_MERGE_LABEL = { unknown: "merge status unknown", mergeable: "mergeable", conflicting: "conflicts", blocked: "merge blocked", unstable: "merge unstable" };
+function prSummaryLine(f, extra = {}) {
+  const parts = [f.state];
+  if (f.state === "open" || f.state === "draft") {
+    if (f.ci !== "unknown") parts.push(PR_CI_LABEL[f.ci]);
+    if (f.review !== "none") parts.push(PR_REVIEW_LABEL[f.review]);
+    if (extra.unresolvedThreads) parts.push(`${extra.unresolvedThreads} unresolved`);
+    else if (f.reviewComments) parts.push("unresolved comments");
+    if (f.mergeability !== "unknown") parts.push(PR_MERGE_LABEL[f.mergeability]);
+  }
+  return `#${f.number} ${parts.join(" · ")}`;
+}
+
 // integrations/hermes/ui/detail.ts
 var POLL_MS = 3e3;
 var SYNC_LABEL = {
@@ -1192,7 +1208,7 @@ function AnswerBox(p) {
   const [text, setText] = useState("");
   const [picks, setPicks] = useState(() => (q.questions ?? []).map(() => []));
   const [others, setOthers] = useState(() => (q.questions ?? []).map(() => ""));
-  const [title, ...rest] = (q.title === q.kind ? "omp asks" : q.title).split("\n");
+  const [title, ...rest] = (q.title === q.kind ? "The agent asks" : q.title).split("\n");
   const head = h(
     "div",
     { className: "omps-q-head" },
@@ -1272,7 +1288,7 @@ function AnswerBox(p) {
   } else {
     body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with switchyard attach.");
   }
-  return h("section", { className: "omps-question", "aria-label": "omp is asking" }, head, body);
+  return h("section", { className: "omps-question", "aria-label": "the agent is asking" }, head, body);
 }
 function Meta(p) {
   return h("div", { className: "omps-meta-item" }, h("dt", null, p.label), h("dd", null, p.children));
@@ -1332,12 +1348,12 @@ function DetailPanel(p) {
     if (!text.trim()) return;
     void act("send", "send", { text, steer: s?.state === "working" && steer }, () => setText(""));
   };
-  const openVscode = async (what) => {
-    setBusy(what);
+  const openVscode = async (what, body = {}, busyKey = what) => {
+    setBusy(busyKey);
     setActionError(null);
     setNotice(null);
     try {
-      setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`));
+      setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`, body));
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -1391,6 +1407,32 @@ function DetailPanel(p) {
         h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
         view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map((t) => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
         view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null
+      ) : null,
+      view?.prs?.length ? h(
+        "section",
+        { className: "omps-prs", "aria-label": "Pull requests" },
+        h("div", { className: "omps-section-label" }, "Pull requests"),
+        h(
+          "div",
+          { className: "omps-tags" },
+          ...view.prs.map((pr) => h("a", { key: pr.url || pr.number, className: "omps-chip omps-orch-pr", href: pr.url, target: "_blank", rel: "noreferrer noopener", title: `Open the pull request (updated ${ago(Date.parse(pr.updatedAt) || void 0, p.now) || "unknown"})` }, prSummaryLine(pr)))
+        ),
+        h(
+          "div",
+          { className: "omps-followup-row" },
+          ...view.prs.map(
+            (pr) => h(Button, {
+              key: pr.number,
+              small: true,
+              kind: "ghost",
+              icon: "external",
+              label: view.prs?.length === 1 ? "Review PR in VS Code" : `Review #${pr.number} in VS Code`,
+              title: `Open the review of #${pr.number} in VS Code: its files, diffs and review threads`,
+              busy: busy === `review-${pr.number}`,
+              onClick: () => void openVscode("vscode", { review: "pr", pr: pr.number }, `review-${pr.number}`)
+            })
+          )
+        )
       ) : null,
       view ? h(
         "div",
@@ -1698,7 +1740,7 @@ function CardNode(p) {
   const right = note ? note.label : session ? card.lane ? `lane · ${session}` : session : null;
   const tone = note ? note.tone : card.sessionState;
   const statusW = measure(SMALL_FONT)(card.status);
-  const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
+  const label = `${card.title} (${card.status}${session ? `, session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
   return h(
     "g",
     {
@@ -1758,10 +1800,10 @@ function CardInfo(p) {
       h("span", { className: "omps-grow" }),
       card.session ? h(
         "button",
-        { type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open omp session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
+        { type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
         h("span", { className: cx("omps-dot", card.sessionState && `tone-${card.sessionState}`) }),
         SESSION_STATE[card.sessionState ?? ""] ?? card.sessionState
-      ) : h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no omp session"),
+      ) : h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no session"),
       h(Button, { small: true, kind: "ghost", icon: "x", title: "Close", onClick: p.onClose })
     ),
     h(
@@ -1944,7 +1986,7 @@ function NewSessionDialog(p) {
   };
   const submit = async () => {
     const place = target();
-    if (!prompt.trim()) return setError("Write what omp should do.");
+    if (!prompt.trim()) return setError("Write what the agent should do.");
     if (!place) return setError("Pick where it runs.");
     setBusy(true);
     setError(null);
@@ -2007,12 +2049,12 @@ function NewSessionDialog(p) {
           void submit();
         }
       },
-      h("header", { className: "omps-dialog-head" }, h("h2", { id: "omps-new-title" }, icon("plus", 16), "New omp session"), h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })),
+      h("header", { className: "omps-dialog-head" }, h("h2", { id: "omps-new-title" }, icon("plus", 16), "New session"), h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })),
       h(
         "div",
         { className: "omps-dialog-body" },
         h(Field, {
-          label: "What should omp do?",
+          label: "What should the agent do?",
           htmlFor: "omps-prompt",
           children: h("textarea", {
             id: "omps-prompt",
@@ -2056,7 +2098,7 @@ function NewSessionDialog(p) {
             { className: "omps-input", "aria-label": "Kanban board", value: board, onChange: (e) => setBoard(e.target.value) },
             ...boards.map((b) => h("option", { key: b.slug, value: b.slug, disabled: !b.folder }, `${b.name ?? b.slug}${b.folder ? ` — ${b.folder}` : " (no folder set)"}`))
           ) : h("div", { className: "omps-field-hint" }, "No kanban boards."),
-          where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and omp group (set them in Boards).") : null,
+          where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and group (set them in Boards).") : null,
           chosenFolder ? h(
             "div",
             { className: "omps-field-hint" },
@@ -2134,6 +2176,493 @@ function NewSessionDialog(p) {
         h(Button, { kind: "ghost", label: "Cancel", onClick: p.onClose }),
         h(Button, { type: "submit", kind: "brand", icon: when === "now" ? "sparkle" : "clock", label: when === "now" ? "Start session" : when === "queue" ? "Queue session" : "Schedule session", busy })
       )
+    )
+  );
+}
+
+// integrations/hermes/ui/orchestrator.ts
+var POLL_MS3 = 4e3;
+var WORKERS_SHOWN = 8;
+var REPLY_CLIP = 280;
+var PERMISSIONS = {
+  default: "default — ask before every command",
+  "accept-edits": "accept-edits — edits run, commands ask",
+  auto: "auto — AO's classifier decides",
+  "bypass-permissions": "bypass-permissions — everything runs"
+};
+var TOGGLE_LABEL = { "": "Not set (AO's default)", on: "On", off: "Off" };
+function choicesOf(places, orchestrators) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const f of places?.folders ?? []) {
+    if (!f.id) continue;
+    seen.add(f.path);
+    out.push({ value: f.id, label: `${f.name} — ${f.label}`, group: "AO projects" });
+  }
+  for (const o of orchestrators) {
+    if (out.some((c) => c.value === o.projectId)) continue;
+    seen.add(o.projectPath);
+    out.push({ value: o.projectId, label: `${o.projectName} — ${o.projectPathLabel}`, group: "AO projects" });
+  }
+  for (const x of places?.hermesProjects ?? []) {
+    if (x.path && !seen.has(x.path)) out.push({ value: x.path, label: `${x.name} — ${x.path}`, group: "Hermes projects" });
+  }
+  return out;
+}
+function projectSelect(id, label, choices, value, onChange) {
+  const groups = ["AO projects", "Hermes projects"];
+  return h(
+    "select",
+    { id, className: "omps-input", "aria-label": label, value, onChange: (e) => onChange(e.target.value) },
+    ...groups.flatMap((g) => {
+      const mine = choices.filter((c) => c.group === g);
+      return mine.length ? [h("optgroup", { key: g, label: g }, ...mine.map((c) => h("option", { key: c.value, value: c.value }, c.label)))] : [];
+    })
+  );
+}
+function HarnessSelect(p) {
+  if (!p.harnesses) {
+    return h("input", { id: p.id, className: "omps-input omps-mono", "aria-label": p.label, value: p.value, placeholder: p.blank, autoComplete: "off", spellCheck: false, onChange: (e) => p.onChange(e.target.value) });
+  }
+  const known = p.harnesses.harnesses;
+  return h(
+    "select",
+    { id: p.id, className: "omps-input", "aria-label": p.label, value: p.value, onChange: (e) => p.onChange(e.target.value) },
+    h("option", { value: "" }, p.blank),
+    ...p.value && !known.some((x) => x.id === p.value) ? [h("option", { key: p.value, value: p.value }, `${p.value} (not one of AO's chat harnesses)`)] : [],
+    ...known.map((x) => h("option", { key: x.id, value: x.id, disabled: Boolean(x.unavailable) }, `${x.label}${x.id !== x.label ? ` (${x.id})` : ""}${x.authStatus === "authorized" ? "" : ` · ${x.authStatus}`}${x.unavailable ? " · can't chat here" : ""}`))
+  );
+}
+function TaskBox(p) {
+  const [task, setTask] = useState("");
+  const [steer, setSteer] = useState(false);
+  const [harness, setHarness] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const running = Boolean(p.current?.active);
+  const working = p.current?.state === "working" || p.current?.state === "starting";
+  const submit = async () => {
+    if (!task.trim()) return setError("Write what the orchestrator should do.");
+    if (!p.project) return setError("Pick the project.");
+    setBusy(true);
+    setError(null);
+    try {
+      const sent = await p.host.request("/orchestrators/submit", {
+        method: "POST",
+        body: { task, project: p.project, steer: running && steer, ...!running && harness ? { harness } : {} }
+      });
+      setTask("");
+      setSteer(false);
+      p.onSubmitted(sent);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return h(
+    "form",
+    {
+      className: "omps-orch-task",
+      "aria-label": "Give the orchestrator a task",
+      onSubmit: (e) => {
+        e.preventDefault();
+        void submit();
+      }
+    },
+    h("div", { className: "omps-section-label" }, "Give the orchestrator a task"),
+    h("textarea", {
+      id: "omps-orch-task",
+      className: "omps-input omps-prompt",
+      rows: 4,
+      value: task,
+      "aria-label": "The task for the orchestrator",
+      placeholder: "Move the billing module to the new API, split it across workers and get the PRs reviewed",
+      onChange: (e) => setTask(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          void submit();
+        }
+      }
+    }),
+    h(
+      "div",
+      { className: "omps-orch-task-row" },
+      h(Field, { label: "Project", htmlFor: "omps-orch-project", children: p.choices.length ? projectSelect("omps-orch-project", "Project", p.choices, p.project, p.onProject) : h("div", { className: "omps-field-hint" }, "Loading projects… (an orchestrator coordinates a project AO knows: a git repository)") }),
+      running ? h(Field, {
+        label: "Orchestrator",
+        children: h("div", { className: "omps-field-hint" }, `${p.current?.id} is running${p.current?.harness ? ` on ${p.current.harness}` : ""}: the task goes to it, queued behind its turn.`)
+      }) : h(Field, {
+        label: p.current ? "Harness when it restarts" : "Harness when it starts",
+        htmlFor: "omps-orch-harness",
+        hint: p.current ? "The orchestrator is stopped: the task brings it back." : "No orchestrator for this project yet: the task starts one.",
+        children: h(HarnessSelect, { id: "omps-orch-harness", label: "Harness", value: harness, blank: "The project's setting, else Switchyard's default", harnesses: p.harnesses, onChange: setHarness })
+      })
+    ),
+    error ? h(ErrorBox, { message: error }) : null,
+    h(
+      "div",
+      { className: "omps-followup-row" },
+      h(
+        "label",
+        { className: "omps-check", title: running ? working ? "Redirect the turn it is working on with this text" : "It is not working on a turn: the task goes in as usual" : "There is no running orchestrator to steer" },
+        h("input", { type: "checkbox", checked: steer && running, disabled: !running, onChange: (e) => setSteer(e.target.checked) }),
+        "Steer the turn in progress"
+      ),
+      h("span", { className: "omps-hint" }, "Ctrl+Enter to send"),
+      h("span", { className: "omps-grow" }),
+      h(Button, { type: "submit", kind: "brand", icon: running ? "send" : "sparkle", label: running ? steer ? "Steer" : "Send task" : "Start and send task", busy, disabled: !task.trim() || !p.project })
+    )
+  );
+}
+function Reply(p) {
+  const [open, setOpen] = useState(false);
+  const long = p.text.length > REPLY_CLIP || p.text.trim().split("\n").length > 4;
+  return h(
+    "section",
+    { className: "omps-reply", "aria-label": "Last reply" },
+    h("div", { className: "omps-section-label" }, "Last reply"),
+    open || !long ? h("div", { className: "omps-md" }, ...markdown(p.text)) : h("div", { className: "omps-md omps-orch-clip" }, h("p", null, plain(p.text.length > REPLY_CLIP ? `${p.text.slice(0, REPLY_CLIP).trimEnd()}…` : p.text))),
+    long ? h(Button, { small: true, kind: "ghost", icon: "chevron", label: open ? "Show less" : "Show more", pressed: open, onClick: () => setOpen(!open) }) : null
+  );
+}
+function prTone(f) {
+  if (f.state === "merged" || f.state === "open" && f.review === "approved" && f.mergeability === "mergeable" && f.ci !== "failing") return "is-ok";
+  if (f.state === "open" && (f.ci === "failing" || f.review === "changes_requested" || f.mergeability === "conflicting")) return "is-warn";
+  return "";
+}
+function WorkerRow(p) {
+  const { w } = p;
+  return h(
+    "li",
+    { className: "omps-orch-worker" },
+    h(
+      "button",
+      { type: "button", className: "omps-orch-worker-main", title: `Open ${w.title}`, onClick: () => p.onOpen(w.id) },
+      h("span", { className: cx("omps-dot", `tone-${w.state}`), "aria-hidden": true }),
+      h("span", { className: cx("omps-orch-worker-state", `tone-${w.state}`) }, STATE_LABEL[w.state]),
+      h("span", { className: "omps-orch-worker-title" }, w.title),
+      h("code", { className: "omps-orch-worker-id" }, shortId(w.id))
+    ),
+    h(
+      "span",
+      { className: "omps-orch-worker-meta" },
+      w.displayStatus ? h("span", { className: "omps-muted", title: "AO's status for the session" }, w.displayStatus) : null,
+      w.harness && w.harness !== "omp" ? h("span", { className: "omps-chip omps-harness", title: `Runs on the ${w.harness} harness` }, w.harness) : null,
+      w.branch ? h("span", { className: "omps-chip", title: `Branch ${w.branch}` }, icon("tag", 10), w.branch) : null,
+      ...w.prs.map(
+        (pr) => h(
+          "span",
+          { key: pr.url || pr.number, className: "omps-orch-pr-group" },
+          h("a", { className: cx("omps-chip omps-orch-pr", prTone(pr)), href: pr.url, target: "_blank", rel: "noreferrer noopener", title: `Open the pull request (updated ${ago(Date.parse(pr.updatedAt) || void 0, p.now) || "unknown"})` }, prSummaryLine(pr)),
+          h(Button, { small: true, kind: "ghost", icon: "external", title: `Review #${pr.number} in VS Code`, onClick: () => void p.onReview(w.id, pr.number) })
+        )
+      )
+    )
+  );
+}
+function countsLine(o) {
+  const n = o.counts;
+  const bits = [n.working && `${n.working} working`, n.needsInput && `${n.needsInput} need${n.needsInput === 1 ? "s" : ""} you`, n.idle && `${n.idle} idle`, n.stopped && `${n.stopped} stopped`, n.openPrs && `${n.openPrs} open PR${n.openPrs === 1 ? "" : "s"}`].filter(Boolean);
+  return `${n.workers} worker${n.workers === 1 ? "" : "s"}${bits.length ? ` · ${bits.join(" · ")}` : ""}`;
+}
+function draftOf(c) {
+  return {
+    harness: c.harness ?? "",
+    model: c.model ?? "",
+    effort: c.effort ?? "",
+    permissions: c.permissions ?? "",
+    rules: c.rules ?? "",
+    rulesFile: c.rulesFile ?? "",
+    workerHarness: c.workerHarness ?? "",
+    workerModel: c.workerModel ?? "",
+    review: c.workersRequestReview === void 0 ? "" : c.workersRequestReview ? "on" : "off",
+    autoReview: c.autoReview === void 0 ? "" : c.autoReview ? "on" : "off"
+  };
+}
+function changesOf(draft, saved) {
+  const body = {};
+  for (const key of ["harness", "model", "effort", "permissions", "rules", "rulesFile", "workerHarness", "workerModel"]) {
+    if (draft[key] !== saved[key]) body[key] = draft[key];
+  }
+  if (draft.review !== saved.review) body.workersRequestReview = draft.review === "" ? null : draft.review === "on";
+  if (draft.autoReview !== saved.autoReview) body.autoReview = draft.autoReview === "" ? null : draft.autoReview === "on";
+  return body;
+}
+function ToggleSelect(p) {
+  return h(
+    "select",
+    { id: p.id, className: "omps-input", "aria-label": p.label, value: p.value, onChange: (e) => p.onChange(e.target.value) },
+    ...Object.entries(TOGGLE_LABEL).map(([v, text]) => h("option", { key: v, value: v }, text))
+  );
+}
+function SettingsPanel(p) {
+  const [saved, setSaved] = useState(p.initial ? draftOf(p.initial) : null);
+  const [draft, setDraft] = useState(saved);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [confirm, setConfirm] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const base = `omps-orch-${p.projectId}`;
+  const adopt = (settings) => {
+    const next = draftOf(settings.config);
+    setSaved(next);
+    setDraft(next);
+  };
+  useEffect(() => {
+    p.host.request(`/orchestrators/${encodeURIComponent(p.projectId)}/config`).then(adopt).catch((err) => setError(errorMessage(err)));
+  }, [p.projectId]);
+  if (!saved || !draft) return error ? h(ErrorBox, { message: error }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading settings…");
+  const set = (key) => (v) => {
+    setDraft({ ...draft, [key]: v });
+    setJustSaved(false);
+  };
+  const changes = changesOf(draft, saved);
+  const dirty = Object.keys(changes).length > 0;
+  const save = async () => {
+    setBusy("save");
+    setError(null);
+    try {
+      adopt(await p.host.request(`/orchestrators/${encodeURIComponent(p.projectId)}/config`, { method: "POST", body: changes }));
+      setJustSaved(true);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const restart = async () => {
+    setBusy("restart");
+    setError(null);
+    try {
+      p.onRestarted(await p.host.request(`/orchestrators/${encodeURIComponent(p.projectId)}/restart`, { method: "POST", body: {} }));
+      setConfirm(false);
+      setJustSaved(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return h(
+    "form",
+    {
+      className: "omps-orch-settings",
+      "aria-label": "Orchestrator settings",
+      onSubmit: (e) => {
+        e.preventDefault();
+        if (dirty) void save();
+      }
+    },
+    h(Field, { label: "Orchestrator harness", htmlFor: `${base}-harness`, hint: "AO's chat harness it runs on", children: h(HarnessSelect, { id: `${base}-harness`, label: "Orchestrator harness", value: draft.harness, blank: "AO's choice", harnesses: p.harnesses, onChange: set("harness") }) }),
+    h(Field, { label: "Model", htmlFor: `${base}-model`, hint: "As the harness names it", children: h("input", { id: `${base}-model`, className: "omps-input omps-mono", value: draft.model, placeholder: "The harness's default", autoComplete: "off", spellCheck: false, onChange: (e) => set("model")(e.target.value) }) }),
+    h(Field, { label: "Effort", htmlFor: `${base}-effort`, children: h("input", { id: `${base}-effort`, className: "omps-input omps-mono", value: draft.effort, placeholder: "The harness's default", autoComplete: "off", spellCheck: false, onChange: (e) => set("effort")(e.target.value) }) }),
+    h(Field, {
+      label: "Permissions",
+      htmlFor: `${base}-permissions`,
+      hint: "Approval mode a new orchestrator starts in",
+      children: h(
+        "select",
+        { id: `${base}-permissions`, className: "omps-input", value: draft.permissions, onChange: (e) => set("permissions")(e.target.value) },
+        h("option", { value: "" }, "AO's default for an orchestrator (bypass-permissions)"),
+        ...Object.entries(PERMISSIONS).map(([v, text]) => h("option", { key: v, value: v }, text))
+      )
+    }),
+    h(Field, {
+      label: "Standing rules",
+      htmlFor: `${base}-rules`,
+      hint: "Instructions it always follows for this project",
+      children: h("textarea", { id: `${base}-rules`, className: "omps-input", rows: 4, value: draft.rules, placeholder: "Always ask for a review. Never merge.", onChange: (e) => set("rules")(e.target.value) })
+    }),
+    h(Field, { label: "Rules file", htmlFor: `${base}-rules-file`, hint: "A file of the project with the rules", children: h("input", { id: `${base}-rules-file`, className: "omps-input omps-mono", value: draft.rulesFile, placeholder: "Not set", autoComplete: "off", spellCheck: false, onChange: (e) => set("rulesFile")(e.target.value) }) }),
+    h(Field, { label: "Worker harness", htmlFor: `${base}-worker-harness`, hint: "For the workers it starts", children: h(HarnessSelect, { id: `${base}-worker-harness`, label: "Worker harness", value: draft.workerHarness, blank: "The project's setting, else AO's", harnesses: p.harnesses, onChange: set("workerHarness") }) }),
+    h(Field, { label: "Worker model", htmlFor: `${base}-worker-model`, children: h("input", { id: `${base}-worker-model`, className: "omps-input omps-mono", value: draft.workerModel, placeholder: "The harness's default", autoComplete: "off", spellCheck: false, onChange: (e) => set("workerModel")(e.target.value) }) }),
+    h(Field, { label: "Workers request a review", htmlFor: `${base}-review`, hint: "Of their PRs, from AO's reviewer", children: h(ToggleSelect, { id: `${base}-review`, label: "Workers request a review", value: draft.review, onChange: set("review") }) }),
+    h(Field, { label: "AO reviews PRs by itself", htmlFor: `${base}-auto-review`, children: h(ToggleSelect, { id: `${base}-auto-review`, label: "AO reviews PRs by itself", value: draft.autoReview, onChange: set("autoReview") }) }),
+    error ? h("div", { className: "omps-orch-settings-wide" }, h(ErrorBox, { message: error })) : null,
+    h(
+      "div",
+      { className: "omps-orch-settings-foot" },
+      p.running ? h("span", { className: "omps-hint" }, justSaved ? "Saved. The running orchestrator keeps what it started with: restart it to apply." : "A running orchestrator keeps the settings it started with.") : h("span", { className: "omps-hint" }, justSaved ? "Saved: the next orchestrator starts with it." : "Settings of the next orchestrator this project starts."),
+      h("span", { className: "omps-grow" }),
+      p.running ? confirm ? h(
+        "span",
+        { className: "omps-confirm" },
+        "Replace it with a fresh one? Its context is lost.",
+        h(Button, { small: true, kind: "danger", label: "Restart", busy: busy === "restart", onClick: () => void restart() }),
+        h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirm(false) })
+      ) : h(Button, { small: true, kind: justSaved && !dirty ? "primary" : "default", icon: "refresh", label: "Restart to apply", title: dirty ? "Save first: a restart starts from the saved settings" : "Replace the orchestrator with a fresh one on these settings", disabled: dirty, onClick: () => setConfirm(true) }) : null,
+      h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: busy === "save" })
+    )
+  );
+}
+function OrchestratorCard(p) {
+  const { o, project } = p;
+  const [showSettings, setShowSettings] = useState(!o);
+  const [allWorkers, setAllWorkers] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
+  const [confirmStop, setConfirmStop] = useState(false);
+  const run = async (name, fn) => {
+    setBusy(name);
+    setError(null);
+    try {
+      await fn();
+      p.onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const answer = (text) => run("answer", async () => {
+    if (!o?.question) return;
+    await p.host.request(`/sessions/${encodeURIComponent(o.id)}/answer`, { method: "POST", body: { answer: text, question: o.question.id } });
+  });
+  const stop = () => run("stop", async () => {
+    await p.host.request(`/orchestrators/${encodeURIComponent(project.id)}/stop`, { method: "POST", body: {} });
+    setConfirmStop(false);
+  });
+  const start = () => run("start", async () => {
+    const started = await p.host.request(`/orchestrators/${encodeURIComponent(project.id)}/start`, { method: "POST", body: {} });
+    p.onNotice(`${started.revived ? "Brought back" : "Started"} the orchestrator of ${project.name}: ${started.id}.`);
+  });
+  const openVscode = () => run("vscode", async () => {
+    if (o) p.onNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(o.id)}/vscode`));
+  });
+  const reviewPr = (session, pr) => run("vscode", async () => p.onNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(session)}/vscode`, { review: "pr", pr })));
+  const workers = o?.workers ?? [];
+  const shown = allWorkers ? workers : workers.slice(0, WORKERS_SHOWN);
+  return h(
+    "section",
+    { className: cx("omps-bcard omps-orch", o?.active && "is-on", o && `tone-${o.state}`), "aria-label": `Orchestrator of ${project.name}` },
+    h(
+      "header",
+      { className: "omps-bcard-head" },
+      h("span", { className: "omps-bcard-icon" }, icon("sparkle", 15)),
+      h(
+        "div",
+        { className: "omps-bcard-titles" },
+        h("div", { className: "omps-bcard-name" }, project.name),
+        h(
+          "div",
+          { className: "omps-bcard-slug", title: project.path },
+          o ? [o.harness ? `${o.harness}${o.model ? ` ${o.model}` : ""} · ` : "", shortId(o.id), o.updatedAt ? ` · ${ago(o.updatedAt, p.now)}` : ""].join("") : "no orchestrator yet"
+        )
+      ),
+      h("span", { className: "omps-grow" }),
+      o ? h("span", { className: cx("omps-state", `tone-${o.state}`), title: o.displayStatus }, h("span", { className: cx("omps-dot", `tone-${o.state}`) }), `${STATE_LABEL[o.state]}${o.active || o.state === "stopped" ? "" : " (stopped)"}`) : null
+    ),
+    o ? h(
+      "div",
+      { className: "omps-orch-actions" },
+      h(Button, { small: true, kind: "ghost", icon: "external", label: "Open in VS Code", title: "Open the orchestrator's chat in VS Code", busy: busy === "vscode", onClick: () => void openVscode() }),
+      h(Button, { small: true, kind: "ghost", icon: "server", label: "AO dashboard", title: "Agent Orchestrator's own web UI: terminals, PRs, the reviewer", onClick: p.onOpenAo }),
+      h("span", { className: "omps-grow" }),
+      o.active ? confirmStop ? h(
+        "span",
+        { className: "omps-confirm" },
+        "Stop the orchestrator?",
+        h(Button, { small: true, kind: "danger", label: "Stop", busy: busy === "stop", onClick: () => void stop() }),
+        h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmStop(false) })
+      ) : h(Button, { small: true, kind: "ghost", icon: "stop", label: "Stop", title: "End its agent (its transcript stays; a task or Start brings it back)", onClick: () => setConfirmStop(true) }) : h(Button, { small: true, kind: "primary", icon: "send", label: "Start", title: "Bring the stopped orchestrator back", busy: busy === "start", onClick: () => void start() })
+    ) : h("div", { className: "omps-orch-empty omps-muted" }, `${project.name} has no orchestrator yet: a task above starts one (on the harness set here, else AO's choice).`),
+    error ? h("div", { className: "omps-orch-pad" }, h(ErrorBox, { message: error })) : null,
+    o?.state === "needs_input" && o.question ? h("div", { className: "omps-orch-pad" }, h(AnswerBox, { key: o.question.id, q: o.question, busy: busy === "answer", onAnswer: (text) => void answer(text) })) : null,
+    o?.reply ? h("div", { className: "omps-orch-pad" }, h(Reply, { key: o.id, text: o.reply })) : null,
+    o ? h(
+      "div",
+      { className: "omps-bcard-cards" },
+      h("div", { className: "omps-section-label" }, `Workers · ${countsLine(o)}`),
+      workers.length ? h(
+        "ul",
+        { className: "omps-orch-workers" },
+        ...shown.map((w) => h(WorkerRow, { key: w.id, w, now: p.now, onOpen: p.onOpenSession, onReview: reviewPr })),
+        workers.length > WORKERS_SHOWN ? h("li", { key: "more" }, h(Button, { small: true, kind: "ghost", label: allWorkers ? "Show fewer" : `Show all ${workers.length}`, onClick: () => setAllWorkers(!allWorkers) })) : null
+      ) : h("div", { className: "omps-muted" }, "No worker sessions in this project yet.")
+    ) : null,
+    h(
+      "div",
+      { className: "omps-orch-settings-bar" },
+      h(Button, { small: true, kind: "ghost", icon: "chevron", label: "Settings", pressed: showSettings, className: cx(showSettings && "is-open"), title: "Harness, model, rules, workers and review of this project's orchestrator", onClick: () => setShowSettings(!showSettings) })
+    ),
+    showSettings ? h(SettingsPanel, { host: p.host, projectId: project.id, running: Boolean(o?.active), harnesses: p.harnesses, initial: o?.config, onRestarted: (started) => (p.onNotice(`Replaced the orchestrator of ${project.name} with ${started.id}.`), p.onChanged()) }) : null
+  );
+}
+function OrchestratorPanel(p) {
+  const { host: host2 } = p;
+  const [list, setList] = useState(null);
+  const [error, setError] = useState(null);
+  const [places, setPlaces] = useState(null);
+  const [placesError, setPlacesError] = useState(null);
+  const [harnesses, setHarnesses] = useState(null);
+  const [project, setProject] = useState("");
+  const [notice, setNotice] = useState(null);
+  const load = async () => {
+    try {
+      setList((await host2.request("/orchestrators")).orchestrators);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, POLL_MS3);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    host2.request("/projects").then(setPlaces).catch((err) => setPlacesError(errorMessage(err)));
+    host2.request("/harnesses").then(setHarnesses).catch(() => setHarnesses(null));
+  }, []);
+  const orchestrators = list ?? [];
+  const choices = choicesOf(places, orchestrators);
+  useEffect(() => {
+    if (project || !list) return;
+    const first = list.find((o) => o.state === "needs_input" && o.active) ?? list.find((o) => o.active) ?? list[0];
+    const pick = first?.projectId ?? choices[0]?.value;
+    if (pick) setProject(pick);
+  }, [list, places]);
+  const current = orchestrators.find((o) => o.projectId === project || o.projectPath === project);
+  const choice = choices.find((c) => c.value === project);
+  const chosen = current ? { id: current.projectId, name: current.projectName, path: current.projectPath } : choice && choice.group === "AO projects" ? { id: choice.value, name: choice.label.split(" — ")[0], path: choice.label.split(" — ").slice(1).join(" — ") } : void 0;
+  const others = orchestrators.filter((o) => o.projectId !== current?.projectId);
+  const changed = () => void load();
+  const cards = [
+    ...chosen ? [{ o: current, project: chosen }] : [],
+    ...others.map((o) => ({ o, project: { id: o.projectId, name: o.projectName, path: o.projectPath } }))
+  ];
+  if (!list) return error ? h(ErrorBox, { message: error, onRetry: () => void load() }) : h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Loading orchestrators…");
+  return h(
+    "div",
+    { className: "omps-orch-panel" },
+    h(TaskBox, {
+      host: host2,
+      choices,
+      project,
+      onProject: setProject,
+      current,
+      harnesses,
+      onSubmitted: (sent) => {
+        setNotice(`${sent.started ? "Started the orchestrator and gave it the task" : sent.revived ? "Brought the orchestrator back and gave it the task" : sent.mode === "steer" ? "Steered the orchestrator" : "Gave the orchestrator the task"}: ${sent.orchestrator} (${sent.project}${sent.harness ? `, ${sent.harness}` : ""}).`);
+        setProject(sent.projectId);
+        changed();
+      }
+    }),
+    placesError ? h("div", { className: "omps-stale" }, icon("alert", 12), `Projects unavailable: ${placesError}`) : null,
+    error ? h("div", { className: "omps-stale" }, icon("alert", 12), `Not refreshed: ${error}`) : null,
+    notice ? h("div", { className: "omps-notice" }, icon("external", 12), notice) : null,
+    cards.length === 0 ? h(Empty, {
+      icon: "sparkle",
+      title: "No orchestrator yet",
+      body: "An orchestrator is Agent Orchestrator's coordinating agent for a project: give it a high-level task and it splits it into worker sessions, steers them and has their PRs reviewed. The first task above starts it."
+    }) : h(
+      "div",
+      { className: "omps-bgrid omps-orch-grid" },
+      ...cards.map((c) => h(OrchestratorCard, { key: c.project.id, host: host2, project: c.project, o: c.o, now: p.now, harnesses, onOpenSession: p.onOpenSession, onOpenAo: p.onOpenAo, onChanged: changed, onNotice: setNotice }))
     )
   );
 }
@@ -2710,6 +3239,8 @@ function createPage(host2) {
       main = h(BoardsPanel, { host: host2, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: (id) => (setView("sessions"), setSelected(id)) });
     } else if (view === "graph") {
       main = h(GraphPanel, { host: host2, onOpenSession: setSelected });
+    } else if (view === "orchestrator") {
+      main = h(OrchestratorPanel, { host: host2, now, onOpenSession: setSelected, onOpenAo: () => setView("ao") });
     } else if (view === "ao") {
       main = h(AoDashboardPanel, { host: host2 });
     } else if (notInstalled) {
@@ -2719,7 +3250,7 @@ function createPage(host2) {
     } else if (all.length === 0) {
       main = h(Empty, {
         icon: "sparkle",
-        title: "No omp sessions yet",
+        title: "No sessions yet",
         body: "Start one here, with switchyard new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the switchyard_session_start tool). Kanban cards assigned to switchyard show up here too once the lane is on.",
         action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) })
       });
@@ -2765,9 +3296,10 @@ function createPage(host2) {
           onChange: setView,
           options: [
             { value: "sessions", label: "Sessions" },
+            { value: "orchestrator", label: "Orchestrator", title: "AO's orchestrator of each project: give it a high-level task, see its workers, change its settings" },
             { value: "boards", label: "Boards" },
             { value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
-            { value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on omp's machine" }
+            { value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on the Switchyard machine" }
           ]
         }),
         h("span", { className: "omps-grow" }),
@@ -2786,10 +3318,10 @@ function createPage(host2) {
       ),
       h(StatusStrip, { o: overview, error: overviewError, sessions, now, refreshedAt, onBoards: () => setView("boards") }),
       // Desktop keeps its own copy of this page; after a plugin update it can lag the backend it talks to.
-      host2.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== "0.7.0" ? h(Notes, {
+      host2.kind === "desktop" && overview?.pluginVersion && overview.pluginVersion !== "0.8.0" ? h(Notes, {
         className: "omps-page-note",
         notes: [
-          `This page is Switchyard ${"0.7.0"}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → Switchyard: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`
+          `This page is Switchyard ${"0.8.0"}; the plugin on this Hermes is ${overview.pluginVersion}. Update the page in Capabilities → Plugins → Switchyard: Rescan when Hermes runs on this computer, or Install from Git again with Force reinstall when it runs on another machine.`
         ]
       }) : null,
       h("div", { className: "omps-body" }, main),
@@ -3251,6 +3783,37 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 .omps-bcard-foot { padding: 8px 14px 10px; font-size: 11.5px; color: var(--o-faint); display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px dashed var(--o-border); }
 .omps-bcard-foot:empty { display: none; }
 
+/* ---------- orchestrator view ---------- */
+.omps-orch-panel { display: flex; flex-direction: column; gap: 14px; }
+.omps-orch-task { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: calc(var(--o-radius) + 2px); border: 1px solid var(--o-border); background: var(--o-raised); position: relative; overflow: hidden; }
+.omps-orch-task::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--o-grad); }
+.omps-orch-task .omps-section-label { margin: 0; }
+.omps-orch-task-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.omps-orch-grid { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); }
+.omps-orch.tone-needs_input { border-color: color-mix(in srgb, var(--o-pink) 45%, var(--o-border)); }
+.omps-orch-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--o-border); }
+.omps-orch-pad { padding: 12px 14px 0; }
+.omps-orch-pad:last-of-type { padding-bottom: 12px; }
+.omps-orch-empty { padding: 12px 14px; font-size: 12.5px; }
+.omps-orch-clip p { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0 0 6px; }
+.omps-orch-workers { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.omps-orch-worker { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 7px; background: var(--o-card); border: 1px solid var(--o-border); font-size: 12.5px; min-width: 0; }
+.omps-orch-worker-main { display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; color: var(--o-fg); }
+.omps-orch-worker-main:hover .omps-orch-worker-title { text-decoration: underline; }
+.omps-orch-worker-state { font-size: 11px; font-weight: 600; color: var(--tone); white-space: nowrap; }
+.omps-orch-worker-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omps-orch-worker-id { color: var(--o-muted); font-size: 11px; }
+.omps-orch-worker-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding-left: 16px; font-size: 11.5px; }
+.omps-orch-worker-meta:empty { display: none; }
+.omps-orch-pr { text-decoration: none; max-width: none; }
+.omps-orch-pr-group { display: inline-flex; align-items: center; gap: 2px; }
+.omps-chip.is-ok { background: color-mix(in srgb, var(--o-green) 16%, transparent); border-color: color-mix(in srgb, var(--o-green) 40%, transparent); }
+.omps-orch-settings-bar { padding: 4px 10px; border-top: 1px dashed var(--o-border); }
+.omps-orch-settings-bar .is-open .omps-icon { transform: rotate(90deg); }
+.omps-orch-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; padding: 12px 14px; border-top: 1px solid var(--o-border); }
+.omps-orch-settings .omps-field:nth-child(5), .omps-orch-settings-wide, .omps-orch-settings-foot { grid-column: 1 / -1; }
+.omps-orch-settings-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
 /* ---------- AO dashboard ---------- */
 .omps-ao { display: flex; flex-direction: column; gap: 10px; }
 .omps-ao-bar { margin-bottom: 0; }
@@ -3309,7 +3872,8 @@ select.omps-input option, select.omps-input optgroup { background: var(--o-raise
 
 @media (max-width: 720px) {
 	.omps-search { min-width: 0; flex: 1; }
-	.omps-bgrid { grid-template-columns: 1fr; }
+	.omps-bgrid, .omps-orch-grid { grid-template-columns: 1fr; }
+	.omps-orch-settings { grid-template-columns: 1fr; }
 	.omps-meta { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {

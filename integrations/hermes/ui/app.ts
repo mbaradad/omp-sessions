@@ -1,6 +1,6 @@
 // The Switchyard page, written once for both hosts (the Hermes dashboard tab and the Hermes
-// Desktop page): status strip, session board with filters, detail panel, New session, Boards, Graph,
-// and the AO dashboard (Agent Orchestrator's own web UI).
+// Desktop page): status strip, session board with filters, detail panel, New session, Orchestrator (AO's
+// orchestrator of each project), Boards, Graph, and the AO dashboard (Agent Orchestrator's own web UI).
 import { type ArchiveDone, errorMessage, type Host, type Overview, type Session, type Started } from "./api";
 import { AoDashboardPanel } from "./ao";
 import { type CardAction, SessionBoard } from "./board";
@@ -9,6 +9,7 @@ import { Button, Empty, ErrorBox, Notes, Segmented } from "./components";
 import { DetailPanel } from "./detail";
 import { GraphPanel } from "./graph";
 import { NewSessionDialog } from "./newSession";
+import { OrchestratorPanel } from "./orchestrator";
 import type { RunQueueAction } from "./queue";
 import { type Child, h, type ReactElement, setReact, useEffect, useMemo, useRef, useState } from "./react";
 import { SessionSounds, setSoundMuted, soundMuted } from "./sounds";
@@ -18,7 +19,7 @@ import { openInVscode } from "./vscode";
 const SESSIONS_MS = 4000;
 const OVERVIEW_MS = 10_000;
 
-type View = "sessions" | "boards" | "graph" | "ao";
+type View = "sessions" | "orchestrator" | "boards" | "graph" | "ao";
 
 /** Runs `fn` now and every `every` ms while the page is visible (and right away when it shows again). */
 function usePoll(fn: () => Promise<void>, every: number): void {
@@ -268,6 +269,8 @@ export function createPage(host: Host): () => ReactElement {
 			main = h(BoardsPanel, { host, lane: overview?.lane ?? null, now, onChanged: () => void loadOverview(), onOpenSession: id => (setView("sessions"), setSelected(id)) });
 		} else if (view === "graph") {
 			main = h(GraphPanel, { host, onOpenSession: setSelected });
+		} else if (view === "orchestrator") {
+			main = h(OrchestratorPanel, { host, now, onOpenSession: setSelected, onOpenAo: () => setView("ao") });
 		} else if (view === "ao") {
 			main = h(AoDashboardPanel, { host });
 		} else if (notInstalled) {
@@ -277,7 +280,7 @@ export function createPage(host: Host): () => ReactElement {
 		} else if (all.length === 0) {
 			main = h(Empty, {
 				icon: "sparkle",
-				title: "No omp sessions yet",
+				title: "No sessions yet",
 				body: "Start one here, with switchyard new, from VS Code or the Agent Orchestrator app, or ask Hermes to (the switchyard_session_start tool). Kanban cards assigned to switchyard show up here too once the lane is on.",
 				action: h(Button, { kind: "brand", icon: "plus", label: "New session", onClick: () => setCreating(true) }),
 			});
@@ -324,9 +327,10 @@ export function createPage(host: Host): () => ReactElement {
 					onChange: setView,
 					options: [
 						{ value: "sessions", label: "Sessions" },
+						{ value: "orchestrator", label: "Orchestrator", title: "AO's orchestrator of each project: give it a high-level task, see its workers, change its settings" },
 						{ value: "boards", label: "Boards" },
 						{ value: "graph", label: "Graph", title: "Kanban cards as a dependency graph" },
-						{ value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on omp's machine" },
+						{ value: "ao", label: "AO dashboard", title: "Agent Orchestrator's own web UI, served by Switchyard on the Switchyard machine" },
 					],
 				}),
 				h("span", { className: "omps-grow" }),

@@ -4,12 +4,18 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import type { FromGraph, ToGraph } from "../graph/main";
-import type { PlanOp } from "../planner/types";
+import type { PlanOp, PlanView } from "../planner/types";
 import { planGraph } from "../shared/plan-graph";
 import { tasksOf } from "../shared/plan-tree";
 import type { OmpApi } from "./api";
 import type { TaskNode, TasksProvider } from "./tasks";
 import type { TasksDeps } from "./tasks-deps";
+
+/** The Tasks view node of a planner task, so the tree's own commands can act on it from the graph and the overview. */
+export function taskNodeOf(plan: PlanView | undefined, id: string): TaskNode | undefined {
+	const task = plan?.tasks.find(t => t.id === id);
+	return plan && task ? { kind: "task", task, index: tasksOf(plan, task.lane).indexOf(task) } : undefined;
+}
 
 type GraphAction = Extract<FromGraph, { type: "action" }>["action"];
 
@@ -60,13 +66,6 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 		else post({ type: "graph", graph: planGraph(plan, l => l.title ?? provider.sessionTitle(l.session ?? l.id) ?? l.id) });
 	};
 
-	/** The Tasks view node of a task, so the tree's own commands can act on it. */
-	const nodeOf = (id: string): TaskNode | undefined => {
-		const plan = deps.planner.plan;
-		const task = plan?.tasks.find(t => t.id === id);
-		return plan && task ? { kind: "task", task, index: tasksOf(plan, task.lane).indexOf(task) } : undefined;
-	};
-
 	const open = () => {
 		if (panel) {
 			panel.reveal();
@@ -87,7 +86,7 @@ export function registerTaskGraph(api: OmpApi, deps: TasksDeps, provider: TasksP
 			else if (m.type === "action") {
 				if (m.action === "rerun" || m.action === "sync") void edit([{ op: m.action, id: m.id }]);
 				else {
-					const node = nodeOf(m.id);
+					const node = taskNodeOf(deps.planner.plan, m.id);
 					if (node) void vscode.commands.executeCommand(COMMAND[m.action], node);
 				}
 			}

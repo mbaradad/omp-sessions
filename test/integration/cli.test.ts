@@ -469,6 +469,32 @@ test("cli: the error texts and exit codes the Hermes plugin matches; tags are on
 	assert.equal(cli("answer", asking, `--question=${w.data.question.id}`, "--", "reject").status, 0);
 });
 
+test("cli: vscode --review [--pr N] writes the request with the intent and links it; --pr alone or a bad number is a usage error", { skip }, () => {
+	const id = started("echo reviewed", "--mode", "auto");
+	const requestFile = path.join(home, "switchyard", "vscode-open.json");
+	type Opened = { id: string; url: string; review: string | null; pr: number | null };
+	const plain = json<Opened>("vscode", id, "--json");
+	assert.equal(plain.status, 0, plain.stderr);
+	assert.equal(plain.data.review, null);
+	assert.equal(plain.data.pr, null);
+	assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(requestFile, "utf8"))).sort(), ["at", "session"]);
+	const review = json<Opened>("vscode", "--review", id, "--json");
+	assert.equal(review.status, 0, review.stderr);
+	assert.deepEqual({ id: review.data.id, review: review.data.review, pr: review.data.pr }, { id, review: "pr", pr: null });
+	assert.equal(review.data.url, `vscode://mbaradad.switchyard/open?session=${id}&review=pr`);
+	assert.deepEqual(JSON.parse(fs.readFileSync(requestFile, "utf8")), { session: id, at: JSON.parse(fs.readFileSync(requestFile, "utf8")).at, review: "pr" });
+	const one = json<Opened>("vscode", id, "--review", "--pr", "12", "--json");
+	assert.equal(one.status, 0, one.stderr);
+	assert.equal(one.data.pr, 12);
+	assert.match(one.data.url, /&review=pr&pr=12$/);
+	const written = JSON.parse(fs.readFileSync(requestFile, "utf8"));
+	assert.equal(written.review, "pr");
+	assert.equal(written.pr, 12);
+	assert.equal(cli("vscode", id, "--pr", "12").status, 2);
+	assert.equal(cli("vscode", id, "--review", "--pr", "0").status, 2);
+	assert.equal(cli("vscode", id, "--review", "--pr", "abc").status, 2);
+});
+
 test("cli: new --worktree auto|always reports the worktree; never/--no-worktree is refused before a session exists; archive/unarchive --json", { skip, timeout: 120_000 }, () => {
 	const before = json<Array<{ meta: { id: string } }>>("ls", "--all", "--json").data.length;
 	type Worktree = { id: string; worktree?: { path: string; repo: string; branch?: string } };

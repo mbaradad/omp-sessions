@@ -1,6 +1,7 @@
 // The detail panel: the session's question with answer buttons, its full last reply, a follow-up box,
 // queue controls (run now, retry, schedule), the permission mode and model switches, Stop, and Open in
 // VS Code (the chat, or the project folder).
+import { prSummaryLine } from "../../../src/shared/pr-review";
 import { errorMessage, type Host, MODE_INFO, MODES, type Mode, type Question, type Session, type SyncState, type UpstreamEdge } from "./api";
 import { Button, ErrorBox, Segmented, useDismiss } from "./components";
 import { ModelPicker, ModelsError, useModels } from "./models";
@@ -44,14 +45,14 @@ function Upstream(p: { edges: UpstreamEdge[]; busy: string | null; onSync: (reru
 	);
 }
 
-/** switchyard answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts). */
-function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) => void }): ReactElement {
+/** switchyard answer's text for each question kind (see dialogAnswer in src/shared/session-report.ts); the Orchestrator view answers with it too. */
+export function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) => void }): ReactElement {
 	const { q } = p;
 	const [text, setText] = useState("");
 	const [picks, setPicks] = useState<number[][]>(() => (q.questions ?? []).map(() => []));
 	const [others, setOthers] = useState<string[]>(() => (q.questions ?? []).map(() => ""));
 	// questionOf() falls back to the dialog kind ("ask") when omp gives no title.
-	const [title, ...rest] = (q.title === q.kind ? "omp asks" : q.title).split("\n");
+	const [title, ...rest] = (q.title === q.kind ? "The agent asks" : q.title).split("\n");
 	const head = h(
 		"div",
 		{ className: "omps-q-head" },
@@ -131,7 +132,7 @@ function AnswerBox(p: { q: Question; busy: boolean; onAnswer: (answer: string) =
 	} else {
 		body = h("div", { className: "omps-muted" }, "This kind of question can only be answered in VS Code or with switchyard attach.");
 	}
-	return h("section", { className: "omps-question", "aria-label": "omp is asking" }, head, body);
+	return h("section", { className: "omps-question", "aria-label": "the agent is asking" }, head, body);
 }
 
 function Meta(p: { label: string; children: Child }): ReactElement {
@@ -198,13 +199,13 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 		void act("send", "send", { text, steer: s?.state === "working" && steer }, () => setText(""));
 	};
 
-	// The VS Code window last used on omp's machine takes the request; the link brings that window up.
-	const openVscode = async (what: "vscode" | "project"): Promise<void> => {
-		setBusy(what);
+	// The VS Code window last used on the Switchyard machine takes the request; the link brings that window up.
+	const openVscode = async (what: "vscode" | "project", body: Record<string, unknown> = {}, busyKey: string = what): Promise<void> => {
+		setBusy(busyKey);
 		setActionError(null);
 		setNotice(null);
 		try {
-			setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`));
+			setNotice(await openInVscode(p.host, `/sessions/${encodeURIComponent(p.id)}/${what}`, body));
 		} catch (err) {
 			setActionError(errorMessage(err));
 		} finally {
@@ -263,6 +264,34 @@ export function DetailPanel(p: { host: Host; id: string; summary: Session | unde
 						h(Meta, { label: "Active", children: ago(view.updatedAt, p.now) || "—" }),
 						view.tags.length ? h(Meta, { label: "Tags", children: h("span", { className: "omps-tags" }, ...view.tags.map(t => h("span", { key: t, className: "omps-chip" }, t))) }) : null,
 						view.completed ? h(Meta, { label: "Completed", children: view.completedAt ? `${ago(view.completedAt, p.now)} (${clock(view.completedAt)})` : "yes" }) : null,
+					)
+				: null,
+			view?.prs?.length
+				? h(
+						"section",
+						{ className: "omps-prs", "aria-label": "Pull requests" },
+						h("div", { className: "omps-section-label" }, "Pull requests"),
+						h(
+							"div",
+							{ className: "omps-tags" },
+							...view.prs.map(pr => h("a", { key: pr.url || pr.number, className: "omps-chip omps-orch-pr", href: pr.url, target: "_blank", rel: "noreferrer noopener", title: `Open the pull request (updated ${ago(Date.parse(pr.updatedAt) || undefined, p.now) || "unknown"})` }, prSummaryLine(pr))),
+						),
+						h(
+							"div",
+							{ className: "omps-followup-row" },
+							...view.prs.map(pr =>
+								h(Button, {
+									key: pr.number,
+									small: true,
+									kind: "ghost",
+									icon: "external",
+									label: view.prs?.length === 1 ? "Review PR in VS Code" : `Review #${pr.number} in VS Code`,
+									title: `Open the review of #${pr.number} in VS Code: its files, diffs and review threads`,
+									busy: busy === `review-${pr.number}`,
+									onClick: () => void openVscode("vscode", { review: "pr", pr: pr.number }, `review-${pr.number}`),
+								}),
+							),
+						),
 					)
 				: null,
 			view

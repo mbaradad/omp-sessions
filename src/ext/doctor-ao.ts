@@ -17,6 +17,17 @@ export interface AoFacts {
 	sessions?: number;
 	/** Whether this platform can run AO as a login service (systemd). */
 	serviceAvailable: boolean;
+	/** The projects' running orchestrators; absent when AO could not list them. */
+	orchestrators?: OrchestratorFacts[];
+}
+
+/** One running orchestrator (src/ao/orchestrator.ts's summary of it). */
+export interface OrchestratorFacts {
+	projectId: string;
+	project: string;
+	harness?: string;
+	workers: number;
+	openPrs: number;
 }
 
 export interface PlannerFacts {
@@ -70,7 +81,19 @@ export function aoChecks(f: AoFacts): Check[] {
 	else if (omp.installation === "not_installed") checks.push({ level: "error", title: "AO can't find omp", detail: `${omp.installationReason ?? ""}\nAO runs the omp on the daemon's PATH.`.trim(), fixes: [{ label: "Install omp", command: "switchyard.installOmp" }] });
 	else if (omp.authentication === "unauthorized") checks.push({ level: "warn", title: "omp is not logged in to a model provider", detail: omp.authenticationReason, fixes: [{ label: "Log in", command: "switchyard.login" }] });
 	else checks.push({ level: "ok", title: "AO can run omp", detail: [omp.installationReason, omp.authenticationReason].filter(Boolean).join("\n") || undefined });
+	if (f.orchestrators) checks.push(...orchestratorChecks(f.orchestrators));
 	return checks;
+}
+
+/** Informational only: an orchestrator is optional and nothing else depends on it. */
+export function orchestratorChecks(running: readonly OrchestratorFacts[]): Check[] {
+	if (!running.length) return [{ level: "info", title: "No orchestrator running", detail: "AO starts a project's orchestrator when it gets a task: Switchyard: Give Orchestrator a Task…", fixes: [{ label: "Give a task", command: "switchyard.orchestrator.submit" }] }];
+	return running.map(o => ({
+		level: "info",
+		title: `Orchestrator of ${o.project} running`,
+		detail: [o.harness ?? "", `${o.workers} worker${o.workers === 1 ? "" : "s"}`, o.openPrs ? `${o.openPrs} open PR${o.openPrs === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
+		fixes: [{ label: "Open chat", command: "switchyard.orchestrator.openChat", args: [o.projectId] }],
+	}));
 }
 
 /**

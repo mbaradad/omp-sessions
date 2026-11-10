@@ -1,5 +1,5 @@
 // Boards: the kanban lane per board (folder, group, mode, model, assignee, comment authors), the cards
-// it runs as omp sessions and the ready cards it will take next, with the lane's switches; and the
+// it runs as sessions and the ready cards it will take next, with the lane's switches; and the
 // Switchyard default model.
 import { type ArchiveDoneCards, type Board, type BoardsView, errorMessage, type Host, type Lane, MODE_INFO, MODES, type Mode, type Models } from "./api";
 import { Button, Empty, ErrorBox, Field, Notes, Switch } from "./components";
@@ -61,7 +61,7 @@ function BoardCard(p: {
 			h("span", { className: "omps-grow" }),
 			h("span", { className: cx("omps-lane-state", b.lane && "is-on") }, b.lane ? "Lane on" : p.laneOn ? "Not in the lane" : "Lane off"),
 			b.folder ? h(Button, { small: true, kind: "ghost", icon: "external", title: `Open ${b.folder} in VS Code`, onClick: () => b.folder && p.onOpenFolder(b.folder) }) : null,
-			h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as omp sessions`, busy: p.busy, onChange: on => void p.onSave(b.slug, { lane: on }) }),
+			h(Switch, { checked: b.listed, label: `Run ${b.name} cards assigned to ${b.effectiveAssignee} as sessions`, busy: p.busy, onChange: on => void p.onSave(b.slug, { lane: on }) }),
 		),
 		h(
 			"form",
@@ -73,7 +73,7 @@ function BoardCard(p: {
 				},
 			},
 			h(Field, { label: "Folder", htmlFor: id("folder"), hint: "Where cards without a worktree run", children: h("input", { id: id("folder"), className: "omps-input omps-mono", value: folder, placeholder: "Not set", onChange: (e: Event) => setFolder((e.target as HTMLInputElement).value) }) }),
-			h(Field, { label: "omp group", htmlFor: id("group"), children: h("input", { id: id("group"), className: "omps-input", value: group, placeholder: b.defaultGroup, onChange: (e: Event) => setGroup((e.target as HTMLInputElement).value) }) }),
+			h(Field, { label: "Group", htmlFor: id("group"), children: h("input", { id: id("group"), className: "omps-input", value: group, placeholder: b.defaultGroup, onChange: (e: Event) => setGroup((e.target as HTMLInputElement).value) }) }),
 			h(Field, {
 				label: "Mode",
 				htmlFor: id("mode"),
@@ -89,7 +89,7 @@ function BoardCard(p: {
 			h(Field, {
 				label: "Comment authors",
 				htmlFor: id("authors"),
-				hint: "Whose card comments reach omp and whose @switchyard assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
+				hint: "Whose card comments reach the agent and whose @switchyard assigns cards (comma-separated; * for anyone). The dashboard and Hermes Console comment as dashboard.",
 				children: h("input", { id: id("authors"), className: "omps-input", value: authors, placeholder: b.effectiveCommentAuthors.join(", ") || "nobody", onChange: (e: Event) => setAuthors((e.target as HTMLInputElement).value) }),
 			}),
 			h("div", { className: "omps-bcard-save" }, h(Button, { type: "submit", small: true, kind: dirty ? "primary" : "default", label: "Save", disabled: !dirty, busy: p.busy && dirty })),
@@ -105,7 +105,7 @@ function BoardCard(p: {
 					className: "omps-input",
 					value: b.archiveCompleted == null ? "" : b.archiveCompleted ? "on" : "off",
 					disabled: p.busy,
-					title: "Archive a card on the board, and its omp session, as soon as the lane completes it",
+					title: "Archive a card on the board, and its session, as soon as the lane completes it",
 					onChange: (e: Event) => {
 						const v = (e.target as HTMLSelectElement).value;
 						void p.onSave(b.slug, { archiveCompleted: v === "" ? null : v === "on" });
@@ -123,7 +123,7 @@ function BoardCard(p: {
 						h(Button, { small: true, kind: "danger", label: "Archive", busy: p.busy, onClick: () => void p.onArchiveDone(b.slug).finally(() => setConfirmArchive(false)) }),
 						h(Button, { small: true, kind: "ghost", label: "Cancel", onClick: () => setConfirmArchive(false) }),
 					)
-				: h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by omp, and their omp sessions`, onClick: () => setConfirmArchive(true) }),
+				: h(Button, { small: true, kind: "ghost", icon: "archive", label: "Archive done now", title: `Archive ${b.name}'s done cards assigned to ${b.effectiveAssignee} or run by a session, and their sessions`, onClick: () => setConfirmArchive(true) }),
 		),
 		h(
 			"div",
@@ -141,7 +141,7 @@ function BoardCard(p: {
 								h("span", { className: "omps-linked-title", title: `${b.slug}/${c.id}` }, c.title ?? c.id),
 								c.waitingOnInput ? h("span", { className: "omps-chip is-needs" }, "needs input") : null,
 								c.session
-									? h("button", { type: "button", className: cx("omps-linked-session", `tone-${c.sessionState}`), title: `Open omp session ${shortId(c.session)}`, onClick: () => c.session && p.onOpenSession(c.session) }, h("span", { className: cx("omps-dot", `tone-${c.sessionState}`) }), SESSION_STATE[c.sessionState] ?? c.sessionState)
+									? h("button", { type: "button", className: cx("omps-linked-session", `tone-${c.sessionState}`), title: `Open session ${shortId(c.session)}`, onClick: () => c.session && p.onOpenSession(c.session) }, h("span", { className: cx("omps-dot", `tone-${c.sessionState}`) }), SESSION_STATE[c.sessionState] ?? c.sessionState)
 									: h("span", { className: "omps-muted" }, SESSION_STATE[c.sessionState] ?? c.sessionState),
 								c.error ? h("span", { className: "omps-linked-error", title: c.error }, icon("alert", 12)) : null,
 							),
@@ -240,7 +240,7 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 			const n = res.archived.length;
 			const failed = Object.entries(res.failed).map(([card, why]) => `${card}: ${why}`);
 			if (failed.length) setActionError(`Not archived: ${failed.join("; ")}`);
-			setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} omp session${res.sessions.length === 1 ? "" : "s"}.`);
+			setNotice(`${slug}: archived ${n} done card${n === 1 ? "" : "s"} and ${res.sessions.length} session${res.sessions.length === 1 ? "" : "s"}.`);
 			p.onChanged();
 		} catch (err) {
 			setActionError(errorMessage(err));
@@ -269,8 +269,8 @@ export function BoardsPanel(p: { host: Host; lane: Lane | null; now: number; onO
 					"div",
 					{ className: "omps-muted" },
 					view.enabled
-						? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as omp sessions and report back to the card.`
-						: `Turn it on to run kanban cards assigned to ${view.assignee} as omp sessions (they queue under the Switchyard scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
+						? `Cards assigned to ${view.assignee} on ${view.allBoards ? "every board" : "the boards switched on below"} run as sessions and report back to the card.`
+						: `Turn it on to run kanban cards assigned to ${view.assignee} as sessions (they queue under the Switchyard scheduler's concurrency limit). Settings are this profile's (${view.profile}).`,
 					tick && view.enabled ? ` The kanban dispatcher (profile ${tick.profile}) last ran it ${ago(tick.at, p.now)}.` : null,
 				),
 				notes.length ? h(Notes, { notes }) : null,

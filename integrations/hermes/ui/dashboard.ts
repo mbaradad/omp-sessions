@@ -52,7 +52,7 @@ if (sdk && registry) {
 			aoFrame: cookieAuth ? `${prefix}${BASE}/ao/` : undefined,
 			aoNote: cookieAuth
 				? undefined
-				: "This Hermes dashboard runs without sign-in (legacy session-token mode): its requests carry a token header that an embedded page can't send. Open the address switchyard dashboard url prints in a browser on omp's machine, or turn on the dashboard's sign-in.",
+				: "This Hermes dashboard runs without sign-in (legacy session-token mode): its requests carry a token header that an embedded page can't send. Open the address switchyard dashboard url prints in a browser on the Switchyard machine, or turn on the dashboard's sign-in.",
 		}),
 	);
 }

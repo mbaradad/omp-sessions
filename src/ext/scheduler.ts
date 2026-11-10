@@ -63,7 +63,7 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 	source = planner;
 	const status = vscode.window.createStatusBarItem("switchyard.scheduler", vscode.StatusBarAlignment.Left, 49);
 	status.name = "Switchyard: queued task slots";
-	status.command = "switchyard.scheduler.configure";
+	status.command = "switchyard.overview";
 	context.subscriptions.push(status);
 
 	const render = (s: SchedulerSnapshot) => {
@@ -75,7 +75,7 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 		status.text = `${s.paused ? "$(debug-pause)" : "$(layers)"} ${text}`;
 		const holds = source?.plan ? holdLines(source.plan.status) : [];
 		const windows = source?.plan ? usageLines(source.plan.status) : [];
-		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click for the scheduler settings.\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}${windows.length ? `\n\nProvider usage (${source?.plan?.status.usage.holdAtPercent}% holds work, spare tasks wait below ${source?.plan?.status.usage.spareBelowPercent}%):\n${windows.join("\n")}` : ""}`;
+		status.tooltip = `Planner tasks across all sessions: ${text}.\nLimit: ${s.maxConcurrent || "unlimited"}. Click to open the Switchyard Overview (scheduler, limits and budget are there).\nPrompts typed in a chat are never held back.${holds.length ? `\n\n${holds.join("\n")}` : ""}${windows.length ? `\n\nProvider usage (${source?.plan?.status.usage.holdAtPercent}% holds work, spare tasks wait below ${source?.plan?.status.usage.spareBelowPercent}%):\n${windows.join("\n")}` : ""}`;
 		status.show();
 	};
 	context.subscriptions.push(watchScheduler(render));
@@ -170,7 +170,12 @@ export function registerScheduler(api: OmpApi, planner: PlannerStore): void {
 			const model = text.trim();
 			await set({ defaults: model ? { ...rest, model } : rest });
 		}),
-		vscode.commands.registerCommand("switchyard.scheduler.clearLimits", async () => {
+		// `arg`: a provider name or `true` (all of them) clears without asking (the Overview's buttons); no argument asks.
+		vscode.commands.registerCommand("switchyard.scheduler.clearLimits", async (arg?: unknown) => {
+			if (typeof arg === "string" || arg === true) {
+				await set({}, typeof arg === "string" ? [arg] : true);
+				return;
+			}
 			const limits = (source?.plan?.status.limits ?? []).filter(l => l.until > Date.now());
 			if (!limits.length) {
 				void vscode.window.showInformationMessage("Switchyard: no provider is held by a rate or usage limit.");

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AoConversation, AoSessionView } from "../../src/ao/client";
 import { type AoSessionModel, sessionModel } from "../../src/ao/model";
-import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskBaseOf, taskTransitions, withQueue } from "../../src/ext/session-view";
+import { completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, splitArgs, statusOf, taskBaseOf, taskTransitions, withQueue, workersOf } from "../../src/ext/session-view";
 import type { LaneView, PlanView, TaskView } from "../../src/planner/types";
 import { pairingLink, pairingPending, pairingReady, reachSummary } from "../../src/ao/mobile";
 
@@ -332,4 +332,13 @@ test("metaOf: turnId is the latest real turn, or the waiting question's id (the 
 	const question = { id: "req-9" } as AoSessionModel["question"];
 	assert.equal(metaOf(model({ state: "needs_input", question, conversation }), "").turnId, "req-9");
 	assert.equal(metaOf(model({ state: "idle" }), "").turnId, undefined);
+});
+
+test("metaOf marks an orchestrator; workersOf keeps it out of every worker list while workers stay as they were", () => {
+	const orchestrator = metaOf(model({ id: "orch-1", view: view({ id: "orch-1", kind: "orchestrator" }) }), "/ao/worktrees/orch");
+	const worker = metaOf(model({ id: "repo-2", view: view({ id: "repo-2" }) }), "/ao/worktrees/repo-2");
+	assert.equal(orchestrator.kind, "orchestrator");
+	assert.equal("kind" in worker, false, "a worker's record is unchanged");
+	assert.deepEqual(workersOf([orchestrator, worker]).map(m => m.id), ["repo-2"]);
+	assert.deepEqual(workersOf([]), []);
 });

@@ -59,7 +59,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 
 	const submit = async (): Promise<void> => {
 		const place = target();
-		if (!prompt.trim()) return setError("Write what omp should do.");
+		if (!prompt.trim()) return setError("Write what the agent should do.");
 		if (!place) return setError("Pick where it runs.");
 		setBusy(true);
 		setError(null);
@@ -125,12 +125,12 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 					void submit();
 				},
 			},
-			h("header", { className: "omps-dialog-head" }, h("h2", { id: "omps-new-title" }, icon("plus", 16), "New omp session"), h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })),
+			h("header", { className: "omps-dialog-head" }, h("h2", { id: "omps-new-title" }, icon("plus", 16), "New session"), h(Button, { kind: "ghost", icon: "x", title: "Close (Esc)", onClick: p.onClose })),
 			h(
 				"div",
 				{ className: "omps-dialog-body" },
 				h(Field, {
-					label: "What should omp do?",
+					label: "What should the agent do?",
 					htmlFor: "omps-prompt",
 					children: h("textarea", {
 						id: "omps-prompt",
@@ -182,7 +182,7 @@ export function NewSessionDialog(p: { host: Host; groups: string[]; onClose: () 
 										...boards.map(b => h("option", { key: b.slug, value: b.slug, disabled: !b.folder }, `${b.name ?? b.slug}${b.folder ? ` — ${b.folder}` : " (no folder set)"}`)),
 									)
 								: h("div", { className: "omps-field-hint" }, "No kanban boards."),
-					where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and omp group (set them in Boards).") : null,
+					where === "board" ? h("div", { className: "omps-field-hint" }, "Runs in the board's folder and group (set them in Boards).") : null,
 					chosenFolder
 						? h(
 								"div",

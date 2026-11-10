@@ -19,16 +19,17 @@ import { MAX_NOTES, MAX_TITLE } from "../shared/queue";
 import { qrHalfBlocks } from "../shared/remote-qr";
 import { setSessionMode } from "../shared/session-mode-ops";
 import { holdText } from "../shared/task-text";
-import { OPEN_REQUEST_TTL_MS, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
+import { OPEN_REQUEST_TTL_MS, type OpenIntent, folderProblem, folderTarget, isAuthority, requestOpen, vscodeFolderLink, vscodeLink, windowFor } from "../shared/vscode-open";
 import { type Args, UsageError, checkFlags, flag, parseArgs, parseWhen, value } from "./args";
 import { attach } from "./attach";
 import { ensureBundles, extensionReport, installBundles, shippedBundles, uninstallBundles } from "./extension";
 import { modeProblem } from "./gate";
 import { type GraphEdge, type LaneSummary, type Planner, type PlannerConfig, type PlannerQueue, type PlannerStatus, type QueueOp, canRequeue, connectPlanner, edgesOfRef, graphEdges, lanesOf, plannerService, tasksOfRef } from "./plan";
 import { MIGRATE_HELP, cmdMigrate } from "./migrate";
+import { cmdOrchestrator } from "./orchestrator";
 import { itemLines, timeline } from "./render";
 import { type AgentState, type CliReport, type ListFilter, type Session, ao, aoIfRunning, changedFileCount, columnOf, filterSessions, infoJson, livePlanMode, loadSession, loadSessions, orderOf, reportOf, resolveSession } from "./sessions";
-import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, setColor, termWidth, truncate } from "./term";
+import { PRIORITY_MARK, ago, c, colorEnabled, confirm, errorLine, oneLine, pad, priorityLabel, readStdin, setColor, termWidth, truncate } from "./term";
 
 function readVersion(): string {
 	for (const file of [path.join(__dirname, "package.json"), path.join(__dirname, "..", "package.json")]) {
@@ -73,12 +74,16 @@ async function allSessions(): Promise<Session[]> {
 	return loadSessions(await ao(), { lanes: await lanes() });
 }
 
-/** The session `query` names (id, id prefix, title words, or `.` for the newest one in this folder). */
+/** The session `query` names (id, id prefix, title words, or `.` for the newest one in this folder); an orchestrator by its id (or unique prefix). */
 async function findSession(query: string | undefined): Promise<Session> {
 	if (!query) throw new UsageError("which session? (id, id prefix, title words, or . for this folder)");
 	const hit = resolveSession(query, await allSessions(), process.cwd());
-	if ("error" in hit) throw new Error(hit.error);
-	return hit;
+	if (!("error" in hit)) return hit;
+	// Orchestrators are not workers (the lists above leave them out) but are sessions: show, tail, send and answer reach them by id.
+	const orchestrators = (await (await ao()).listOrchestrators()).filter(o => o.id === query || (query.length >= 3 && o.id.startsWith(query)));
+	const exact = orchestrators.find(o => o.id === query) ?? (orchestrators.length === 1 ? orchestrators[0] : undefined);
+	if (exact) return fresh(exact.id);
+	throw new Error(hit.error);
 }
 
 async function fresh(id: string, conversationLimit?: number): Promise<Session> {
@@ -225,12 +230,6 @@ async function cmdBoard(args: Args): Promise<void> {
 		}
 		if (col.sessions.length === 0) process.stdout.write(c.dim("  —\n"));
 	}
-}
-
-async function readStdin(): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-	return Buffer.concat(chunks).toString("utf8").trim();
 }
 
 /** Title for a session created from a task or prompt: its first line, shortened. */
@@ -466,9 +465,22 @@ async function cmdShow(args: Args): Promise<number> {
 	return 0;
 }
 
+/** `--review [--pr N]` as an open intent; none without --review. */
+function reviewIntent(args: Args): OpenIntent {
+	const pr = value(args, "pr");
+	if (!flag(args, "review")) {
+		if (pr !== undefined) throw new UsageError("--pr goes with --review");
+		return {};
+	}
+	if (pr === undefined) return { review: "pr" };
+	if (!/^[1-9][0-9]{0,15}$/.test(pr)) throw new UsageError(`--pr is a pull request number, not "${pr}"`);
+	return { review: "pr", pr: Number(pr) };
+}
+
 /**
  * Asks a VS Code window on this machine to open the session, or opens a folder (`--folder <dir>` exactly;
- * a path argument naming a folder: its checkout); prints the link that brings it up.
+ * a path argument naming a folder: its checkout); prints the link that brings it up. `--review [--pr N]`
+ * has the window open the session's PR review after its chat.
  */
 async function cmdVscode(args: Args): Promise<number> {
 	const authority = value(args, "authority");
@@ -494,11 +506,12 @@ async function cmdVscode(args: Args): Promise<number> {
 		return 0;
 	}
 	const s = await findSession(arg ?? ".");
+	const intent = reviewIntent(args);
 	const win = pick(s.cwd);
-	requestOpen(s.id);
-	const url = vscodeLink(s, win);
+	requestOpen(s.id, Date.now(), intent);
+	const url = vscodeLink(s, win, intent);
 	if (flag(args, "json")) {
-		process.stdout.write(`${JSON.stringify({ id: s.id, url, authority: win?.authority ?? null, windowAt: win?.at || null }, null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify({ id: s.id, url, review: intent.review ?? null, pr: intent.pr ?? null, authority: win?.authority ?? null, windowAt: win?.at || null }, null, 2)}\n`);
 		return 0;
 	}
 	const where = !win ? "no VS Code window recorded on this machine yet" : !win.at ? `no window of ${win.authority || "local VS Code"} recorded yet` : `last used: ${win.authority || "a local window"}, ${ago(win.at)} ago`;
@@ -1985,11 +1998,13 @@ ${c.bold("Sessions")}  ${c.dim("<session> = id, id prefix, title words, or . (la
                                   answer its waiting question: option number/text, yes/no, text; several
                                   questions: one answer each, separated by | (--question: refuse if
                                   another question is now first)
-  vscode [session | path/to/dir] [--folder dir] [--authority a] [--json]
+  vscode [session | path/to/dir] [--folder dir] [--authority a] [--review [--pr N]] [--json]
                                   open it in a VS Code window on this machine (prints the link to open
                                   on the computer running VS Code, e.g. over Remote-SSH); a folder opens
                                   its checkout, --folder exactly that folder; --authority: that remote
-                                  (ssh-remote+box, wsl+Ubuntu; "" local), even if no window of it is known
+                                  (ssh-remote+box, wsl+Ubuntu; "" local), even if no window of it is known;
+                                  --review: then open the session's pull request review (--pr: that PR
+                                  number; else its only PR, or the window asks which)
   projects [--json]               AO projects (git folders sessions run in), newest first
   attach [session]                chat in the terminal (Ctrl-C aborts a turn, Ctrl-D detaches)
   send <session> <text|-> [--steer] [-w|--wait] [--json]
@@ -2076,6 +2091,24 @@ ${c.bold("Agents")}  ${c.dim("(the switchyard skill teaches other agents to use 
                                   install or update it (default: every platform found)
   skill uninstall [platform]… | print | path
 
+${c.bold("Orchestrator")}  ${c.dim("(AO's coordinating agent for a project: give it a high-level task and it splits it into worker sessions, steers them and has their PRs reviewed)")}
+  orchestrator [status] [project|dir] [--all] [--json]
+                                  the project's orchestrator (default: this folder's project): state, last
+                                  reply, waiting question, settings, and its worker sessions with their PRs;
+                                  --all: every project's orchestrator
+  orchestrator submit <task|-> [--project p] [--steer] [-w|--wait] [--harness h] [--permissions m] [--json]
+                                  give it a high-level task (starts it when it isn't running); a task sent
+                                  while it works waits for the turn to end, --steer redirects the turn;
+                                  --wait blocks like wait. Its chat is a session: show|tail|attach|answer <id>
+  orchestrator start|restart|stop [project] [--harness h] [--permissions m] [--json]
+                                  start it (or resume a stopped one) · replace it with a fresh one that takes
+                                  the project's current settings · stop its agent
+  orchestrator config [project] [--harness h] [--model m] [--effort e] [--permissions m]
+      [--rules text|@file|-] [--rules-file path] [--worker-harness h] [--worker-model m]
+      [--review on|off] [--auto-review on|off] [--json]
+                                  show or change the project's orchestrator settings (none clears one); a
+                                  running orchestrator keeps what it started with: restart applies them
+
 ${c.bold("Hermes")}  ${c.dim("(switchyard plugin: switchyard tools, notifications and a kanban lane in Hermes Agent; docs/HERMES.md)")}
   hermes install [--force]        copy the plugin into $HERMES_HOME/plugins (~/.hermes) and enable it
   hermes uninstall | status [--json]
@@ -2127,7 +2160,7 @@ async function cmdVersion(json: boolean): Promise<number> {
 	return 0;
 }
 
-const ALIASES: Record<string, string> = { list: "ls", chat: "attach", log: "tail", start: "resume", remove: "rm", q: "queue", priority: "prio", scheduler: "sched", skills: "skill" };
+const ALIASES: Record<string, string> = { list: "ls", chat: "attach", log: "tail", start: "resume", remove: "rm", q: "queue", priority: "prio", scheduler: "sched", skills: "skill", orch: "orchestrator" };
 
 /** Each command with the flags it takes (`--help` and `--no-color` always work). */
 const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd: string) => Promise<number> | number }> = {
@@ -2165,8 +2198,9 @@ const COMMANDS: Record<string, { flags: readonly string[]; run: (args: Args, cmd
 	show: { flags: ["json"], run: cmdShow },
 	wait: { flags: ["timeout", "json"], run: cmdWait },
 	answer: { flags: ["question", "json"], run: cmdAnswer },
-	vscode: { flags: ["folder", "authority", "json"], run: cmdVscode },
+	vscode: { flags: ["folder", "authority", "review", "pr", "json"], run: cmdVscode },
 	projects: { flags: ["json"], run: cmdProjects },
+	orchestrator: { flags: ["all", "json", "project", "steer", "wait", "harness", "model", "effort", "permissions", "rules", "rules-file", "worker-harness", "worker-model", "review", "auto-review"], run: args => cmdOrchestrator(args, { waitFor }) },
 	skill: { flags: ["dir", "force"], run: cmdSkill },
 	hermes: { flags: ["force", "profile", "all-profiles", "json"], run: cmdHermes },
 	"omp-extension": { flags: ["json"], run: cmdOmpExtension },

@@ -16,7 +16,7 @@ import { queueOf } from "../shared/plan-queue";
 import { isRecord, listTranscripts, parseHead, parseTranscriptLine, readTranscriptStart } from "../shared/transcript-files";
 import type { AoConnection } from "./ao-connection";
 import type { SessionQueues } from "./session-queues";
-import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, statusOf, taskBaseOf, taskTransitions, withQueue } from "./session-view";
+import { type TaskTransition, completeOps, dependencyOps, laneQueue, launchFlags, metaOf, asChangedFile, ownFiles, parentBranches, priorityOps, rerunTaskIds, statusOf, taskBaseOf, taskTransitions, withQueue, workersOf } from "./session-view";
 import type { Priority } from "../shared/organize";
 import { type SessionScope, isSessionScope, withinAny } from "./session-scope";
 import { type ProjectInfo, changedSince, findProject } from "./worktree-git";
@@ -386,8 +386,21 @@ export class SessionManager implements vscode.Disposable {
 		return this.models.get(id);
 	}
 
+	/**
+	 * The worker sessions: what the Sessions tree, board, Tasks view, status bar and every picker list. The project
+	 * orchestrators are held too (`get` finds them, so their chat opens) but listed by `orchestrators()` only.
+	 */
 	all(): SessionMeta[] {
-		return [...this.sessions.values()].sort((a, b) => {
+		return this.sorted(workersOf(this.sessions.values()));
+	}
+
+	/** The AO projects' orchestrator sessions (the Orchestrators view's chats), same order as `all()`. */
+	orchestrators(): SessionMeta[] {
+		return this.sorted([...this.sessions.values()].filter(m => m.kind === "orchestrator"));
+	}
+
+	private sorted(metas: SessionMeta[]): SessionMeta[] {
+		return metas.sort((a, b) => {
 			const ra = a.status === "stopped" ? 1 : 0;
 			const rb = b.status === "stopped" ? 1 : 0;
 			return ra - rb || b.updatedAt - a.updatedAt;

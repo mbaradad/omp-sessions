@@ -4,7 +4,7 @@
 
 Please report vulnerabilities privately, not in public issues:
 
-- GitHub: **Security → Report a vulnerability** on <https://github.com/mbaradad/omp-sessions/security/advisories/new>, or
+- GitHub: **Security → Report a vulnerability** on <https://github.com/mbaradad/switchyard/security/advisories/new>, or
 - email Manel Baradad at <manelbaradad@gmail.com> with "switchyard security" in the subject.
 
 Include the version, OS, how you run it (VS Code local or Remote-SSH, the standalone `switchyard` command, AO's phone app, Hermes) and steps to reproduce. You will get an answer within a week. Fixes ship in the next release, and the reporter is credited unless they prefer otherwise. Only the latest released version is supported.

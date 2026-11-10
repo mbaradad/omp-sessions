@@ -22,6 +22,13 @@ test("parseArgs: a value flag followed by another flag is a missing value; --x=-
 	assert.equal(parseArgs(["new", "-p", "-"]).flags.get("prompt"), "-");
 });
 
+test("parseArgs: --review is a boolean for vscode and a value flag elsewhere (orchestrator --review <mode>)", () => {
+	const v = parseArgs(["vscode", "--review", "s1", "--pr", "4"]);
+	assert.deepEqual(v._, ["vscode", "s1"]);
+	assert.equal(v.flags.get("review"), true);
+	assert.equal(parseArgs(["orchestrator", "set", "--review", "auto"]).flags.get("review"), "auto");
+});
+
 test("checkFlags: a command refuses flags it doesn't take", () => {
 	checkFlags(parseArgs(["ls", "--json", "--tag", "x", "-h"]), "ls", ["json", "tag"]);
 	assert.throws(() => checkFlags(parseArgs(["ls", "--group", "g", "--bogus"]), "ls", ["group"]), (err: unknown) => err instanceof UsageError && /--bogus/.test(err.message));

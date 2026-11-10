@@ -19,7 +19,7 @@ export const AT_PRESETS: ReadonlyArray<{ label: string; at: () => string }> = [
 
 /**
  * `hour`:00 of this browser's day `days` ahead (tonight: tomorrow if already past), as an ISO time with
- * its UTC offset (2026-01-31T09:00+01:00), so omp's machine starts it at the time shown here whatever
+ * its UTC offset (2026-01-31T09:00+01:00), so the Switchyard machine starts it at the time shown here whatever
  * its own time zone.
  */
 function nextLocal(hour: number, days: number): string {

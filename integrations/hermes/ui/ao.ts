@@ -1,4 +1,4 @@
-// The AO dashboard tab: Agent Orchestrator's own web UI, served by the Switchyard server on omp's
+// The AO dashboard tab: Agent Orchestrator's own web UI, served by the Switchyard server on the Switchyard
 // machine and proxied by the plugin backend at /ao/ (plugin_api.py). The dashboard embeds it
 // (same origin: the browser's Hermes sign-in cookie rides along); Desktop can't, so it opens the
 // backend's public landing page (ao-dashboard.html) in the system browser.
@@ -52,7 +52,7 @@ export function AoDashboardPanel(p: { host: Host }): ReactElement {
 	if (!probe) return h("div", { className: "omps-loading" }, h("span", { className: "omps-spinner" }), "Checking the AO dashboard…");
 	if ("error" in probe) {
 		return probe.down
-			? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on omp's machine.`, action: checkAgain })
+			? h(Empty, { icon: "server", title: "AO dashboard server not running", body: `${probe.error}: the Switchyard planner serves it on the Switchyard machine.`, action: checkAgain })
 			: h(ErrorBox, { message: probe.error, onRetry: () => void check() });
 	}
 	const { status } = probe;
@@ -60,7 +60,7 @@ export function AoDashboardPanel(p: { host: Host }): ReactElement {
 		return h(Empty, {
 			icon: "terminal",
 			title: "AO dashboard not installed",
-			body: h("span", null, "Run ", h("code", null, INSTALL), " on omp's machine: it fetches Agent Orchestrator's web UI from AO's release."),
+			body: h("span", null, "Run ", h("code", null, INSTALL), " on the Switchyard machine: it fetches Agent Orchestrator's web UI from AO's release."),
 			action: checkAgain,
 		});
 	}

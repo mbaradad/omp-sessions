@@ -1,6 +1,6 @@
 // Graph: a board's kanban cards as a dependency graph (parent → child, left to right; a child waits
-// for its parents), coloured by card status, with the state of the omp session working on each card.
-// Plain SVG laid out by graph-layout.ts. Clicking a card shows its links; a card with an omp session
+// for its parents), coloured by card status, with the state of the session working on each card.
+// Plain SVG laid out by graph-layout.ts. Clicking a card shows its links; a card with a session
 // opens that session's detail too.
 import { type BoardsView, errorMessage, type GraphCard, type Host } from "./api";
 import { SESSION_STATE } from "./boards";
@@ -43,7 +43,7 @@ function CardNode(p: { card: GraphCard; note: ReturnType<typeof planNote>; x: nu
 	const right = note ? note.label : session ? (card.lane ? `lane · ${session}` : session) : null;
 	const tone = note ? note.tone : card.sessionState;
 	const statusW = measure(SMALL_FONT)(card.status);
-	const label = `${card.title} (${card.status}${session ? `, omp session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
+	const label = `${card.title} (${card.status}${session ? `, session ${session}` : ""}${note ? `, ${note.detail}` : ""})`;
 	return h(
 		"g",
 		{
@@ -105,11 +105,11 @@ function CardInfo(p: { card: GraphCard; note: ReturnType<typeof planNote>; byId:
 			card.session
 				? h(
 						"button",
-						{ type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open omp session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
+						{ type: "button", className: cx("omps-linked-session", card.sessionState && `tone-${card.sessionState}`), title: `Open session ${shortId(card.session)}`, onClick: () => card.session && p.onOpenSession(card.session) },
 						h("span", { className: cx("omps-dot", card.sessionState && `tone-${card.sessionState}`) }),
 						SESSION_STATE[card.sessionState ?? ""] ?? card.sessionState,
 					)
-				: h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no omp session"),
+				: h("span", { className: "omps-muted" }, card.lane ? "lane · no session yet" : "no session"),
 			h(Button, { small: true, kind: "ghost", icon: "x", title: "Close", onClick: p.onClose }),
 		),
 		h(

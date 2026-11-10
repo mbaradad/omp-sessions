@@ -7,9 +7,9 @@ Switchyard works the same whether everything runs on the computer in front of yo
 | **Local**: one computer (Linux or macOS) | everything below | the same computer, plus your phone |
 | **Remote**: a workstation or server | everything below | a laptop (the `switchyard` command over SSH, VS Code Remote-SSH, Hermes Desktop in remote mode) and your phone |
 
-**Windows**: run omp, AO, the planner and Hermes in WSL 2 and use VS Code through a *WSL* window. For the phone, see [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2). Native Windows is handled but untested.
+**Windows**: run AO, the planner, your agent's harness and Hermes in WSL 2 and use VS Code through a *WSL* window. For the phone, see [WSL 2 and the phone](REMOTE-API.md#windows-with-wsl-2). Native Windows is handled but untested.
 
-"The machine" below means the computer with your repositories: your own computer in the local arrangement, the workstation or server in the remote one. omp, Agent Orchestrator, the planner, every session, Hermes and the plugin run there, so closing the laptop or losing signal never stops work.
+"The machine" below means the computer with your repositories: your own computer in the local arrangement, the workstation or server in the remote one. Agent Orchestrator, the agents' harnesses, the planner, every session, Hermes and the plugin run there, so closing the laptop or losing signal never stops work.
 
 ## What runs where
 
@@ -23,9 +23,9 @@ Switchyard works the same whether everything runs on the computer in front of yo
 
 Sessions never depend on the planner or on a client. If the planner is down, running sessions keep working; queued and scheduled work waits until it is back.
 
-## 1. omp, AO and Switchyard
+## 1. A coding agent, AO and Switchyard
 
-1. **A coding agent** on the machine, signed in, that AO can run in Chat mode: omp (`curl -fsSL https://omp.sh/install | sh`, then run `omp` and `/login`; AO needs omp 15.0.0 or newer), Claude Code, Codex, … Several are fine: [Which harness](#which-harness) says which one a session gets.
+1. **A coding agent** on the machine, signed in, of any harness AO can run in Chat mode: Claude Code, Codex, OpenCode, omp, … Switchyard needs none in particular. For omp: `curl -fsSL https://omp.sh/install | sh`, then run `omp` and `/login` (AO needs omp 15.0.0 or newer). Several harnesses are fine: [Which harness](#which-harness) says which one a session gets.
 2. **Agent Orchestrator** on the machine, one of:
    - **The AO desktop app** from [orchestrator.inc](https://orchestrator.inc/download/) (macOS, Windows, Linux). It owns the daemon and starts it for you; Switchyard finds it. Use this on a computer with a screen.
    - **Headless** (a server or a WSL 2 distribution): AO publishes no bare binary yet, so build it. You need Git and Go 1.27 or newer (`GOTOOLCHAIN=auto` downloads the right toolchain):
@@ -38,8 +38,8 @@ Sessions never depend on the planner or on a client. If the planner is down, run
    
    With the binary on `PATH` (or `~/.local/bin`, or `AO_BIN`), you don't start anything by hand: the first `switchyard` command or VS Code window that finds no daemon starts `ao daemon` as a systemd user unit (`ao-daemon.service`, enabled, with `KillMode=process` so that running sessions survive a restart of the daemon), or as a detached process where there is no systemd.
 3. **Switchyard**, one of:
-   - **The VS Code extension**: install **Switchyard**. Remote: connect VS Code to the machine with Remote-SSH (or WSL, or a dev container) first; the Extensions view installs it on that side, which is where it runs. Then run **Switchyard: Install switchyard Command** for the terminal command. The extension also installs the Switchyard omp extension into omp's agent folder (`~/.omp/agent/extensions/switchyard/`).
-   - **Only the command** (a headless server, or no VS Code): with Node 22+, `npm install -g <the switchyard package>` and `switchyard omp-extension install`.
+   - **The VS Code extension**: install **Switchyard**. Remote: connect VS Code to the machine with Remote-SSH (or WSL, or a dev container) first; the Extensions view installs it on that side, which is where it runs. Then run **Switchyard: Install switchyard Command** for the terminal command. The extension also installs the Switchyard omp extension into omp's agent folder (`~/.omp/agent/extensions/switchyard/`), which only omp sessions use.
+   - **Only the command** (a headless server, or no VS Code): with Node 22+, `npm install -g <the switchyard package>`, and, if you use omp, `switchyard omp-extension install`.
 4. **Check it**, in a terminal on the machine:
    ```sh
    switchyard status          # AO daemon, default harness, omp, the planner, default model, sessions, problems (exit 1 if any)
@@ -53,7 +53,7 @@ That is all Switchyard needs. The rest is optional.
 
 ### Which harness
 
-A session runs one of AO's chat harnesses (`switchyard harnesses` lists them with AO's auth status). Resolved for every session, from every client: the harness asked for (`switchyard new --harness <id>`, a planner task's or lane's `harness`, the Hermes tool's `harness` or a board's `harness`, VS Code's pick); else Switchyard's default (`switchyard config set harness <id>|none`, or VS Code's `switchyard.defaultHarness`, both in `~/.switchyard/config.json`); else the AO project's worker harness (`worker.agent`); else AO's default: the only authorized one, or with several `omp` when it is authorized, else the most used one. A harness AO can't chat with is refused with the list, and one AO reports it can't start here (`GET /api/v1/agents/chat/unavailable`, e.g. a missing ACP adapter) is never the default.
+oh-my-pi (`omp`) is one harness among AO's, not a requirement. A session runs one of AO's chat harnesses (`switchyard harnesses` lists them with AO's auth status). Resolved for every session, from every client: the harness asked for (`switchyard new --harness <id>`, a planner task's or lane's `harness`, the Hermes tool's `harness` or a board's `harness`, VS Code's pick); else Switchyard's default (`switchyard config set harness <id>|none`, or VS Code's `switchyard.defaultHarness`, both in `~/.switchyard/config.json`); else the AO project's worker harness (`worker.agent`); else AO's default: the only authorized one, or with several `omp` when it is authorized, else the most used one. A harness AO can't chat with is refused with the list, and one AO reports it can't start here (`GET /api/v1/agents/chat/unavailable`, e.g. a missing ACP adapter) is never the default.
 
 Claude Code chats go through AO's packaged ACP runtime, which a headless `ao daemon` built from source doesn't have: AO then refuses the session with "the Orchestrator ACP runtime is not installed". Give the daemon `AO_CLAUDE_ACP_COMMAND=<path to claude-agent-acp>` (`npm i -g @agentclientprotocol/claude-agent-acp`) in its unit's environment, or use the AO desktop app.
 
@@ -134,7 +134,7 @@ Hermes Desktop keeps its own copy of the old page (*omp Sessions* in its sidebar
    switchyard hermes install --all-profiles
    switchyard hermes status --all-profiles
    ```
-   `HERMES_HOME` is respected. The gateway loads the plugin without a restart; restart the dashboard once so it mounts the page's backend. When the extension updates, it refreshes the plugin and reloads it in the running gateway. Without VS Code, install it from Git instead: `hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable` (it still needs `switchyard` on the machine). Comments on kanban cards reach omp only from trusted authors (`lane.comment_authors`, default `dashboard`, which covers the dashboard and Hermes Console).
+   `HERMES_HOME` is respected. The gateway loads the plugin without a restart; restart the dashboard once so it mounts the page's backend. When the extension updates, it refreshes the plugin and reloads it in the running gateway. Without VS Code, install it from Git instead: `hermes plugins install mbaradad/switchyard/integrations/hermes/switchyard --enable` (it still needs `switchyard` on the machine). Comments on kanban cards reach omp only from trusted authors (`lane.comment_authors`, default `dashboard`, which covers the dashboard and Hermes Console).
 3. **The kanban lane**, in one profile: the one whose gateway runs the machine's kanban dispatcher. With a single multiplexed gateway that is `default`; with one gateway per profile, it is whichever gateway took the dispatcher lock. `hermes switchyard status` tells you which (`kanban dispatcher: last tick … in profile …`) and warns when the lane is on elsewhere.
    ```sh
    hermes -p default switchyard lane on --board <board>
@@ -149,7 +149,7 @@ Hermes Desktop keeps its own copy of the old page (*omp Sessions* in its sidebar
 | --- | --- |
 | **Web dashboard** (any browser) | Automatic once the plugin is enabled and the dashboard restarted: **Switchyard** appears under *Plugins* in the sidebar. |
 | **Hermes Desktop, local mode** (Hermes on this computer) | Desktop copies the page from the installed plugin. Turn **Switchyard** on in *Capabilities → Plugins* (use **Rescan** if it isn't listed). |
-| **Hermes Desktop, remote mode** (an SSH gateway or a remote URL) | Desktop plugins live on the computer running Desktop, so add the page there once: *Capabilities → Plugins → Install from Git*, repository `mbaradad/omp-sessions/integrations/hermes/switchyard`. The agent part is already on the machine, so Desktop reports that it exists and installs only the page. Then turn it on. |
+| **Hermes Desktop, remote mode** (an SSH gateway or a remote URL) | Desktop plugins live on the computer running Desktop, so add the page there once: *Capabilities → Plugins → Install from Git*, repository `mbaradad/switchyard/integrations/hermes/switchyard`. The agent part is already on the machine, so Desktop reports that it exists and installs only the page. Then turn it on. |
 
 The page always talks to the plugin on the machine Hermes runs on, so it shows that machine's sessions. After a plugin update, Desktop keeps its copy of the page until you **Rescan** (local) or **Install from Git** again with **Force reinstall** (remote); the page tells you when it is older than the plugin.
 

@@ -1279,7 +1279,7 @@ h2 .grad {
 	margin-left: 0;
 }
 
-/* Why: comparison with omp in tmux */
+/* Layer: who does what */
 
 .vs {
 	width: 100%;
@@ -1345,6 +1345,7 @@ h2 .grad {
 }
 
 .vs .i {
+	display: inline-block;
 	width: 18px;
 	height: 18px;
 	vertical-align: -3px;
@@ -1450,7 +1451,7 @@ h2 .grad {
 	color: var(--accent);
 }
 
-/* New in 0.6: bento */
+/* Control: bento */
 
 .bento {
 	display: grid;
@@ -1745,6 +1746,30 @@ h2 .grad {
 	max-width: 760px;
 	margin: 0 auto 40px;
 	text-align: center;
+}
+
+.duo-head--after {
+	margin-top: clamp(56px, 7vw, 88px);
+}
+
+.row--after {
+	margin-top: clamp(56px, 7vw, 88px);
+}
+
+.olist {
+	display: grid;
+	gap: 6px;
+	margin: 8px 0 0;
+	padding-left: 1.3em;
+	list-style: decimal;
+	color: var(--text-2);
+	font-size: 15px;
+}
+
+.omp-tag {
+	color: var(--text-3);
+	font-weight: 500;
+	font-size: 0.8em;
 }
 
 .duo {

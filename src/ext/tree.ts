@@ -2,13 +2,14 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { isOmpHarness } from "../ao/harness";
 import { SYNC_LABEL } from "../kanban/board";
-import { waitsForLabel } from "../kanban/graph";
+import { waitsForLabel } from "../shared/session-graph";
 import { hermesOrigin, isHermesTag, originLabel } from "../shared/hermes-origin";
 import { type OrganizeStore, effectiveColor, groupPath } from "../shared/organize";
 import { type ViewNode, buildView, isGroupMode, isSortMode, siblingIds } from "../shared/organize-view";
 import type { SessionMeta } from "../shared/protocol";
 import { agentState } from "../shared/session-report";
 import { holdText } from "../shared/task-text";
+import { STATUS_LABEL } from "./session-view";
 import { orgThemeColor } from "./organize";
 import { type SessionManager, projectRoot } from "./sessions";
 import { headOf } from "./worktree-git";
@@ -26,7 +27,7 @@ export function isNode(v: unknown): v is Node {
 	return !!v && typeof v === "object" && "kind" in v && typeof v.kind === "string";
 }
 
-function relTime(ts: number): string {
+export function relTime(ts: number): string {
 	const s = Math.max(0, (Date.now() - ts) / 1000);
 	if (s < 60) return "just now";
 	if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -34,20 +35,12 @@ function relTime(ts: number): string {
 	return `${Math.floor(s / 86400)}d ago`;
 }
 
-const STATUS_ICON: Record<SessionMeta["status"], vscode.ThemeIcon> = {
+export const STATUS_ICON: Record<SessionMeta["status"], vscode.ThemeIcon> = {
 	starting: new vscode.ThemeIcon("loading~spin"),
 	working: new vscode.ThemeIcon("loading~spin", new vscode.ThemeColor("charts.blue")),
 	waiting: new vscode.ThemeIcon("bell-dot", new vscode.ThemeColor("charts.yellow")),
 	idle: new vscode.ThemeIcon("pass-filled", new vscode.ThemeColor("charts.green")),
 	stopped: new vscode.ThemeIcon("circle-outline"),
-};
-
-const STATUS_LABEL: Record<SessionMeta["status"], string> = {
-	starting: "starting",
-	working: "working",
-	waiting: "needs input",
-	idle: "idle",
-	stopped: "stopped",
 };
 
 /** "3 · 1 working · 1 needs input" for a container. */
@@ -178,7 +171,11 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 		const held = m.queue?.state === "held" && m.queue.pending > 0 ? `✋ ${holdText(m.queue.waitReason, m.queue.waitUntil)}` : "";
 		const waits = m.status === "working" || m.status === "starting" || m.status === "waiting" ? undefined : waitsForLabel(m.queue ?? {}, (m.queue?.blockedBy ?? []).map(id => ({ id, title: this.sessions.get(id)?.title ?? "" })));
 		const harness = isOmpHarness(m.harness) ? undefined : m.harness;
-		item.description = [unread ? "● new" : "", held || STATUS_LABEL[m.status], waits?.text ?? "", where, relTime(m.updatedAt), harness ?? ""].filter(Boolean).join(" · ");
+		// AO's own status line says what a PR waits for (`CI failing`, `Changes requested`, `Mergeable`): no second opinion here.
+		const view = this.sessions.model(m.id)?.view;
+		const pr = view?.prs.find(p => p.state === "open" || p.state === "draft") ?? view?.prs[0];
+		const prChip = view && pr ? `PR #${pr.number}${pr.state === "open" ? ` ${view.displayStatus.toLowerCase()}` : ` ${pr.state}`}${view.prs.length > 1 ? ` +${view.prs.length - 1}` : ""}` : "";
+		item.description = [unread ? "● new" : "", held || STATUS_LABEL[m.status], prChip, waits?.text ?? "", where, relTime(m.updatedAt), harness ?? ""].filter(Boolean).join(" · ");
 		const tip = new vscode.MarkdownString(undefined, true);
 		tip.appendMarkdown(`**${m.title.replace(/[*_`[\]]/g, "\\$&")}**\n\n`);
 		tip.appendMarkdown(`$(folder) \`${m.cwd}\`  \n$(pulse) ${STATUS_LABEL[m.status]}${m.exitReason && m.status === "stopped" ? ` (${m.exitReason})` : ""}  \n`);
@@ -251,7 +248,7 @@ export class SessionTree implements vscode.TreeDataProvider<Node>, vscode.TreeDr
 			].filter(Boolean);
 			if (lines.length) item.tooltip.appendMarkdown(`\n\n${lines.join("  \n")}`);
 		}
-		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${completed ? ".completed" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}`;
+		item.contextValue = `${item.contextValue ?? "session"}${e?.pinned ? ".pinned" : ""}${e?.archived ? ".archived" : ""}${completed ? ".completed" : ""}${e?.groupId ? ".grouped" : ""}${origin?.card ? ".hermesCard" : ""}${this.sessions.model(m.id)?.view.prs.length ? ".pr" : ""}`;
 	}
 
 	/** Session ids shown next to `node` in its container (display order). */

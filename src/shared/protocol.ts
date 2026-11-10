@@ -14,6 +14,8 @@ export type SyncState = "in-sync" | "pending" | "merged" | "resolving" | "confli
 export interface SessionMeta {
 	id: string;
 	cwd: string;
+	/** Set for an AO project's orchestrator (the coordinating agent above the workers). SessionManager holds it so its chat opens, but lists, boards and counts leave it out. */
+	kind?: "orchestrator";
 	title: string;
 	status: SessionStatus;
 	pid: number;

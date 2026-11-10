@@ -2,7 +2,7 @@
 
 Two stores:
 - the profile's own state (ctx.state: <HERMES_HOME>/plugin-data/<plugin>/state.json): which Hermes
-  session to notify about which omp session;
+  session to notify about which session;
 - the lane's state (FileState in <kanban root>/plugin-data/switchyard-lane/): card <-> session links.
   Kanban boards are shared by every profile, so the lane's links and its lock live next to them:
   however many gateways (profiles) run the plugin, one lane pass runs at a time on this machine and

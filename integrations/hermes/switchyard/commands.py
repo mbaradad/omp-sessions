@@ -147,7 +147,7 @@ def status_text(d: dict) -> str:
     s = d.get("scheduler")
     if s:
         limit = f"limit {s.get('maxConcurrent')}" if s.get("maxConcurrent") else "no limit"
-        lines.append(f"omp scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once switchyard starts it)'}")
+        lines.append(f"scheduler: {s.get('running', 0)} running, {s.get('waiting', 0)} waiting ({limit}{', paused' if s.get('paused') else ''}){'' if s.get('server') else ' · the planner is not running (queued tasks start once switchyard starts it)'}")
     lines.extend(_usage_lines(s))
     ext = (d.get("omp") or {}).get("extension")
     if isinstance(ext, dict) and ext.get("installed") is False:
@@ -183,7 +183,7 @@ def status_text(d: dict) -> str:
             flags = " · waiting on input" if l["waiting_on_input"] else ""
             flags += f" · lane {l['lane_state']}" if l["lane_state"] != "active" else ""
             flags += f" · {l['error']}" if l.get("error") else ""
-            lines.append(f"  {l['card']}  {l['title']!s:.50}  → omp {sid} ({l['session_status']}){flags}")
+            lines.append(f"  {l['card']}  {l['title']!s:.50}  → session {sid} ({l['session_status']}){flags}")
     else:
         lines.append("linked cards: none")
     return "\n".join(lines)
@@ -195,7 +195,7 @@ def sessions_summary(omp: Switchyard) -> str:
     except SwitchyardError as exc:
         return f"switchyard: {exc}"
     if not infos:
-        return "No running omp sessions."
+        return "No running sessions."
     lines = []
     for s in infos:
         m = s.get("meta") or {}
@@ -213,7 +213,7 @@ def sessions_brief(omp: Switchyard) -> str:
     except SwitchyardError as exc:
         return f"switchyard: {exc}"
     if not infos:
-        return "No running omp sessions."
+        return "No running sessions."
     by: dict[str, list[dict]] = {}
     for s in infos:
         by.setdefault(agent_state(s), []).append(s)
@@ -234,8 +234,29 @@ def sessions_brief(omp: Switchyard) -> str:
     return "\n".join(lines)
 
 
+def orchestrators_summary(omp: Switchyard) -> str:
+    """`/switchyard orchestrator`: AO's orchestrators (one per project) with their state, workers and what they ask."""
+    try:
+        infos = omp.orchestrators(stopped=True)
+    except SwitchyardError as exc:
+        return f"switchyard: {exc}"
+    if not infos:
+        return 'No project has an orchestrator yet (switchyard orchestrator submit "<task>" --project <project> starts one).'
+    lines = []
+    for o in infos:
+        counts = o.get("counts") if isinstance(o.get("counts"), dict) else {}
+        bits = [f"{counts[k]} {label}" for k, label in (("working", "working"), ("needsInput", "need you"), ("idle", "idle"), ("stopped", "stopped"), ("openPrs", "open PRs")) if counts.get(k)]
+        harness = f" · {o['harness']}" if o.get("harness") else ""
+        workers = f"{counts.get('workers', 0)} workers" + (f" ({', '.join(bits)})" if bits else "")
+        lines.append(f"{o.get('projectName')}{harness}: {o.get('state')}{'' if o.get('active') else ' (stopped)'} · {workers} · {short(str(o.get('id', '')))}")
+        q = o.get("question")
+        if isinstance(q, dict):
+            lines.append(f"  needs you: {q.get('title')}")
+    return "\n".join(lines)
+
+
 def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane) -> str:
-    """Assigns a kanban card to the Switchyard lane (`/switchyard take <card> [board]`): the way to route a card to omp
+    """Assigns a kanban card to the Switchyard lane (`/switchyard take <card> [board]`): the way to route a card to the lane
     from clients whose assignee picker only offers Hermes profiles (Hermes Console on Android)."""
     from hermes_cli import kanban_db as kb
     from hermes_cli import kanban_db_connect as kbc
@@ -260,13 +281,13 @@ def take_card(card_id: str, board: Optional[str], settings: Settings, lane: Lane
         if disp and disp.get("lane_on") is False:
             note = f" The Switchyard lane is off in profile {disp.get('profile')}, where the kanban dispatcher runs: `hermes -p {disp.get('profile')} switchyard lane on`."
         else:
-            note = " The Switchyard lane starts it as an omp session once it is ready."
+            note = " The Switchyard lane starts it as a session once it is ready."
         return f"{card_id} on {slug} is assigned to {assignee}.{note}"
     return f"No card {card_id} on {'board ' + board if board else 'any open board'}."
 
 
 def archive_done_text(slugs: Sequence[str], lane: Lane) -> str:
-    """`hermes switchyard archive-done`: archives each board's done lane cards and their omp sessions."""
+    """`hermes switchyard archive-done`: archives each board's done lane cards and their sessions."""
     lines = []
     for slug in slugs:
         try:
@@ -275,7 +296,7 @@ def archive_done_text(slugs: Sequence[str], lane: Lane) -> str:
             lines.append(f"{slug}: {exc}")
             continue
         n = len(r["archived"])
-        lines.append(f"{slug}: archived {n} done card{'' if n == 1 else 's'}" + (f" ({', '.join(r['archived'])})" if n else "") + f" and {len(r['sessions'])} omp session(s)")
+        lines.append(f"{slug}: archived {n} done card{'' if n == 1 else 's'}" + (f" ({', '.join(r['archived'])})" if n else "") + f" and {len(r['sessions'])} session(s)")
         lines.extend(f"  ! {card}: {why}" for card, why in r["failed"].items())
     return "\n".join(lines) or "No boards."
 
@@ -284,39 +305,39 @@ def setup_cli(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="omp_cmd")
     st = sub.add_parser("status", help="switchyard, notifications, the kanban lane and linked cards")
     st.add_argument("--json", action="store_true")
-    sub.add_parser("sessions", help="running omp sessions")
+    sub.add_parser("sessions", help="running sessions")
     lane = sub.add_parser("lane", help="the kanban lane: on, off, run")
     lane_sub = lane.add_subparsers(dest="lane_cmd")
     on = lane_sub.add_parser("on", help="run cards assigned to the assignee as coding agent sessions")
     on.add_argument("--assignee", help="card assignee the lane takes (default switchyard)")
     on.add_argument("--mode", choices=MODES, help="starting permission mode of card sessions")
     on.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every board)")
-    on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach omp and whose @switchyard assigns cards (default dashboard; * anyone)")
-    on.add_argument("--archive-completed", choices=("on", "off"), help="archive a card and its omp session once the lane completes it (default off)")
+    on.add_argument("--comment-authors", help="comma-separated kanban comment authors whose comments reach the agent and whose @switchyard assigns cards (default dashboard; * anyone)")
+    on.add_argument("--archive-completed", choices=("on", "off"), help="archive a card and its session once the lane completes it (default off)")
     lane_sub.add_parser("off", help="stop taking new cards (linked cards are still reported)")
     run = lane_sub.add_parser("run", help="one lane pass now (normally every dispatcher tick)")
     run.add_argument("--board", action="append", default=[], help="only this board (repeatable)")
     board = sub.add_parser("board", help="per-board lane settings")
     board.add_argument("slug")
     board.add_argument("--folder", help="cwd for cards with a scratch workspace")
-    board.add_argument("--group", help="omp group of the board's sessions (default: board name)")
+    board.add_argument("--group", help="group of the board's sessions (default: board name)")
     board.add_argument("--mode", choices=MODES)
     board.add_argument("--assignee")
     board.add_argument("--model", help="model of the board's card sessions, e.g. anthropic/claude-sonnet-4-5 (\"\": Switchyard's default)")
     board.add_argument("--harness", help="AO chat harness of the board's card sessions, e.g. claude-code, codex, omp (`switchyard harnesses` lists them; \"\": Switchyard's default, the AO project's worker harness, else AO's default)")
     board.add_argument("--comment-authors", help="comma-separated trusted comment authors on this board (\"\": the lane's list)")
-    board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their omp sessions) once the lane completes them (default: the lane's setting)")
+    board.add_argument("--archive-completed", choices=("on", "off", "default"), help="archive this board's cards (and their sessions) once the lane completes them (default: the lane's setting)")
     board.add_argument("--remove", action="store_true", help="drop the board from the lane's list")
     project = sub.add_parser("project", help="map a Hermes project (or any name) to a folder")
     project.add_argument("name")
     project.add_argument("folder", nargs="?")
     project.add_argument("--remove", action="store_true")
-    notify = sub.add_parser("notify", help="tell Hermes sessions when their omp sessions settle")
+    notify = sub.add_parser("notify", help="tell Hermes sessions when their sessions settle")
     notify.add_argument("value", choices=("on", "off"))
     take = sub.add_parser("take", help="assign a kanban card to the Switchyard lane")
     take.add_argument("card")
     take.add_argument("--board", help="the card's board (default: search every open board)")
-    done = sub.add_parser("archive-done", help="archive the done lane cards of a board and their omp sessions")
+    done = sub.add_parser("archive-done", help="archive the done lane cards of a board and their sessions")
     done.add_argument("--board", action="append", default=[], help="only this board (repeatable; default: every open board)")
 
 

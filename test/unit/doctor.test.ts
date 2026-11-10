@@ -259,3 +259,15 @@ test("reportToHtml: escapes content, links fixes as command URIs, no scripts", (
 	assert.ok(html.includes(`href="command:switchyard.resumeSession?${encodeURIComponent(JSON.stringify(["abc123"])).replace(/"/g, "&quot;")}"`));
 	assert.equal(commandLink({ label: "x", command: "switchyard.doctor" }), "command:switchyard.doctor");
 });
+
+test("aoChecks: running orchestrators are informational lines (harness, workers); none running says how to start one", () => {
+	const none = aoChecks({ ...AO_OK, orchestrators: [] }).at(-1);
+	assert.equal(none?.level, "info");
+	assert.equal(none?.title, "No orchestrator running");
+	assert.deepEqual(none?.fixes?.map(f => f.command), ["switchyard.orchestrator.submit"]);
+	const checks = aoChecks({ ...AO_OK, orchestrators: [{ projectId: "app", project: "app", harness: "claude-code", workers: 3, openPrs: 2 }, { projectId: "lib", project: "lib", workers: 1, openPrs: 0 }] });
+	const lines = checks.slice(-2);
+	assert.deepEqual(lines.map(c => [c.level, c.title, c.detail]), [["info", "Orchestrator of app running", "claude-code · 3 workers · 2 open PRs"], ["info", "Orchestrator of lib running", "1 worker"]]);
+	assert.deepEqual(lines[0].fixes?.map(f => [f.command, f.args]), [["switchyard.orchestrator.openChat", ["app"]]]);
+	assert.deepEqual(aoChecks(AO_OK).map(c => c.level), ["ok", "ok", "ok"], "AO could not list them: no line");
+});

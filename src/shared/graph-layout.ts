@@ -1,5 +1,5 @@
-// Layered left-to-right layout of a dependency graph, for the task graph view (src/graph). Ported as it
-// was from the parked `omp/deps` branch (`src/kanban/graph.ts`), minus its board-card helpers.
+// Layered left-to-right layout of a dependency graph, for the graph views (src/shared/graph-svg.ts). Ported as it
+// was from the parked `omp/deps` branch, minus its board-card helpers (those are src/shared/session-graph.ts).
 // Pure: no DOM, vscode or node imports; it is bundled into the webview.
 
 export interface GraphEdge {

@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag `v<version>` matching package.json's version (e.g. `git tag v0.5.0 && git push origin v0.5.0`).
 # Marketplace auth: Trusted Publishing (OIDC), no stored token — the publisher has a policy for
-# mbaradad/omp-sessions, workflow release.yml (docs/PUBLISHING.md).
+# mbaradad/switchyard, workflow release.yml (docs/PUBLISHING.md).
 on:
   push:
     tags: ["v*"]

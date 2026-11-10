@@ -98,7 +98,7 @@ function apply(api: OmpApi, updates: FromBoard): void {
  * Run now or Requeue a card's queue on the planner (queueOpsFor says which ops). The planner resumes a stopped
  * session itself when it dispatches.
  */
-async function queueAction(api: OmpApi, id: string, action: "run" | "requeue"): Promise<void> {
+export async function queueAction(api: OmpApi, id: string, action: "run" | "requeue"): Promise<void> {
 	const meta = api.sessions.get(id);
 	const ops = queueOpsFor(action, { queue: meta?.queue, startAt: scheduledStart(meta?.queue) }, api.sessions.queue(id).tasks.some(t => t.status === "pending"));
 	if (ops.length === 0) {

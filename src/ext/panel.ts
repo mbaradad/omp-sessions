@@ -812,7 +812,7 @@ export class ChatPanel implements vscode.Disposable {
 		const meta = this.meta;
 		if (!meta) return;
 		const mark = meta.status === "working" ? "● " : meta.status === "waiting" ? "◆ " : "";
-		this.surface.title = `${mark}${meta.title}`;
+		this.surface.title = `${mark}${meta.kind === "orchestrator" ? "Orchestrator · " : ""}${meta.title}`;
 		this.surface.decorate(chatDecorator(this.sessionId));
 	}
 

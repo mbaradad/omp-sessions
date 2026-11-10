@@ -164,8 +164,11 @@ export function canRerunWithParent(c: BoardCard): boolean {
 	return c.sync?.state === "upstream-changed" || c.sync?.state === "conflict";
 }
 
+/** What decides a session's status column: the Overview classifies its sessions the same way. */
+export type StatusFacts = Pick<BoardCard, "status" | "blockedBy" | "queue" | "waiting" | "sync" | "completed">;
+
 /** A session marked completed shows as Completed only while nothing happens in it (stopped or idle). */
-export function statusKey(c: BoardCard): StatusKey {
+export function statusKey(c: StatusFacts): StatusKey {
 	// Pending tasks held back by unfinished dependencies: queued, even when the session is stopped.
 	// Held ones (a provider limit, a usage window, the budget, a retry backoff) are queued too: they start by themselves.
 	if ((c.blockedBy?.length || c.queue?.state === "held") && (c.queue?.pending ?? 0) > 0 && (c.status === "stopped" || c.status === "idle")) return "queued";

@@ -174,3 +174,8 @@ test("pushRecent: most recent first, deduplicated, capped", () => {
 	assert.deepEqual(pushRecent(["a", "b", "c"], "b"), ["b", "a", "c"]);
 	assert.deepEqual(pushRecent(["a", "b", "c", "d", "e"], "f"), ["f", "a", "b", "c", "d"]);
 });
+
+test("commandGroup: the orchestrator commands have their own group, whatever their words say", () => {
+	for (const id of ["submit", "steer", "configure", "stop", "openChat", "restart"]) assert.equal(commandGroup(`switchyard.orchestrator.${id}`), "Orchestrator", id);
+	assert.equal(commandGroup("switchyard.tasks.add"), "Tasks");
+});

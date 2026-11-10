@@ -33,6 +33,7 @@ const GROUP_ICON: Record<CommandGroup, string> = {
 	Sessions: "hubot",
 	Chat: "comment",
 	Tasks: "checklist",
+	Orchestrator: "organization",
 	"Review & git": "git-compare",
 	"omp account & tools": "account",
 	Help: "question",

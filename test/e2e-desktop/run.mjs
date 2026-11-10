@@ -12,7 +12,7 @@
 //
 // Scripted runs: SWITCHYARD_E2E_FAKE_OMP=1 runs the daemon's sessions on test/fake-omp-acp.mjs instead of the real omp (no
 // tokens, no login; the agent folder is a scratch one, not the linked real one); SWITCHYARD_E2E_SUITES=sounds,... runs only
-// the named suite files (desktop, flow, sounds; default desktop then flow). SWITCHYARD_E2E_AO_PORT pins the daemon's port.
+// the named suite files (desktop, flow, sounds, overview; default desktop then flow). SWITCHYARD_E2E_AO_PORT pins the daemon's port.
 
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -47,7 +47,7 @@ if (build.status !== 0) process.exit(build.status ?? 1);
 const outDir = path.join(here, "out-views");
 fs.rmSync(outDir, { recursive: true, force: true });
 await esbuild.build({
-	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts"), path.join(here, "suite", "flow.test.ts"), path.join(here, "suite", "sounds.test.ts")],
+	entryPoints: [path.join(here, "suite", "index.ts"), path.join(here, "suite", "desktop.test.ts"), path.join(here, "suite", "flow.test.ts"), path.join(here, "suite", "sounds.test.ts"), path.join(here, "suite", "overview.test.ts")],
 	outdir: outDir,
 	bundle: true,
 	platform: "node",

@@ -7,8 +7,8 @@ Thanks for helping. Bug reports, fixes and features are welcome. For anything la
 Requirements: Node.js 22+, npm, git, VS Code 1.100+. Linux or macOS for the full test suite; Windows works for unit tests (named pipes and `.cmd` shims are handled, but the platform is not yet fully tested). The integration tests start an isolated Agent Orchestrator daemon, so they need an `ao` binary (`SWITCHYARD_TEST_AO_BIN`, or `ao` on `PATH`; see [docs/SETUP.md](docs/SETUP.md)); they skip without one. `omp` itself is only needed to try the extension by hand; the tests use a scripted stand-in.
 
 ```sh
-git clone https://github.com/mbaradad/omp-sessions.git
-cd omp-sessions
+git clone https://github.com/mbaradad/switchyard.git
+cd switchyard
 npm ci
 npm run build        # esbuild → out/ (npm run watch to rebuild on change)
 ```
@@ -42,7 +42,7 @@ npm run test:e2e:desktop   # real desktop VS Code (downloaded to .vscode-test/, 
 
 ## Code style
 
-- TypeScript, tabs, double quotes. Keep code boring and robust across Linux, macOS, Windows, local desktop and Remote-SSH, with omp missing and sessions stopped.
+- TypeScript, tabs, double quotes. Keep code boring and robust across Linux, macOS, Windows, local desktop and Remote-SSH, with the agent harness (omp or another) missing and sessions stopped.
 - No `any` and no `as { … }` casts: narrow with type guards. Prefer `Promise.withResolvers()` to `new Promise`.
 - New user-facing behaviour gets a test, a README mention and a `CHANGELOG.md` entry under the next version.
 

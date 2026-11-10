@@ -1,10 +1,12 @@
-"""switchyard: Hermes plugin for omp coding sessions, run by Agent Orchestrator (AO) through the
+"""switchyard: Hermes plugin for coding sessions, run by Agent Orchestrator (AO) through the
 switchyard CLI (the same sessions VS Code, the AO app, AO Mobile and the CLI show).
 
 - Tools (toolset switchyard) to list, start, queue, schedule, check, wait on, answer, steer and stop
-  omp sessions, add tasks to their queues, set priority, and read the server's status.
-- Notifications: a Hermes session that started an omp session gets a message when it settles.
-- Kanban lane: cards assigned to `switchyard` run as omp sessions and report back to the card.
+  sessions, add tasks to their queues, set priority, and read the server's status; and to give AO's
+  orchestrator a high-level task, see it and its workers, configure and replace it.
+- Notifications: a Hermes session that started a session (or gave an orchestrator a task) gets a
+  message when it settles.
+- Kanban lane: cards assigned to `switchyard` run as sessions and report back to the card.
 - Bundled skill `switchyard:switchyard`, `/switchyard`, and `hermes switchyard …`.
 """
 
@@ -14,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .commands import run_cli, sessions_brief, sessions_summary, setup_cli, status_data, status_text, take_card
+from .commands import orchestrators_summary, run_cli, sessions_brief, sessions_summary, setup_cli, status_data, status_text, take_card
 from .lane import Lane
 from .notify import Notifier, inject_with
 from .switchyard import Switchyard
@@ -26,7 +28,7 @@ log = logging.getLogger(__name__)
 
 SKILL_FILE = Path(__file__).parent / "skills" / "switchyard" / "SKILL.md"
 SKILL_DESCRIPTION = (
-    "Start, queue, schedule and supervise omp coding sessions that keep running in the background "
+    "Start, queue, schedule and supervise coding sessions that keep running in the background "
     "(switchyard_session_* tools or the switchyard CLI)."
 )
 
@@ -75,7 +77,7 @@ class Plugin:
         try:
             self.notifier.poll()
         except Exception as exc:
-            log.warning("omp notify: %s", exc, exc_info=True)
+            log.warning("switchyard notify: %s", exc, exc_info=True)
         self.lane.tick(board)
 
     def slash(self, raw_args: str = "", **_: Any) -> str:
@@ -88,6 +90,8 @@ class Plugin:
             return take_card(args[1], args[2] if len(args) == 3 else None, self.settings(), self.lane)
         if args[:1] == ["sessions"]:
             return sessions_summary(self.omp())
+        if args[:1] in (["orchestrator"], ["orchestrators"]):
+            return orchestrators_summary(self.omp())
         return sessions_brief(self.omp())
 
     def cli(self, args: Any) -> int:
@@ -100,7 +104,7 @@ def register(ctx: Any) -> None:
     for name, handler in plugin.tools.handlers().items():
         ctx.register_tool(name=name, toolset=TOOLSET, schema=SCHEMAS[name], handler=handler, check_fn=available, emoji="🛠")
     ctx.register_hook("on_kanban_dispatch_tick", plugin.on_dispatch_tick)
-    ctx.register_command("switchyard", plugin.slash, description="omp sessions: what's working and what needs you; status; take <card> assigns a kanban card to omp", args_hint="[status|sessions|take <card> [board]]")
-    ctx.register_cli_command(name="switchyard", help="omp sessions: status, kanban lane, board folders", setup_fn=setup_cli, handler_fn=plugin.cli)
+    ctx.register_command("switchyard", plugin.slash, description="sessions: what's working and what needs you; status; orchestrator shows AO's orchestrators and their workers; take <card> assigns a kanban card to the lane", args_hint="[status|sessions|orchestrator|take <card> [board]]")
+    ctx.register_cli_command(name="switchyard", help="sessions: status, kanban lane, board folders", setup_fn=setup_cli, handler_fn=plugin.cli)
     if SKILL_FILE.is_file():
         ctx.register_skill("switchyard", SKILL_FILE, description=SKILL_DESCRIPTION, frontmatter={"name": "switchyard", "description": SKILL_DESCRIPTION})

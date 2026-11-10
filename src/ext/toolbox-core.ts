@@ -139,7 +139,7 @@ export function modelDetail(m: ModelInfo): string {
 
 // ---------- command center ----------
 
-export const GROUPS = ["Sessions", "Chat", "Tasks", "Review & git", "omp account & tools", "Help"] as const;
+export const GROUPS = ["Sessions", "Chat", "Tasks", "Orchestrator", "Review & git", "omp account & tools", "Help"] as const;
 export type CommandGroup = (typeof GROUPS)[number];
 
 const EXPLICIT: Record<string, CommandGroup> = {
@@ -176,6 +176,8 @@ const EXPLICIT: Record<string, CommandGroup> = {
 
 /** Ordered keyword rules for commands without an explicit group (e.g. ones added later). */
 const RULES: Array<[RegExp, CommandGroup]> = [
+	[/^switchyard\.orchestrator\./, "Orchestrator"],
+	[/^switchyard\.pr\./, "Review & git"],
 	[/^omp\.tasks?\.|task|queue/i, "Tasks"],
 	[/scm|git|diff|review|revert|changes|commit|worktree|checkpoint/i, "Review & git"],
 	[/login|logout|update|setup|plugin|skill|usage|stats|model|account|mcp/i, "omp account & tools"],
@@ -201,7 +203,7 @@ export interface CommandCenterEntry {
 }
 
 /** Commands that make no sense from a list (they need a tree item, a file, or are this list itself). */
-const ALWAYS_HIDDEN = new Set(["switchyard.commandCenter", "switchyard.openSessionFileDiff"]);
+const ALWAYS_HIDDEN = new Set(["switchyard.commandCenter", "switchyard.openSessionFileDiff", "switchyard.pr.openFile", "switchyard.pr.openThread", "switchyard.pr.openInWorktree", "switchyard.pr.thread.sendToAgent"]);
 
 function prettyKey(key: string, platform: NodeJS.Platform): string {
 	const mac: Record<string, string> = { cmd: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };

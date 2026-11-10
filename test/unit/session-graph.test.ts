@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { type BoardCard, buildColumns, filterCards, statusKey } from "../../src/kanban/board";
-import { GRAPH_METRICS, type GraphEdge, type GraphLayout, dependencyGraph, layoutGraph, waitsForLabel } from "../../src/kanban/graph";
+import { type GraphCard, SESSION_MARKERS, dependencyGraph, edgeKind, plannerBadge, sessionDag, waitsForLabel } from "../../src/shared/session-graph";
 
 const NOW = 1_700_000_000_000;
 
@@ -24,99 +24,6 @@ function card(id: string, extra: Partial<BoardCard> = {}): BoardCard {
 	};
 }
 const queue = (pending: number) => ({ pending, running: 0, done: 0, total: pending });
-const layerOf = (l: GraphLayout, id: string) => l.positions.get(id)?.layer;
-
-describe("layoutGraph", () => {
-	test("chain A→B→C: increasing layers left to right", () => {
-		const l = layoutGraph(["c", "b", "a"], [
-			{ from: "a", to: "b" },
-			{ from: "b", to: "c" },
-		]);
-		assert.deepEqual(l.layers, [["a"], ["b"], ["c"]]);
-		const xs = ["a", "b", "c"].map(id => l.positions.get(id)?.x ?? -1);
-		assert.ok(xs[0] < xs[1] && xs[1] < xs[2]);
-		assert.ok(l.width > 0 && l.height > 0);
-	});
-
-	test("diamond: the join waits for the longest path", () => {
-		const edges: GraphEdge[] = [
-			{ from: "a", to: "b" },
-			{ from: "a", to: "c" },
-			{ from: "b", to: "d" },
-			{ from: "c", to: "d" },
-			{ from: "a", to: "d" },
-		];
-		const l = layoutGraph(["a", "b", "c", "d"], edges);
-		assert.deepEqual(["a", "b", "c", "d"].map(id => layerOf(l, id)), [0, 1, 1, 2]);
-		assert.deepEqual(new Set(l.layers[1]), new Set(["b", "c"]));
-		assert.notEqual(l.positions.get("b")?.y, l.positions.get("c")?.y);
-	});
-
-	test("disconnected nodes sit in the first layer; unknown ids, self-loops and duplicates are ignored", () => {
-		const l = layoutGraph(["x", "a", "b", "y"], [
-			{ from: "a", to: "b" },
-			{ from: "a", to: "b" },
-			{ from: "y", to: "y" },
-			{ from: "ghost", to: "x" },
-		]);
-		assert.deepEqual(["x", "a", "b", "y"].map(id => layerOf(l, id)), [0, 0, 1, 0]);
-		assert.equal(l.positions.size, 4);
-		assert.deepEqual(l.reversed, []);
-	});
-
-	test("barycenter ordering untangles crossing edges", () => {
-		// a1→b2, a2→b1 in input order would cross; the sweep swaps one layer.
-		const l = layoutGraph(["a1", "a2", "b1", "b2"], [
-			{ from: "a1", to: "b2" },
-			{ from: "a2", to: "b1" },
-		]);
-		const ord = (id: string) => l.positions.get(id)?.order ?? -1;
-		assert.equal(ord("a1") < ord("a2"), ord("b2") < ord("b1"));
-	});
-
-	test("cycles terminate, place every node once and are broken deterministically", () => {
-		const nodes = ["a", "b", "c", "d"];
-		const edges: GraphEdge[] = [
-			{ from: "a", to: "b" },
-			{ from: "b", to: "c" },
-			{ from: "c", to: "a" },
-			{ from: "c", to: "d" },
-			{ from: "d", to: "b" },
-		];
-		const l = layoutGraph(nodes, edges);
-		assert.equal(l.positions.size, 4);
-		assert.deepEqual(l.layers.flat().sort(), nodes);
-		assert.ok(l.reversed.length >= 1);
-		assert.deepEqual(layoutGraph(nodes, edges), l);
-		// Two-node cycle.
-		const two = layoutGraph(["p", "q"], [
-			{ from: "p", to: "q" },
-			{ from: "q", to: "p" },
-		]);
-		assert.deepEqual(two.layers, [["p"], ["q"]]);
-	});
-
-	test("long edges route through a virtual slot instead of across the node in between", () => {
-		const l = layoutGraph(["a", "b", "c"], [
-			{ from: "a", to: "b" },
-			{ from: "b", to: "c" },
-			{ from: "a", to: "c" },
-		]);
-		assert.deepEqual(l.layers, [["a"], ["b"], ["c"]]);
-		const long = l.routes.find(r => r.from === "a" && r.to === "c");
-		assert.equal(long?.points.length, 4);
-		const b = l.positions.get("b");
-		const via = long?.points[1];
-		assert.ok(b && via && via.x === b.x && via.y !== b.y + GRAPH_METRICS.nodeHeight / 2);
-		const short = l.routes.find(r => r.from === "a" && r.to === "b");
-		assert.equal(short?.points.length, 2);
-		assert.equal(l.routes.length, 3);
-	});
-
-	test("empty graph", () => {
-		assert.deepEqual(layoutGraph([], []), { layers: [], positions: new Map(), routes: [], reversed: [], width: 0, height: 0 });
-	});
-});
 
 describe("dependencyGraph", () => {
 	test("cards with dependencies plus the ones they wait for; filtered-out cards drop out", () => {
@@ -146,6 +53,77 @@ describe("waitsForLabel", () => {
 		assert.match(many?.tooltip ?? "", /Write docs[\s\S]*Build API[\s\S]*zzzzzzzz$/);
 		assert.equal(waitsForLabel({ blockedBy: [] }, cards), undefined);
 		assert.equal(waitsForLabel({}, cards), undefined);
+	});
+});
+
+describe("edgeKind", () => {
+	test("propagation state wins; otherwise a waiting child makes the arrow pending", () => {
+		assert.equal(edgeKind("conflict", false), "conflict");
+		assert.equal(edgeKind("resolving", false), "conflict");
+		assert.equal(edgeKind("upstream-changed", true), "changed");
+		assert.equal(edgeKind("pending", false), "pending");
+		assert.equal(edgeKind("merged", true), "merged");
+		assert.equal(edgeKind("in-sync", true), "pending");
+		assert.equal(edgeKind(undefined, false), undefined);
+	});
+});
+
+describe("plannerBadge", () => {
+	const at = new Date(2025, 0, 10, 12, 0).getTime();
+	const now = new Date(2025, 0, 10, 9, 0);
+	test("nothing while the queue runs, has nothing pending or the planner says nothing", () => {
+		assert.equal(plannerBadge(undefined), undefined);
+		assert.equal(plannerBadge({ state: "running", pending: 2 }), undefined);
+		assert.equal(plannerBadge({ state: "held", pending: 0 }), undefined);
+		assert.equal(plannerBadge({ pending: 2 }), undefined);
+	});
+	test("scheduled says when, held says why and until when, waiting its position", () => {
+		const s = plannerBadge({ state: "scheduled", waitUntil: at, pending: 1 }, now);
+		assert.equal(s?.label, "Scheduled 12:00");
+		assert.equal(s?.short, "12:00");
+		const h = plannerBadge({ state: "held", waitReason: "budget day 21.50/20 USD", waitUntil: at, pending: 1 }, now);
+		assert.equal(h?.label, "Held");
+		assert.equal(h?.title, "budget day 21.50/20 USD until 12:00");
+		assert.equal(plannerBadge({ state: "waiting", waiting: { position: 2 }, pending: 1 })?.label, "Queued #2");
+		assert.equal(plannerBadge({ state: "blocked", pending: 1 })?.label, "Blocked");
+		assert.equal(plannerBadge({ state: "paused", pending: 1 })?.label, "Paused");
+	});
+	test("interrupted shows even with nothing pending and is the one bad tone", () => {
+		const i = plannerBadge({ state: "interrupted", pending: 0 });
+		assert.equal(i?.label, "Interrupted");
+		assert.equal(i?.tone, "bad");
+		assert.equal(plannerBadge({ state: "held", pending: 1 })?.tone, "wait");
+	});
+});
+
+describe("sessionDag", () => {
+	const graphCard = (c: BoardCard): GraphCard => ({ ...c, state: statusKey(c), queue: c.queue });
+	test("stripe = session state, badge = planner state, thick arrows, dashed while the child waits", () => {
+		const a = card("a", { status: "working", createdAt: NOW });
+		const b = card("b", { status: "idle", createdAt: NOW + 1, after: ["a"], blockedBy: ["a"], queue: { ...queue(1), state: "blocked", failed: 2 } });
+		const c = card("c", { status: "idle", createdAt: NOW + 2, after: ["b"], sync: { state: "conflict", parents: ["b"], edges: { b: "conflict" } } });
+		const { nodes, edges } = sessionDag([a, b, c].map(graphCard), [a, b, c]);
+		assert.deepEqual(
+			nodes.map(n => n.id),
+			["a", "b", "c"],
+		);
+		const nb = nodes.find(n => n.id === "b");
+		assert.deepEqual(nb?.classes, ["s-queued", "blocked"]);
+		assert.equal(nb?.sub, "queued · waits for Session a · 2 failed");
+		assert.deepEqual(nb?.badge, { text: "blocked", tone: "wait" });
+		assert.equal(nodes.find(n => n.id === "a")?.badge, undefined);
+		assert.deepEqual(
+			edges.map(e => [e.from, e.to, e.classes, e.marker]),
+			[
+				["a", "b", ["enforced", "pending"], "graph-arrow-pending"],
+				["b", "c", ["enforced", "conflict"], "graph-arrow-conflict"],
+			],
+		);
+		for (const e of edges) assert.ok(SESSION_MARKERS.includes(e.marker));
+	});
+	test("an edge that holds nothing back is plain", () => {
+		const { edges } = sessionDag([graphCard(card("a")), graphCard(card("b", { after: ["a"] }))], []);
+		assert.deepEqual(edges, [{ from: "a", to: "b", classes: ["enforced"], marker: "graph-arrow" }]);
 	});
 });
 

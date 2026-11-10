@@ -2,14 +2,14 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can hand coding work to coding agent sessions (omp, Claude Code, Codex or any other chat harness Agent Orchestrator runs). The `switchyard` Hermes plugin gives it:
 
-- **Tools** (toolset `switchyard`, 16 tools) to start, queue, schedule, check, wait on, answer, steer and stop sessions, chain them (`after`), sync a parent's changes into them, switch their model, and check the Switchyard setup (the Agent Orchestrator daemon and omp).
-- **Notifications.** When a session that a Hermes session started finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
+- **Tools** (toolset `switchyard`, 20 tools) to start, queue, schedule, check, wait on, answer, steer and stop sessions, chain them (`after`), sync a parent's changes into them, switch their model, check the Switchyard setup (the Agent Orchestrator daemon and omp, when you use it), and give AO's [orchestrator](#orchestrator) high-level tasks.
+- **Notifications.** When a session that a Hermes session started (or an orchestrator it gave a task) finishes or needs input, Hermes gets a message about it in that session, so it doesn't have to poll.
 - **A kanban lane.** Kanban cards assigned to `switchyard` run as coding agent sessions, and their outcome goes back to the card. Hermes's dependency chaining works as usual: a child card starts when its parents are done, with their results in its prompt.
 - The **`switchyard` skill**, plus `/switchyard` in chats and `hermes switchyard …` in a terminal.
 
 The plugin drives the `switchyard` CLI, so every session it starts is an ordinary session run by [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator) (AO), the daemon behind Switchyard, on whichever AO harness is resolved (see **Harnesses** below). The plugin never talks to AO itself: `switchyard` is the one client that maps AO sessions onto Switchyard states, questions, queues and costs, the same way for VS Code, the CLI and Hermes. You can watch and steer a session from the Switchyard page in Hermes, with `switchyard attach`, in the AO app or AO Mobile, or in VS Code (Switchyard). Queued sessions respect Switchyard's global concurrency limit (`switchyard sched set <n>`).
 
-For the whole arrangement (one workstation running omp, the AO daemon and Hermes; VS Code and Hermes Desktop on a laptop; AO Mobile on the phone), see [the setup guide](SETUP.md).
+For the whole arrangement (one workstation running the agents, the AO daemon and Hermes; VS Code and Hermes Desktop on a laptop; AO Mobile on the phone), see [the setup guide](SETUP.md).
 
 ## Install
 
@@ -26,7 +26,7 @@ switchyard hermes uninstall
 **From Git**, with Hermes (it fetches only the plugin folder of this repository):
 
 ```sh
-hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable
+hermes plugins install mbaradad/switchyard/integrations/hermes/switchyard --enable
 hermes config set plugins.entries.switchyard.allow_gateway_injection true
 hermes plugins update switchyard      # later, to update
 ```
@@ -76,33 +76,37 @@ Install the plugin in the profiles you chat with: tools and notifications work i
 | Tool | What it does |
 | --- | --- |
 | `switchyard_sessions_list` | Lists sessions: running and with work ahead (queued, scheduled, interrupted), or all with `all: true`. |
-| `switchyard_projects_list` | Lists where sessions can run: recent omp folders, kanban boards with their configured folders and groups, and Hermes projects. |
+| `switchyard_projects_list` | Lists where sessions can run: recent session folders, kanban boards with their configured folders and groups, and Hermes projects. |
 | `switchyard_session_start` | Starts a session now (`prompt`) or queues one (`task`, with optional `notes` and `subtasks`). `at` schedules a queued task (`+30m`, `14:30`, an ISO time); `after` (with `task`) names sessions whose work must finish first: the task branches from their work and later gets their changes (see [Parent changes](#parent-changes)). Where it runs is set by `cwd`, `project` (a Hermes project, or the name of a known folder) or `board` (that board's folder, group and harness). Also takes `title`, `mode` (`ask`, `edits`, `plan`, `auto`), `group`, `tags`, `priority`, `model` and `harness` (an AO chat harness id such as `claude-code`, `codex` or `omp`; see **Harnesses**). |
 | `switchyard_session_status` | Returns a session's state, pending question, last reply, queue, cost, changed files, and `upstream`: the sync state of each parent. |
 | `switchyard_session_wait` | Blocks until the session is idle, needs input, stopped or interrupted, or scheduled. The default timeout is 300 s, at most 600 s. |
 | `switchyard_session_send` | Sends a prompt (resuming a stopped session). While the session works, the prompt runs after the current turn; `steer: true` redirects the turn instead. |
-| `switchyard_session_answer` | Answers the waiting question with an option number or text, yes/no, or free text. Refused for approval dialogs unless `agent_approvals` is on. |
+| `switchyard_session_answer` | Answers the waiting question with an option number or text, yes/no, or free text. Works on an orchestrator's id too. Refused for approval dialogs unless `agent_approvals` is on. |
 | `switchyard_session_mode` | Switches the permission mode live. Unless `agent_approvals` is on, it refuses while an approval waits (the switch would answer it) and refuses switching to a less restrictive mode (plan < ask < edits < auto; a session without a mode counts as ask). |
 | `switchyard_session_model` | Shows the session's model, or switches it (live while it runs, else from its next resume). |
 | `switchyard_session_stop` | Stops the session, or cancels a scheduled start. Its history stays, and `switchyard_session_send` resumes it. |
-| `switchyard_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for omp, plus `subtasks`; `top` puts it first, `run` turns the queue on; `after` sets the sessions the queue waits for. |
+| `switchyard_queue_add` | Adds a task to an existing session's queue: `task` is a one-line title, `notes` the full task for the agent, plus `subtasks`; `top` puts it first, `run` turns the queue on; `after` sets the sessions the queue waits for. |
 | `switchyard_queue_schedule` | Sets or changes when a session's queue starts (`at`), cancels it (`at: "off"`), and/or sets its `priority`. |
-| `switchyard_models_list` | Lists the models omp can use (`provider/id`), with the Switchyard default and omp's own. |
+| `switchyard_models_list` | Lists the models the harness can use (`provider/id`), with the Switchyard default and omp's own. |
 | `switchyard_server_status` | The `switchyard status` overview: server, omp, sessions by state, tasks, scheduler, remote access and problems. `scheduler` carries what holds queued work back: `held` (count), `limits` (provider rate/usage limits in force and when they reset), `usageWindows` (omp's provider windows), `budget` and `spend` (caps and what each rolling window has spent). `/switchyard status` prints the same. |
 | `switchyard_plan_status` | Lists the graph's edges (parent → child) with their sync state and conflicting files, for one session or every plan. |
 | `switchyard_plan_sync` | Brings a session's parents' changes into its worktree now and returns each edge's sync state; `rerun: true` also runs its task again with them. |
+| `switchyard_orchestrator_submit` | Gives a project's AO orchestrator a **high-level goal** (`task`; `project` is an AO project id or name, or a git folder; `steer: true` redirects its turn in progress; `harness` applies when the call starts it). The orchestrator starts on demand and is reused. For one concrete coding task use `switchyard_session_start`. See [Orchestrator](#orchestrator). |
+| `switchyard_orchestrator_status` | A project's orchestrator (or every project's, without `project`): state, last reply, the question it waits on, harness and model, the project's workers with state, branch and PR line (`#12 open · CI passing · approved · mergeable`), counts and the settings in force. |
+| `switchyard_orchestrator_config` | Shows, or changes, its settings: `harness`, `model`, `effort`, `permissions`, `rules`, `rules_file`, `worker_harness`, `worker_model`, `review`, `auto_review`. `none` clears one. A running orchestrator keeps what it started with: restart applies the change. Unless `agent_approvals` is on, `permissions` can only become more restrictive (`default` < `accept-edits` < `auto` < `bypass-permissions`; unset counts as `bypass-permissions`, AO's default for an orchestrator). |
+| `switchyard_orchestrator_restart` | `action` `restart` (default) replaces the orchestrator with a fresh one on the project's current settings, `start` brings it up, `stop` ends its agent (its transcript stays). `harness` is saved first with restart and start. |
 
 States: `queued` (waiting for a slot), `scheduled` (waiting for its start time), `starting`, `working`, `needs_input`, `idle` (done for now), `interrupted` (a crash or reboot cut a queued task short; it waits for a person), `stopped`.
 
-**Approvals stay with people.** Select and confirm dialogs (tool approvals, plan approval) count as approvals. By default the Hermes agent can't answer them, can't switch the mode while one waits, and can't switch a session to a less restrictive mode; set `agent_approvals: true` in the plugin settings to allow it. Answers carry the question's id, so an answer is refused if a different dialog has come up meanwhile. omp's text in tool results and chat notes is marked as data, not instructions.
+**Approvals stay with people.** Select and confirm dialogs (tool approvals, plan approval) count as approvals. By default the Hermes agent can't answer them, can't switch the mode while one waits, and can't switch a session to a less restrictive mode; set `agent_approvals: true` in the plugin settings to allow it. Answers carry the question's id, so an answer is refused if a different dialog has come up meanwhile. The agent's text in tool results and chat notes is marked as data, not instructions.
 
-**Models.** A session started by the tools or the lane uses, in order: the `model` given (or a card's own model override), the board's `model`, then the Switchyard default (`switchyard config set model`, applied to omp sessions only), then the harness's own default.
+**Models.** A session started by the tools or the lane uses, in order: the `model` given (or a card's own model override), the board's `model`, then the Switchyard default (`switchyard config set model`, applied to sessions only), then the harness's own default.
 
 **Harnesses.** A session runs on one of AO's chat harnesses (`switchyard harnesses` lists them with their readiness). The harness is, in order: the `harness` given to `switchyard_session_start`, the board's `harness` (lane cards, and the tool with `board`), the Switchyard default (`switchyard config set harness <id>`), the AO project's worker harness, else AO's default (the only authorized harness; with several, omp if authorized, else the most used). The plugin checks nothing itself: `switchyard new` refuses an unknown or non-chat harness and lists the valid ones. Plan mode, the approval gate of Switchyard's omp extension, `/undo` checkpoints and omp's own flags are omp-only; on other harnesses `mode` maps to AO approval modes (`ask` → `default`, the harness asking through AO's approvals; `edits` → `accept-edits`; `auto` → `bypass-permissions`) and `plan` is refused. Cards on the Switchyard page show a chip with the harness when it isn't omp.
 
 ## Notifications
 
-`switchyard_session_start`, `switchyard_session_send` and `switchyard_session_answer` remember which Hermes session called them. Once that omp session settles (idle, needs input or stopped), the plugin queues a short message into the Hermes session. The message gives the title, the state, a reply excerpt or the question, and `switchyard show <id>`. An idle Hermes session starts a turn on it; a busy one gets it after its current turn. If the agent already saw that state through `switchyard_session_status` or `switchyard_session_wait`, no message is sent.
+`switchyard_session_start`, `switchyard_session_send`, `switchyard_session_answer` and `switchyard_orchestrator_submit` remember which Hermes session called them. Once that session (or orchestrator) settles (idle, needs input or stopped), the plugin queues a short message into the Hermes session. The message gives the title, the state, a reply excerpt or the question, and `switchyard show <id>` (for an orchestrator, `switchyard_orchestrator_status`). An idle Hermes session starts a turn on it; a busy one gets it after its current turn. If the agent already saw that state through `switchyard_session_status`, `switchyard_orchestrator_status` or `switchyard_session_wait`, no message is sent.
 
 Notifications need:
 
@@ -112,21 +116,32 @@ Notifications need:
 
 Turn notifications off with `hermes switchyard notify off`.
 
+## Orchestrator
+
+An **orchestrator** is Agent Orchestrator's coordinating agent for a project: give it a high-level goal and it splits it into worker sessions, steers them, has their PRs reviewed and reports back. AO owns all of that (it starts and keeps the orchestrator, runs its workers in their own worktrees, tracks their PRs, CI and reviews, and has its own web UI, the **AO dashboard** view). Switchyard only exposes it the same way in every client: `switchyard orchestrator …` on the CLI, the Orchestrator view in VS Code, and here. The plugin runs those CLI commands and keeps nothing of its own.
+
+- **Give it work.** The agent uses `switchyard_orchestrator_submit` for a goal that spans several steps or sessions ("move billing to the new API and update its tests"), and `switchyard_session_start` for one concrete coding task. AO has at most one active orchestrator per project; the first task starts it (on the harness given, else the project's orchestrator setting, else Switchyard's default harness, else AO's) and later tasks go to the same one, queued behind its turn, or into the turn in progress with `steer: true`. A stopped orchestrator is brought back by the next task.
+- **See it.** `switchyard_orchestrator_status`. AO's API doesn't say which workers an orchestrator started, so its workers are the project's worker sessions. The orchestrator's chat is an ordinary AO session: `switchyard_session_status`, `switchyard_session_wait` and `switchyard_session_send` take its id too.
+- **Answer it.** When it asks something (`needs_input`), `switchyard_session_answer` with its id answers, under the same rule as any session: approval dialogs stay with the user unless `agent_approvals` is on.
+- **Configure it.** `switchyard_orchestrator_config` reads and changes the AO project's orchestrator settings. A running orchestrator keeps what it started with; `switchyard_orchestrator_restart` replaces it with a fresh one (new workspace, empty context) that uses them.
+- **Hear back.** A task given from a Hermes chat registers the orchestrator with the [notifications](#notifications) of that chat: a message when it finishes its turn or needs input, once per turn however many tasks went in. The message says it is the orchestrator's and points at `switchyard_orchestrator_status`. Replacing or stopping it through the tool forgets the watch on the old one.
+- **In a chat:** `/switchyard orchestrator` lists every project's orchestrator with its state and workers. From a terminal: `switchyard orchestrator …` (see `switchyard --help`).
+
 ## Kanban lane
 
-Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. A card assigned to anything else (here, `omp`) stays `ready`, and the dispatcher logs `skipped_nonspawnable`. On every dispatcher tick, the lane:
+Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. A card assigned to anything else (here, `switchyard`) stays `ready`, and the dispatcher logs `skipped_nonspawnable`. On every dispatcher tick, the lane:
 
-1. **Claims** ready cards assigned to `switchyard`, using Hermes's kanban API with a claim lock `<host>:switchyard`. It only takes cards while omp has free concurrency slots (`switchyard sched`), at most 4 per tick.
+1. **Claims** ready cards assigned to `switchyard`, using Hermes's kanban API with a claim lock `<host>:switchyard`. It only takes cards while Switchyard has free concurrency slots (`switchyard sched`), at most 4 per tick.
 2. **Prepares the workspace** the way Hermes prepares one for its own workers:
    - `worktree`: a git worktree on the card's branch (default `wt/<card id>`), recorded on the card;
    - `dir`: that folder;
    - `scratch`: the folder of the card's Hermes project, else the board's configured `folder`, else Hermes's scratch folder.
-3. **Queues an omp session** there. The title is the card title. The task notes hold:
+3. **Queues a session** there. The title is the card title. The task notes hold:
    - a note that the session works on card `<board>/<id>` and that the lane reports back on its own, so the agent needs no kanban tools;
    - the card's worker context exactly as Hermes builds it for its own workers (body, parent results, comments);
    - the paths of the `SKILL.md` files the card asks for.
 
-   The session gets the tags `hermes`, `hermes:<board>` and `card:<id>`, goes into the board's omp group, and starts in the board's permission mode, if one is set.
+   The session gets the tags `hermes`, `hermes:<board>` and `card:<id>`, goes into the board's group, and starts in the board's permission mode, if one is set.
 4. **Comments** on the card with the session id and how to watch it: the Switchyard page, `switchyard attach <id>`, the AO app or AO Mobile, or VS Code.
 5. **Tracks** the session and mirrors it onto the card:
 
@@ -135,19 +150,19 @@ Hermes's dispatcher only spawns workers for cards assigned to a Hermes profile. 
 | queued or working | The claim is renewed every tick, and a heartbeat is recorded every 10 minutes. |
 | scheduled | The card stays claimed; comments are held until the session runs. |
 | waiting on a question or approval | `block --kind needs_input` with the question and how to answer it. Once the session moves on, the card is unblocked and claimed again. |
-| task done (idle, or stopped afterwards) | `complete`. The result is the session's last reply, and so is the run summary that child cards read. The metadata holds the omp session id, folder, cost (including subagents) and changed-file count. |
+| task done (idle, or stopped afterwards) | `complete`. The result is the session's last reply, and so is the run summary that child cards read. The metadata holds the session id, folder, cost (including subagents) and changed-file count. |
 | interrupted (crash or reboot during the task) | Blocked with the reason and "Unblock the card to continue it in the same session". Unblocking starts the queue again. |
 | task failed, session stopped early, or session removed | `block --kind transient` with the reason. |
 | a parent's changes don't merge into its worktree (`conflict`) | `block --kind needs_input` with the files. Resolve the merge in the session (a card comment reaches it); the card is unblocked once the edge is merged. |
 | card done, archived, deleted or reassigned | The lane stops tracking it and leaves the session alone. A done card whose parent changes later gets one comment saying how to re-run it (below). |
 
-Unblocking a card that failed (in Hermes: `hermes kanban unblock <id>`) retries it in the same omp session, or in a new one if the session was removed.
+Unblocking a card that failed (in Hermes: `hermes kanban unblock <id>`) retries it in the same session, or in a new one if the session was removed.
 
-The card↔session links and the lane's lock live beside the kanban boards, which every profile shares: `~/.hermes/plugin-data/switchyard-lane/` (`state.json`, `lane.lock`). Before it creates a session, the lane also looks for an omp session tagged `card:<id>`. A card never gets two sessions, even across restarts or crashes.
+The card↔session links and the lane's lock live beside the kanban boards, which every profile shares: `~/.hermes/plugin-data/switchyard-lane/` (`state.json`, `lane.lock`). Before it creates a session, the lane also looks for a session tagged `card:<id>`. A card never gets two sessions, even across restarts or crashes.
 
 ### Parent changes
 
-A card whose Hermes parents ran in the lane is queued with those parents' sessions as `after`, so its omp session branches from their work instead of the repository base. When a parent changes later (a follow-up, a re-run), the planner merges the change into each child's worktree: a child that is working gets it after its turn, an idle one gets it with a note, a done one is marked **upstream changed** and is not run again. Each edge has a sync state: `in-sync`, `pending`, `merged`, `conflict` or `upstream-changed`.
+A card whose Hermes parents ran in the lane is queued with those parents' sessions as `after`, so its session branches from their work instead of the repository base. When a parent changes later (a follow-up, a re-run), the planner merges the change into each child's worktree: a child that is working gets it after its turn, an idle one gets it with a note, a done one is marked **upstream changed** and is not run again. Each edge has a sync state: `in-sync`, `pending`, `merged`, `conflict` or `upstream-changed`.
 
 - A `conflict` blocks the child's card (see the table above). The session itself does not turn `needs_input` (and `switchyard_session_wait` doesn't return for it): read `upstream.state` in `switchyard_session_status` (the worst of its parent edges: conflict > resolving > upstream-changed > pending > merged > in-sync).
 - An `upstream-changed` card gets one comment. Re-run it with `switchyard plan sync <session> --rerun`, **Re-run with parent changes** on the Switchyard page, or `switchyard_plan_sync` with `rerun: true`.
@@ -166,13 +181,13 @@ The lane is off by default. Turn it on in one profile (`hermes -p <name> switchy
 
 Hermes runs one kanban dispatcher per machine (a lock at `<kanban home>/kanban/.dispatcher.lock`), in the gateway that took it. With the default multiplexed gateway (one gateway serving every profile) that is the default profile, so turn the lane on there: `hermes -p default switchyard lane on`. Without `-p`, `hermes switchyard …` acts on the active profile (`hermes profile use`), which may not be the one you mean.
 
-### Assign cards to omp
+### Assign cards to the lane
 
 ```sh
 hermes kanban --board lightscale create "Fix the flaky upload test" --assignee switchyard --body "…"
 hermes kanban --board lightscale create "Release notes" --assignee switchyard --parent t_1234abcd   # starts when the parent is done
 hermes kanban --board lightscale create "Refactor" --assignee switchyard --workspace worktree --branch refactor/x
-hermes kanban --board lightscale assign t_1234abcd omp      # an existing card (not while it is running)
+hermes kanban --board lightscale assign t_1234abcd switchyard      # an existing card (not while it is running)
 ```
 
 `--board` goes before the verb. A card without parents starts `ready`; with open parents it waits in `todo` until they are done.
@@ -181,28 +196,28 @@ From any chat (including clients whose assignee picker lists only Hermes profile
 
 ### Talk to a card's session through comments
 
-Comments on a card the lane runs can reach its omp session, but only from **trusted authors**: `lane.comment_authors`, default `["dashboard"]`, which is what the Hermes dashboard and Hermes Console post as (`*` trusts anyone). Hermes agents comment under their profile name, so another profile's agent, which may act on untrusted input, can't prompt omp or hand it cards unless you list that profile. A comment from anyone else gets one note per author per card saying it doesn't reach the session. Approvals are never answered by comments.
+Comments on a card the lane runs can reach its session, but only from **trusted authors**: `lane.comment_authors`, default `["dashboard"]`, which is what the Hermes dashboard and Hermes Console post as (`*` trusts anyone). Hermes agents comment under their profile name, so another profile's agent, which may act on untrusted input, can't prompt the agent or hand it cards unless you list that profile. A comment from anyone else gets one note per author per card saying it doesn't reach the session. Approvals are never answered by comments.
 
-- While omp waits on a question (ask, input or editor), the first new comment is the answer (an option's number or label, or free text); the lane then unblocks the card. If it doesn't fit the question, the lane says so and tries the next comment.
+- While the agent waits on a question (ask, input or editor), the first new comment is the answer (an option's number or label, or free text); the lane then unblocks the card. If it doesn't fit the question, the lane says so and tries the next comment.
 - **Approvals are never answered by comments.** While one waits, comments are held, the card gets one note saying where to approve (the Switchyard page, the AO app or AO Mobile, VS Code or `switchyard answer`), and the comments are delivered after it's answered.
-- Otherwise comments arrive as a message: a follow-up while omp works, a new prompt once it is idle (the card is completed again from the new reply). omp sees each one wrapped as `<kanban-comment author="…">`.
+- Otherwise comments arrive as a message: a follow-up while the agent works, a new prompt once it is idle (the card is completed again from the new reply). The agent sees each one wrapped as `<kanban-comment author="…">`.
 - Comments are held until the card's queued task has started, so they never jump the concurrency limit or a scheduled start.
-- The lane confirms each delivery with its own comment (`omp session 1a2b3c4d: passed the comment on`), and says so when omp rejects an answer. If a comment can't be delivered, the card gets one "Couldn't reach omp session …" note and the lane retries on later passes, giving up (and saying so) after 5 tries.
+- The lane confirms each delivery with its own comment (`session 1a2b3c4d: passed the comment on`), and says so when the agent rejects an answer. If a comment can't be delivered, the card gets one "Couldn't reach session …" note and the lane retries on later passes, giving up (and saying so) after 5 tries.
 
 ### Turn it on and configure it
 
 ```sh
 hermes switchyard lane on                                   # every board, assignee switchyard
 hermes switchyard lane on --board lightscale --mode auto    # only these boards (repeat --board); starting permission mode
-hermes switchyard lane on --comment-authors dashboard,alice # whose comments reach omp ("*": anyone)
+hermes switchyard lane on --comment-authors dashboard,alice # whose comments reach the agent ("*": anyone)
 hermes switchyard board lightscale --folder ~/src/lightscale --group Lightscale --mode auto --model anthropic/claude-sonnet-4-5
 hermes switchyard board lightscale --harness claude-code   # AO harness of the board's card sessions ("": back to the default chain)
 hermes switchyard project lightscale ~/src/lightscale       # folder for a Hermes project, by id, slug or name
 hermes switchyard lane off                                  # stop taking new cards; linked cards keep reporting
 hermes switchyard lane run                                  # one pass now
-hermes switchyard lane on --archive-completed on            # archive each card (and its omp session) once the lane completes it
+hermes switchyard lane on --archive-completed on            # archive each card (and its session) once the lane completes it
 hermes switchyard board lightscale --archive-completed on   # the same for one board (off; default: the lane's setting)
-hermes switchyard archive-done --board lightscale          # archive a board's done lane cards and their omp sessions now (repeat --board; default: every board)
+hermes switchyard archive-done --board lightscale          # archive a board's done lane cards and their sessions now (repeat --board; default: every board)
 hermes switchyard status                                    # lane, last passes, errors, linked cards and their sessions
 ```
 
@@ -221,8 +236,8 @@ plugins:
           enabled: true
           assignee: switchyard
           mode: auto                   # unset: the Switchyard default (switchyard config set mode), else auto (nothing asks); ask/edits/plan need Switchyard's omp extension (switchyard status shows it) and make cards wait for a person at the first command
-          comment_authors: [dashboard] # whose comments reach omp and whose @switchyard assigns cards ("*": anyone)
-          archive_completed: false     # true: archive a card on the board, and its omp session, as soon as the lane completes it
+          comment_authors: [dashboard] # whose comments reach the agent and whose @switchyard assigns cards ("*": anyone)
+          archive_completed: false     # true: archive a card on the board, and its session, as soon as the lane completes it
           boards:                      # empty: every board
             lightscale:
               folder: /home/me/src/lightscale
@@ -238,13 +253,13 @@ plugins:
 
 ### Archiving done cards
 
-Done cards pile up on a board. With `archive_completed` on (the lane's setting, or a board's own), the lane archives a card right after it completes it, with the card's result kept, and archives the card's omp session too (`switchyard archive`; it stays in `ls --all` and under *Show archived* on the page). It is off by default.
+Done cards pile up on a board. With `archive_completed` on (the lane's setting, or a board's own), the lane archives a card right after it completes it, with the card's result kept, and archives the card's session too (`switchyard archive`; it stays in `ls --all` and under *Show archived* on the page). It is off by default.
 
-`hermes switchyard archive-done [--board <slug>]` does it in one go for the cards already done: every `done` card assigned to the board's lane assignee, or run by an omp session (tagged `hermes:<board>` and `card:<id>`), is archived with Hermes's own `archive_task`, together with those sessions. Cards of other assignees and open cards are left alone. The Boards view has the same, per board: *Archive done cards* (when the lane completes them, keep them, or the lane's default) and *Archive done now*.
+`hermes switchyard archive-done [--board <slug>]` does it in one go for the cards already done: every `done` card assigned to the board's lane assignee, or run by a session (tagged `hermes:<board>` and `card:<id>`), is archived with Hermes's own `archive_task`, together with those sessions. Cards of other assignees and open cards are left alone. The Boards view has the same, per board: *Archive done cards* (when the lane completes them, keep them, or the lane's default) and *Archive done now*.
 
 ### Answering a card's question
 
-When a card is blocked with `needs_input`, answer the omp session in any of these places:
+When a card is blocked with `needs_input`, answer the session in any of these places:
 
 - the Switchyard page in Hermes, the AO app or AO Mobile;
 - VS Code (the session's chat);
@@ -257,28 +272,28 @@ On its next tick the lane unblocks and reclaims the card.
 ### Limits
 
 - The lane runs where the dispatcher ticks: the gateway's embedded dispatcher (`kanban.dispatch_in_gateway`, on by default, every 60 s), `hermes kanban dispatch`, or `hermes switchyard lane run`. Without any of them, cards wait in `ready`.
-- Hermes sends a card to `triage` when it is blocked twice for the same reason (its unblock-loop guard), and nothing can complete a card in triage. So only the first question on a card blocks it; later questions are added as comments, and the omp session still waits for an answer.
+- Hermes sends a card to `triage` when it is blocked twice for the same reason (its unblock-loop guard), and nothing can complete a card in triage. So only the first question on a card blocks it; later questions are added as comments, and the session still waits for an answer.
 - A failed card that fails again after a retry goes to `triage` for the same reason.
-- `max_runtime_seconds` is not enforced for omp cards. The omp session runs until it finishes. Give the queued task a time limit in omp if you need one.
-- When a card completes, Hermes removes its scratch folder, and its worktree too if the worktree is clean and pushed. The omp session's folder may then be gone. Its transcript stays.
+- `max_runtime_seconds` is not enforced for lane cards. The session runs until it finishes. Give the queued task a time limit in the harness if you need one.
+- When a card completes, Hermes removes its scratch folder, and its worktree too if the worktree is clean and pushed. The session's folder may then be gone. Its transcript stays.
 - A card whose task the user interrupted (the queue is paused) stays `running` until the task is resumed or the card is completed by hand. A task a crash or reboot interrupted blocks the card instead (see above).
 - `review` cards assigned to switchyard are not picked up.
 
 ## Several boards, projects and folders
 
-- Give each board a `folder` and a `group`. Card sessions for that board run there, and VS Code and the omp board show them grouped.
+- Give each board a `folder` and a `group`. Card sessions for that board run there, and VS Code and the Switchyard views show them grouped.
 - A Hermes project's cards already run in worktrees of the project's repository, because Hermes sets that up when the card is created. For project cards with a scratch workspace, the lane uses `projects` from the settings, then the project's primary folder.
 - `switchyard_projects_list` shows all of these, so Hermes can pick `cwd`, `project` or `board` for `switchyard_session_start`.
 
 ## Recurring work
 
-Schedules belong to Hermes cron. A cron job can queue an omp session directly:
+Schedules belong to Hermes cron. A cron job can queue a session directly:
 
 ```sh
 hermes cron create "0 7 * * 1-5" "Use switchyard_session_start with project lightscale and task 'Run the full test suite and fix what fails'. Report the session id." --name omp-nightly-tests
 ```
 
-Or it can create a kanban card for omp, which keeps the history on the board:
+Or it can create a kanban card for the lane, which keeps the history on the board:
 
 ```sh
 hermes cron create "every 1d" "Create a kanban card on board lightscale, assigned to switchyard, titled 'Update dependencies and run the tests'." --name omp-deps
@@ -292,39 +307,42 @@ The plugin adds an **Switchyard** page to the left sidebar of the Hermes web das
 
 ![Switchyard in the Hermes dashboard](images/hermes-dashboard.png)
 
-- **Status strip:** `switchyard` and its server, omp's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
+- **Status strip:** `switchyard` and its server, Switchyard's concurrency slots (running, waiting, limit), the kanban lane with the kanban dispatcher's last pass, and how many sessions need you. When the lane can't run (no dispatcher tick seen, the last one is stale, or the dispatcher ticks in a profile whose lane is off) the Lane item turns amber and says why, here and in the Boards view.
 - **Session board** with five columns: Needs you, Working, Queued & scheduled, Done, Stopped. A card shows the title, project folder, group, permission mode, cost, when it was last active (or when it starts), the linked kanban card with its status, and the question or the start of the last reply; interrupted sessions say so. Filter by board, group or project, or search (`/`). Each card has a button to open its project in VS Code, and (on hover) **Mark completed** / **Mark not completed** and **Archive** / **Unarchive**. **Archive all** on the Done column header (after a confirm) archives, in one request, every done session the board shows: idle with nothing queued, or marked completed (`switchyard complete`). Archived sessions are hidden; **Show archived** brings them back, with Unarchive on each.
 - **Detail panel** (click a card): the question with one button per answer (the answer names the question, so a stale click fails instead of answering a different dialog), the full last reply, queue controls (*Run now* runs the queue's first pending task at once and drops a scheduled start; *Retry* puts a failed, interrupted or finished task back to pending and keeps the schedule; *Schedule* sets or cancels the queue's start time, the same as `switchyard_queue_schedule`), a follow-up box (it runs after the current turn; tick *Steer this turn* to redirect it instead), the permission mode switch, a model switcher, Mark completed and Archive (or their undo), Stop (hidden for interrupted sessions), **VS Code** and **Open project in VS Code** (below).
 - **New session** (`N`): the prompt, a title, where it runs (a recent folder, a Hermes project, any folder, or a kanban board's folder and group), mode, a searchable model picker, group, tags, and when: now, queued for a free slot, or scheduled (`+30m`, `22:00`, a date and time).
-- **Boards:** the lane switch, and per board (the ones in the lane first) the lane's folder (with an open-in-VS-Code button), omp group, mode, default model, trusted comment authors and assignee, the cards it runs as omp sessions with their status, and the ready cards it takes next.
-- **Graph:** a board's kanban cards as a dependency graph, parents on the left and their children (cards that wait for them: `hermes kanban link <parent> <child>`, or a card created with parents) to the right. Cards are coloured by status and show the state of the omp session working on them: the lane's session (marked *lane*), else the latest session tagged `hermes:<board>` + `card:<id>`. An edge is solid once its parent is done and dashed while it still holds the child back. Only cards linked to another card show until you switch **Linked cards only** to **All cards** (unlinked cards then sit in a grid below; archived cards never show). Click a card (or focus it and press Enter) to see what it waits for and what it unblocks; a card with an omp session also opens that session's detail panel.
+- **Boards:** the lane switch, and per board (the ones in the lane first) the lane's folder (with an open-in-VS-Code button), group, mode, default model, trusted comment authors and assignee, the cards it runs as sessions with their status, and the ready cards it takes next.
+- **Graph:** a board's kanban cards as a dependency graph, parents on the left and their children (cards that wait for them: `hermes kanban link <parent> <child>`, or a card created with parents) to the right. Cards are coloured by status and show the state of the session working on them: the lane's session (marked *lane*), else the latest session tagged `hermes:<board>` + `card:<id>`. An edge is solid once its parent is done and dashed while it still holds the child back. Only cards linked to another card show until you switch **Linked cards only** to **All cards** (unlinked cards then sit in a grid below; archived cards never show). Click a card (or focus it and press Enter) to see what it waits for and what it unblocks; a card with a session also opens that session's detail panel.
   Switchyard's planner state of the card's session shows on the card too: *blocked* (queued after a session that has not finished; the card's parents that ran in the lane become the session's `after`, so the Switchyard row of the selected card lists them as *queued after*), *scheduled* (with the time), *held* (the usage gate: a provider limit, usage window, budget or retry backoff, with the reason), *paused*, *waiting for a slot* or *interrupted*. A thicker line marks a link the planner enforces as well (the child's session is queued after the parent's); a link only Hermes knows (the parent ran outside the lane) gates the card in Hermes alone. Edges that skip a column are routed between the cards they pass, and a long title is cut to the card's width with an ellipsis (the whole title is the tooltip).
 - **AO dashboard:** Agent Orchestrator's own web UI (its board, sessions and conversations), see [AO dashboard](#ao-dashboard) below.
+- **Orchestrator:** one card per project orchestrator (running ones first; stopped ones can be started) with its state, harness and model, the last reply (clipped, *Show more*), the question it waits on with the same answer controls as a session's, and the project's workers as rows (state, title, branch, PR chips in the CLI's words; click one to open its detail). A task box at the top, *Give the orchestrator a task* (a project picker from AO's projects and your Hermes projects, a *Steer the turn in progress* check, and a harness picker when the task will start the orchestrator), starts it on demand. **Settings** (collapsed on each card) holds its harness (from AO's chat harnesses), model, effort, permissions, standing rules, rules file, the workers' harness and model, and the two review switches; **Save** writes AO's project settings, and **Restart to apply** (after a confirm) replaces the running orchestrator so it uses them. **Open in VS Code** opens the orchestrator's chat; **AO dashboard** switches to AO's own UI. The view polls every few seconds while visible and works the same in the dashboard and Hermes Desktop. Its routes: `GET /orchestrators`, `GET /orchestrators/<project>`, `POST /orchestrators/submit`, `POST /orchestrators/<project>/start|restart|stop`, `GET|POST /orchestrators/<project>/config` and `GET /harnesses`; answers, follow-ups and *Open in VS Code* use the `/sessions/<orchestrator id>/…` routes.
 
 ![A session that needs an answer](images/hermes-detail.png)
 
 The page refreshes every few seconds while it is visible. **Sounds:** the bell in the header plays the cue Hermes Desktop uses for its own turns when a session finishes its turn, and a second one when a session starts waiting for you (a question or an approval). It stays silent for the first list a tab loads, and when the page is open in two tabs only one plays. Click the bell to mute (the choice is kept in that browser). There is no sound while the page is closed: the page only polls while it is open. Lane settings it changes are the active profile's, like `hermes switchyard lane` and `hermes switchyard board`.
 
-**Open in VS Code.** The detail panel's **VS Code** button opens the session's chat in a VS Code window on omp's machine, including a Remote-SSH window on your laptop. Every window of the extension records itself (`vscode-window.json` in the `switchyard` state folder, `~/.switchyard`: its remote authority, folders and workspace file) when it gains focus. The button picks a window that has the session's folder open, else the one you used last, records the request (`vscode-open.json`, valid for two minutes) and opens a link that brings that window up: `vscode://vscode-remote/<authority><folder>` for a remote window (that window's workspace, or the git checkout around the session; VS Code focuses the window holding it, or opens one), or `vscode://mbaradad.switchyard/open?session=<id>` for a local one. The window takes the request when it gains focus and opens the chat. In the dashboard the browser asks before opening VS Code. Hermes Desktop opens only web links, so it opens a small page of the dashboard (`/dashboard-plugins/switchyard/open-vscode.html`, served without sign-in; it holds nothing but the link and follows only VS Code links) in your browser, which then asks to open VS Code. From a terminal: `switchyard vscode <session>` records the request and prints the link (`--authority` picks the Remote-SSH window).
+**Open in VS Code.** The detail panel's **VS Code** button opens the session's chat in a VS Code window on the Switchyard machine, including a Remote-SSH window on your laptop. Every window of the extension records itself (`vscode-window.json` in the `switchyard` state folder, `~/.switchyard`: its remote authority, folders and workspace file) when it gains focus. The button picks a window that has the session's folder open, else the one you used last, records the request (`vscode-open.json`, valid for two minutes) and opens a link that brings that window up: `vscode://vscode-remote/<authority><folder>` for a remote window (that window's workspace, or the git checkout around the session; VS Code focuses the window holding it, or opens one), or `vscode://mbaradad.switchyard/open?session=<id>` for a local one. The window takes the request when it gains focus and opens the chat. In the dashboard the browser asks before opening VS Code. Hermes Desktop opens only web links, so it opens a small page of the dashboard (`/dashboard-plugins/switchyard/open-vscode.html`, served without sign-in; it holds nothing but the link and follows only VS Code links) in your browser, which then asks to open VS Code. From a terminal: `switchyard vscode <session>` records the request and prints the link (`--authority` picks the Remote-SSH window).
 
 **Open project in VS Code** opens a folder rather than a chat: the card's Hermes project folder, else the board's folder (when the session runs inside it), else the deepest project folder containing the session, else its git repository, else the session's own folder. The page only opens folders it shows (session, board and project folders). From a terminal: `switchyard vscode --folder <dir>` opens exactly that folder, and `switchyard vscode path/to/dir` the git checkout around it.
+
+**Review PR in VS Code.** The detail panel lists the session's pull requests as chips (AO's state, CI, review and mergeability, linking to the PR) and, only when it has some, a **Review PR in VS Code** button (one per PR, `Review #12 in VS Code`, when there are several). It goes through the same flow as **VS Code**: the page posts `{"review": "pr", "pr": 12}` to `POST /sessions/<id>/vscode` (`pr` is optional, `review` is only `"pr"`), the backend runs `switchyard vscode <id> --review [--pr 12] --json`, and the window that takes the request opens the session's chat and then its pull request review (`switchyard.pr.review`; a session without PRs gets a message in VS Code). A local window's link carries the intent (`vscode://mbaradad.switchyard/open?session=<id>&review=pr&pr=12`); a remote window's folder link cannot, so the request file (`vscode-open.json`) carries it. On the Orchestrator view each PR chip on a worker row has a small button beside it that does the same for that worker's PR. From a terminal: `switchyard vscode <session> --review [--pr N]`.
 
 What it takes:
 
 - **Dashboard:** the plugin must be enabled (`hermes plugins enable switchyard`; `switchyard hermes install` does it). Hermes mounts the page's backend (`dashboard/plugin_api.py`, under `/api/plugins/switchyard/`) when the dashboard or gateway starts, so restart it after enabling (`hermes gateway restart`, or restart `hermes dashboard`).
 - **Desktop with Hermes on the same computer:** Desktop copies the desktop half (`desktop/plugin.js`) from the installed plugin, from the first profile that has it (default first), so keep every profile's copy current (`switchyard hermes install --all-profiles`; the extension does it on update). It ships off: turn on **Switchyard** in **Capabilities → Plugins** (use **Rescan** there if it isn't listed or after an update; once the desktop half is in, the row is titled *Switchyard*, so search for that rather than `switchyard`). It uses the same backend, so the plugin must also be enabled in that profile.
-- **Desktop against a remote backend** (Desktop on a laptop, Hermes on another machine): the desktop half has to be on the laptop, because Desktop loads plugins from its own `~/.hermes/desktop-plugins/`. Until it is, the plugin's row says *Desktop: unavailable (remote backend)*. In **Capabilities → Plugins → Install from Git**, enter `mbaradad/omp-sessions/integrations/hermes/switchyard`, review, and Install. Desktop clones the desktop half into `~/.hermes/desktop-plugins/switchyard/` with a `.hermes-package.json` marker that pairs it with the agent half on the backend. If the agent half is already installed there, the dialog reports *Plugin 'switchyard' already exists*, which is harmless: the desktop half is still installed. Then turn on its **Desktop** switch. To update it later, run Install from Git again with **Force reinstall** on. Desktop doesn't refresh a Git-installed desktop half by itself, and Force reinstall also replaces the agent half on the backend. The install link `hermes://plugin/install?repo=mbaradad/omp-sessions/integrations/hermes/switchyard` opens the same dialog.
+- **Desktop against a remote backend** (Desktop on a laptop, Hermes on another machine): the desktop half has to be on the laptop, because Desktop loads plugins from its own `~/.hermes/desktop-plugins/`. Until it is, the plugin's row says *Desktop: unavailable (remote backend)*. In **Capabilities → Plugins → Install from Git**, enter `mbaradad/switchyard/integrations/hermes/switchyard`, review, and Install. Desktop clones the desktop half into `~/.hermes/desktop-plugins/switchyard/` with a `.hermes-package.json` marker that pairs it with the agent half on the backend. If the agent half is already installed there, the dialog reports *Plugin 'switchyard' already exists*, which is harmless: the desktop half is still installed. Then turn on its **Desktop** switch. To update it later, run Install from Git again with **Force reinstall** on. Desktop doesn't refresh a Git-installed desktop half by itself, and Force reinstall also replaces the agent half on the backend. The install link `hermes://plugin/install?repo=mbaradad/switchyard/integrations/hermes/switchyard` opens the same dialog.
 
 The page is built from `integrations/hermes/ui` by `node build.mjs` into `dashboard/dist/` and `desktop/plugin.js`; those files are committed because Hermes installs the plugin folder without a build step.
 
 ### AO dashboard
 
-The Switchyard server on omp's machine serves AO's real web UI on `http://127.0.0.1:<dashboardPort>/` (`dashboardPort` in `~/.switchyard/config.json`, default 3012; `"dashboard": "off"` turns it off). Install it there once with `switchyard dashboard install`; `switchyard dashboard status` tells whether it is installed and served. The plugin backend proxies it at `/api/plugins/switchyard/ao/`, behind Hermes's own sign-in, so the page's **AO dashboard** view can show it wherever you reach Hermes, with nothing else to forward or expose.
+The Switchyard server on the Switchyard machine serves AO's real web UI on `http://127.0.0.1:<dashboardPort>/` (`dashboardPort` in `~/.switchyard/config.json`, default 3012; `"dashboard": "off"` turns it off). Install it there once with `switchyard dashboard install`; `switchyard dashboard status` tells whether it is installed and served. The plugin backend proxies it at `/api/plugins/switchyard/ao/`, behind Hermes's own sign-in, so the page's **AO dashboard** view can show it wherever you reach Hermes, with nothing else to forward or expose.
 
-- **Hermes dashboard in a browser:** the view embeds AO's UI (same origin, so the browser's Hermes sign-in cookie reaches it), with **Open in new window** for a tab of its own. Before it does, it asks the server for its status and says when the UI isn't installed (`switchyard dashboard install` on omp's machine) or the server isn't running (`switchyard server start`, or any `switchyard` command, starts it).
+- **Hermes dashboard in a browser:** the view embeds AO's UI (same origin, so the browser's Hermes sign-in cookie reaches it), with **Open in new window** for a tab of its own. Before it does, it asks the server for its status and says when the UI isn't installed (`switchyard dashboard install` on the Switchyard machine) or the server isn't running (`switchyard server start`, or any `switchyard` command, starts it).
 - **Hermes Desktop:** **Open in browser** opens it in your browser instead. Desktop signs in to a remote Hermes with a bearer token its main process keeps, which an embedded page can't carry, and Desktop's sandboxed frames have no storage or cookies, which AO's UI needs. The browser opens `/dashboard-plugins/switchyard/ao-dashboard.html` on the address Desktop reached Hermes at (a page served without sign-in that holds nothing): it sends you to Hermes's sign-in page if this browser isn't signed in, then on to the proxy.
-- **Legacy session-token mode** (a Hermes dashboard without sign-in, on loopback): its requests carry a token header that an embedded page or a link can't send, so the view explains that instead of embedding. Open `switchyard dashboard url` in a browser on omp's machine, or turn on the dashboard's sign-in.
-- **Terminals:** the proxy carries HTTP, including AO's live event streams, but not WebSockets. Hermes's sign-in check doesn't cover a plugin's WebSocket, so offering one would expose AO's terminals without sign-in; AO's terminal panes don't connect through Hermes. Use them on `switchyard dashboard url` on omp's machine, or in AO's app.
+- **Legacy session-token mode** (a Hermes dashboard without sign-in, on loopback): its requests carry a token header that an embedded page or a link can't send, so the view explains that instead of embedding. Open `switchyard dashboard url` in a browser on the Switchyard machine, or turn on the dashboard's sign-in.
+- **Terminals:** the proxy carries HTTP, including AO's live event streams, but not WebSockets. Hermes's sign-in check doesn't cover a plugin's WebSocket, so offering one would expose AO's terminals without sign-in; AO's terminal panes don't connect through Hermes. Use them on `switchyard dashboard url` on the Switchyard machine, or in AO's app.
 - **Requests:** the proxy forwards to `127.0.0.1` only. It drops the browser's `Origin`, `Referer`, cookies, `Authorization`, Hermes's session headers and the `Sec-Fetch-*` and `X-Forwarded-*` headers, refuses writes (`POST`, `PUT`, `PATCH`, `DELETE`) another page made (`Sec-Fetch-Site: cross-site` or `same-site`), and never passes AO's cookies back. AO's UI runs on Hermes's origin, so it is as trusted as the plugin itself.
 - **`plugins.isolation: host`:** Hermes buffers responses of plugins it runs in a separate host, so AO's live updates don't stream there; the default in-process mode streams them.
 
@@ -333,10 +351,10 @@ The Switchyard server on omp's machine serves AO's real web UI on `http://127.0.
 [Hermes Console](https://github.com/xP3ta/hermes-console) talks to the Hermes dashboard but shows only its own screens, so the Switchyard page doesn't appear there. Everything else works through Hermes's own features:
 
 - **Chats**: Hermes calls the `switchyard_session_*` tools as usual (Console shows them as steps), and the note that a session finished or needs input arrives in the chat that started it.
-- **`/switchyard`**: a short summary (how many sessions need you, are working, queued, scheduled, interrupted or done, and which need you); `/switchyard status` for the lane; `/switchyard take <card> [board]` routes a kanban card to omp, which Console's assignee picker can't (it lists only profiles).
-- **Tasks**: cards the lane runs show `@switchyard`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@switchyard` on a card to hand it to omp. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them in AO Mobile or on the Switchyard page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
+- **`/switchyard`**: a short summary (how many sessions need you, are working, queued, scheduled, interrupted or done, and which need you); `/switchyard status` for the lane; `/switchyard take <card> [board]` routes a kanban card to the lane, which Console's assignee picker can't (it lists only profiles).
+- **Tasks**: cards the lane runs show `@switchyard`, their status, results and comments. Console posts comments as `dashboard`, so they are trusted by default. Comment `@switchyard` on a card to hand it to the lane. When a card's session asks a question, the card is blocked with the question as the reason and Console notifies you; answer with a comment on the card. Approvals can't be answered by comment: approve them in AO Mobile or on the Switchyard page. Any other comment reaches the session as a message (see [comments](#talk-to-a-cards-session-through-comments)).
 
-For the omp sessions themselves on Android (every session, not only cards), pair AO Mobile with the AO daemon (see the [setup guide](SETUP.md)): it lists them, follows them live, and answers questions and approvals.
+For the sessions themselves on Android (every session, not only cards), pair AO Mobile with the AO daemon (see the [setup guide](SETUP.md)): it lists them, follows them live, and answers questions and approvals.
 
 ## Troubleshooting
 
@@ -348,7 +366,7 @@ For the omp sessions themselves on Android (every session, not only cards), pair
 - **Cards stay `ready`.**
   - `hermes switchyard status` shows the kanban dispatcher's last tick and which profile's plugin it reached, and warns when the lane is on in a different profile, when the dispatcher's profile has the lane off, or when no tick has arrived for 3 minutes. The Switchyard page shows the same warnings on its Lane item.
   - Is the board in the lane's list? Is the card assigned exactly to the lane's assignee?
-  - Is omp's concurrency limit full (`switchyard sched`)?
+  - Is Switchyard's concurrency limit full (`switchyard sched`)?
   - `hermes switchyard lane run` forces a pass from the terminal.
   - Just updated the plugin files? The running gateway keeps the old code until it reloads the plugin: the extension's automatic refresh and `switchyard hermes install` do that for you; by hand, `hermes -p <profile> plugins disable switchyard` then `enable`, or `hermes gateway restart`.
 - **A card was blocked with "could not prepare the workspace".** A `worktree` card needs a path inside a git repository, or a board `default_workdir`. A `dir` path must be absolute.

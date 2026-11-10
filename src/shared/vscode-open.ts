@@ -30,6 +30,13 @@ export function isSessionId(s: string): boolean {
 	return /^[A-Za-z0-9_-]{1,128}$/.test(s);
 }
 
+/** The session `query` names among `ids`: that exact id, or a unique prefix of at least 4 characters. */
+export function resolveSessionId(query: string, ids: readonly string[]): string | undefined {
+	if (ids.includes(query)) return query;
+	const prefixed = query.length >= 4 ? ids.filter(id => id.startsWith(query)) : [];
+	return prefixed.length === 1 ? prefixed[0] : undefined;
+}
+
 export interface VscodeWindow {
 	/** VS Code's id of the window's session (vscode.env.sessionId); "" for a record from an older extension. */
 	id: string;
@@ -44,9 +51,31 @@ export interface VscodeWindow {
 	workspace?: string;
 }
 
-export interface OpenRequest {
+/** What the window does after opening the session's chat: its PR review (that PR number, else the session's only PR or a pick). */
+export interface OpenIntent {
+	review?: "pr";
+	pr?: number;
+}
+
+export interface OpenRequest extends OpenIntent {
 	session: string;
 	at: number;
+}
+
+/** A PR number as links and requests carry it: a positive integer. */
+export function isPrNumber(n: unknown): n is number {
+	return typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+}
+
+/**
+ * The intent of URI parameters (`review=pr[&pr=N]`): none for absent ones; undefined when invalid
+ * (`review` is only `pr`, `pr` a positive integer and only with `review`).
+ */
+export function intentOfParams(review: string | null, pr: string | null): OpenIntent | undefined {
+	if (review === null) return pr === null ? {} : undefined;
+	if (review !== "pr") return undefined;
+	if (pr === null) return { review };
+	return /^[1-9][0-9]{0,15}$/.test(pr) && isPrNumber(Number(pr)) ? { review, pr: Number(pr) } : undefined;
 }
 
 export const OPEN_REQUEST_FILE = "vscode-open.json";
@@ -140,15 +169,15 @@ export function windowFor(want: { authority?: string; cwd?: string }, env: NodeJ
 	return authority === undefined || win?.authority === authority ? win : { id: "", authority, scheme: win?.scheme ?? "vscode", at: 0, folders: [] };
 }
 
-export function requestOpen(session: string, now = Date.now()): void {
-	writeJson(requestFile(), { session, at: now } satisfies OpenRequest);
+export function requestOpen(session: string, now = Date.now(), intent: OpenIntent = {}): void {
+	writeJson(requestFile(), { session, at: now, ...(intent.review ? { review: intent.review } : {}), ...(intent.review && intent.pr !== undefined ? { pr: intent.pr } : {}) } satisfies OpenRequest);
 }
 
 /**
- * The pending request's session when `has(session)` (this window can open it) and it is fresh; the
- * request is removed so only one window acts on it. A stale request is removed too.
+ * The pending request (session and intent) when `has(session)` (this window can open it) and it is fresh;
+ * the request is removed so only one window acts on it. A stale request is removed too.
  */
-export function takeOpenRequest(has: (session: string) => boolean, now = Date.now()): string | undefined {
+export function takeOpenRequest(has: (session: string) => boolean, now = Date.now()): ({ session: string } & OpenIntent) | undefined {
 	const v = readJson(requestFile());
 	if (!v || typeof v.session !== "string" || typeof v.at !== "number") return undefined;
 	const fresh = now - v.at <= OPEN_REQUEST_TTL_MS && v.at - now <= OPEN_REQUEST_TTL_MS;
@@ -159,7 +188,9 @@ export function takeOpenRequest(has: (session: string) => boolean, now = Date.no
 	} catch {
 		return undefined;
 	}
-	return fresh ? v.session : undefined;
+	if (!fresh) return undefined;
+	if (v.review !== "pr") return { session: v.session };
+	return isPrNumber(v.pr) ? { session: v.session, review: "pr", pr: v.pr } : { session: v.session, review: "pr" };
 }
 
 /** Drops the pending request when it is for `session` (opened another way, e.g. the URI handler). */
@@ -201,12 +232,14 @@ export function folderTarget(cwd: string, win: VscodeWindow | undefined): string
 
 /**
  * The link that opens `session` in `win` (from readWindow; none: a local VS Code). A remote window gets the
- * folder to open (folderTarget) over its authority; a local one the extension's URI handler.
+ * folder to open (folderTarget) over its authority (no intent: the request file carries it); a local one the
+ * extension's URI handler, with the intent as `review=pr[&pr=N]`.
  */
-export function vscodeLink(session: { id: string; cwd: string }, win: VscodeWindow | undefined): string {
+export function vscodeLink(session: { id: string; cwd: string }, win: VscodeWindow | undefined, intent: OpenIntent = {}): string {
 	const scheme = win?.scheme ?? "vscode";
 	if (win?.authority) return `${scheme}://vscode-remote/${win.authority}${uriPath(folderTarget(session.cwd, win))}`;
-	return `${scheme}://${EXTENSION_ID}/open?session=${encodeURIComponent(session.id)}`;
+	const review = intent.review ? `&review=${intent.review}${intent.pr !== undefined ? `&pr=${intent.pr}` : ""}` : "";
+	return `${scheme}://${EXTENSION_ID}/open?session=${encodeURIComponent(session.id)}${review}`;
 }
 
 /** Why `folder` can't be opened in VS Code (not an absolute path to an existing folder, control characters); undefined when it can. */

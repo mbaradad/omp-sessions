@@ -4,6 +4,7 @@ import type { SoundPlayedMessage } from "../shared/completion-sound";
 import type { SessionMeta } from "../shared/protocol";
 import type { AoConnection } from "./ao-connection";
 import type { SnapshotProvider } from "./diff";
+import type { OrchestratorStore } from "./orchestrator";
 import type { ChatPanel } from "./panel";
 import type { NewSessionOptions, SessionManager } from "./sessions";
 import type { Node, SessionTree } from "./tree";
@@ -39,6 +40,8 @@ export interface OmpApi {
 	readonly organize: OrganizeStore;
 	/** Sessions view data provider and view (selection, description, reveal). */
 	readonly sessionTree: SessionTree;
+	/** The AO projects' orchestrators with their workers and PRs (the Orchestrators view's data; refreshes on AO's change events). */
+	readonly orchestrators: OrchestratorStore;
 	readonly sessionsView: vscode.TreeView<Node>;
 	/** A Switchyard webview reports it played a session cue (src/ext/sounds.ts); for tests and diagnostics. */
 	readonly onDidPlaySound: vscode.Event<SoundPlayedMessage>;

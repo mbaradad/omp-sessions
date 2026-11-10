@@ -5,6 +5,7 @@ import { isOmpHarness } from "../ao/harness";
 import { OrganizeStore, organizeFile } from "../shared/organize";
 import type { SessionMeta } from "../shared/protocol";
 import type { OmpApi } from "./api";
+import { OrchestratorStore, registerOrchestrators } from "./orchestrator";
 import { registerAgentSkill } from "./agent-skill";
 import { registerAoDashboard } from "./ao-dashboard";
 import { type PermissionMode, readMode } from "../shared/session-mode";
@@ -29,6 +30,8 @@ import { type NewSessionOptions, SessionManager, projectRoot } from "./sessions"
 import { registerDependencies } from "./dependencies";
 import { registerPermissions } from "./permissions";
 import { registerOrganize } from "./organize";
+import { registerPrReview } from "./pr-review";
+import { registerOverview } from "./overview";
 import { registerScheduler } from "./scheduler";
 import { registerRemote } from "./remote";
 import { registerServer } from "./server";
@@ -49,6 +52,8 @@ function idFrom(arg: unknown): string | undefined {
 		const node = arg as Node;
 		if (node.kind === "session") return node.meta.id;
 		if (node.kind === "file") return node.sessionId;
+		// An Orchestrators view node (an orchestrator, one of its workers) carries the session it stands for.
+		if ("sessionId" in arg && typeof arg.sessionId === "string") return arg.sessionId;
 	}
 	return undefined;
 }
@@ -70,6 +75,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		else unread.delete(id);
 		void context.globalState.update("switchyard.unread", [...unread]);
 		tree.refresh();
+		orchestratorView.refresh();
 		updateStatus();
 	};
 	// User organization (groups, colors, pins, priorities); shared with other windows through the file.
@@ -512,6 +518,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 		sessionTree: tree,
 		sessionsView: treeView,
 		onDidPlaySound,
+		orchestrators: new OrchestratorStore(ao),
 	};
 	registerEditorIntegration(context, { sessions, snapshots, targetPanel });
 	// One planner connection per window: the Tasks view, the session queues and the views' plan summaries share it.
@@ -551,6 +558,9 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 	registerOmpExtensions(api);
 	registerHermesPlugin(api);
 	registerVscodeOpen(api);
+	const orchestratorView = registerOrchestrators(api);
+	registerPrReview(api);
+	registerOverview(api, tasksDeps.planner);
 	registerRemote(api, server);
 	registerAoDashboard(api, server);
 
@@ -609,7 +619,7 @@ export function activate(context: vscode.ExtensionContext): OmpApi {
 			if (attended) return;
 			let message: string | undefined;
 			// A merge conflict is needs-input too, but the Tasks view toasts it with the files and the graph (ext-tasks): not twice.
-			const agent = meta.harness ?? "omp";
+			const agent = meta.kind === "orchestrator" ? `${meta.harness ?? "omp"} orchestrator` : (meta.harness ?? "omp");
 			if (meta.status === "waiting") message = meta.queue?.sync?.state === "conflict" ? undefined : `${agent} needs your input: ${meta.title}`;
 			else if (meta.status === "idle" && from === "working") message = `${agent} finished: ${meta.title}`;
 			else if (meta.status === "stopped" && from !== "stopped" && meta.exitCode && meta.exitCode !== 0) message = `${agent} session exited (${meta.exitReason}): ${meta.title}`;

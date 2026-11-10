@@ -2,11 +2,11 @@
 // records itself (authority, scheme, folders) when it gains focus, tells its terminals its authority so
 // `switchyard vscode` run there targets a matching window, takes pending open requests when it gains focus
 // or a new session shows up (the request's link focused or opened it), and handles
-// vscode://mbaradad.switchyard/open?session=<id>.
+// vscode://mbaradad.switchyard/open?session=<id>[&review=pr[&pr=N]] (the review: switchyard.pr.review).
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import { stateRoot } from "../shared/protocol";
-import { OPEN_REQUEST_FILE, WINDOW_AUTHORITY_ENV, clearOpenRequest, isSessionId, recordWindow, takeOpenRequest } from "../shared/vscode-open";
+import { OPEN_REQUEST_FILE, type OpenIntent, WINDOW_AUTHORITY_ENV, clearOpenRequest, intentOfParams, isSessionId, recordWindow, resolveSessionId, takeOpenRequest } from "../shared/vscode-open";
 import type { OmpApi } from "./api";
 
 /**
@@ -36,14 +36,18 @@ function localPath(uri: vscode.Uri | undefined): string | undefined {
 }
 
 export function registerVscodeOpen(api: OmpApi): void {
-	const open = (id: string) => api.openPanel(id)?.focusComposer();
+	/** Opens the session's chat; with an intent, its PR review next (the review says so when the session has no PR). */
+	const open = (id: string, intent: OpenIntent = {}) => {
+		api.openPanel(id)?.focusComposer();
+		if (intent.review) void vscode.commands.executeCommand("switchyard.pr.review", intent.pr === undefined ? id : { session: id, pr: intent.pr });
+	};
 	const authority = windowAuthority();
 	void authority.then(known => {
 		if (known !== undefined) api.context.environmentVariableCollection.replace(WINDOW_AUTHORITY_ENV, known);
 	});
 	const take = () => {
-		const id = takeOpenRequest(s => !!api.sessions.get(s));
-		if (id) open(id);
+		const req = takeOpenRequest(s => !!api.sessions.get(s));
+		if (req) open(req.session, req);
 	};
 	const focused = async () => {
 		const known = await authority;
@@ -74,21 +78,27 @@ export function registerVscodeOpen(api: OmpApi): void {
 		vscode.window.registerUriHandler({
 			handleUri(uri) {
 				if (uri.path !== "/open") return;
-				const query = new URLSearchParams(uri.query).get("session")?.trim() ?? "";
+				const params = new URLSearchParams(uri.query);
+				const query = params.get("session")?.trim() ?? "";
 				if (!isSessionId(query)) {
 					void vscode.window.showWarningMessage("That Switchyard link names no valid session id.");
 					return;
 				}
-				const all = api.sessions.all();
-				const prefixed = query.length >= 4 ? all.filter(m => m.id.startsWith(query)) : [];
-				const meta = all.find(m => m.id === query) ?? (prefixed.length === 1 ? prefixed[0] : undefined);
+				const intent = intentOfParams(params.get("review"), params.get("pr"));
+				if (!intent) {
+					void vscode.window.showWarningMessage("That Switchyard link has an invalid review request: review is only \"pr\", pr a positive number.");
+					return;
+				}
+				// Workers and orchestrators alike: both have chats.
+				const id = resolveSessionId(query, [...api.sessions.all(), ...api.sessions.orchestrators()].map(m => m.id));
+				const meta = id ? api.sessions.get(id) : undefined;
 				if (!meta) {
 					const here = vscode.env.remoteName ? "the machine this window is connected to" : "this computer";
 					void vscode.window.showWarningMessage(`No session ${query} on ${here}: it runs on another machine. Open it from a VS Code window connected there.`);
 					return;
 				}
 				clearOpenRequest(meta.id);
-				open(meta.id);
+				open(meta.id, intent);
 			},
 		}),
 	);

@@ -1,7 +1,7 @@
 // Packs the standalone `switchyard` command: the CLI with everything it runs or installs next to it
 // (the planner, agent skill, omp extensions and shim, Hermes plugin), the same layout as the extension's
 // runtime folder, as an npm tarball. Install it without VS Code:
-//   npm install -g https://github.com/mbaradad/omp-sessions/releases/download/v<version>/switchyard-<version>.tgz
+//   npm install -g https://github.com/mbaradad/switchyard/releases/download/v<version>/switchyard-<version>.tgz
 // Usage: node build.mjs [--production] && node packaging/cli/pack.mjs [out dir] [--dest <dir>]
 // Writes <dest>/switchyard-<version>.tgz (default dest: dist/) and prints its path.
 import { spawnSync } from "node:child_process";

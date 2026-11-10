@@ -6,12 +6,12 @@ Releases are automated by `.github/workflows/release.yml`: pushing a tag `v<vers
 
 ### 1. GitHub repository
 
-`package.json` already points `repository`, `bugs`, `homepage` and `qna` at `https://github.com/mbaradad/omp-sessions`. The Marketplace page links there, and `vsce` rewrites relative README links against it, so the repository must exist and be public before the first publish.
+`package.json` already points `repository`, `bugs`, `homepage` and `qna` at `https://github.com/mbaradad/switchyard`. The Marketplace page links there, and `vsce` rewrites relative README links against it, so the repository must exist and be public before the first publish.
 
-1. Create the **public** repository `mbaradad/omp-sessions` on GitHub (no README, license or .gitignore: they already exist here).
+1. Create the **public** repository `mbaradad/switchyard` on GitHub (no README, license or .gitignore: they already exist here).
 2. Push:
    ```sh
-   git remote add origin git@github.com:mbaradad/omp-sessions.git
+   git remote add origin git@github.com:mbaradad/switchyard.git
    git push -u origin main
    ```
 3. Settings → **Code security** → enable *Private vulnerability reporting* (`SECURITY.md` links to it).
@@ -52,7 +52,7 @@ The Marketplace needs no secret (Trusted Publishing, step 2). The workflow uses 
 
 ### 5. Marketplace listing assets
 
-The README and the website (`site/assets/shots/`) use the same PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/omp-sessions/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`). The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
+The README and the website (`site/assets/shots/`) use the same PNGs, kept in `docs/images/`. Embed them in `README.md` with relative paths (`![…](docs/images/chat.png)`): `vsce` rewrites relative paths to `https://github.com/mbaradad/switchyard/raw/HEAD/…`, so the images only show once they are pushed to the public repo. `docs/` is never packaged into the VSIX (see `.vscodeignore`). The Marketplace does not accept SVG images in the README (only badges from trusted hosts), and every image must be HTTPS.
 
 `node scripts/screenshots/run.mjs` retakes them: it packages the VSIX, installs it into a real VS Code (Dark Modern, zoom 0, isolated profile, so no *Extension Development Host*) under Xvfb, starts an isolated AO daemon and planner with two demo projects, builds the demo through the extension's API (`scripts/screenshots/driver`) with `test/fake-omp-acp.mjs` in demo mode answering from `scripts/screenshots/scenario.mjs`, and grabs each view. The review and undo session runs one short real omp turn (checkpoints come from Switchyard's omp extension, which only real omp loads; `--no-real` skips it). With Hermes Agent installed it then opens the same sessions in the Hermes dashboard (`hermes.mjs`). Everything lives in `/tmp/switchyard-shots` with its own HOME; no personal paths, keys or costs appear. VS Code's window is 1440×900 inside the 1600×1000 screen (no window manager), so the VS Code shots are 1440×900 (16:10; the website crops with `object-fit: cover` anchored top-left). Afterwards shrink them with pngquant, copy them to `site/assets/shots/`, and re-render the README graphics (`docs/images/src/README.md`).
 
@@ -99,7 +99,7 @@ Manual fallback without CI: upload the VSIX from `npx vsce package` at <https://
 The plugin in `integrations/hermes/switchyard/` ships three ways. Its `plugin.yaml` `version` must equal `package.json`'s (`node build.mjs` fails otherwise), so bump both together.
 
 1. **Inside the extension.** `build.mjs` copies the folder into `out/hermes-plugin/`; `switchyard hermes install` and *Switchyard: Install Hermes Plugin…* install it from there. Nothing to do beyond the extension release.
-2. **From Git.** `hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/switchyard/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update switchyard`.
+2. **From Git.** `hermes plugins install mbaradad/switchyard/integrations/hermes/switchyard` fetches only that folder from `main`, so the folder must be self-contained: `build.mjs` keeps its copy of the skill (`skills/switchyard/SKILL.md`) and the dashboard and Desktop bundles (built from `integrations/hermes/ui/`) up to date, and they are committed. Run `node build.mjs` and commit before pushing. Users update with `hermes plugins update switchyard`.
 3. **The Hermes plugin catalog** (`hermes plugins install switchyard`, listed on <https://hermes-agent.nousresearch.com/docs/plugins>). Entries are YAML files in [`NousResearch/hermes-agent/plugin-catalog/`](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog), added by a reviewed pull request that pins an exact commit. To submit, or to move it to a new release:
    1. Validate the plugin at the commit you'll pin (the same check catalog CI runs):
       ```sh

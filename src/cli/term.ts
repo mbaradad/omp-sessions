@@ -105,6 +105,13 @@ export async function confirm(question: string, assumeYes = false): Promise<bool
 	return /^y(es)?$/i.test((await ask(`${question} ${c.dim("[y/N]")} `)).trim());
 }
 
+/** Everything piped to stdin, trimmed. */
+export async function readStdin(): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+	return Buffer.concat(chunks).toString("utf8").trim();
+}
+
 /** Error to stderr with the switchyard prefix. */
 export function errorLine(message: string): void {
 	process.stderr.write(`${c.red("switchyard:")} ${message}\n`);

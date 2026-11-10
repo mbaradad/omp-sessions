@@ -1,3 +1,4 @@
+@import "../shared/graph.css";
 /* Sessions board webview. Theme colors via VS Code CSS variables only. */
 :root {
 	--c-red: var(--vscode-charts-red, #e5484d);
@@ -193,6 +194,9 @@ select {
 .pill.sync-conflict { background: transparent; color: var(--c-red, var(--vscode-errorForeground)); border: 1px solid currentColor; }
 .pill.sync-upstream-changed, .pill.sync-pending, .pill.sync-resolving { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.sync-merged { background: transparent; color: var(--c-green, var(--vscode-descriptionForeground)); border: 1px solid currentColor; }
+.pill.planner { font-size: 0.85em; background: transparent; border: 1px solid currentColor; }
+.pill.planner.wait { color: var(--c-yellow); }
+.pill.planner.bad { color: var(--c-red, var(--vscode-errorForeground)); }
 .pill.waiting, .pill.queued { background: transparent; color: var(--c-yellow); border: 1px solid var(--c-yellow); }
 .pill.idle { background: transparent; color: var(--c-green); border: 1px solid var(--c-green); }
 .pill.stopped { background: transparent; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-panel-border); }
@@ -267,29 +271,7 @@ select {
 
 /* ---------- dependency graph ---------- */
 .graph { padding: 10px; }
-.graph-svg { display: block; overflow: visible; font-family: var(--vscode-font-family); }
-.gedge { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1.4; opacity: 0.8; }
-.gedge.pending { stroke: var(--c-yellow); stroke-dasharray: 5 4; opacity: 1; }
-.gedge.changed { stroke: var(--c-orange); opacity: 1; }
-.gedge.conflict { stroke: var(--c-red); stroke-width: 2; opacity: 1; }
-.gedge.merged { stroke: var(--c-green); opacity: 1; }
-.graph-arrow path { fill: var(--vscode-descriptionForeground); }
-.graph-arrow-pending path { fill: var(--c-yellow); }
-.graph-arrow-changed path { fill: var(--c-orange); }
-.graph-arrow-conflict path { fill: var(--c-red); }
-.graph-arrow-merged path { fill: var(--c-green); }
-.gnode { cursor: pointer; outline: none; --s: var(--vscode-panel-border); }
-.gnode-box { fill: var(--vscode-sideBar-background, var(--vscode-editor-background)); stroke: var(--s); stroke-width: 1.2; }
-.gnode-stripe { fill: var(--s); }
-.gnode:hover .gnode-box, .gnode:focus-visible .gnode-box { stroke: var(--vscode-focusBorder); stroke-width: 2; }
-.gnode.s-working { --s: var(--c-blue); }
-.gnode.s-waiting, .gnode.s-queued { --s: var(--c-yellow); }
-.gnode.s-idle { --s: var(--c-green); }
-.gnode.s-stopped { --s: var(--c-gray); }
-.gnode.blocked .gnode-box { stroke-dasharray: 5 3; }
-.gnode-title { fill: var(--vscode-foreground); font-size: 12px; font-weight: 600; }
-.gnode-state { fill: var(--vscode-descriptionForeground); font-size: 11px; }
-.gnode.blocked .gnode-state { fill: var(--c-yellow); }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); }
 
 /* ---------- menus ---------- */
 .menu {

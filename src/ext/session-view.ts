@@ -41,6 +41,20 @@ export function statusOf(state: AoAgentState): SessionStatus {
 	}
 }
 
+/** What the views call each status ("needs input" for `waiting`). */
+export const STATUS_LABEL: Record<SessionStatus, string> = {
+	starting: "starting",
+	working: "working",
+	waiting: "needs input",
+	idle: "idle",
+	stopped: "stopped",
+};
+
+/** The worker sessions among `metas`: every list, board and count of sessions leaves the project orchestrators out (they have their own view). */
+export function workersOf(metas: Iterable<SessionMeta>): SessionMeta[] {
+	return [...metas].filter(m => m.kind !== "orchestrator");
+}
+
 /** Last assistant text kept for tooltips and board cards. */
 const LAST_TEXT_MAX = 600;
 
@@ -58,6 +72,7 @@ export function metaOf(model: AoSessionModel, cwd: string, native?: AoNativeSess
 	return {
 		id: model.id,
 		cwd,
+		...(model.view.kind === "orchestrator" && { kind: "orchestrator" as const }),
 		title: model.title,
 		status: statusOf(state),
 		pid: 0,

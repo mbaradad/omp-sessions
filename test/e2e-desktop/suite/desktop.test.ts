@@ -16,6 +16,7 @@ import { readMode } from "../../../src/shared/session-mode";
 import { writeSwitchyardConfig } from "../../../src/ao/config";
 import { pairingLink, type PairingStatus } from "../../../src/ao/mobile";
 import type { SessionMeta } from "../../../src/shared/protocol";
+import { resolveProject, submitTask } from "../../../src/ao/orchestrator";
 
 const REPO = fs.realpathSync(process.env.SWITCHYARD_E2E_REPO ?? "");
 const EXT_PATH = vscode.extensions.getExtension("mbaradad.switchyard")?.extensionPath ?? "";
@@ -437,5 +438,20 @@ describe("AO views", () => {
 		assert.ok(!sessions.some(s => s.id === id));
 		await settle();
 		shot("7-tree-empty");
+	});
+
+	it("an orchestrator: its chat opens like any session's, the Orchestrators view lists it, and the worker lists leave it out", async () => {
+		const project = await resolveProject(ao, REPO, "/");
+		const sent = await submitTask(ao, project, "Reply with one word.");
+		const held = await waitFor("the orchestrator in the session manager", () => api.sessions.get(sent.orchestrator), 60_000);
+		assert.equal(held.kind, "orchestrator");
+		assert.ok(!api.sessions.all().some(m => m.id === sent.orchestrator), "not among the worker sessions");
+		assert.ok(api.sessions.orchestrators().some(m => m.id === sent.orchestrator));
+		const entry = await waitFor("the project's entry in the Orchestrators view", () => api.orchestrators.entry(project.id)?.orchestrator, 60_000);
+		assert.equal(entry.id, sent.orchestrator);
+		await vscode.commands.executeCommand("switchyard.orchestrator.openChat", project.id);
+		assert.ok(api.openPanel(sent.orchestrator), "the orchestrator's chat opens in the chat panel");
+		await api.sessions.stop(sent.orchestrator);
+		await waitFor("the orchestrator stopped", () => api.sessions.get(sent.orchestrator)?.status === "stopped", 60_000);
 	});
 });

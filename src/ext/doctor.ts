@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { type AoClient, findDaemon } from "../ao/client";
 import { readSwitchyardConfig } from "../ao/config";
+import { listOrchestrators } from "../ao/orchestrator";
 import { INSTALL_COMMAND, dashboardEnabled, dashboardPort, dashboardUrl, probeDashboard, readDashboardInstall } from "../ao/dashboard";
 import { gateStatus } from "../ao/gate";
 import { PlannerClient } from "../planner/client";
@@ -124,10 +125,11 @@ async function gatherAo(api: OmpApi): Promise<AoFacts> {
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err), serviceAvailable };
 	}
-	const [daemon, readiness, list] = await Promise.all([
+	const [daemon, readiness, list, orchestrators] = await Promise.all([
 		findDaemon().catch(() => undefined),
 		client.api.GET("/api/v1/agents/readiness").then(r => r.data, () => undefined),
 		client.listSessions().catch(() => undefined),
+		listOrchestrators(client).catch(() => undefined),
 	]);
 	const omp = readiness?.agents.find(a => a.id === "omp");
 	const unit = installedUnit();
@@ -137,6 +139,7 @@ async function gatherAo(api: OmpApi): Promise<AoFacts> {
 		...(unit && { unit }),
 		...(omp && { omp: { installation: omp.installation.state, installationReason: omp.installation.reason, authentication: omp.authentication.state, authenticationReason: omp.authentication.reason } }),
 		...(list && { sessions: list.sessions.length }),
+		...(orchestrators && { orchestrators: orchestrators.map(o => ({ projectId: o.projectId, project: o.projectName, ...(o.harness && { harness: o.harness }), workers: o.counts.workers, openPrs: o.counts.openPrs })) }),
 		serviceAvailable,
 	};
 }

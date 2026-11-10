@@ -31,10 +31,10 @@
 
 	// Permission modes: an interactive example of the composer chip.
 	const MODES = {
-		ask: "omp asks before every file edit and command. Read-only tools never ask.",
+		ask: "The agent asks before every file edit and command. Read-only tools never ask.",
 		edits: "File edits go through; commands and other tools ask.",
-		plan: "Read-only: omp explores and proposes a plan. File edits are refused.",
-		auto: "Every tool call is approved. omp just works.",
+		plan: "Read-only: the agent explores and proposes a plan, and file edits are refused. omp only.",
+		auto: "Every tool call is approved. The agent just works.",
 	};
 	const desc = document.querySelector("[data-mode-desc]");
 	const modeButtons = [...document.querySelectorAll(".seg__b[data-mode]")];

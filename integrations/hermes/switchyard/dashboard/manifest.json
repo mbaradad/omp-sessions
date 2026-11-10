@@ -1,9 +1,9 @@
 {
   "name": "switchyard",
   "label": "Switchyard",
-  "description": "omp coding sessions at a glance: what needs you, what is working, queued and scheduled, done; answer, steer, start and stop them, and run kanban cards as omp sessions.",
+  "description": "coding sessions at a glance: what needs you, what is working, queued and scheduled, done; answer, steer, start and stop them, and run kanban cards as sessions.",
   "icon": "Activity",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "tab": {
     "path": "/switchyard",
     "position": "after:kanban"

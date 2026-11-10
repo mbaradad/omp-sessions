@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Switchyard · plans for coding agents</title>
-<meta name="description" content="Switchyard plans work for oh-my-pi (omp) coding agents and hands it to Agent Orchestrator to run: tasks with subtasks and dependencies, queues per session, scheduled starts and a limit on how many run at once. Drive it from VS Code, the terminal, Hermes Agent or AO's phone app. Free, MIT, no telemetry.">
+<title>Switchyard · plans for coding agents, any harness</title>
+<meta name="description" content="Switchyard plans and supervises coding agents of any Agent Orchestrator harness (Claude Code, Codex, oh-my-pi and more) and keeps the same sessions in VS Code, the terminal and Hermes Agent: task graphs, queues, scheduled starts, limits, pull request review. Free, MIT, no telemetry.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0c0812" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#faf8fd" media="(prefers-color-scheme: light)">
-<link rel="canonical" href="https://mbaradad.github.io/omp-sessions/">
+<link rel="canonical" href="https://mbaradad.github.io/switchyard/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/icon.png" type="image/png" sizes="256x256">
 <link rel="apple-touch-icon" href="assets/icon.png">
@@ -16,17 +16,17 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Switchyard">
 <meta property="og:title" content="Switchyard: plans for your coding agents">
-<meta property="og:description" content="Plans, task queues, scheduled starts and a concurrency limit for oh-my-pi (omp) sessions that Agent Orchestrator runs. Drive them from VS Code, the terminal, Hermes Agent or AO's phone app. Free, MIT, no telemetry.">
-<meta property="og:url" content="https://mbaradad.github.io/omp-sessions/">
-<meta property="og:image" content="https://mbaradad.github.io/omp-sessions/assets/og.png">
+<meta property="og:description" content="One thin layer over Agent Orchestrator: plans, queues and schedules for coding agents of any harness, and the same sessions in VS Code, the terminal and Hermes Agent. Free, MIT, no telemetry.">
+<meta property="og:url" content="https://mbaradad.github.io/switchyard/">
+<meta property="og:image" content="https://mbaradad.github.io/switchyard/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Switchyard: plans for your coding agents.">
+<meta property="og:image:alt" content="Switchyard: plans for your coding agents. Task graphs, queues and schedules for any Agent Orchestrator harness.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Switchyard: plans for your coding agents">
-<meta name="twitter:description" content="Plans, task queues, scheduled starts and a concurrency limit for oh-my-pi (omp) sessions that Agent Orchestrator runs. Free, MIT, no telemetry.">
-<meta name="twitter:image" content="https://mbaradad.github.io/omp-sessions/assets/og.png">
-<meta name="twitter:image:alt" content="Switchyard: plans for your coding agents.">
+<meta name="twitter:description" content="Plans, queues and schedules for coding agents of any Agent Orchestrator harness, and the same sessions in VS Code, the terminal and Hermes. Free, MIT, no telemetry.">
+<meta name="twitter:image" content="https://mbaradad.github.io/switchyard/assets/og.png">
+<meta name="twitter:image:alt" content="Switchyard: plans for your coding agents. Task graphs, queues and schedules for any Agent Orchestrator harness.">
 
 <link rel="stylesheet" href="styles.css">
 <script src="main.js" defer></script>
@@ -64,7 +64,6 @@
   <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
   <symbol id="i-board" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9.2 4v16M14.8 4v16"/></symbol>
 </svg>
-
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="nav">
@@ -74,18 +73,18 @@
       <span>Switchyard</span>
     </a>
     <nav class="nav__links" aria-label="Primary">
-      <a href="#why">Why</a>
-      <a href="#queue">Queue</a>
+      <a href="#layer">Idea</a>
+      <a href="#harnesses">Harnesses</a>
+      <a href="#hermes">Hermes</a>
+      <a href="#queue">Planner</a>
       <a href="#features">VS&nbsp;Code</a>
-      <a href="#new">New in 0.6</a>
       <a href="#cli">CLI</a>
       <a href="#phone">Phone</a>
-      <a href="#hermes">Hermes</a>
       <a href="#setup">Setup</a>
       <a href="#faq">FAQ</a>
     </nav>
     <div class="nav__cta">
-      <a class="btn btn--ghost btn--sm btn--icon-sm" href="https://github.com/mbaradad/omp-sessions" aria-label="Switchyard on GitHub"><svg class="i"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
+      <a class="btn btn--ghost btn--sm btn--icon-sm" href="https://github.com/mbaradad/switchyard" aria-label="Switchyard on GitHub"><svg class="i"><use href="#i-github"/></svg><span class="hide-sm">GitHub</span></a>
       <a class="btn btn--primary btn--sm" href="#install">Install</a>
     </div>
   </div>
@@ -97,13 +96,13 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="hero__glow" aria-hidden="true"></div>
   <div class="wrap hero__in">
-    <a class="pill" href="#cli">
-      <span class="pill__tag">New in 0.7</span>
-      <span class="pill__text">Plans on Agent Orchestrator: the switchyard command, VS Code, a Hermes plugin and AO's phone app</span>
+    <a class="pill" href="#hermes">
+      <span class="pill__tag">New in 0.8</span>
+      <span class="pill__text">AO's orchestrator and pull request review, in VS Code, the terminal and Hermes</span>
       <svg class="i i--sm" aria-hidden="true"><use href="#i-arrow"/></svg>
     </a>
     <h1 id="hero-title" class="hero__title">Plans for <span class="grad">your coding agents.</span></h1>
-    <p class="lede">Switchyard plans work for <a href="https://omp.sh">oh-my-pi</a> coding agents and hands it to <a href="https://github.com/OrchestratorInc/agent-orchestrator">Agent Orchestrator</a> (AO) to run. Write tasks with subtasks and dependencies, queues per session, scheduled starts and a limit on how many run at once; AO runs each task as an omp session in its own git worktree. Drive it from the terminal, VS&nbsp;Code, Hermes Agent or AO's phone app.</p>
+    <p class="lede">Switchyard plans and supervises coding agents of any harness <a href="https://github.com/OrchestratorInc/agent-orchestrator">Agent Orchestrator</a> (AO) can run: Claude Code, Codex, oh-my-pi, OpenCode and the rest. AO runs each one in its own git worktree and keeps it going with no window open; Switchyard adds the plans, and keeps the same sessions in VS&nbsp;Code, the terminal and Hermes Agent.</p>
     <div class="ctas">
       <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
       <a class="btn btn--ghost btn--lg" href="https://open-vsx.org/extension/mbaradad/switchyard">Get it on Open VSX</a>
@@ -112,17 +111,17 @@
       <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>code --install-extension mbaradad.switchyard</span></code>
       <button class="cmd__btn" type="button" data-copy aria-label="Copy install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
     </div>
-    <ul class="facts" aria-label="At a glance">
+    <ul class="facts" aria-label="One set of sessions, three places to use it">
+      <li>VS&nbsp;Code</li>
+      <li>Terminal</li>
+      <li>Hermes Agent</li>
       <li>Free &amp; MIT</li>
-      <li>No telemetry</li>
-      <li>Linux &amp; macOS</li>
-      <li>Local or remote</li>
     </ul>
   </div>
 
   <div class="wrap hero__stage">
     <figure class="mock">
-      <figcaption class="sr-only">Illustration: VS Code connected over SSH to a build server. The Sessions list shows five sessions: one working, one needing input, one running its task queue, one with new activity and one idle. The open chat shows a prompt about a flaky login test, tool calls to grep, read, edit and run the tests, an inline word-level diff, and omp's answer. A queue bar holds two more tasks; the composer has an Edits permission chip; the status bar shows queue concurrency and today's spend.</figcaption>
+      <figcaption class="sr-only">Illustration: VS Code connected over SSH to a build server. The Sessions list shows five sessions: one working, one needing input, one running its task queue, one with new activity and one idle. The open chat shows a prompt about a flaky login test, tool calls to grep, read, edit and run the tests, an inline word-level diff, and the agent's answer. A queue bar holds two more tasks; the composer has an Edits permission chip; the status bar shows queue concurrency and today's spend.</figcaption>
       <div class="win win--hero" aria-hidden="true">
         <div class="win__bar">
           <span class="dots"><i></i><i></i><i></i></span>
@@ -165,7 +164,7 @@
               <span class="qbar__hint"><kbd>Alt</kbd>+<kbd>Enter</kbd> queues</span>
             </div>
             <div class="composer">
-              <div class="composer__in">Ask omp… <span class="dim"><kbd>@</kbd> files · <kbd>/</kbd> commands</span></div>
+              <div class="composer__in">Ask the agent… <span class="dim"><kbd>@</kbd> files · <kbd>/</kbd> commands</span></div>
               <div class="composer__row">
                 <span class="chip chip--mode"><svg class="i"><use href="#i-shield"/></svg>Edits<span class="chev">▾</span></span>
                 <span class="chip chip--ghost"><svg class="i"><use href="#i-clip"/></svg></span>
@@ -184,123 +183,41 @@
       </div>
     </figure>
   </div>
+
+  </div>
 </section>
 
-<!-- ───────────────────────── Why ───────────────────────── -->
-<section class="section" id="why" aria-labelledby="why-title">
+<!-- ───────────────────────── The thin layer ───────────────────────── -->
+<section class="section" id="layer" aria-labelledby="layer-title">
   <div class="wrap">
     <header class="shead">
-      <p class="eyebrow">Why a planner</p>
-      <h2 id="why-title">More than omp <span class="grad">in tmux.</span></h2>
-      <p class="sub">tmux keeps one omp process alive. Switchyard keeps the work moving: AO runs each session in its own git worktree and keeps it alive with no client open, the Switchyard planner queues, schedules and limits them, and any window, script or agent reaches the same sessions.</p>
+      <p class="eyebrow">The idea</p>
+      <h2 id="layer-title">One thin layer. <span class="grad">The same AO sessions everywhere.</span></h2>
+      <p class="sub">AO runs and tracks the sessions: it starts the agent, gives it a worktree, keeps it alive, follows its pull requests, runs the orchestrator, and serves a phone app and a dashboard. Switchyard doesn't rebuild any of that. It plans the work, and keeps VS&nbsp;Code, the terminal and Hermes looking at, and steering, the same AO sessions.</p>
     </header>
 
     <table class="vs reveal">
       <thead>
-        <tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col">omp in tmux</th><th scope="col">Switchyard</th></tr>
+        <tr><th scope="col"><span class="sr-only">Who does what</span></th><th scope="col">AO</th><th scope="col">Switchyard</th></tr>
       </thead>
       <tbody>
-        <tr><th scope="row">Keeps running when you close the window or lose SSH</th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">A queue per session<small>tasks run in order, with retries, time limits and a model per task</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">Scheduled starts<small>at 22:00, tomorrow at 07:30, or in +2h</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">One concurrency limit across sessions<small>waiting work starts as slots free up, even after a reboot</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">Knows when omp needs you<small>a <em>needs input</em> status, notifications, answer from anywhere</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">Review what changed<small>diffs, revert, checkpoints, cost per session</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
-        <tr><th scope="row">Many clients on one session<small>VS&nbsp;Code, terminal, phone, HTTP API, Hermes, other agents</small></th><td>one terminal</td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">Runs the agent in its own git worktree and branch<small>a branch <code>ao/&lt;session&gt;/root</code> per session; your checkout stays as it is</small></th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td>—<span class="sr-only">no</span></td></tr>
+        <tr><th scope="row">Keeps sessions alive with no client open<small>a per-session host that outlives the daemon, VS&nbsp;Code and the terminal</small></th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td>—<span class="sr-only">no</span></td></tr>
+        <tr><th scope="row">Tracks pull requests, CI and reviews<small>runs its own reviewer, merges, hands failing CI back to the agent</small></th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td>—<span class="sr-only">no</span></td></tr>
+        <tr><th scope="row">Runs the project's orchestrator<small>takes a high-level goal, starts and steers worker sessions</small></th><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td><td>—<span class="sr-only">no</span></td></tr>
+        <tr><th scope="row">Task graphs, queues, schedules and limits<small>dependencies, a queue per session, <code>02:00</code> or <code>+2h</code> starts, one concurrency limit, usage holds, budgets</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
+        <tr><th scope="row">The same sessions in VS&nbsp;Code, the terminal and Hermes<small>chat, board, diffs and pull request review; the <code>switchyard</code> command; tools and a kanban lane</small></th><td>—<span class="sr-only">no</span></td><td class="y"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="sr-only">yes</span></td></tr>
       </tbody>
     </table>
 
-    <ol class="timeline">
-      <li class="tl reveal">
-        <span class="tl__time">6:02 pm</span>
-        <h3>Hand it off</h3>
-        <p>Prompt a session, or queue tasks from the chat, the Tasks view or the <code>switchyard</code> command.</p>
-      </li>
-      <li class="tl reveal">
-        <span class="tl__time">6:05 pm</span>
-        <h3>Walk away</h3>
-        <p>Close VS Code, close the lid, lose the SSH connection. AO runs the session, not VS Code, so omp keeps going.</p>
-      </li>
-      <li class="tl reveal">
-        <span class="tl__time">9:40 pm</span>
-        <h3>Pick it back up</h3>
-        <p>Reopen, and every chat reattaches with what ran, what changed and what's waiting on you. Sessions with news are marked <span class="new-dot">● new</span>.</p>
-      </li>
-    </ol>
-
-    <div class="trio">
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-windows"/></svg>
-        <h3>Attach from any window</h3>
-        <p>Any number of VS Code windows can open the same session. Late arrivals get the full transcript, open dialogs and in-flight tools.</p>
-      </div>
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bell"/></svg>
-        <h3>Never silently stuck</h3>
-        <p>When omp asks something, the session shows <em>needs input</em> in the tree and status bar, and a notification fires if the chat isn't visible.</p>
-      </div>
-      <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-resume"/></svg>
-        <h3>Resumable after anything</h3>
-        <p>Stopped sessions keep their transcript and resume on it. A session whose host or machine died is resumed from omp's transcript; a turn that was cut short is lost. Sessions you started in omp's own terminal UI aren't adopted: continue those with <code>omp --resume</code>.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ───────────────────────── Queue ───────────────────────── -->
-<section class="section section--tint" id="queue" aria-labelledby="queue-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">The planner: queue &amp; scheduler</p>
-      <h2 id="queue-title">Queue it tonight. <span class="grad">Read the results tomorrow.</span></h2>
-      <p class="sub">The Switchyard planner holds each session's queue and sends a task to AO when its dependencies are done, a slot is free and its start time has come. Scheduled queues start on time. Nothing needs to stay open.</p>
-    </header>
-
-    <div class="queue">
-      <div class="shot shot--big reveal">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">2/3 running · 5 waiting</span></div>
-        <img src="assets/shots/tasks.png" width="1440" height="900" loading="lazy" decoding="async" alt="The Tasks view: a running queue with subtasks and two pending tasks, a scheduled task in another project, and the chat showing Queued task 1/3.">
-      </div>
-      <div class="qgrid">
-        <div class="mini reveal">
-          <h3>Tasks with subtasks</h3>
-          <p>Write <code>Title :: step; step</code>, drag to reorder (also between sessions), or press <kbd>Alt</kbd>+<kbd>Enter</kbd> in the chat to queue instead of send.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>Per-task options</h3>
-          <p>Model, thinking level, fresh context, 1–5 retries with backoff and a time limit. The planner applies them task by task.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>Scheduled starts</h3>
-          <p>Start a queue at <code>22:00</code>, at <code>2026-11-08 07:30</code>, or in <code>+2h</code>.</p>
-        </div>
-        <div class="mini reveal">
-          <h3>One global limit</h3>
-          <p>Queues across all sessions share one concurrency limit. The planner starts waiting tasks as slots free up, and planned work continues once the planner runs again after a reboot.</p>
-        </div>
-      </div>
-    </div>
-    <p class="fine reveal">A failure pauses the queue. A task cut short by a crash or reboot is marked <em>interrupted</em> and waits for you: it never reruns unattended.</p>
-  </div>
-</section>
-
-<!-- ───────────────────────── How it fits together ───────────────────────── -->
-<section class="section" id="fit" aria-labelledby="fit-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">How it fits together</p>
-      <h2 id="fit-title">One planner. <span class="grad">Every way in.</span></h2>
-      <p class="sub">AO runs the sessions; the Switchyard planner, one per user, holds the plans: tasks, dependencies, queues and schedules. Every client reaches the same sessions, so a session Hermes started shows up in VS Code and on your phone, and an answer from any of them reaches the same session. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Set it up on one workstation, step by step</a>.</p>
-    </header>
     <figure class="fit reveal">
-      <figcaption class="sr-only">Clients (VS Code, the switchyard terminal command, AO's phone app, Hermes Agent, and other agents through the switchyard skill) reach the same sessions. The Switchyard planner holds the plans and sends tasks to Agent Orchestrator; AO runs each session in its own chat host process with omp.</figcaption>
+      <figcaption class="sr-only">Clients (VS Code, the switchyard terminal command, AO's phone app, Hermes Agent, and other agents through the switchyard skill) reach the same sessions. The Switchyard planner holds the plans and sends tasks to Agent Orchestrator; AO runs each session in its own chat host process with the harness it picked. The clients also talk to AO directly for chats, approvals and session lists.</figcaption>
       <ul class="fit__clients" aria-hidden="true">
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-vscode"/></svg></span><span class="fitc__t">VS Code</span><span class="fitc__s">chat, board, diffs, checkpoints</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-vscode"/></svg></span><span class="fitc__t">VS Code</span><span class="fitc__s">chat, board, diffs, PR review</span></li>
         <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-terminal"/></svg></span><span class="fitc__t">Terminal</span><span class="fitc__s"><code>switchyard</code> attach, queue, scripts</span></li>
         <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-phone"/></svg></span><span class="fitc__t">Phone</span><span class="fitc__s">AO's mobile app</span></li>
         <li class="fitc fitc--hermes"><span class="fitc__ic"><svg class="i"><use href="#i-bot"/></svg></span><span class="fitc__t">Hermes</span><span class="fitc__s">tools, kanban lane, sidebar page</span></li>
-        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="fitc__t">Other agents</span><span class="fitc__s">omp, Claude Code, Codex via the skill</span></li>
+        <li class="fitc"><span class="fitc__ic"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="fitc__t">Other agents</span><span class="fitc__s">any agent, via the skill</span></li>
       </ul>
       <div class="fit__bus" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       <div class="fit__server" aria-hidden="true">
@@ -310,38 +227,209 @@
       </div>
       <div class="fit__bus fit__bus--hosts" aria-hidden="true"><i></i><i></i><i></i></div>
       <ul class="fit__hosts" aria-hidden="true">
-        <li><svg class="i"><use href="#i-pi"/></svg><span>AO chat host + omp<small>auth refactor · working</small></span></li>
-        <li><svg class="i"><use href="#i-pi"/></svg><span>AO chat host + omp<small>flaky test · needs you</small></span></li>
-        <li><svg class="i"><use href="#i-pi"/></svg><span>AO chat host + omp<small>board card · queued</small></span></li>
+        <li><svg class="i"><use href="#i-branch"/></svg><span>AO session · Claude Code<small>auth refactor · working</small></span></li>
+        <li><svg class="i"><use href="#i-branch"/></svg><span>AO session · omp<small>flaky test · needs you</small></span></li>
+        <li><svg class="i"><use href="#i-branch"/></svg><span>AO session · Codex<small>board card · queued</small></span></li>
       </ul>
     </figure>
+    <p class="fine reveal">Sessions never depend on the planner or on a client: if the planner is down, running sessions keep going and queued work waits. <a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md">What runs where</a>.</p>
+
     <div class="trio">
       <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
-        <h3>Hermes plugin</h3>
-        <p>Tools, notifications, a kanban lane, a sidebar page, and <code>/switchyard</code> in any chat, Hermes Console included. <a href="#hermes">More below</a>.</p>
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-windows"/></svg>
+        <h3>Attach from any window</h3>
+        <p>Any number of VS&nbsp;Code windows, terminals and Hermes pages can open the same session. Late arrivals get the full transcript and any open question.</p>
       </div>
       <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
-        <h3>A skill for other agents</h3>
-        <p><em>Switchyard: Install Switchyard Skill for Agents…</em> teaches omp, Claude Code and Codex to hand work to background omp sessions and pick up the result.</p>
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bell"/></svg>
+        <h3>Never silently stuck</h3>
+        <p>When an agent asks something, the session shows <em>needs input</em> in every client, a notification fires, and answering in one place answers it everywhere.</p>
       </div>
       <div class="mini reveal">
-        <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
-        <h3>Built for scripts</h3>
-        <p><code>switchyard new --json</code>, <code>wait</code>, <code>show</code>, <code>answer</code> and <code>status --json</code>: start a session, block until it's done or needs you, read the reply, check the machine.</p>
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-resume"/></svg>
+        <h3>Resumable after anything</h3>
+        <p>Stopped sessions keep their transcript and resume on it, and a session whose host or machine died is resumed from it; a turn that was cut short is lost. Sessions you started in a harness's own terminal aren't adopted.</p>
       </div>
     </div>
   </div>
 </section>
 
+<!-- ───────────────────────── Harnesses ───────────────────────── -->
+<section class="section section--tint" id="harnesses" aria-labelledby="harnesses-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Any harness</p>
+      <h2 id="harnesses-title">Your agent, <span class="grad">whichever harness.</span></h2>
+      <p class="sub">Switchyard runs any harness AO can run in chat mode: Claude Code, Codex, OpenCode, <a href="https://omp.sh">oh-my-pi</a> (<code>omp</code>) and the others on AO's list. oh-my-pi is one of them, not the product's premise. <code>switchyard harnesses</code> shows what AO offers, whether each is logged in, and which one a new session gets and why.</p>
+    </header>
+    <div class="tools">
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-plug"/></svg>
+        <h3>Whatever AO lists</h3>
+        <p>The candidates are AO's chat harnesses with the login status AO reports. Every client picks the same way, including the queued and scheduled tasks the planner starts and Hermes kanban cards. A harness AO can't chat with, or can't start on this machine, is refused with the list.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-sliders"/></svg>
+        <h3>How one is chosen</h3>
+        <ol class="olist">
+          <li>The one you ask for: <code>new --harness</code>, a task's or lane's option, the Hermes tool or board, VS&nbsp;Code's pick.</li>
+          <li>Switchyard's default: <code>config set harness</code>, or <code>switchyard.defaultHarness</code>.</li>
+          <li>The AO project's worker harness.</li>
+          <li>AO's default: the only authorized one; with several, omp if it is one of them, else the most used.</li>
+        </ol>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-pi"/></svg>
+        <h3>What is omp-only</h3>
+        <p>Plan mode, the live permission gate behind Ask and Edits, <code>/undo</code> and <code>/redo</code> checkpoints, the todo mirror, the VS&nbsp;Code language-tools bridge, extra omp flags and the default model of <code>config set model</code>. Other harnesses get Ask, Edits and Auto as AO's approval modes and their models from AO's catalog. Asking another harness for an omp-only feature says so instead of failing.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Hermes → orchestrator → PRs → VS Code ───────────────────────── -->
+<section class="section" id="hermes" aria-labelledby="hermes-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Hermes, the orchestrator and VS&nbsp;Code</p>
+      <h2 id="hermes-title">Give it a goal. <span class="grad">Review the pull requests.</span></h2>
+      <p class="sub">With the <code>switchyard</code> plugin, <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> plans and delegates instead of coding on its own. A high-level task goes to AO's orchestrator for the project; the orchestrator splits it into worker sessions and has their pull requests reviewed, and you review the result in VS&nbsp;Code.</p>
+    </header>
+
+    <ol class="timeline">
+      <li class="tl reveal">
+        <span class="tl__time">Hermes</span>
+        <h3>Hand over the goal</h3>
+        <p>In a chat or from a kanban card, Hermes gives the project's orchestrator a goal (<code>switchyard_orchestrator_submit</code>), or starts one session for one concrete task. It starts on demand and is reused.</p>
+      </li>
+      <li class="tl reveal">
+        <span class="tl__time">AO</span>
+        <h3>Workers and pull requests</h3>
+        <p>The orchestrator splits the goal into worker sessions, each in its own worktree on the project's worker harness, steers them, and has their pull requests reviewed. AO tracks CI and review state.</p>
+      </li>
+      <li class="tl reveal">
+        <span class="tl__time">VS Code</span>
+        <h3>Review where you work</h3>
+        <p>Hermes tells the chat when the orchestrator finishes or needs you. The Orchestrators view lists its workers with their pull requests, and <em>Review Pull Request</em> opens every file in VS&nbsp;Code's diff editor.</p>
+      </li>
+    </ol>
+
+    <div class="trio">
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
+        <h3>Steer it from anywhere</h3>
+        <p>Give it a task, steer a turn in progress, answer its question, change its harness, model, rules or permissions and restart it, from Hermes, the terminal (<code>switchyard orchestrator …</code>) or VS&nbsp;Code.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-branch"/></svg>
+        <h3>Pull requests are AO's</h3>
+        <p>Switchyard shows AO's PR data (state, CI, review decision, conflicts, files) and acts through AO. It rebuilds none of AO's behaviour.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-external"/></svg>
+        <h3>One command to review</h3>
+        <p><code>switchyard vscode &lt;session&gt; --review</code>, or <em>Review PR in VS Code</em> on the Hermes page, opens the session's chat and its pull request review in VS&nbsp;Code.</p>
+      </div>
+    </div>
+
+    <div class="row row--after reveal">
+      <div class="row__text">
+        <p class="kicker">In Hermes</p>
+        <h3>Plan and delegate from any chat or board.</h3>
+        <ul class="ticks">
+          <li>Tools to start, queue or schedule a session, check it, answer it, steer it, switch its model and stop it, and to give the orchestrator a task</li>
+          <li>The chat that started a session gets a message when it finishes or needs you</li>
+          <li>Kanban cards assigned to <code>switchyard</code> run as sessions, one group per board, with an optional harness and model per board; the reply becomes the card's result</li>
+          <li>Approvals stay with you: comments and the agent can't answer them unless you allow it</li>
+          <li>Open any session, or its project, in VS&nbsp;Code from the page</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes · Switchyard</span></div>
+        <img src="assets/shots/hermes-dashboard.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Switchyard page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped, with project, mode and cost on each card.">
+      </div>
+    </div>
+    <div class="row row--flip reveal">
+      <div class="row__text">
+        <p class="kicker">Dashboard &amp; Desktop</p>
+        <h3>A Switchyard page in Hermes's sidebar.</h3>
+        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer a question or a tool approval, follow up, switch the permission mode or model, stop it, or open its chat or its project in VS&nbsp;Code; start new work now, queued or at a time; set up the kanban lane per board. The page also has an Orchestrator view: a task box with Steer, a card per orchestrator with its question, its workers with PR chips, and its settings.</p>
+      </div>
+      <div class="shot">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
+        <img src="assets/shots/hermes-detail.png" width="1600" height="1000" loading="lazy" decoding="async" alt="A session's detail panel in the Hermes dashboard: a bash command waiting for approval with Approve, Approve bash for this session and Deny, the session's status, organize actions, permission mode, model and last reply.">
+      </div>
+    </div>
+    <div class="row reveal">
+      <div class="row__text">
+        <p class="kicker">Install</p>
+        <h3>One command, every profile.</h3>
+        <p>From VS Code, run <em>Switchyard: Install Hermes Plugin…</em> and pick the profiles (or <code>switchyard hermes install --all-profiles</code>). Or install it with Hermes, straight from GitHub:</p>
+        <div class="cmd cmd--block" data-copy-root>
+          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/switchyard/integrations/hermes/switchyard --enable</span></code>
+          <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        </div>
+      </div>
+      <div class="mini">
+        <h3>After installing</h3>
+        <p>Turn the kanban lane on in one profile with <code>hermes switchyard lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, comment <code>@switchyard</code> on a card to hand it to the lane and answer questions in the comments; chats and <code>/switchyard</code> work too. <a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/switchyard/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Planner ───────────────────────── -->
+<section class="section section--tint" id="queue" aria-labelledby="queue-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">The planner</p>
+      <h2 id="queue-title">Queue it tonight. <span class="grad">Read the results tomorrow.</span></h2>
+      <p class="sub">The Switchyard planner holds the plans: tasks with subtasks, dependencies between sessions, a queue per session and start times. It sends a task to AO when its dependencies are done, a slot is free and its start time has come, with no client open.</p>
+    </header>
+
+    <div class="queue">
+      <div class="shot shot--big reveal">
+        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Tasks</span><span class="shot__chip">1/2 running · 2 waiting</span></div>
+        <img src="assets/shots/tasks.png" width="1440" height="900" loading="lazy" decoding="async" alt="The Tasks view next to a chat: a running queue with subtasks and pending tasks in two projects, and the chat showing Queued task 1/3.">
+      </div>
+      <div class="qgrid">
+        <div class="mini reveal">
+          <h3>Tasks with subtasks</h3>
+          <p>Write <code>Title :: step; step</code>, drag to reorder (also between sessions), or press <kbd>Alt</kbd>+<kbd>Enter</kbd> in the chat to queue instead of send.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Dependencies</h3>
+          <p>A task can wait for other sessions and starts by itself when every parent is done or skipped. A failed parent keeps it blocked until you retry or skip it; cycles are refused, and the board draws the graph.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Per-task options</h3>
+          <p>Harness, model, thinking level, fresh context, 1–5 retries with backoff and a time limit. The planner applies them task by task.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Scheduled starts</h3>
+          <p>Start a queue at <code>22:00</code>, at <code>2026-11-08 07:30</code>, or in <code>+2h</code>.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>One global limit</h3>
+          <p>Queues across all sessions share one concurrency limit. Waiting tasks start as slots free up, and planned work continues once the planner runs again after a reboot.</p>
+        </div>
+        <div class="mini reveal">
+          <h3>Holds and budgets</h3>
+          <p>Queued work is held, not failed, while a provider's rate or usage limit is in force, and starts at the reset. Spend budgets cap what planner tasks spend per rolling hour, day or week.</p>
+        </div>
+      </div>
+    </div>
+    <p class="fine reveal">A failure pauses the queue. A task cut short by a crash or reboot is marked <em>interrupted</em> and waits for you: it never reruns unattended.</p>
+  </div>
+</section>
+
 <!-- ───────────────────────── Features ───────────────────────── -->
-<section class="section section--tint" id="features" aria-labelledby="features-title">
+<section class="section" id="features" aria-labelledby="features-title">
   <div class="wrap">
     <header class="shead">
       <p class="eyebrow">VS&nbsp;Code, the main way in</p>
       <h2 id="features-title">Feels like part of VS&nbsp;Code, <span class="grad">because it is.</span></h2>
-      <p class="sub">Native views, native diffs, your theme's colors. omp works in AO's sessions; VS&nbsp;Code shows you what it did and what's next in the queue.</p>
+      <p class="sub">Native views, native diffs, your theme's colors. The agent works in AO's sessions; VS&nbsp;Code shows you what it did, what's next in the queue and the pull requests it opened.</p>
     </header>
 
     <div class="row reveal">
@@ -354,7 +442,7 @@
           <li>Inline diffs with word-level highlights. Click a line to jump there</li>
           <li><kbd>@</kbd> for files, <kbd>/</kbd> for commands, <kbd>!</kbd> for a shell command</li>
           <li>Paste or drop images and any file: PDFs, docs, archives</li>
-          <li>Edit &amp; resend or fork from any prompt; <kbd>Enter</kbd> steers while omp works</li>
+          <li>Edit &amp; resend from any prompt; <kbd>Enter</kbd> steers while the agent works</li>
         </ul>
       </div>
       <div class="shot">
@@ -365,14 +453,14 @@
 
     <div class="row row--flip reveal">
       <div class="row__text">
-        <p class="kicker">Review</p>
+        <p class="kicker">Diffs &amp; checkpoints</p>
         <h3>See every change. Undo any of them.</h3>
-        <p>The Switchyard omp extension snapshots each file before and after every omp edit, so reviews are exact and reverts are safe, even for changes made while you were away.</p>
+        <p>On omp sessions, Switchyard's omp extension snapshots each file before and after every edit, so reviews are exact and reverts are safe, even for changes made while you were away. On any harness, the pull request is the review (below).</p>
         <ul class="ticks">
           <li><em>Diff</em> opens VS Code's own diff editor for any tool call; <em>Revert</em> restores the file to before it</li>
           <li><em>N files changed</em> opens a multi-file review of everything the session touched</li>
           <li>A <span class="pi-badge">π</span> badge in the Explorer and changed-line markers in open editors</li>
-          <li>CodeLens on changed lines: diff, revert, or jump to the chat</li>
+          <li>Undo and redo a turn, files and conversation together (omp only)</li>
         </ul>
       </div>
       <div class="shot">
@@ -401,16 +489,38 @@
         <figcaption><strong>Sessions Board.</strong> A kanban of every session, by status, your own lanes, group or priority, with a swimlane per project. Drag cards; set priority, color, pins and tags; see queue progress, cost and unread at a glance.</figcaption>
       </figure>
     </div>
+
+    <div class="duo-head duo-head--after reveal">
+      <p class="kicker">Pull requests &amp; the orchestrator</p>
+      <h3>AO's pull requests and orchestrator, <span class="keep">in your editor.</span></h3>
+    </div>
+    <div class="tools">
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-commit"/></svg>
+        <h3>Pull request review</h3>
+        <p>A Pull Requests view lists each session's PRs with CI, review decision, failing checks and unresolved comments. <em>Review Pull Request</em> opens every file in the multi-file diff editor, base against head, with review comments as threads and <em>Ask the Agent to Address This Comment</em>. Merge, ask AO's reviewer, resolve threads or let AO fix CI and comments: AO does it.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-bot"/></svg>
+        <h3>Orchestrator view</h3>
+        <p>One node per AO project with an orchestrator: its state, harness and last reply, the question it waits on, its workers with PR chips (<code>#12 open · CI passing · approved</code>) and its settings. <em>Give Orchestrator a Task…</em>, steer it, configure it (harness, model, rules, worker harness) and restart it from there or the Command Center.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-external"/></svg>
+        <h3>Open it from outside</h3>
+        <p><code>switchyard vscode &lt;session&gt; --review</code> and the Hermes page's <em>Review PR in VS Code</em> open the session's chat and its pull request review in the VS&nbsp;Code window that has the project, over Remote-SSH too. Pull requests also appear in <code>switchyard show --json</code> and on the Hermes page.</p>
+      </article>
+    </div>
   </div>
 </section>
 
 <!-- ───────────────────────── Control ───────────────────────── -->
-<section class="section" id="new" aria-labelledby="new-title">
+<section class="section section--tint" id="new" aria-labelledby="new-title">
   <div class="wrap">
     <header class="shead">
       <p class="eyebrow">Permission modes, checkpoints and the terminal UI</p>
       <h2 id="new-title">More control, <span class="grad">fewer surprises.</span></h2>
-      <p class="sub">Decide how much omp may do on its own, rewind when it goes sideways, or drop into its terminal UI without leaving the session.</p>
+      <p class="sub">Ask, Edits and Auto work on any harness. Plan mode, the gate that holds with VS&nbsp;Code closed, <code>/undo</code> checkpoints and omp's terminal UI are omp-only, and marked as such.</p>
     </header>
 
     <div class="bento">
@@ -427,14 +537,14 @@
         </div>
         <div class="card__body">
           <h3><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Permission modes</h3>
-          <p>Ask, Edits, Plan or Auto, switchable live from a chip in the chat, even while omp is mid-turn. Switchyard's omp extension enforces the mode inside the session, so it still applies with VS Code closed.</p>
+          <p>Switch live from a chip in the chat, even mid-turn. On other harnesses Ask, Edits and Auto are AO's approval modes, and a harness that can't run a mode refuses it. On omp, Switchyard's extension enforces the mode inside the session, so it still applies with VS&nbsp;Code closed; Plan is omp-only.</p>
         </div>
       </article>
 
       <article class="card card--ckpt reveal">
         <div class="card__body">
-          <h3><svg class="i" aria-hidden="true"><use href="#i-rewind"/></svg>Checkpoints</h3>
-          <p>Every prompt is a restore point. Roll back the files <em>and</em> the conversation to any of them, or undo and redo the last turn.</p>
+          <h3><svg class="i" aria-hidden="true"><use href="#i-rewind"/></svg>Checkpoints <span class="omp-tag">(omp)</span></h3>
+          <p>On omp sessions every prompt is a restore point. Roll back the files <em>and</em> the conversation to any of them, or undo and redo the last turn.</p>
         </div>
         <div class="shot shot--card">
           <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span></div>
@@ -453,161 +563,11 @@
           </div>
         </div>
         <div class="card__body">
-          <h3><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg>TUI switch</h3>
-          <p>Open the same session in omp's terminal UI beside the chat. Exit, and it goes back to running in the background.</p>
+          <h3><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg>TUI switch <span class="omp-tag">(omp)</span></h3>
+          <p>For an omp session, open the same session in omp's terminal UI beside the chat. Exit, and it goes back to running in the background.</p>
         </div>
       </article>
     </div>
-  </div>
-</section>
-
-<!-- ───────────────────────── CLI ───────────────────────── -->
-<section class="section section--tint" id="cli" aria-labelledby="cli-title">
-  <div class="wrap cli">
-    <div class="cli__text reveal">
-      <p class="eyebrow">switchyard</p>
-      <h2 id="cli-title">Same sessions. <span class="grad">No VS&nbsp;Code required.</span></h2>
-      <p class="sub sub--left">The <code>switchyard</code> command drives everything without VS&nbsp;Code: sessions, queues, schedules, models and the planner, over plain SSH or from scripts. Install it from VS&nbsp;Code (<em>Switchyard: Install switchyard Command</em>) or, without VS&nbsp;Code, with <code>npm install -g</code> from the GitHub release.</p>
-      <dl class="cmds">
-        <div><dt><code>status</code></dt><dd>AO, planner, omp, model, sessions by state</dd></div>
-        <div><dt><code>new . -p "…"</code></dt><dd>start a session with a prompt</dd></div>
-        <div><dt><code>new . --task "…" --at 02:00</code></dt><dd>queue it, or schedule it</dd></div>
-        <div><dt><code>ls --state needs_input</code></dt><dd>filter by project, group, tag or state</dd></div>
-        <div><dt><code>model . &lt;provider/id&gt;</code></dt><dd>switch a session's model; <code>models</code> lists them</dd></div>
-        <div><dt><code>vscode .</code></dt><dd>open the session in VS&nbsp;Code</dd></div>
-      </dl>
-    </div>
-    <figure class="term reveal">
-      <figcaption class="sr-only">Terminal example: switchyard status shows AO and the planner running, the login service, omp, the default model, sessions by state, pending tasks, the scheduler and remote access. switchyard ls lists four sessions with status, title, queue progress, project, last activity and cost, one of them scheduled. switchyard send prompts a session by title words and streams its tool calls and reply.</figcaption>
-      <div class="term__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="term__title">mbaradad@build-box: ~/api-server</span></div>
-      <pre class="term__body" aria-hidden="true" data-term><span class="tline"><span class="tp">$</span> <span class="tc">switchyard status</span></span>
-<span class="tline tout"><b>switchyard</b> <span class="dim">· home ~/.switchyard</span></span>
-<span class="tline tout"><span class="dim">ao        </span><span class="c-gr">running</span> http://127.0.0.1:3001 pid 1980</span>
-<span class="tline tout"><span class="dim">planner   </span><span class="c-gr">running</span> pid 2214 · up 3d</span>
-<span class="tline tout"><span class="dim">service   </span>systemd <span class="c-gr">installed</span></span>
-<span class="tline tout"><span class="dim">omp       </span><span class="c-gr">ready</span></span>
-<span class="tline tout"><span class="dim">model     </span>anthropic/claude-sonnet-4-5</span>
-<span class="tline tout"><span class="dim">sessions  </span>4 · 1 needs input · 2 working · 1 scheduled</span>
-<span class="tline tout"><span class="dim">scheduler </span>limit 2 · 2 running · 0 waiting · 1 scheduled</span>
-<span class="tline tout"><span class="dim">remote    </span><span class="c-gr">on</span> tailscale build-box.tail5e1.ts.net:3011</span>
-<span class="tline"><span class="tp">$</span> <span class="tc">switchyard ls</span></span>
-<span class="tline tout dim">ID       STATUS        TITLE                 QUEUE    PROJECT     COST</span>
-<span class="tline tout"><span class="dim">3f9c1a2e</span> <span class="c-yl">working</span>       Fix flaky auth test            <span class="dim">api-server  $0.84</span></span>
-<span class="tline tout"><span class="dim">a07d55b1</span> <span class="c-mg">needs input</span>   Migrate config loader          <span class="dim">api-server  $1.12</span></span>
-<span class="tline tout"><span class="dim">c2e8f019</span> <span class="c-yl">working</span>       Upgrade dependencies  <span class="c-yl">▶ 1/3</span>    <span class="dim">web-app     $0.37</span></span>
-<span class="tline tout"><span class="dim">e51b7d04</span> <span class="c-cy">scheduled</span>     Nightly test sweep      <span class="c-cy">0/1</span>    <span class="dim">api-server</span></span>
-<span class="tline"><span class="tp">$</span> <span class="tc">switchyard send flaky "also update the docs" --wait</span></span>
-<span class="tline tout dim">▸ read docs/testing.md</span>
-<span class="tline tout dim">▸ edit docs/testing.md</span>
-<span class="tline tout">Documented the injected clock in docs/testing.md.</span>
-<span class="tline"><span class="tp">$</span> <span class="caret caret--term"></span></span></pre>
-    </figure>
-  </div>
-</section>
-
-<!-- ───────────────────────── Phone ───────────────────────── -->
-<section class="section" id="phone" aria-labelledby="phone-title">
-  <div class="wrap phonesec">
-    <div class="phonesec__text reveal">
-      <p class="eyebrow">AO's phone app</p>
-      <h2 id="phone-title">Your sessions, <span class="grad">in your pocket.</span></h2>
-      <p class="sub sub--left">Install AO's phone app (<a href="https://apps.apple.com/app/ao-mobile/id6792552173">iPhone and iPad</a>, <a href="https://play.google.com/store/apps/details?id=aoagents.dev">Android</a>), run <em>Switchyard: Connect Phone…</em> (or <code>switchyard remote qr</code>) and scan the code in the app. The phone keeps the pairing. It doesn't show Switchyard's queues and schedules yet; a Switchyard phone app is planned.</p>
-      <ul class="ticks">
-        <li>See what's working, waiting for you or done</li>
-        <li>Follow a session live and prompt it</li>
-        <li>Approve a command or answer a question</li>
-        <li>Start a new session; get push notifications</li>
-      </ul>
-      <p class="fine fine--left">Over your Wi-Fi, <a href="https://tailscale.com">Tailscale</a> (free, encrypted) or AO's tunnel. The API behind the app is AO's, <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/REMOTE-API.md">described here</a>.</p>
-    </div>
-    <figure class="shot shot--pair reveal">
-      <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Connect Phone</span></div>
-      <img src="assets/shots/connect-phone.png" width="590" height="665" loading="lazy" decoding="async" alt="Switchyard's Connect Phone panel in VS Code: a QR code (blurred here) with the steps to install the Orchestrator app and scan it, a note that the code carries the machine's AO password, and buttons to copy the pairing link, allow access from anywhere, rotate the password or turn remote access off.">
-    </figure>
-  </div>
-</section>
-
-<!-- ───────────────────────── Hermes ───────────────────────── -->
-<section class="section section--tint" id="hermes" aria-labelledby="hermes-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">Hermes Agent plugin</p>
-      <h2 id="hermes-title">Hermes plans the work. <span class="grad">omp does the coding.</span></h2>
-      <p class="sub">With the <code>switchyard</code> plugin, <a href="https://github.com/NousResearch/hermes-agent">Hermes</a> schedules omp sessions instead of coding on its own. It starts them in the right folder, project or board, hears back when they finish, and runs kanban cards as omp sessions.</p>
-    </header>
-    <div class="row reveal">
-      <div class="row__text">
-        <p class="kicker">In Hermes</p>
-        <h3>Schedule sessions from any chat or board.</h3>
-        <ul class="ticks">
-          <li>14 tools to start, queue or schedule a session, check it, answer it, steer it, switch its model and stop it, and to check the server</li>
-          <li>The chat that started a session gets a message when it finishes or needs you</li>
-          <li>Kanban cards assigned to <code>omp</code> run as omp sessions, one group per board, with an optional model per board; the reply becomes the card's result, and trusted comments answer omp or steer it</li>
-          <li>Approvals stay with you: comments and the agent can't answer them unless you allow it</li>
-          <li>Open any session, or its project, in VS&nbsp;Code from the page</li>
-        </ul>
-      </div>
-      <div class="shot">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes · Switchyard</span></div>
-        <img src="assets/shots/hermes-dashboard.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Switchyard page in the Hermes dashboard: sessions in columns for needs you, working, queued and scheduled, done and stopped, with project, board, mode and cost on each card.">
-      </div>
-    </div>
-    <div class="row row--flip reveal">
-      <div class="row__text">
-        <p class="kicker">Dashboard &amp; Desktop</p>
-        <h3>An Switchyard page in Hermes's sidebar.</h3>
-        <p>Every session on the machine by state, filtered by board, group or project. Open one to answer omp's question or a tool approval, follow up, switch the permission mode or model, stop it, or open its chat or its project in VS&nbsp;Code; start new work now, queued or at a time; set up the kanban lane per board.</p>
-      </div>
-      <div class="shot">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes dashboard · session detail</span></div>
-        <img src="assets/shots/hermes-detail.png" width="1600" height="1000" loading="lazy" decoding="async" alt="A session's detail panel in the Hermes dashboard: a bash command waiting for approval with Approve, Approve bash for this session and Deny, the session's status, organize actions, permission mode, model and last reply.">
-      </div>
-    </div>
-    <div class="row reveal">
-      <div class="row__text">
-        <p class="kicker">Install</p>
-        <h3>One command, every profile.</h3>
-        <p>From VS Code, run <em>Switchyard: Install Hermes Plugin…</em> and pick the profiles (or <code>switchyard hermes install --all-profiles</code>). Or install it with Hermes, straight from GitHub:</p>
-        <div class="cmd cmd--block" data-copy-root>
-          <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable</span></code>
-          <button class="cmd__btn" type="button" data-copy aria-label="Copy Hermes plugin install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
-        </div>
-        <p class="fine fine--left">Then turn the kanban lane on in one profile with <code>hermes switchyard lane on</code>. In Hermes Desktop, switch the page on under <em>Capabilities → Plugins</em> (Desktop connected to Hermes on another machine: add it there with <em>Install from Git</em> first). From <a href="https://github.com/xP3ta/hermes-console">Hermes Console</a> on Android, comment <code>@omp</code> on a card to hand it to omp and answer its questions in the comments; chats and <code>/switchyard</code> work too. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide</a> · <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/HERMES.md">Hermes guide</a>.</p>
-      </div>
-      <div class="shot">
-        <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Hermes Desktop · Switchyard</span></div>
-        <img src="assets/shots/hermes-desktop.png" width="1600" height="1000" loading="lazy" decoding="async" alt="The Switchyard page in Hermes Desktop, opened from the left sidebar under Scheduled jobs: two sessions need input with their questions and answer options, three are working, two queued, two done and two stopped.">
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ───────────────────────── Setup ───────────────────────── -->
-<section class="section" id="setup" aria-labelledby="setup-title">
-  <div class="wrap">
-    <header class="shead">
-      <p class="eyebrow">Your setup</p>
-      <h2 id="setup-title">Your computer or a server. <span class="grad">Same steps.</span></h2>
-      <p class="sub">omp, Agent Orchestrator, the planner, every session and Hermes run on the machine with your code. Only where you reach them from changes.</p>
-    </header>
-    <div class="tools">
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-laptop"/></svg>
-        <h3>All on one computer</h3>
-        <p>omp, AO, the planner and Hermes on the same Mac or Linux machine, with a local VS&nbsp;Code window or just the terminal. Hermes Desktop in local mode picks up the Switchyard page from the plugin.</p>
-      </article>
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-server"/></svg>
-        <h3>A workstation or server</h3>
-        <p>Everything runs there; reach it with <code>ssh</code> and <code>switchyard</code>, or VS&nbsp;Code Remote-SSH. Close the laptop: sessions, queues and the kanban lane keep going. No VS&nbsp;Code on the box? Install the command from the release.</p>
-      </article>
-      <article class="tcard reveal">
-        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-phone"/></svg>
-        <h3>Phone &amp; Hermes from anywhere</h3>
-        <p>Pair AO's phone app over Tailscale, and connect Hermes Desktop or Hermes Console to the machine's Hermes. Answer and approve while you're away.</p>
-      </article>
-    </div>
-    <p class="fine setup__more reveal">The planner installs itself as a systemd or launchd login service the first time a client starts it, so queued and scheduled work comes back after a crash or reboot. Check everything with <code>switchyard status</code>, <em>Switchyard: Run Doctor</em> and <code>hermes switchyard status</code>. On Windows, run it in WSL&nbsp;2. <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide, step by step</a>.</p>
   </div>
 </section>
 
@@ -620,9 +580,9 @@
         <h3 id="usage-title">Know what your agents cost.</h3>
         <p>The usage dashboard charts cost, tokens and sessions over any range. Today's spend sits in the status bar, and <em>Search Session History</em> finds anything in any transcript. A session's cost includes its subagents and is the same in VS&nbsp;Code, the terminal, the phone and Hermes.</p>
         <ul class="ticks">
-          <li>Cost per answer: hover a reply for model, tokens and cost</li>
+          <li>Spend and tokens per day, project, model and session</li>
           <li>Sort sessions by cost; cost on every board card</li>
-          <li>Optionally count omp sessions started outside VS Code</li>
+          <li>Today's spend in the status bar</li>
         </ul>
       </div>
       <div class="shot">
@@ -645,7 +605,7 @@
         <div class="tcard__text">
           <svg class="i tcard__ic" aria-hidden="true"><use href="#i-branch"/></svg>
           <h3>Git worktrees &amp; Best-of-N</h3>
-          <p>Start a session in its own worktree on an <code>omp/…</code> branch, or run the same task in N parallel worktree sessions and keep the best. Compare with base, merge into the main checkout, or remove it all in one step.</p>
+          <p>Every session runs in its own AO worktree on a branch <code>ao/&lt;session&gt;/root</code>, so parallel sessions never overwrite each other. Start one on a branch you pick, or run the same task in N worktrees and keep the best. Compare with base, merge into the main checkout, or remove it all in one step.</p>
         </div>
         <svg class="branches" viewBox="0 0 320 140" aria-hidden="true">
           <defs><linearGradient id="bg-g" x1="0" x2="1"><stop offset="0" stop-color="#ed4abf"/><stop offset=".5" stop-color="#9b4dff"/><stop offset="1" stop-color="#5ad8e6"/></linearGradient></defs>
@@ -657,24 +617,24 @@
           <circle class="cm cm--a" cx="262" cy="22" r="5"/>
           <circle class="cm cm--win" cx="262" cy="70" r="6"/>
           <circle class="cm cm--a" cx="262" cy="118" r="5"/>
-          <text x="146" y="14">omp/fix-1</text><text x="146" y="62">omp/fix-2</text><text x="146" y="110">omp/fix-3</text>
+          <text x="146" y="14">ao/fix-1/root</text><text x="146" y="62">ao/fix-2/root</text><text x="146" y="110">ao/fix-3/root</text>
           <text x="14" y="90">main</text>
         </svg>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-plug"/></svg>
         <h3>VS Code bridge</h3>
-        <p>A per-session MCP server lets omp use <em>this window's</em> language features: symbols, definitions, hover and diagnostics.</p>
+        <p>On omp sessions, a session can use <em>this window's</em> language features: symbols, definitions, hover and diagnostics of open files.</p>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-pulse"/></svg>
         <h3>Doctor</h3>
-        <p>A health report with one-click fixes: missing omp, auth problems, AO or the planner not running, Switchyard's omp extension missing or out of date, and Hermes: the plugin in each profile, notifications and the kanban lane.</p>
+        <p>A health report with one-click fixes: AO or the planner not running, missing or logged-out agents, Switchyard's omp extension missing or out of date, and Hermes: the plugin in each profile, notifications and the kanban lane.</p>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-command"/></svg>
         <h3>Command Center</h3>
-        <p><kbd>Ctrl/Cmd</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>: a searchable index of every omp command, including omp's own CLI features.</p>
+        <p><kbd>Ctrl/Cmd</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>: a searchable, grouped index of every command, orchestrator and pull request ones included.</p>
       </article>
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-bulb"/></svg>
@@ -694,24 +654,139 @@
       <article class="tcard reveal">
         <svg class="i tcard__ic" aria-hidden="true"><use href="#i-sliders"/></svg>
         <h3>Sessions your way</h3>
-        <p><em>New Session with Options</em>: model, thinking level, permission mode, plan-first, advisor, a goal and extra omp flags, remembered for resumes. A default model for every client, and a toggle between this workspace's sessions and all of them.</p>
+        <p><em>New Session with Options</em>: model, thinking level, permission mode and a goal, plus plan-first, advisor and extra flags for omp. A default harness, model and mode for every client, and a toggle between this workspace's sessions and all of them.</p>
       </article>
     </div>
   </div>
 </section>
 
+<!-- ───────────────────────── CLI ───────────────────────── -->
+<section class="section section--tint" id="cli" aria-labelledby="cli-title">
+  <div class="wrap cli">
+    <div class="cli__text reveal">
+      <p class="eyebrow">switchyard · for people, scripts and agents</p>
+      <h2 id="cli-title">Same sessions. <span class="grad">No VS&nbsp;Code required.</span></h2>
+      <p class="sub sub--left">The <code>switchyard</code> command drives everything without VS&nbsp;Code: sessions, queues, schedules, harnesses, the orchestrator and the planner, over plain SSH or from scripts. Install it from VS&nbsp;Code (<em>Switchyard: Install switchyard Command</em>) or, without VS&nbsp;Code, with <code>npm install -g</code> from the GitHub release.</p>
+      <dl class="cmds">
+        <div><dt><code>status</code></dt><dd>AO, planner, default harness, sessions by state</dd></div>
+        <div><dt><code>new . -p "…" --harness codex</code></dt><dd>start a session, on the harness you name</dd></div>
+        <div><dt><code>new . --task "…" --at 02:00</code></dt><dd>queue it, or schedule it</dd></div>
+        <div><dt><code>harnesses</code></dt><dd>AO's harnesses, their login status, the default</dd></div>
+        <div><dt><code>wait &lt;id&gt; --json</code></dt><dd>exit 0 idle, 3 needs input, 4 stopped, 5 scheduled</dd></div>
+        <div><dt><code>vscode . --review</code></dt><dd>open the session's PR review in VS&nbsp;Code</dd></div>
+      </dl>
+    </div>
+    <figure class="term reveal">
+      <figcaption class="sr-only">Terminal example: switchyard status shows AO and the planner running, the login service, the default harness, the default model, sessions by state, pending tasks, the scheduler and remote access. switchyard ls lists four sessions with status, title, queue progress, project, last activity and cost, one of them scheduled. switchyard send prompts a session by title words and streams its tool calls and reply.</figcaption>
+      <div class="term__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="term__title">mbaradad@build-box: ~/api-server</span></div>
+      <pre class="term__body" aria-hidden="true" data-term><span class="tline"><span class="tp">$</span> <span class="tc">switchyard status</span></span>
+<span class="tline tout"><b>switchyard</b> <span class="dim">· home ~/.switchyard</span></span>
+<span class="tline tout"><span class="dim">ao        </span><span class="c-gr">running</span> http://127.0.0.1:3001 pid 1980</span>
+<span class="tline tout"><span class="dim">planner   </span><span class="c-gr">running</span> pid 2214 · up 3d</span>
+<span class="tline tout"><span class="dim">service   </span>systemd <span class="c-gr">installed</span></span>
+<span class="tline tout"><span class="dim">harness   </span>codex <span class="dim">(default)</span> · 3 authorized</span>
+<span class="tline tout"><span class="dim">model     </span>anthropic/claude-sonnet-4-5</span>
+<span class="tline tout"><span class="dim">sessions  </span>4 · 1 needs input · 2 working · 1 scheduled</span>
+<span class="tline tout"><span class="dim">scheduler </span>limit 2 · 2 running · 0 waiting · 1 scheduled</span>
+<span class="tline tout"><span class="dim">remote    </span><span class="c-gr">on</span> tailscale build-box.tail5e1.ts.net:3011</span>
+<span class="tline"><span class="tp">$</span> <span class="tc">switchyard ls</span></span>
+<span class="tline tout dim">ID       STATUS        TITLE                 QUEUE    PROJECT     COST</span>
+<span class="tline tout"><span class="dim">3f9c1a2e</span> <span class="c-yl">working</span>       Fix flaky auth test            <span class="dim">api-server  $0.84</span></span>
+<span class="tline tout"><span class="dim">a07d55b1</span> <span class="c-mg">needs input</span>   Migrate config loader          <span class="dim">api-server  $1.12</span></span>
+<span class="tline tout"><span class="dim">c2e8f019</span> <span class="c-yl">working</span>       Upgrade dependencies  <span class="c-yl">▶ 1/3</span>    <span class="dim">web-app     $0.37</span></span>
+<span class="tline tout"><span class="dim">e51b7d04</span> <span class="c-cy">scheduled</span>     Nightly test sweep      <span class="c-cy">0/1</span>    <span class="dim">api-server</span></span>
+<span class="tline"><span class="tp">$</span> <span class="tc">switchyard send flaky "also update the docs" --wait</span></span>
+<span class="tline tout dim">▸ read docs/testing.md</span>
+<span class="tline tout dim">▸ edit docs/testing.md</span>
+<span class="tline tout">Documented the injected clock in docs/testing.md.</span>
+<span class="tline"><span class="tp">$</span> <span class="caret caret--term"></span></span></pre>
+    </figure>
+  </div>
+  <div class="wrap">
+    <div class="trio">
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-sparkle"/></svg>
+        <h3>A skill for other agents</h3>
+        <p><code>switchyard skill install</code> teaches Claude Code, Codex, omp and others to start, queue or schedule a session, wait for it, read its report, answer its questions and follow up.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-terminal"/></svg>
+        <h3>Built for scripts</h3>
+        <p><code>new --json</code> prints the id; <code>wait</code> blocks until the session is idle, needs you, stopped or scheduled and says which by its exit code; <code>show --json</code> has the state, the waiting question, the full last reply and the PRs; <code>answer</code> replies.</p>
+      </div>
+      <div class="mini reveal">
+        <svg class="i mini__ic" aria-hidden="true"><use href="#i-bot"/></svg>
+        <h3>The orchestrator, too</h3>
+        <p><code>switchyard orchestrator submit "…" --project ~/repo</code> gives a project's orchestrator a goal; <code>orchestrator status</code> shows its workers and their pull requests.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Phone ───────────────────────── -->
+<section class="section" id="phone" aria-labelledby="phone-title">
+  <div class="wrap phonesec">
+    <div class="phonesec__text reveal">
+      <p class="eyebrow">AO's phone app</p>
+      <h2 id="phone-title">Your sessions, <span class="grad">in your pocket.</span></h2>
+      <p class="sub sub--left">Install AO's phone app (<a href="https://apps.apple.com/app/ao-mobile/id6792552173">iPhone and iPad</a>, <a href="https://play.google.com/store/apps/details?id=aoagents.dev">Android</a>), run <em>Switchyard: Connect Phone…</em> (or <code>switchyard remote qr</code>) and scan the code in the app. The phone keeps the pairing. It doesn't show Switchyard's queues and schedules yet; a Switchyard phone app is planned.</p>
+      <ul class="ticks">
+        <li>See what's working, waiting for you or done</li>
+        <li>Follow a session live and prompt it</li>
+        <li>Approve a command or answer a question</li>
+        <li>Start a new session; get push notifications</li>
+      </ul>
+      <p class="fine fine--left">Over your Wi-Fi, <a href="https://tailscale.com">Tailscale</a> (free, encrypted) or AO's tunnel. The API behind the app is AO's, <a href="https://github.com/mbaradad/switchyard/blob/main/docs/REMOTE-API.md">described here</a>.</p>
+    </div>
+    <figure class="shot shot--pair reveal">
+      <div class="shot__bar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="shot__title">Connect Phone</span></div>
+      <img src="assets/shots/connect-phone.png" width="590" height="665" loading="lazy" decoding="async" alt="Switchyard's Connect Phone panel in VS Code: a QR code (blurred here) with the steps to install the Orchestrator app and scan it, a note that the code carries the machine's AO password, and buttons to copy the pairing link, allow access from anywhere, rotate the password or turn remote access off.">
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Setup ───────────────────────── -->
+<section class="section section--tint" id="setup" aria-labelledby="setup-title">
+  <div class="wrap">
+    <header class="shead">
+      <p class="eyebrow">Laptop or server</p>
+      <h2 id="setup-title">Your computer or a server. <span class="grad">Same steps.</span></h2>
+      <p class="sub">Agent Orchestrator, the planner, your agents' harnesses, every session and Hermes run on the machine with your code. Only where you reach them from changes.</p>
+    </header>
+    <div class="tools">
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-laptop"/></svg>
+        <h3>All on one computer</h3>
+        <p>AO, the planner, a harness and Hermes on the same Mac or Linux machine, with a local VS&nbsp;Code window or just the terminal. Hermes Desktop in local mode picks up the Switchyard page from the plugin.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-server"/></svg>
+        <h3>A workstation or server</h3>
+        <p>Everything runs there; reach it with <code>ssh</code> and <code>switchyard</code>, or VS&nbsp;Code Remote-SSH. Close the laptop: sessions, queues and the kanban lane keep going. No VS&nbsp;Code on the box? Install the command from the release.</p>
+      </article>
+      <article class="tcard reveal">
+        <svg class="i tcard__ic" aria-hidden="true"><use href="#i-phone"/></svg>
+        <h3>Phone &amp; Hermes from anywhere</h3>
+        <p>Pair AO's phone app over Tailscale, and connect Hermes Desktop or Hermes Console to the machine's Hermes. AO's desktop app can also use the machine's AO as a remote host. Answer and approve while you're away.</p>
+      </article>
+    </div>
+    <p class="fine setup__more reveal">The planner installs itself as a systemd or launchd login service the first time a client starts it, so queued and scheduled work comes back after a crash or reboot. Check everything with <code>switchyard status</code>, <em>Switchyard: Run Doctor</em> and <code>hermes switchyard status</code>. On Windows, run it in WSL&nbsp;2. <a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md">Setup guide, step by step</a>.</p>
+  </div>
+</section>
+
 <!-- ───────────────────────── Install ───────────────────────── -->
-<section class="section section--tint" id="install" aria-labelledby="install-title">
+<section class="section" id="install" aria-labelledby="install-title">
   <div class="wrap">
     <header class="shead">
       <p class="eyebrow">Get started</p>
-      <h2 id="install-title">Up and running <span class="grad">in a minute.</span></h2>
+      <h2 id="install-title">AO, an agent, <span class="grad">and Switchyard.</span></h2>
+      <p class="sub">On the machine where sessions will run: your computer, or the server you reach over Remote-SSH.</p>
     </header>
     <ol class="steps">
       <li class="step reveal">
         <span class="step__n" aria-hidden="true">1</span>
-        <h3>Install omp</h3>
-        <p>On the machine where sessions will run: your computer, or the server you reach over Remote-SSH. Then log in to a model provider.</p>
+        <h3>A coding agent, signed in</h3>
+        <p>Any harness AO can run in chat mode and that you have logged in to: Claude Code, Codex, OpenCode, oh-my-pi and so on. Several are fine. For example, oh-my-pi (AO needs 15.0.0 or newer), then run <code>omp</code> and <code>/login</code>:</p>
         <div class="cmd cmd--block" data-copy-root>
           <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>curl -fsSL https://omp.sh/install | sh</span></code>
           <button class="cmd__btn" type="button" data-copy aria-label="Copy omp install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
@@ -719,8 +794,14 @@
       </li>
       <li class="step reveal">
         <span class="step__n" aria-hidden="true">2</span>
-        <h3>Add the extension</h3>
-        <p>From the VS Code Marketplace or Open VSX. Over Remote-SSH, install it on the SSH host.</p>
+        <h3>Agent Orchestrator</h3>
+        <p>The <a href="https://orchestrator.inc/download/">AO desktop app</a> on a computer with a screen; it owns the daemon and Switchyard finds it. On a headless server or WSL&nbsp;2, build the <code>ao</code> binary from <a href="https://github.com/OrchestratorInc/agent-orchestrator">AO's source</a> (the setup guide has the steps). The first Switchyard client that finds no daemon starts one.</p>
+        <p class="step__more">Claude Code on a headless AO built from source also needs AO's Claude ACP runtime: <a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md#which-harness">the setup guide says how</a>.</p>
+      </li>
+      <li class="step reveal">
+        <span class="step__n" aria-hidden="true">3</span>
+        <h3>Switchyard</h3>
+        <p>The VS Code extension, from the Marketplace or Open VSX (over Remote-SSH, install it on the SSH host). Open a folder and press <strong>+</strong> in the Switchyard Sessions view.</p>
         <div class="step__btns">
           <a class="btn btn--primary btn--sm" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard"><svg class="i i--sm" aria-hidden="true"><use href="#i-vscode"/></svg>Marketplace</a>
           <a class="btn btn--ghost btn--sm" href="https://open-vsx.org/extension/mbaradad/switchyard">Open VSX</a>
@@ -729,65 +810,80 @@
           <code><span class="cmd__p" aria-hidden="true">$</span> <span data-copy-text>code --install-extension mbaradad.switchyard</span></code>
           <button class="cmd__btn" type="button" data-copy aria-label="Copy extension install command"><svg class="i i--sm" aria-hidden="true"><use href="#i-copy"/></svg></button>
         </div>
-      </li>
-      <li class="step reveal">
-        <span class="step__n" aria-hidden="true">3</span>
-        <h3>Start a session</h3>
-        <p>Open a folder and press <strong>+</strong> in the Switchyard Sessions view. <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>O</kbd> focuses the chat, and <em>Help → Get Started</em> walks you through the rest.</p>
-        <p class="step__more">Want the terminal too? Run <em>Switchyard: Install switchyard Command</em>, then <code>switchyard status</code>. No VS&nbsp;Code on that machine? <code>npm install -g</code> the <code>switchyard</code> package from the <a href="https://github.com/mbaradad/omp-sessions/releases">latest release</a>. On a server or with Hermes? See <a href="#setup">your setup</a>.</p>
+        <p class="step__more">Or just the command, with Node 22+: <code>npm install -g</code> the <code>switchyard</code> package from the <a href="https://github.com/mbaradad/switchyard/releases">latest release</a> (then <code>switchyard omp-extension install</code> if you use omp). Check with <code>switchyard status</code> and <code>switchyard harnesses</code>. On a server or with Hermes? See <a href="#setup">your setup</a>.</p>
       </li>
     </ol>
   </div>
 </section>
 
 <!-- ───────────────────────── FAQ ───────────────────────── -->
-<section class="section" id="faq" aria-labelledby="faq-title">
+<section class="section section--tint" id="faq" aria-labelledby="faq-title">
   <div class="wrap faq">
     <header class="shead shead--left">
       <p class="eyebrow">FAQ</p>
       <h2 id="faq-title">Questions, answered.</h2>
-      <p class="sub sub--left">Anything else? <a href="https://github.com/mbaradad/omp-sessions/issues">Open an issue on GitHub</a>.</p>
+      <p class="sub sub--left">Anything else? <a href="https://github.com/mbaradad/switchyard/issues">Open an issue on GitHub</a>.</p>
     </header>
     <div class="faq__list">
       <details>
-        <summary>What do I need?</summary>
-        <p><a href="https://omp.sh">omp</a> on the machine where sessions run, plus either VS Code 1.100 or newer with the extension (on that machine, or connected to it over Remote-SSH), or Node 22+ for the standalone <code>switchyard</code> command.</p>
+        <summary>What is Agent Orchestrator (AO)?</summary>
+        <p><a href="https://github.com/OrchestratorInc/agent-orchestrator">AO</a> is the engine underneath. It runs coding agents on the harness you pick, gives each session its own git worktree and branch, keeps it alive with no client open, tracks its pull requests, CI and reviews, runs the project's orchestrator agent, and serves a phone app and a dashboard. Switchyard is a layer on top of it, not a replacement.</p>
+      </details>
+      <details>
+        <summary>Do I need omp?</summary>
+        <p>No. oh-my-pi is one of the harnesses AO can run; any authorized one works. With several authorized and nothing chosen, AO's default is omp if it is one of them. Only a few features are omp-only: Plan mode, the permission gate that holds with VS&nbsp;Code closed, <code>/undo</code> checkpoints, the todo mirror, the language-tools bridge and extra omp flags.</p>
+      </details>
+      <details>
+        <summary>Which harnesses work?</summary>
+        <p>AO's chat harnesses: Claude Code, Codex, OpenCode, omp, pi and the others AO lists. <code>switchyard harnesses</code> shows them with their login status and the one a new session gets. A harness AO can't chat with, or can't start on this machine, is refused with the list.</p>
+      </details>
+      <details>
+        <summary>What does Switchyard add over AO's own app?</summary>
+        <p>AO runs and tracks the sessions and has its own desktop app, dashboard and phone app. Switchyard adds the planner (task graphs, queues per session, scheduled starts, usage holds, budgets and a concurrency limit, which run with no client open) and puts the same sessions in VS&nbsp;Code (chat, diffs, board, pull request review, the orchestrator), the <code>switchyard</code> command and a Hermes plugin. AO's own dashboard also opens in VS&nbsp;Code and on the Hermes page.</p>
       </details>
       <details>
         <summary>What does it cost?</summary>
-        <p>The extension is free and MIT-licensed. You bring your own omp and model provider, and pay that provider for model usage just as you would in omp's terminal UI. The usage dashboard and the status bar show what your sessions spend.</p>
+        <p>The extension is free and MIT-licensed. You bring your own agent harness and model provider, and pay that provider for model usage as you would anywhere else. The usage dashboard and the status bar show what your sessions spend.</p>
       </details>
       <details>
-        <summary>Does it collect any data?</summary>
-        <p>No telemetry. Session state lives in <code>~/.switchyard/</code> on the machine that runs the sessions, and transcripts stay in omp's own sessions folder. Clients talk to AO and the planner on the machine; omp talks to the model provider you configured.</p>
+        <summary>Is my data local?</summary>
+        <p>Yes. No telemetry. Session state lives in <code>~/.switchyard/</code> and AO's data in <code>~/.ao/data/</code> on the machine that runs the sessions, and transcripts stay with the harness (omp's are in its own sessions folder). Clients talk to AO and the planner on that machine; the agent talks to the model provider you configured.</p>
+      </details>
+      <details>
+        <summary>What do I need?</summary>
+        <p>Agent Orchestrator and a signed-in harness on the machine where sessions run, plus either VS Code 1.100 or newer with the extension (on that machine, or connected to it over Remote-SSH), or Node 22+ for the standalone <code>switchyard</code> command.</p>
       </details>
       <details>
         <summary>Do I need Remote-SSH?</summary>
-        <p>No. A local window works the same way: AO runs the sessions on your computer and they survive closing VS&nbsp;Code. Remote-SSH only puts them on another machine, and the terminal command needs no VS&nbsp;Code at all. The <a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">setup guide</a> covers both.</p>
+        <p>No. A local window works the same way: AO runs the sessions on your computer and they survive closing VS&nbsp;Code. Remote-SSH only puts them on another machine, and the terminal command needs no VS&nbsp;Code at all. The <a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md">setup guide</a> covers both.</p>
       </details>
       <details>
         <summary>Which platforms are supported?</summary>
-        <p>Linux and macOS, as your own computer or as a server you reach over SSH. On Windows, run omp and Switchyard in WSL&nbsp;2 (VS&nbsp;Code in a WSL window, Tailscale on the Windows side).</p>
+        <p>Linux and macOS, as your own computer or as a server you reach over SSH. On Windows, run AO and Switchyard in WSL&nbsp;2 (VS&nbsp;Code in a WSL window, Tailscale on the Windows side).</p>
       </details>
       <details>
         <summary>What happens when my machine reboots?</summary>
-        <p>Sessions stop, but AO resumes a session from omp's transcript when you next use it. The planner comes back as a login service and planned work continues; tasks that were running wait as interrupted. Nothing runs twice. Closing VS Code, sleeping or disconnecting doesn't stop anything.</p>
+        <p>The agent processes stop, and AO resumes a session from its transcript when you next use it. The planner comes back as a login service and planned work continues; tasks that were running wait as interrupted. Nothing runs twice. Closing VS Code, sleeping or disconnecting doesn't stop anything.</p>
       </details>
       <details>
-        <summary>Can I still use omp in the terminal?</summary>
-        <p>Yes. <code>switchyard attach</code> chats with a session in the terminal, and the TUI switch opens omp's own terminal UI on the session. Sessions you started in omp's own terminal aren't adopted; continue those with <code>omp --resume</code>.</p>
+        <summary>I used omp Sessions. How do I migrate?</summary>
+        <p>Switchyard is a new extension and command (<code>mbaradad.switchyard</code>, <code>switchyard</code>) and doesn't read the old state by itself. <code>switchyard migrate</code> imports your default model and mode, the concurrency limit and your groups and board lanes: a dry run until <code>--apply</code>, with a backup of <code>~/.omp/vscode</code> first. No session is migrated: the dry run lists each old one with the <code>omp --resume &lt;id&gt;</code> command that continues it, and its unfinished queued tasks. Then you can remove the old extension and the <code>omp-sessions</code> command.</p>
+      </details>
+      <details>
+        <summary>Can I still use omp's terminal UI?</summary>
+        <p>Yes, for omp sessions. <code>switchyard attach</code> chats with any session in the terminal, and the TUI switch opens omp's own terminal UI on an omp session. Sessions you started in a harness's own terminal aren't adopted; continue those there (for omp, <code>omp --resume</code>).</p>
       </details>
       <details>
         <summary>Can I use the Hermes plugin without VS Code?</summary>
-        <p>Yes. The plugin drives the <code>switchyard</code> command, which installs without VS&nbsp;Code: <code>npm install -g</code> the package from the <a href="https://github.com/mbaradad/omp-sessions/releases">latest release</a> on the machine that runs Hermes, then install the plugin with <code>switchyard hermes install</code> or <code>hermes plugins install mbaradad/omp-sessions/integrations/hermes/switchyard --enable</code>.</p>
+        <p>Yes. The plugin drives the <code>switchyard</code> command, which installs without VS&nbsp;Code: <code>npm install -g</code> the package from the <a href="https://github.com/mbaradad/switchyard/releases">latest release</a> on the machine that runs Hermes, then install the plugin with <code>switchyard hermes install</code> or <code>hermes plugins install mbaradad/switchyard/integrations/hermes/switchyard --enable</code>.</p>
       </details>
       <details>
         <summary>Does it work with Hermes Console on Android?</summary>
-        <p>Yes, through kanban and chats. Comment <code>@omp</code> on a card to hand it to omp; the card shows the session's status and result, blocks with omp's question (Console notifies you), and your comments answer that question or reach the session as messages. Approvals are answered on AO's phone app or the Switchyard page, not in comments. In chats, Hermes uses the omp tools and gets the "finished" and "needs you" notes, and <code>/switchyard</code> gives a summary. Console doesn't show plugin pages, so for every session at once use AO's phone app.</p>
+        <p>Yes, through kanban and chats. Comment <code>@switchyard</code> on a card to hand it to the lane; the card shows the session's status and result, blocks with its question, and your comments answer that question or reach the session as messages. Approvals are answered on AO's phone app or the Switchyard page, not in comments. In chats, Hermes uses the Switchyard tools and gets the "finished" and "needs you" notes, and <code>/switchyard</code> gives a summary. Console doesn't show plugin pages, so for every session at once use AO's phone app.</p>
       </details>
       <details>
         <summary>Are all file changes tracked for diffs and revert?</summary>
-        <p>Changes made through omp's file-editing tools are snapshotted before and after every call. Changes made through shell commands (for example <code>sed -i</code> or code generators) are not.</p>
+        <p>On omp sessions, changes made through omp's file-editing tools are snapshotted before and after every call; changes made through shell commands (for example <code>sed -i</code> or code generators) are not. Whatever the harness, a session's pull request is reviewable in VS&nbsp;Code.</p>
       </details>
     </div>
   </div>
@@ -800,7 +896,7 @@
     <h2 id="cta-title">Give your agents somewhere <span class="grad">to keep working.</span></h2>
     <div class="ctas ctas--center">
       <a class="btn btn--primary btn--lg" href="https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard"><svg class="i" aria-hidden="true"><use href="#i-vscode"/></svg>Install from Marketplace</a>
-      <a class="btn btn--ghost btn--lg" href="https://github.com/mbaradad/omp-sessions"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
+      <a class="btn btn--ghost btn--lg" href="https://github.com/mbaradad/switchyard"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
     </div>
   </div>
 </section>
@@ -811,7 +907,7 @@
   <div class="wrap foot__in">
     <div class="foot__brand">
       <a class="brand" href="./"><img src="assets/logo.svg" width="20" height="20" alt=""><span>Switchyard</span></a>
-      <p>Background <a href="https://omp.sh">oh-my-pi</a> sessions for VS Code. MIT licensed. No telemetry.</p>
+      <p>One thin layer over <a href="https://github.com/OrchestratorInc/agent-orchestrator">Agent Orchestrator</a>: plans, and the same sessions in VS Code, the terminal and Hermes. MIT licensed. No telemetry.</p>
     </div>
     <nav class="foot__nav" aria-label="Footer">
       <div>
@@ -819,24 +915,24 @@
         <ul>
           <li><a href="https://marketplace.visualstudio.com/items?itemName=mbaradad.switchyard">VS Code Marketplace</a></li>
           <li><a href="https://open-vsx.org/extension/mbaradad/switchyard">Open VSX</a></li>
-          <li><a href="https://omp.sh">oh-my-pi (omp)</a></li>
+          <li><a href="https://github.com/OrchestratorInc/agent-orchestrator">Agent Orchestrator</a></li>
         </ul>
       </div>
       <div>
         <h2>Project</h2>
         <ul>
-          <li><a href="https://github.com/mbaradad/omp-sessions">GitHub</a></li>
-          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/CHANGELOG.md">Changelog</a></li>
-          <li><a href="https://github.com/mbaradad/omp-sessions/issues">Issues</a></li>
-          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/SETUP.md">Setup guide</a></li>
-          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/docs/HERMES.md">Hermes guide</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard">GitHub</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/issues">Issues</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/blob/main/docs/SETUP.md">Setup guide</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/blob/main/docs/HERMES.md">Hermes guide</a></li>
         </ul>
       </div>
       <div>
         <h2>Legal</h2>
         <ul>
-          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/LICENSE">MIT License</a></li>
-          <li><a href="https://github.com/mbaradad/omp-sessions/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/blob/main/LICENSE">MIT License</a></li>
+          <li><a href="https://github.com/mbaradad/switchyard/blob/main/SECURITY.md">Security policy</a></li>
         </ul>
       </div>
     </nav>

@@ -2,7 +2,7 @@
 	"name": "switchyard",
 	"displayName": "Switchyard",
 	"description": "Switchyard is a planning layer for coding agents on Agent Orchestrator: task graphs, queues, schedules, chat and review, from VS Code, the terminal, your phone or Hermes Agent.",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"publisher": "mbaradad",
 	"license": "MIT",
 	"author": "Manel Baradad <manelbaradad@gmail.com>",
@@ -10,13 +10,13 @@
 	"icon": "media/icon.png",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/mbaradad/omp-sessions.git"
+		"url": "https://github.com/mbaradad/switchyard.git"
 	},
 	"bugs": {
-		"url": "https://github.com/mbaradad/omp-sessions/issues"
+		"url": "https://github.com/mbaradad/switchyard/issues"
 	},
-	"homepage": "https://github.com/mbaradad/omp-sessions#readme",
-	"qna": "https://github.com/mbaradad/omp-sessions/issues",
+	"homepage": "https://github.com/mbaradad/switchyard#readme",
+	"qna": "https://github.com/mbaradad/switchyard/issues",
 	"preview": true,
 	"keywords": [
 		"switchyard",
@@ -96,6 +96,17 @@
 					"icon": "media/switchyard.svg"
 				},
 				{
+					"id": "switchyard.orchestrators",
+					"name": "Orchestrators",
+					"icon": "$(organization)",
+					"when": "config.switchyard.orchestrator.showView"
+				},
+				{
+					"id": "switchyard.pullRequests",
+					"name": "Pull Requests",
+					"icon": "$(git-pull-request)"
+				},
+				{
 					"type": "webview",
 					"id": "switchyard.chatView",
 					"name": "Chat",
@@ -112,6 +123,10 @@
 			{
 				"view": "switchyard.sessions",
 				"contents": "No sessions for this workspace yet.\n[Start session](command:switchyard.newSession)\nSessions keep running on this machine when VS Code disconnects."
+			},
+			{
+				"view": "switchyard.orchestrators",
+				"contents": "No orchestrator yet. Give a project's orchestrator a high-level task: it splits it into worker sessions, steers them and has their pull requests reviewed.\n[Give Orchestrator a Task](command:switchyard.orchestrator.submit)\nAgent Orchestrator starts the orchestrator on the first task. Open a git folder to see its project here."
 			},
 			{
 				"view": "switchyard.tasks",
@@ -218,6 +233,12 @@
 				"title": "Open Sessions Board",
 				"category": "Switchyard",
 				"icon": "$(layout)"
+			},
+			{
+				"command": "switchyard.overview",
+				"title": "Open Overview",
+				"category": "Switchyard",
+				"icon": "$(pulse)"
 			},
 			{
 				"command": "switchyard.setPermissionMode",
@@ -1105,10 +1126,160 @@
 				"command": "switchyard.hermes.lane",
 				"title": "Turn Hermes Kanban Lane On or Off",
 				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.orchestrator.submit",
+				"title": "Give Orchestrator a Task…",
+				"category": "Switchyard",
+				"icon": "$(send)"
+			},
+			{
+				"command": "switchyard.orchestrator.submitSelection",
+				"title": "Give Orchestrator the Selection as a Task",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.orchestrator.submitDocument",
+				"title": "Give Orchestrator the Active File as a Task",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.orchestrator.steer",
+				"title": "Steer Orchestrator…",
+				"category": "Switchyard",
+				"icon": "$(compass)"
+			},
+			{
+				"command": "switchyard.orchestrator.openChat",
+				"title": "Open Orchestrator Chat",
+				"category": "Switchyard",
+				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "switchyard.orchestrator.openSessionChat",
+				"title": "Open Orchestrator or Worker Chat",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.orchestrator.configure",
+				"title": "Configure Orchestrator…",
+				"category": "Switchyard",
+				"icon": "$(settings-gear)"
+			},
+			{
+				"command": "switchyard.orchestrator.editSetting",
+				"title": "Change Orchestrator Setting…",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.orchestrator.restart",
+				"title": "Restart Orchestrator (Apply Settings)",
+				"category": "Switchyard",
+				"icon": "$(debug-restart)"
+			},
+			{
+				"command": "switchyard.orchestrator.stop",
+				"title": "Stop Orchestrator",
+				"category": "Switchyard",
+				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "switchyard.orchestrator.openInDashboard",
+				"title": "Open Orchestrator in AO Dashboard",
+				"category": "Switchyard",
+				"icon": "$(dashboard)"
+			},
+			{
+				"command": "switchyard.orchestrator.refresh",
+				"title": "Refresh Orchestrators",
+				"category": "Switchyard",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "switchyard.pr.refresh",
+				"title": "Refresh Pull Requests",
+				"category": "Switchyard",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "switchyard.pr.review",
+				"title": "Review Pull Request",
+				"category": "Switchyard",
+				"icon": "$(diff-multiple)"
+			},
+			{
+				"command": "switchyard.pr.openFile",
+				"title": "Open Pull Request File Diff",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.openThread",
+				"title": "Open Pull Request Review Comment",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.openInWorktree",
+				"title": "Open Pull Request File in Session Worktree",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.openInBrowser",
+				"title": "Open Pull Request in Browser",
+				"category": "Switchyard",
+				"icon": "$(link-external)"
+			},
+			{
+				"command": "switchyard.pr.copyUrl",
+				"title": "Copy Pull Request Link",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.openChat",
+				"title": "Open Pull Request's Session Chat",
+				"category": "Switchyard",
+				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "switchyard.pr.merge",
+				"title": "Merge Pull Request…",
+				"category": "Switchyard",
+				"icon": "$(git-merge)"
+			},
+			{
+				"command": "switchyard.pr.requestReview",
+				"title": "Have AO's Reviewer Review Pull Request…",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.resolveThreads",
+				"title": "Resolve Pull Request Review Threads…",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.autoFeed",
+				"title": "Let AO Fix CI and Review Comments by Itself…",
+				"category": "Switchyard"
+			},
+			{
+				"command": "switchyard.pr.claim",
+				"title": "Attach Pull Request to Session…",
+				"category": "Switchyard",
+				"icon": "$(add)"
+			},
+			{
+				"command": "switchyard.pr.thread.sendToAgent",
+				"title": "Ask the Agent to Address This Comment",
+				"category": "Switchyard",
+				"icon": "$(send)"
 			}
 		],
 		"menus": {
 			"view/title": [
+				{
+					"command": "switchyard.overview",
+					"when": "view == switchyard.sessions",
+					"group": "navigation@2"
+				},
 				{
 					"command": "switchyard.board",
 					"when": "view == switchyard.sessions",
@@ -1313,6 +1484,36 @@
 					"command": "switchyard.importCodex",
 					"when": "view == switchyard.sessions",
 					"group": "1_new@9"
+				},
+				{
+					"command": "switchyard.orchestrator.submit",
+					"when": "view == switchyard.orchestrators",
+					"group": "navigation@1"
+				},
+				{
+					"command": "switchyard.orchestrator.refresh",
+					"when": "view == switchyard.orchestrators",
+					"group": "navigation@2"
+				},
+				{
+					"command": "switchyard.orchestrator.configure",
+					"when": "view == switchyard.orchestrators",
+					"group": "1_orchestrator@1"
+				},
+				{
+					"command": "switchyard.orchestrator.openInDashboard",
+					"when": "view == switchyard.orchestrators",
+					"group": "1_orchestrator@2"
+				},
+				{
+					"command": "switchyard.pr.refresh",
+					"when": "view == switchyard.pullRequests",
+					"group": "navigation@1"
+				},
+				{
+					"command": "switchyard.pr.claim",
+					"when": "view == switchyard.pullRequests",
+					"group": "navigation@2"
 				}
 			],
 			"view/item/context": [
@@ -1770,6 +1971,206 @@
 					"command": "switchyard.share",
 					"when": "view == switchyard.sessions && viewItem =~ /^session/",
 					"group": "3_switchyard@3"
+				},
+				{
+					"command": "switchyard.orchestrator.submit",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped|none)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "switchyard.orchestrator.openChat",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped)$/",
+					"group": "inline@2"
+				},
+				{
+					"command": "switchyard.orchestrator.submit",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped|none)$/",
+					"group": "0_task@1"
+				},
+				{
+					"command": "switchyard.orchestrator.steer",
+					"when": "view == switchyard.orchestrators && viewItem == orchestrator.running",
+					"group": "0_task@2"
+				},
+				{
+					"command": "switchyard.orchestrator.openChat",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped)$/",
+					"group": "1_open@1"
+				},
+				{
+					"command": "switchyard.orchestrator.openInDashboard",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped|none)$/",
+					"group": "1_open@2"
+				},
+				{
+					"command": "switchyard.orchestrator.configure",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped|none)$/",
+					"group": "2_config@1"
+				},
+				{
+					"command": "switchyard.orchestrator.restart",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.(running|stopped)$/",
+					"group": "2_config@2"
+				},
+				{
+					"command": "switchyard.orchestrator.stop",
+					"when": "view == switchyard.orchestrators && viewItem == orchestrator.running",
+					"group": "3_lifecycle@1"
+				},
+				{
+					"command": "switchyard.resumeSession",
+					"when": "view == switchyard.orchestrators && viewItem == orchestrator.stopped",
+					"group": "3_lifecycle@1"
+				},
+				{
+					"command": "switchyard.resumeSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.stopped/",
+					"group": "inline@1"
+				},
+				{
+					"command": "switchyard.stopSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.running/",
+					"group": "inline@2"
+				},
+				{
+					"command": "switchyard.openInSidebar",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "0_open@1"
+				},
+				{
+					"command": "switchyard.openInEditor",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "0_open@2"
+				},
+				{
+					"command": "switchyard.reviewChanges",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "1_session@0"
+				},
+				{
+					"command": "switchyard.showChanges",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "1_session@1"
+				},
+				{
+					"command": "switchyard.renameSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "1_session@2"
+				},
+				{
+					"command": "switchyard.setPermissionMode",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "1_session@8"
+				},
+				{
+					"command": "switchyard.stopSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.running/",
+					"group": "2_lifecycle@1"
+				},
+				{
+					"command": "switchyard.resumeSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.stopped/",
+					"group": "2_lifecycle@1"
+				},
+				{
+					"command": "switchyard.deleteSession",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.stopped/",
+					"group": "2_lifecycle@2"
+				},
+				{
+					"command": "switchyard.worktree.diff",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@1"
+				},
+				{
+					"command": "switchyard.worktree.merge",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@2"
+				},
+				{
+					"command": "switchyard.worktree.openFolder",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@3"
+				},
+				{
+					"command": "switchyard.worktree.remove",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker\\.[a-z]+\\.worktree/",
+					"group": "3_worktree@4"
+				},
+				{
+					"command": "switchyard.continueInTerminal",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "4_switchyard@1"
+				},
+				{
+					"command": "switchyard.exportHtml",
+					"when": "view == switchyard.orchestrators && viewItem =~ /^orchestrator\\.worker/",
+					"group": "4_switchyard@2"
+				},
+				{
+					"command": "switchyard.pr.review",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "inline@1"
+				},
+				{
+					"command": "switchyard.pr.openInBrowser",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "inline@2"
+				},
+				{
+					"command": "switchyard.pr.review",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "1_review@1"
+				},
+				{
+					"command": "switchyard.pr.openInBrowser",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "1_review@2"
+				},
+				{
+					"command": "switchyard.pr.copyUrl",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "1_review@3"
+				},
+				{
+					"command": "switchyard.pr.openChat",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "1_review@4"
+				},
+				{
+					"command": "switchyard.pr.merge",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open)$/",
+					"group": "2_act@1"
+				},
+				{
+					"command": "switchyard.pr.requestReview",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open)$/",
+					"group": "2_act@2"
+				},
+				{
+					"command": "switchyard.pr.resolveThreads",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open)$/",
+					"group": "2_act@3"
+				},
+				{
+					"command": "switchyard.pr.autoFeed",
+					"when": "view == switchyard.pullRequests && viewItem =~ /^pr\\.(draft|open|merged|closed)$/",
+					"group": "2_act@4"
+				},
+				{
+					"command": "switchyard.pr.openInWorktree",
+					"when": "view == switchyard.pullRequests && viewItem == pr.file",
+					"group": "1_file@1"
+				},
+				{
+					"command": "switchyard.pr.thread.sendToAgent",
+					"when": "view == switchyard.pullRequests && viewItem == pr.thread",
+					"group": "1_thread@1"
+				},
+				{
+					"command": "switchyard.pr.review",
+					"when": "view == switchyard.sessions && viewItem =~ /^session.*\\.pr/",
+					"group": "1_session@3"
 				}
 			],
 			"editor/context": [
@@ -1812,6 +2213,11 @@
 					"command": "switchyard.fixFileProblems",
 					"when": "resourceScheme == file",
 					"group": "switchyard@8"
+				},
+				{
+					"command": "switchyard.orchestrator.submitSelection",
+					"when": "editorHasSelection",
+					"group": "switchyard@9"
 				}
 			],
 			"scm/title": [
@@ -2083,6 +2489,38 @@
 				{
 					"command": "switchyard.gitUi",
 					"when": "workspaceFolderCount > 0"
+				},
+				{
+					"command": "switchyard.orchestrator.openSessionChat",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.orchestrator.editSetting",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.orchestrator.submitSelection",
+					"when": "editorHasSelection"
+				},
+				{
+					"command": "switchyard.orchestrator.submitDocument",
+					"when": "activeEditor"
+				},
+				{
+					"command": "switchyard.pr.openFile",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.pr.openThread",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.pr.openInWorktree",
+					"when": "false"
+				},
+				{
+					"command": "switchyard.pr.thread.sendToAgent",
+					"when": "false"
 				}
 			],
 			"editor/title/context": [
@@ -2119,6 +2557,13 @@
 					"command": "switchyard.fixLastFailedCommand",
 					"when": "switchyard.hasFailedCommand",
 					"group": "switchyard@1"
+				}
+			],
+			"comments/commentThread/context": [
+				{
+					"command": "switchyard.pr.thread.sendToAgent",
+					"when": "commentController == switchyard.pr",
+					"group": "inline@1"
 				}
 			]
 		},
@@ -2379,6 +2824,11 @@
 					],
 					"default": "workspace",
 					"description": "Which sessions the Sessions view, Tasks view, Sessions Board and status bar list. A window without folders lists all sessions."
+				},
+				"switchyard.orchestrator.showView": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Show the **Orchestrators** view: each AO project's orchestrator (the agent that splits a high-level task into worker sessions), its workers and settings. Hide it if you do not use orchestrators; the `Switchyard: … Orchestrator …` commands keep working."
 				},
 				"switchyard.saveBeforePrompt": {
 					"type": "boolean",

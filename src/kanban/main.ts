@@ -2,7 +2,6 @@
 import { playRequested, unlockAudioOnGesture } from "../shared/completion-sound";
 import { plainExcerpt } from "../shared/excerpt";
 import { holdText } from "../shared/task-text";
-import type { SyncState } from "../shared/protocol";
 import { parseStartTime } from "../planner/when";
 import {
 	BOARD_MODES,
@@ -38,7 +37,9 @@ import {
 	statusKey,
 	stepTarget,
 } from "./board";
-import { GRAPH_METRICS, dependencyGraph, layoutGraph, waitsForLabel } from "./graph";
+import { drawDag } from "../shared/graph-svg";
+import { button, el, icon } from "../shared/webview-dom";
+import { SESSION_MARKERS, plannerBadge, sessionDag, waitsForLabel } from "../shared/session-graph";
 
 interface VsCodeApi {
 	postMessage(msg: FromBoard): void;
@@ -102,62 +103,6 @@ let renderPending = false;
 let editingLane: { id: string | null; value: string } | undefined;
 
 const COLORS: readonly OrgColor[] = ["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"];
-
-// ---------- DOM helpers ----------
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", ...children: Child[]): HTMLElementTagNameMap[K] {
-	const e = document.createElement(tag);
-	if (cls) e.className = cls;
-	for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-	return e;
-}
-
-const ICONS: Record<string, string> = {
-	chat: '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-	stop: '<rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/>',
-	play: '<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor"/>',
-	rerun: '<path d="M13 8a5 5 0 11-1.6-3.7M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
-	archive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-	unarchive: '<path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M8 12V8.5M6.5 10 8 8.5 9.5 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-	palette: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="6.3" r="1" fill="currentColor"/><circle cx="9.8" cy="6.3" r="1" fill="currentColor"/><circle cx="6.5" cy="10" r="1" fill="currentColor"/>',
-	more: '<circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/>',
-	chevron: '<path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
-	plus: '<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-	minus: '<path d="M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-	pin: '<path d="M6 2.5h4l-.5 4 2 2v1h-7v-1l2-2zM8 9.5V14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
-	bell: '<path d="M4 11V7a4 4 0 018 0v4l1 1H3zM6.5 13.5a1.5 1.5 0 003 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-	check: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-	circle: '<circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
-	clock: '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.2l2 1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
-	link: '<path d="M7 9a2.5 2.5 0 003.5 0l2.5-2.5a2.5 2.5 0 00-3.5-3.5L8.8 3.7M9 7a2.5 2.5 0 00-3.5 0L3 9.5A2.5 2.5 0 006.5 13l.7-.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
-	run: '<path d="M3.5 3.5l6 4.5-6 4.5zM11 3.5v9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>',
-	retry: '<path d="M12.5 8a4.5 4.5 0 11-1.3-3.2M12.5 2.5v2.8H9.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
-	expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
-	folder: '<path d="M1.5 4h4.5l1.5 1.5h7v7h-13z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
-	"p-urgent": '<rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="currentColor"/><path d="M8 4.5v4.3" stroke="var(--vscode-editor-background)" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r="1.05" fill="var(--vscode-editor-background)"/>',
-	"p-high": '<rect x="2" y="9" width="3" height="5" rx=".8" fill="currentColor"/><rect x="6.5" y="6" width="3" height="8" rx=".8" fill="currentColor"/><rect x="11" y="2.5" width="3" height="11.5" rx=".8" fill="currentColor"/>',
-	"p-normal": '<rect x="2" y="9" width="3" height="5" rx=".8" fill="currentColor"/><rect x="6.5" y="6" width="3" height="8" rx=".8" fill="currentColor"/><rect x="11" y="2.5" width="3" height="11.5" rx=".8" fill="currentColor" opacity=".25"/>',
-	"p-low": '<rect x="2" y="9" width="3" height="5" rx=".8" fill="currentColor"/><rect x="6.5" y="6" width="3" height="8" rx=".8" fill="currentColor" opacity=".25"/><rect x="11" y="2.5" width="3" height="11.5" rx=".8" fill="currentColor" opacity=".25"/>',
-};
-function icon(name: string, cls = ""): HTMLElement {
-	const span = el("span", `ic ${cls}`.trim());
-	span.setAttribute("aria-hidden", "true");
-	span.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16">${ICONS[name] ?? ""}</svg>`;
-	return span;
-}
-
-function button(cls: string, title: string, content: Child[], run: (ev: MouseEvent) => void): HTMLButtonElement {
-	const b = el("button", cls, ...content);
-	b.type = "button";
-	b.title = title;
-	b.setAttribute("aria-label", title);
-	b.addEventListener("click", ev => {
-		ev.stopPropagation();
-		run(ev);
-	});
-	return b;
-}
 
 function relTime(ts: number): string {
 	const s = Math.max(0, (Date.now() - ts) / 1000);
@@ -499,9 +444,9 @@ function statusPill(c: BoardCard): HTMLElement {
 	if (key === "working") return el("span", "pill working", el("span", "spinner"), c.status === "starting" ? "Starting" : "Working");
 	if (key === "waiting") return el("span", "pill waiting", icon("bell"), "Needs input");
 	if (key === "queued") {
-		const held = c.queue?.state === "held";
-		const pill = el("span", "pill queued", icon("clock"), c.waiting ? `Queued #${c.waiting.position}` : c.blockedBy?.length ? "Blocked" : held ? "Held" : "Queued");
-		if (c.queue?.waitReason) pill.title = `${c.queue.state ?? "waiting"}: ${holdText(c.queue.waitReason, held ? c.queue.waitUntil : undefined)}`;
+		const badge = plannerBadge(c.queue && { ...c.queue, waiting: c.waiting });
+		const pill = el("span", "pill queued", icon("clock"), badge?.label ?? "Queued");
+		if (badge) pill.title = badge.title;
 		return pill;
 	}
 	if (key === "stopped") return el("span", "pill stopped", icon("circle"), "Stopped");
@@ -532,6 +477,12 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		sync.title = [`${SYNC_LABEL[c.sync.state]}${from.length ? ` (from ${from.join(", ")})` : ""}`, ...(c.sync.files?.length ? [`Conflicts: ${c.sync.files.join(", ")}`] : [])].join("\n");
 		meta.append(sync);
 	}
+	const planner = statusKey(c) === "queued" ? undefined : plannerBadge(c.queue && { ...c.queue, waiting: c.waiting });
+	if (planner && (c.queue?.state === "paused" || c.queue?.state === "interrupted")) {
+		const pill = el("span", `pill planner ${planner.tone}`, icon(planner.tone === "bad" ? "bell" : "clock"), planner.label);
+		pill.title = planner.title;
+		meta.append(pill);
+	}
 	if (c.startAt !== undefined) {
 		const at = new Date(c.startAt).toLocaleString();
 		const sched = el("span", "sched", icon("clock"), untilTime(c.startAt));
@@ -561,7 +512,7 @@ function renderCard(c: BoardCard, row: string): HTMLElement {
 		const pct = Math.round((c.queue.done / c.queue.total) * 100);
 		const bar = el("span", "progress", el("span", "progress-fill"));
 		bar.firstElementChild?.setAttribute("style", `width:${pct}%`);
-		const q = el("span", "queue", bar, `${c.queue.done}/${c.queue.total}`);
+		const q = el("span", "queue", bar, `${c.queue.done}/${c.queue.total}${c.queue.failed ? ` · ${c.queue.failed} failed` : ""}`);
 		q.title = `Task queue: ${c.queue.done} done, ${c.queue.running} running, ${c.queue.pending} pending${c.queue.failed ? `, ${c.queue.failed} failed` : ""}${c.queue.interrupted ? `, ${c.queue.interrupted} interrupted` : ""}`;
 		if (c.queue.failed) q.classList.add("failed");
 		foot.append(q);
@@ -698,93 +649,19 @@ function statusDot(col: BoardColumn): HTMLElement | null {
 
 // ---------- dependency graph ----------
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, ...children: Array<Node | string>): SVGElementTagNameMap[K] {
-	const e = document.createElementNS(SVG_NS, tag);
-	for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-	e.append(...children);
-	return e;
-}
-
-const GRAPH_STATE: Record<StatusKey, string> = { working: "working", waiting: "needs input", queued: "queued", idle: "idle", completed: "completed", stopped: "stopped" };
-
-const EDGE_KINDS = ["pending", "changed", "conflict", "merged"] as const;
-type EdgeKind = (typeof EDGE_KINDS)[number];
-
-/** How an arrow reads: the parent's changes in the child (propagation), else whether the child still waits for it. */
-function edgeKind(state: SyncState | undefined, blocked: boolean): EdgeKind | undefined {
-	if (state === "conflict" || state === "resolving") return "conflict";
-	if (state === "upstream-changed") return "changed";
-	if (state === "pending") return "pending";
-	if (state === "merged") return "merged";
-	return blocked ? "pending" : undefined;
-}
-
 /** Sessions with dependencies as a left-to-right DAG: arrows run from a dependency to the session waiting for it. */
 function renderGraph(visible: BoardCard[]): HTMLElement {
 	if (!loaded) return el("div", "graph", el("div", "notice", "Loading sessions…"));
-	const { nodes, edges } = dependencyGraph(visible);
+	const { nodes, edges } = sessionDag(
+		visible.map(c => ({ ...c, state: statusKey(c), queue: c.queue && { ...c.queue, waiting: c.waiting } })),
+		data.cards,
+	);
 	if (!nodes.length) {
 		const hint = data.cards.some(c => c.after?.length) ? "No sessions with dependencies match the filter." : "No dependencies yet — right-click a card → Dependencies…";
 		return el("div", "graph", el("div", "notice", hint));
 	}
-	const { nodeWidth: w, nodeHeight: h } = GRAPH_METRICS;
-	const pad = 16;
-	const layout = layoutGraph(
-		nodes.map(n => n.id),
-		edges,
-	);
-	const width = layout.width + 2 * pad;
-	const height = layout.height + 2 * pad;
-	const root = svgEl("svg", { class: "graph-svg", width, height, viewBox: `${-pad} ${-pad} ${width} ${height}`, role: "group", "aria-label": "Session dependencies" });
-	const defs = svgEl("defs", {});
-	for (const id of ["graph-arrow", ...EDGE_KINDS.map(k => `graph-arrow-${k}`)]) defs.append(svgEl("marker", { id, class: id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" }, svgEl("path", { d: "M0 0L10 5L0 10z" })));
-	root.append(defs);
-
-	const byId = new Map(nodes.map(n => [n.id, n]));
-	const edgeLayer = svgEl("g", { class: "graph-edges" });
-	for (const r of layout.routes) {
-		// Horizontal tangents at every point: smooth S-curves between layers, straight runs through virtual slots.
-		const d = r.points
-			.map((q, i) => {
-				if (i === 0) return `M${q.x} ${q.y}`;
-				const p = r.points[i - 1];
-				const dx = Math.max(30, Math.abs(q.x - p.x) / 2);
-				return `C${p.x + dx} ${p.y} ${q.x - dx} ${q.y} ${q.x} ${q.y}`;
-			})
-			.join("");
-		const to = byId.get(r.to);
-		const kind = edgeKind(to?.sync?.edges?.[r.from], to?.blockedBy?.includes(r.from) === true);
-		const path = svgEl("path", { class: `gedge${kind ? ` ${kind}` : ""}`, d, "marker-end": `url(#${kind ? `graph-arrow-${kind}` : "graph-arrow"})` });
-		path.dataset.from = r.from;
-		path.dataset.to = r.to;
-		edgeLayer.append(path);
-	}
-
-	const nodeLayer = svgEl("g", { class: "graph-nodes" });
-	const maxChars = Math.floor((w - 22) / 7);
-	for (const c of nodes) {
-		const p = layout.positions.get(c.id);
-		if (!p) continue;
-		const key = statusKey(c);
-		const blocked = (c.blockedBy?.length ?? 0) > 0;
-		const waits = waitsForLabel(c, data.cards);
-		const title = c.title.length > maxChars ? `${c.title.slice(0, maxChars - 1)}…` : c.title;
-		const state = `${GRAPH_STATE[key]}${blocked ? ` · blocked by ${c.blockedBy?.length}` : ""}`;
-		const g = svgEl(
-			"g",
-			{ class: `gnode s-${key}${blocked ? " blocked" : ""}`, transform: `translate(${p.x} ${p.y})`, tabindex: 0, role: "button", "aria-label": `${c.title}, ${state}` },
-			svgEl("title", {}, [c.title, `${c.project} · ${state}`, waits?.tooltip].filter(Boolean).join("\n")),
-			svgEl("rect", { class: "gnode-box", width: w, height: h, rx: 6 }),
-			svgEl("rect", { class: "gnode-stripe", width: 4, height: h - 12, x: 4, y: 6, rx: 2 }),
-			svgEl("text", { class: "gnode-title", x: 14, y: 20 }, title),
-			svgEl("text", { class: "gnode-state", x: 14, y: 37 }, state),
-		);
-		g.dataset.node = c.id;
-		nodeLayer.append(g);
-	}
-	root.append(edgeLayer, nodeLayer);
-	return el("div", "graph", root);
+	const legend = el("div", "graph-legend", el("span", "key enforced", "dependency"), el("span", "key pending", "still waiting"), el("span", "key changed", "parent changed"), el("span", "key conflict", "conflict"), el("span", "key merged", "merged"));
+	return el("div", "graph", legend, drawDag({ nodes, edges, markers: SESSION_MARKERS, label: "Session dependencies" }));
 }
 
 function render(): void {

@@ -29,6 +29,42 @@ TEXT_QUESTION_KINDS = ("ask", "input", "editor")
 GATE_PREFIX = "Allow tool: "
 ALLOW_CHOICE = re.compile(r"^(allow|approve|accept)\b", re.IGNORECASE)
 DENY_CHOICE = re.compile(r"^(deny|reject|refuse)\b", re.IGNORECASE)
+# Approval modes an AO orchestrator can start in (`switchyard orchestrator config --permissions`), most
+# restrictive first; the one it gets when nothing is set (src/ao/orchestrator.ts DEFAULT_ORCHESTRATOR_PERMISSIONS).
+ORCHESTRATOR_PERMISSIONS = ("default", "accept-edits", "auto", "bypass-permissions")
+ORCHESTRATOR_DEFAULT_PERMISSIONS = "bypass-permissions"
+# `orchestrator config` settings as the plugin names them -> the CLI flag. Text settings (rules aside, which
+# go on stdin) are set as `--flag=value`, toggles as on/off; `none` clears one.
+ORCHESTRATOR_TEXT = {
+    "harness": "harness",
+    "model": "model",
+    "effort": "effort",
+    "permissions": "permissions",
+    "rules_file": "rules-file",
+    "worker_harness": "worker-harness",
+    "worker_model": "worker-model",
+}
+ORCHESTRATOR_TOGGLES = {"review": "review", "auto_review": "auto-review"}
+# The words of src/shared/pr-review.ts prSummaryLine, for a PR's facts as `orchestrator status --json` gives them.
+PR_CI = {"pending": "CI running", "passing": "CI passing", "failing": "CI failing"}
+PR_REVIEW = {"approved": "approved", "changes_requested": "changes requested", "review_required": "review required"}
+PR_MERGE = {"mergeable": "mergeable", "conflicting": "conflicts", "blocked": "merge blocked", "unstable": "merge unstable"}
+
+
+def pr_summary_line(facts: dict) -> str:
+    """`#12 open · CI passing · approved · mergeable`: the parts that say something; nothing but the
+    state for a finished PR (the CLI and the Switchyard page print the same line)."""
+    state = str(facts.get("state") or "open")
+    parts = [state]
+    if state in ("open", "draft"):
+        for table, key in ((PR_CI, "ci"), (PR_REVIEW, "review")):
+            if facts.get(key) in table:
+                parts.append(table[facts[key]])
+        if facts.get("reviewComments"):
+            parts.append("unresolved comments")
+        if facts.get("mergeability") in PR_MERGE:
+            parts.append(PR_MERGE[facts["mergeability"]])
+    return f"#{facts.get('number')} {' · '.join(parts)}"
 
 
 def is_approval(question: dict) -> bool:
@@ -465,6 +501,91 @@ class Switchyard:
         out = self.json(args, stdin=stdin, timeout=90)
         if not isinstance(out, dict) or not isinstance(out.get("id"), str):
             raise SwitchyardError(f"switchyard new printed no session id: {str(out)[:200]}")
+        return out
+
+    # ---- the project's AO orchestrator (`switchyard orchestrator …`; everything about it is AO's and the CLI's) ----
+
+    def _orchestrator_args(self, verb: str, project: Optional[str], *flags: str) -> list[str]:
+        """`orchestrator <verb> --json [--project=<id|name|folder>] …`: the project is a flag value, so a name
+        starting with `--` stays a name; without one the CLI uses the git project of its working folder."""
+        return ["orchestrator", verb, "--json", *([f"--project={project}"] if project else []), *flags]
+
+    def orchestrators(self, *, stopped: bool = False) -> list[dict]:
+        """Every project's orchestrator (`orchestrator ls --json`; `stopped` adds the ones no longer running): the
+        CLI's OrchestratorInfo (id, projectId, projectName, projectPath, harness, model, state, displayStatus, active,
+        question?, reply?, config, workers[{id, title, state, displayStatus, branch, prs[]}], counts), running first."""
+        out = self.json(["orchestrator", "ls", "--json", *(["--all"] if stopped else [])])
+        items = out.get("orchestrators") if isinstance(out, dict) else None
+        if not isinstance(items, list):
+            raise SwitchyardError(f"switchyard orchestrator ls printed {str(out)[:100]!r}")
+        return [o for o in items if isinstance(o, dict)]
+
+    def orchestrator(self, project: Optional[str] = None) -> dict:
+        """`orchestrator status --json`: {project: {id, name, path} | None, orchestrator: OrchestratorInfo | None, note?};
+        no orchestrator yet is `orchestrator: None`, a folder AO has no project for `project: None` with a note."""
+        out = self.json(self._orchestrator_args("status", project))
+        if not isinstance(out, dict) or "orchestrator" not in out:
+            raise SwitchyardError(f"switchyard orchestrator status printed {str(out)[:100]!r}")
+        return out
+
+    def orchestrator_submit(self, text: str, *, project: Optional[str] = None, steer: bool = False, harness: Optional[str] = None) -> dict:
+        """Gives the orchestrator a high-level task on stdin (starting it, or bringing a stopped one back, when needed);
+        returns {orchestrator, projectId, harness?, started, revived, turnId?, mode: send|steer, project}. `steer` redirects
+        the turn in progress instead of queueing behind it. `harness` applies when this call starts it."""
+        flags = ["-", *(["--steer"] if steer else []), *([f"--harness={harness}"] if harness else [])]
+        out = self.json(self._orchestrator_args("submit", project, *flags), stdin=text, timeout=240)
+        if not isinstance(out, dict) or not isinstance(out.get("orchestrator"), str):
+            raise SwitchyardError(f"switchyard orchestrator submit printed no orchestrator id: {str(out)[:200]}")
+        return out
+
+    def orchestrator_lifecycle(self, verb: str, project: Optional[str] = None, *, harness: Optional[str] = None) -> dict:
+        """`orchestrator start|restart|stop`: start/restart give {id, started, revived, harness?, projectId} (restart replaces
+        the orchestrator with a fresh one on the project's current settings; `harness` is saved first), stop {id, projectId,
+        stopped}. Stopping when nothing runs is `{projectId, stopped: False}`, not an error."""
+        if verb not in ("start", "restart", "stop"):
+            raise SwitchyardError("orchestrator action must be start, restart or stop")
+        r = self.run(self._orchestrator_args(verb, project, *([f"--harness={harness}"] if harness and verb != "stop" else [])), timeout=240)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            out = None
+        if isinstance(out, dict) and (r.code == 0 or (verb == "stop" and out.get("stopped") is False)):
+            return out
+        raise SwitchyardError(error_text(r) or f"switchyard orchestrator {verb} exited with {r.code}")
+
+    def orchestrator_config(self, project: Optional[str] = None, patch: Optional[dict[str, Any]] = None) -> dict:
+        """The project's orchestrator settings ({projectId, config}), changed first by `patch` when it has any: keys are
+        harness, model, effort, permissions, rules, rules_file, worker_harness, worker_model (text), review and auto_review
+        (True/False); a None value clears the setting, a missing key keeps it. A running orchestrator keeps what it started
+        with: `orchestrator_lifecycle("restart")` applies the change. AO validates the values."""
+        flags: list[str] = []
+        stdin: Optional[str] = None
+        for key, value in (patch or {}).items():
+            if key == "rules":
+                # Standing instructions are free text: stdin, whatever their length or first characters.
+                flags.append("--rules=none" if value is None else "--rules=-")
+                stdin = None if value is None else str(value)
+            elif key in ORCHESTRATOR_TEXT:
+                flags.append(f"--{ORCHESTRATOR_TEXT[key]}={'none' if value is None else value}")
+            elif key in ORCHESTRATOR_TOGGLES:
+                flags.append(f"--{ORCHESTRATOR_TOGGLES[key]}={'none' if value is None else 'on' if value else 'off'}")
+            else:
+                raise SwitchyardError(f"unknown orchestrator setting {key}")
+        out = self.json(self._orchestrator_args("config", project, *flags), stdin=stdin)
+        if not isinstance(out, dict) or not isinstance(out.get("config"), dict):
+            raise SwitchyardError(f"switchyard orchestrator config printed {str(out)[:100]!r}")
+        return out
+
+    def harnesses(self) -> dict:
+        """`switchyard harnesses --json`: {harnesses: [{id, label, authStatus, installed, usageCount, unavailable?, default}],
+        default: {harness, source, reason} | None, problem?}: AO's chat harnesses (it exits 1 with a `problem` when none is usable)."""
+        r = self.run(["harnesses", "--json"], timeout=30)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError as exc:
+            raise SwitchyardError(error_text(r) or f"switchyard harnesses exited with {r.code}") from exc
+        if not isinstance(out, dict) or not isinstance(out.get("harnesses"), list):
+            raise SwitchyardError(f"switchyard harnesses printed {r.stdout.strip()[:100]!r}")
         return out
 
 

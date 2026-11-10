@@ -1,8 +1,10 @@
 // What other agents and scripts see of a session (`switchyard show|wait --json`, the agent skill):
 // the same shape src/shared/session-report.ts gives today, built from an AoSessionModel.
+import type { PrFacts } from "../shared/pr-review";
 import type { AoConfigOptions, AoTurnSettings } from "./client";
 import type { AoAgentState, AoQuestion, AoSessionModel } from "./model";
 import { isOmpHarness } from "./harness";
+import { prFactsOf } from "./pr";
 
 /** The permission modes the CLI and skill speak (src/shared/permissions.ts). */
 export type AoPermissionMode = "ask" | "edits" | "plan" | "auto";
@@ -56,6 +58,8 @@ export interface AoSessionReport {
 	project?: string;
 	/** The session's own branch: its work lands there. */
 	branch?: string;
+	/** Pull requests the session owns: AO's facts about each (state, CI, review, mergeability). */
+	prs?: PrFacts[];
 }
 
 /**
@@ -175,5 +179,7 @@ export function sessionReport(model: AoSessionModel, extra: AoReportExtra = {}):
 	// Where the work lands: the session's own branch in its AO project's worktree.
 	if (model.projectId) report.project = model.projectId;
 	if (model.branch) report.branch = model.branch;
+	// AO's pull request facts for the session (CI, review decision, mergeability), as clients show them.
+	if (model.view.prs.length) report.prs = model.view.prs.map(prFactsOf);
 	return report;
 }

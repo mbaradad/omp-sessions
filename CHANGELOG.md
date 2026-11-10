@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.0
+
+AO's orchestrator becomes visible, steerable and configurable everywhere Switchyard is, and pull requests become reviewable in VS Code. Both are thin views over AO's own API.
+
+### AO's orchestrator, from the terminal, VS Code and Hermes
+
+AO runs a coordinating agent per project, the **orchestrator**: it takes a high-level goal, splits it into worker sessions, steers them and has their PRs reviewed. Switchyard never listed it (every list is `kind: worker`); now all three clients see, steer, configure and give it tasks, as one thin layer over AO's own API (`POST /orchestrators`, the project's settings, the orchestrator's chat), with nothing of AO's behaviour rebuilt.
+
+- **CLI**: `switchyard orchestrator [status] [project|dir] [--all]`, `submit <task|-> [--project p] [--steer] [--wait] [--harness h] [--permissions m]`, `start|restart|stop`, `config [--harness h] [--model m] [--effort e] [--permissions m] [--rules text|@file|-] [--rules-file p] [--worker-harness h] [--worker-model m] [--review on|off] [--auto-review on|off]` (all `--json`). A task starts the project's orchestrator when none runs and brings a stopped one back. AO starts an orchestrator only for a project that names its harness, so one is chosen the way every session's is (the flag, the project's own, `config set harness`, the project's worker harness, AO's default) and saved in the project's settings first. Settings are AO's project config (written whole by AO, so Switchyard patches the one it read); a running orchestrator keeps what it started with and `restart` applies them. Its chat is an ordinary session: `show|tail|attach|send|answer|wait <orchestrator id>` work on it.
+- **VS Code**: an **Orchestrators** view (state, harness, last reply, the question it waits on, its workers with PR chips, its settings), *Give Orchestrator a Task…* (also from the selection or the active file), *Steer*, *Open Chat*, *Configure…* (rules open in an editor that saves back to AO), *Restart*, *Stop*; the orchestrator's chat is the ordinary chat and notifies like any session, while the Sessions view, board, Tasks and status bar keep listing workers. `switchyard.orchestrator.showView` hides the view.
+- **Hermes**: tools `switchyard_orchestrator_submit` (a high-level goal, versus `switchyard_session_start` for one concrete task), `switchyard_orchestrator_status`, `switchyard_orchestrator_config` (loosening permissions needs `agent_approvals`) and `switchyard_orchestrator_restart` (start, stop), a chat message when the orchestrator finishes or needs input, `/switchyard orchestrator`, dashboard routes, and an **Orchestrator** view on the Switchyard page (task box with Steer, project picker, one card per orchestrator with its question and answer controls, workers with PR chips, settings with *Restart to apply*, Open in VS Code, AO dashboard).
+- `show --json` and `wait --json` carry the session's `prs` (AO's facts per PR).
+- **Harness-neutral Hermes plugin.** The plugin's descriptions, messages, kanban notes and the page's labels no longer call every session an omp session: Switchyard bridges whatever harness AO runs. omp is named only where the thing is omp's (its permission gate, extension, `omp usage`, models).
+- **Fixed (Hermes notifications):** the block that carries an agent's output into a Hermes chat as data opened with `<omp-output>` but closed with `</switchyard-output>`, and only escaped the former, so agent output (a file, a web page it read) containing `</switchyard-output>` could close the block early and read as instructions. One tag now opens, closes and is escaped inside it (any case or spacing).
+
+### Pull requests in VS Code
+
+- A **Pull Requests** view over AO's PR data (state, CI, review decision, mergeability, failing checks, unresolved review comments, conflicting files, files and commits), *Review Pull Request* (every file in the multi-file diff editor, base against head, read from AO's PR file revisions; review comments as threads on the head side), *Open File in Session Worktree*, and AO's own actions: *Merge Pull Request…*, *Have AO's Reviewer Review Pull Request…*, *Resolve Pull Request Review Threads…*, *Attach Pull Request to Session…* and *Let AO Fix CI and Review Comments by Itself…* (AO's auto-inject and auto-review switches). The Sessions view shows AO's status next to a session with PRs. AO reads a PR's files from the session's repository, so a PR whose branch was never fetched there says so instead of showing an empty diff.
+- **Open the review from the terminal and Hermes.** `switchyard vscode <session> --review [--pr N]` (and `vscode://mbaradad.switchyard/open?session=<id>&review=pr[&pr=N]`) opens the session's chat and its pull request review in a VS Code window; the Hermes page's session detail lists the session's PRs as chips with **Review PR in VS Code**, and the Orchestrator view's PR chips have the same button. The request file `vscode-open.json` carries the intent, so it works through Remote-SSH folder links too.
+
+### An Overview in VS Code
+
+- **Switchyard: Open Overview** (Sessions view title, Command Center, or a click on the scheduler status-bar item) is one editor tab with what the Hermes page shows: what needs you, what is working, what runs next (a schedule with "starts in …"), what is held and why (with *Clear limits*), the scheduler (slots, pause, budget and spend, usage windows, provider limits), orchestrators, pull requests needing attention, and a dependency graph. Every row opens the session, task, review or Hermes card it names.
+- The Board's graph and the Task Graph share one renderer with the Overview: planner-state badges, thick edges where the planner enforces a dependency, dashed edges until the upstream is merged. Board cards gain a paused/interrupted pill and a failed-task count.
+
+### The repository is now `mbaradad/switchyard`
+
+Renamed from `omp-sessions`; GitHub redirects the old repository URLs. The site moved to https://mbaradad.github.io/switchyard/ (the old Pages address does not redirect) and now describes Switchyard as a layer over any Agent Orchestrator harness, with omp as one of them.
+
 ## 0.7.0
 
 **omp Sessions is now Switchyard, a planning layer on Agent Orchestrator (AO).** AO's daemon runs the agents (whichever harness AO is set up for: Claude Code, Codex, omp through `omp acp`, …); Switchyard holds the plans and is a set of clients on AO's API. The old server side is gone.

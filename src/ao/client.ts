@@ -422,6 +422,73 @@ export class AoClient {
 		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/workspace/manifest", { params: { path: { sessionId } } }));
 	}
 
+	// ---- orchestrators ----
+
+	/** The project's orchestrator sessions, newest first (AO keeps at most one active per project). */
+	async listOrchestrators(options: { projectId?: string; active?: boolean } = {}): Promise<AoSessionView[]> {
+		const query: AoListSessionsQuery = { kind: "orchestrator", ...(options.projectId && { project: options.projectId }), ...(options.active !== undefined && { active: options.active }) };
+		return (await this.listSessions(query)).sessions;
+	}
+
+	/** Starts the project's orchestrator, or returns the active one (`clean`: replaces it with a fresh one). Chat mode: Switchyard drives chats. */
+	async spawnOrchestrator(body: AoSchemas["SpawnOrchestratorRequest"]): Promise<AoSchemas["OrchestratorResponse"]> {
+		return (await unwrap(this.client.POST("/api/v1/orchestrators", { body }))).orchestrator;
+	}
+
+	// ---- pull requests ----
+
+	/** The pull requests a session owns (`prs`) and links to (`linkedPrs`), with CI, review and mergeability. */
+	sessionPrs(sessionId: string): Promise<AoSchemas["ListSessionPRsResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/pr", { params: { path: { sessionId } } }));
+	}
+
+	/** A PR's changed files (base to head) and its commits. */
+	sessionPrFiles(sessionId: string, prNumber: number, sourceUrl?: string): Promise<AoSchemas["ListPRFilesResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/pr/{prNumber}/files", { params: { path: { sessionId, prNumber }, query: sourceUrl ? { sourceUrl } : {} } }));
+	}
+
+	/** One side of one file of a PR (`commitSha`: of that commit alone, before being its first parent). */
+	sessionPrFileRevision(sessionId: string, prNumber: number, query: { path: string; side: "before" | "after"; sourceUrl?: string; commitSha?: string }): Promise<AoSchemas["WorkspaceFileRevisionResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/pr/{prNumber}/file/revision", { params: { path: { sessionId, prNumber }, query } }));
+	}
+
+	/** A PR file with its unified diff. */
+	sessionPrFile(sessionId: string, prNumber: number, query: { path: string; previousPath?: string; sourceUrl?: string; commitSha?: string }): Promise<AoSchemas["WorkspaceFileResponse"]> {
+		return unwrap(this.client.GET("/api/v1/sessions/{sessionId}/pr/{prNumber}/file", { params: { path: { sessionId, prNumber }, query } }));
+	}
+
+	/** Merges a PR (AO's merge; `expectedHeadSha` refuses when the head moved since the caller looked). */
+	mergePr(prNumber: number, body: AoSchemas["MergePRRequest"]): Promise<AoSchemas["MergePRResponse"]> {
+		return unwrap(this.client.POST("/api/v1/prs/{id}/merge", { params: { path: { id: String(prNumber) } }, body }));
+	}
+
+	/** Starts AO's own reviewer on the session's PRs (`prUrl`: one of them). */
+	triggerReview(sessionId: string, body: AoSchemas["TriggerReviewRequest"] = {}): Promise<AoSchemas["TriggerReviewResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/reviews/trigger", { params: { path: { sessionId } }, body }));
+	}
+
+	/** Attaches an existing PR (a URL or `owner/repo#n`) to a session. */
+	claimPr(sessionId: string, body: AoSchemas["ClaimPRRequest"]): Promise<AoSchemas["ClaimPRResponse"]> {
+		return unwrap(this.client.POST("/api/v1/sessions/{sessionId}/pr/claim", { params: { path: { sessionId } }, body }));
+	}
+
+	/** Lets AO hand the session's failing CI checks (`ci`) or new review comments (`review`) to its agent by itself. */
+	async setAutoInject(sessionId: string, kind: "ci" | "review", enabled: boolean): Promise<void> {
+		const params = { params: { path: { sessionId } } };
+		if (kind === "ci") await unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/auto-inject-ci", { ...params, body: { autoInjectCI: enabled } }));
+		else await unwrap(this.client.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", { ...params, body: { autoInjectReview: enabled } }));
+	}
+
+	/** Turns AO's own reviewer on or off for the session's PRs (it reviews every new head by itself). */
+	async setAutoReview(sessionId: string, enabled: boolean): Promise<void> {
+		await unwrap(this.client.PUT("/api/v1/sessions/{sessionId}/auto-review", { params: { path: { sessionId } }, body: { enabled } }));
+	}
+
+	/** Resolves the PR's review threads on its SCM through AO; the count it resolved. */
+	async resolvePrComments(prNumber: number): Promise<number> {
+		return (await unwrap(this.client.POST("/api/v1/prs/{id}/resolve-comments", { params: { path: { id: String(prNumber) } } }))).resolved;
+	}
+
 	// ---- projects ----
 
 	async listProjects(): Promise<AoProject[]> {

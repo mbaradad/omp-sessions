@@ -4,7 +4,7 @@ import { parseStartTime } from "../planner/when";
 export class UsageError extends Error {}
 
 /** Flags that take a value; everything else is boolean. */
-const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after", "usage", "worktree", "session", "from", "release", "harness"]);
+const VALUE_FLAGS = new Set(["title", "model", "prompt", "task", "sub", "priority", "lines", "mode", "bind", "port", "tag", "at", "timeout", "dir", "notes", "group", "profile", "url", "project", "cwd", "state", "authority", "question", "folder", "after", "usage", "worktree", "session", "from", "release", "harness", "permissions", "effort", "rules", "rules-file", "worker-harness", "worker-model", "review", "auto-review", "pr"]);
 const MULTI_FLAGS = new Set(["sub", "tag", "profile", "after"]);
 const SHORT: Record<string, string> = { p: "prompt", a: "all", f: "follow", y: "yes", n: "lines", t: "title", m: "model", h: "help", w: "wait", d: "detach" };
 
@@ -37,7 +37,8 @@ export function parseArgs(argv: readonly string[]): Args {
 			out._.push(a);
 			continue;
 		}
-		if (VALUE_FLAGS.has(name)) {
+		// `review` takes a value for `orchestrator --review <mode>`, but `vscode --review` is a boolean (the command is the first word).
+		if (VALUE_FLAGS.has(name) && !(name === "review" && out._[0] === "vscode")) {
 			if (value === undefined) {
 				value = argv[++i];
 				if (value === undefined) throw new UsageError(`--${name} needs a value`);
